@@ -1,5 +1,6 @@
 from coworker.delta_governance import GovernanceStore
 from coworker.server.manager import SessionManager
+from coworker.delta_validation import validate_artifact_path
 from types import SimpleNamespace
 
 
@@ -44,3 +45,12 @@ def test_persisted_session_creates_a_recovery_checkpoint(tmp_path):
     manager.persist_session("task-4")
 
     assert manager.governance_store.replay("task-4")["checkpoints"][0]["next_step"] == "Resume from the saved session state."
+
+
+def test_artifact_validation_rejects_files_outside_the_workspace(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    outside = tmp_path / "outside.md"
+    outside.write_text("no")
+
+    assert validate_artifact_path(workspace, outside)["ok"] is False

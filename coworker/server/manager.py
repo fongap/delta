@@ -36,6 +36,7 @@ from ..unrouted import UnroutedStore
 from ..unattended import UnattendedRegistry
 from ..audit import AuditStore
 from ..delta_governance import GovernanceStore
+from ..delta_validation import validate_artifact_path
 from ..config import load_config, workspace_allowed_commands
 from ..conversations import ConversationStore, title_from
 from ..engine import ApprovalOutcome, Approver, TurnEngine
@@ -1232,7 +1233,10 @@ class SessionManager:
         path = str((event.get("arguments") or {}).get("path") or "").strip()
         session_id = str(event.get("session_id") or "").strip()
         if path and session_id:
-            self.governance_store.record_artifact(session_id, path, _artifact_kind(Path(path)))
+            record = self.session_store.load(session_id)
+            workspace = (record.workspace if record else self.default_workspace) or ""
+            validation = validate_artifact_path(workspace, path) if workspace else {"ok": False, "errors": ["No task workspace."]}
+            self.governance_store.record_artifact(session_id, path, _artifact_kind(Path(path)), validation=validation)
 
     def browser_state(self) -> dict[str, Any]:
         return browser_state()
