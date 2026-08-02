@@ -2667,16 +2667,21 @@ class SessionManager:
                 getattr(request, "arguments", None),
                 getattr(request, "metadata", None),
             )
-            return ApprovalOutcome.ONCE
-        try:
-            return ApprovalOutcome(resolution)
-        except ValueError:
-            pass
-        if resolution == "allow":
-            return ApprovalOutcome.ONCE
-        if resolution == "always":
-            return ApprovalOutcome.ALWAYS_TOOL
-        return ApprovalOutcome.DENY
+            outcome = ApprovalOutcome.ONCE
+        else:
+            try:
+                outcome = ApprovalOutcome(resolution)
+            except ValueError:
+                outcome = ApprovalOutcome.ONCE if resolution == "allow" else (
+                    ApprovalOutcome.ALWAYS_TOOL if resolution == "always" else ApprovalOutcome.DENY
+                )
+        self.governance_store.record_approval(
+            session_id,
+            getattr(request, "tool_name", ""),
+            outcome.value,
+            reason=getattr(request, "reason", "") or "",
+        )
+        return outcome
 
     def _scheduled_approver(self, task, session_id: str):
         from ..engine import ApprovalOutcome
