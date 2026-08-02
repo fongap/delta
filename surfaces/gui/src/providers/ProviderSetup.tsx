@@ -10,6 +10,8 @@ import {
 import { openExternal } from "../tauri";
 import { PROVIDER_LOGOS, providerRank } from "./logos";
 
+const DELTA_PROVIDER_PRESETS = new Set(["openai", "anthropic", "gemini", "ollama"]);
+
 // The provider gallery ⇄ key form, shared by Onboarding step 1 (§39) and
 // Settings ▸ Models (UX-021) so the two can never drift apart visually. The hook
 // owns the interaction state machine; ProviderCards/ProviderForm own the shared
@@ -234,7 +236,9 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
 
   return {
     providers,
-    ordered: [...providers].sort((a, b) => providerRank(a.name) - providerRank(b.name)),
+    ordered: providers
+      .filter((provider) => DELTA_PROVIDER_PRESETS.has(provider.name))
+      .sort((a, b) => providerRank(a.name) - providerRank(b.name)),
     refreshProviders,
     sel,
     info,
