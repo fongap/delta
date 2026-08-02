@@ -34,3 +34,13 @@ def test_successful_file_write_is_added_as_an_artifact(tmp_path):
     )
 
     assert manager.governance_store.replay("task-3")["artifacts"][0]["path"] == "report.md"
+
+
+def test_persisted_session_creates_a_recovery_checkpoint(tmp_path):
+    manager = SessionManager(data_dir=tmp_path / "data")
+    manager._engines["task-4"] = object()
+    manager.save = lambda *_args: None
+
+    manager.persist_session("task-4")
+
+    assert manager.governance_store.replay("task-4")["checkpoints"][0]["next_step"] == "Resume from the saved session state."

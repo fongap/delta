@@ -859,6 +859,13 @@ class SessionManager:
         engine = self._engines.get(session_id)
         if engine is not None:
             self.save(session_id, engine)
+            pending = self.inbox.pending(session_id)
+            self.governance_store.checkpoint(
+                session_id,
+                "Session state persisted locally.",
+                "Resume from the saved session state.",
+                risks=["Awaiting approval or user input."] if pending else [],
+            )
 
     async def resolve_inbox(self, item_id: str, resolution: str) -> bool:
         """Resolve an Inbox item from any surface (REST / Slack button / channel reply). If the
