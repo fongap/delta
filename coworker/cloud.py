@@ -36,6 +36,8 @@ from .secrets import SecretStore
 
 CLOUD_AUTH_PROFILE = "cloud:auth"
 LOGIN_SCOPES = "openid profile email offline_access"
+LOCAL_ONLY = True
+LOCAL_ONLY_ERROR = "Delta runs locally; OpenWorker Cloud features are disabled."
 
 from . import __version__ as APP_VERSION  # noqa: E402
 
@@ -60,6 +62,10 @@ _pending_managed_states: dict[str, float] = {}
 _MANAGED_STATE_TTL = 600
 
 
+def _cloud_disabled() -> dict[str, Any]:
+    return {"ok": False, "error": LOCAL_ONLY_ERROR, "local_only": True}
+
+
 def _b64url(raw: bytes) -> str:
     return base64.urlsafe_b64encode(raw).decode().rstrip("=")
 
@@ -82,6 +88,8 @@ def begin_login(config: Config) -> dict[str, Any]:
     desktop shell binds the sidecar to a RANDOM free port. This shipped once
     as "Firefox can't connect to 127.0.0.1:8765" right after Auth0 finished.
     """
+    if LOCAL_ONLY:
+        return _cloud_disabled()
     verifier = _b64url(_secrets.token_bytes(48))
     challenge = _b64url(hashlib.sha256(verifier.encode()).digest())
     port = os.environ.get("COWORKER_PORT") or config.port
@@ -114,6 +122,8 @@ def begin_login(config: Config) -> dict[str, Any]:
 def complete_login(
     secrets: SecretStore, config: Config, code: str, state: str
 ) -> dict[str, Any]:
+    if LOCAL_ONLY:
+        return _cloud_disabled()
     pending = _pending_logins.pop(state, None)
     if pending is None or float(pending["created"]) < _now() - _PENDING_TTL:
         return {"ok": False, "error": "unknown or expired sign-in attempt"}
@@ -160,6 +170,8 @@ def sync_connections(secrets: SecretStore, config: Config) -> dict[str, Any]:
     (installation ids + logins) and installation tokens mint on demand — nothing
     secret ever needs to live here. Every other connector's tokens are local-only
     by design, so those need a one-click re-consent instead."""
+    if LOCAL_ONLY:
+        return _cloud_disabled()
     token = fresh_access_token(secrets, config)
     if not token:
         return {"ok": False, "error": "not signed in"}
@@ -211,6 +223,8 @@ def _store_cloud_tokens(secrets: SecretStore, token: dict) -> None:
 
 
 def status(secrets: SecretStore) -> dict[str, Any]:
+    if LOCAL_ONLY:
+        return {"signed_in": False, "account": "", "user_id": "", "local_only": True}
     profile = secrets.get(CLOUD_AUTH_PROFILE) or {}
     return {
         "signed_in": bool(profile.get("access_token")),
@@ -227,6 +241,8 @@ def logout(secrets: SecretStore) -> dict[str, Any]:
 def fresh_access_token(secrets: SecretStore, config: Config) -> Optional[str]:
     """Valid cloud session token, silently refreshed near expiry; None when
     signed out or the session can't be renewed (GUI shows "sign in again")."""
+    if LOCAL_ONLY:
+        return None
     profile = secrets.get(CLOUD_AUTH_PROFILE) or {}
     if not profile.get("access_token"):
         return None
@@ -250,6 +266,8 @@ def fresh_access_token(secrets: SecretStore, config: Config) -> Optional[str]:
 
 
 def fetch_me(secrets: SecretStore, config: Config) -> Optional[dict]:
+    if LOCAL_ONLY:
+        return None
     token = fresh_access_token(secrets, config)
     if not token:
         return None
@@ -282,11 +300,15 @@ def install_id(secrets: SecretStore) -> str:
 
 
 def telemetry_enabled(secrets: SecretStore) -> bool:
+    if LOCAL_ONLY:
+        return False
     profile = secrets.get(TELEMETRY_PROFILE) or {}
     return bool(profile.get("enabled", True))  # default-on (only matters signed in)
 
 
 def set_telemetry_enabled(secrets: SecretStore, enabled: bool) -> dict[str, Any]:
+    if LOCAL_ONLY:
+        return {"ok": True, "telemetry_enabled": False, "local_only": True}
     profile = secrets.get(TELEMETRY_PROFILE) or {}
     profile["enabled"] = bool(enabled)
     secrets.put(TELEMETRY_PROFILE, profile)
@@ -304,6 +326,8 @@ def emit_session_created(
 ) -> bool:
     """Best-effort, content-free session event. Hard no-op unless signed in AND
     the toggle is on; failures are swallowed (telemetry must never break a session)."""
+    if LOCAL_ONLY:
+        return False
     import platform as _platform
     import sys
 
@@ -355,6 +379,8 @@ def begin_managed_connect(
     `access` names a broker-defined consent tier (hubspot read | write); the
     desktop never sends scopes. `flow` is GitHub-only: "" = the App install
     page; "authorize" links a teammate to an existing installation."""
+    if LOCAL_ONLY:
+        return _cloud_disabled()
     provider = PROVIDER_FOR_CONNECTOR.get(connector)
     if provider is None:
         return {"ok": False, "error": f"{connector} has no managed OAuth path"}
@@ -394,6 +420,8 @@ def begin_managed_connect(
 
 def consume_managed_state(state: str) -> bool:
     """Consume one recent managed-OAuth callback state exactly once."""
+    if LOCAL_ONLY:
+        return False
     if not state:
         return False
     created = _pending_managed_states.pop(state, None)
@@ -438,6 +466,8 @@ def refresh_managed_token(
     profile, or None if this profile can't be (or doesn't need to be) renewed
     that way. Manual profiles are never touched. `profile_key` targets an
     account-keyed profile (`gmail:account:<email>`); default = `<name>:default`."""
+    if LOCAL_ONLY:
+        return None
     key = profile_key or f"{connector}:default"
     profile = secrets.get(key) or {}
     if not (profile.get("managed") and profile.get("refresh_token")):
@@ -499,6 +529,8 @@ def cloud_disconnect(
 ) -> None:
     """Best-effort: tell the cloud a managed connection is gone so its metadata
     flips to disconnected. Local deletion always proceeds regardless."""
+    if LOCAL_ONLY:
+        return
     profile = secrets.get(profile_key or f"{connector}:default") or {}
     connection_id = profile.get("connection_id")
     if not (profile.get("managed") and connection_id):
@@ -531,6 +563,8 @@ def github_installation_token(
     authenticated broker route and cached in memory (~50 min). `force` skips
     the cache — the 401 retry path. Empty string when unavailable (signed
     out / revoked installation / cloud unreachable)."""
+    if LOCAL_ONLY:
+        return ""
     installation_id = str(installation_id or "").strip()
     if not installation_id:
         return ""
@@ -580,6 +614,8 @@ def github_disconnect_installation(
     """Best-effort: delete this user's relay routing rows for one installation
     so the cloud stops pushing its events. Local profile deletion always
     proceeds regardless (the row only routes)."""
+    if LOCAL_ONLY:
+        return
     clear_github_token(installation_id)
     token = fresh_access_token(secrets, config)
     if not token:
@@ -601,6 +637,8 @@ def slack_disconnect_workspace(
     """Best-effort: delete this user's relay routing row for one workspace so the
     cloud stops pushing its events. Local token deletion always proceeds regardless
     (the row only routes; without the desktop token nothing can be sent anyway)."""
+    if LOCAL_ONLY:
+        return
     token = fresh_access_token(secrets, config)
     if not token:
         return
@@ -619,6 +657,8 @@ def slack_disconnect_workspace(
 
 
 def _gallery_get(secrets: SecretStore, config: Config, path: str) -> Optional[dict]:
+    if LOCAL_ONLY:
+        return None
     token = fresh_access_token(secrets, config)
     if not token:
         return None
@@ -645,6 +685,8 @@ def gallery_manifest(secrets: SecretStore, config: Config, slug: str) -> Optiona
 
 def gallery_install_event(secrets: SecretStore, config: Config, slug: str) -> None:
     """Best-effort product telemetry (slug/version only, no content)."""
+    if LOCAL_ONLY:
+        return
     token = fresh_access_token(secrets, config)
     if not token:
         return
