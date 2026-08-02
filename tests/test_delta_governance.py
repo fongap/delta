@@ -24,3 +24,13 @@ def test_resolved_approval_is_added_to_the_task_replay(tmp_path):
     replay = manager.governance_store.replay("task-2")
     assert replay["approvals"][0]["action"] == "write_file"
     assert replay["approvals"][0]["decision"] == "deny"
+
+
+def test_successful_file_write_is_added_as_an_artifact(tmp_path):
+    manager = SessionManager(data_dir=tmp_path / "data")
+
+    manager.record_execution_event(
+        {"session_id": "task-3", "tool": "write_file", "stage": "finished", "status": "ok", "arguments": {"path": "report.md"}}
+    )
+
+    assert manager.governance_store.replay("task-3")["artifacts"][0]["path"] == "report.md"

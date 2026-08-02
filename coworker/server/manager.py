@@ -449,7 +449,7 @@ class SessionManager:
             task_store=self.task_store,
             wake_store=self.wakes,
             session_id=session_id,
-            audit_sink=self.audit_store.append,
+            audit_sink=self.record_execution_event,
             roots=roots,
             # WS sessions pass mode-aware callbacks (attended → live prompt, unattended → Inbox).
             # Background / self-wake / durable-resume runs have no live socket → default to the
@@ -1217,6 +1217,15 @@ class SessionManager:
         return self.audit_store.list(
             limit=limit, session_id=session_id, connector=connector, tool=tool
         )
+
+    def record_execution_event(self, event: dict[str, Any]) -> None:
+        self.audit_store.append(event)
+        if event.get("tool") != "write_file" or event.get("stage") != "finished" or event.get("status") != "ok":
+            return
+        path = str((event.get("arguments") or {}).get("path") or "").strip()
+        session_id = str(event.get("session_id") or "").strip()
+        if path and session_id:
+            self.governance_store.record_artifact(session_id, path, _artifact_kind(Path(path)))
 
     def browser_state(self) -> dict[str, Any]:
         return browser_state()
@@ -2741,7 +2750,7 @@ class SessionManager:
             # it to create another automation instead of running this one.
             task_store=None,
             session_id=session_id,
-            audit_sink=self.audit_store.append,
+            audit_sink=self.record_execution_event,
             # Scheduled runs respect the same per-session connection hierarchy as live sessions:
             # expose only the persona's effective-enabled connectors' tools (§4.3).
             connector_filter=self.effective_connectors(session_id, task.agent),
