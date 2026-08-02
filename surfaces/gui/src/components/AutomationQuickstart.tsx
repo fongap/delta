@@ -431,9 +431,10 @@ export function AutomationQuickstart({
               data-testid="ob-cloudpane"
             >
               <span className="block text-[13px] text-ink font-medium">
-                One sign-in unlocks every one-click connection
+                Configure this connection locally
               </span>
-              Connections are brokered by OpenWorker Cloud — your tokens stay on this computer.
+              Delta does not use a Cloud broker. Add the required manual credentials from the
+              Connectors page, then return to this automation.
               <div className="flex items-center gap-3 mt-2">
                 {signinPhase ? (
                   <>
@@ -457,10 +458,10 @@ export function AutomationQuickstart({
                 ) : (
                   <button
                     className="px-3.5 py-1 rounded-full border border-line text-[12.5px] text-accent hover:bg-panel"
-                    onClick={signInThenConnect}
-                    data-testid="ob-cloud-signin"
+                    onClick={() => setPendingConn(null)}
+                    data-testid="ob-local-connectors-dismiss"
                   >
-                    Sign in to OpenWorker Cloud
+                    Dismiss
                   </button>
                 )}
               </div>
