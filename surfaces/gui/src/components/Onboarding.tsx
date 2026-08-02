@@ -236,10 +236,10 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
               <div className="mt-3.5 rounded-xl border border-line bg-paper px-4 py-3 flex items-center gap-3.5 shrink-0">
                 <span className="flex-1 text-[12.5px] text-muted leading-snug">
                   <span className="block text-[13px] font-semibold text-ink mb-0.5">
-                    Sign in for one-click connections
+                    Configure connections locally
                   </span>
-                  OpenWorker handles the OAuth for 20+ tools — no dev consoles, no pasted keys.
-                  Tokens stay on this computer.
+                  Delta keeps credentials on this machine. Add manual credentials from the
+                  Connectors page after setup.
                 </span>
                 {signinPhase ? (
                   <span className="inline-flex items-center gap-2 text-[12.5px] text-muted shrink-0">
@@ -262,14 +262,10 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
                 ) : (
                   <button
                     className="shrink-0 px-5 py-2 rounded-full bg-ink text-panel text-[13px]"
-                    onClick={async () => {
-                      setSigninPhase("opening");
-                      await cloudLogin().catch(() => {});
-                      setSigninPhase("waiting");
-                    }}
-                    data-testid="ob-cloud-signin"
+                    onClick={() => setStep(2)}
+                    data-testid="ob-local-connectors"
                   >
-                    Sign in
+                    Continue
                   </button>
                 )}
               </div>
