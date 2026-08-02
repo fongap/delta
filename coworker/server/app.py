@@ -1334,6 +1334,34 @@ def create_app(manager: SessionManager) -> FastAPI:
             )
         }
 
+    @app.get("/v1/delta/tasks/{task_id}/replay")
+    def delta_task_replay(task_id: str) -> dict[str, Any]:
+        return manager.governance_store.replay(task_id)
+
+    @app.post("/v1/delta/tasks/{task_id}/artifacts")
+    def delta_record_artifact(task_id: str, body: dict) -> dict[str, Any]:
+        manager.governance_store.record_artifact(
+            task_id, str(body.get("path", "")), str(body.get("kind", "file")),
+            citations=body.get("citations"), validation=body.get("validation"),
+        )
+        return {"ok": True}
+
+    @app.post("/v1/delta/tasks/{task_id}/approvals")
+    def delta_record_approval(task_id: str, body: dict) -> dict[str, Any]:
+        manager.governance_store.record_approval(
+            task_id, str(body.get("action", "")), str(body.get("decision", "pending")),
+            reason=str(body.get("reason", "")),
+        )
+        return {"ok": True}
+
+    @app.post("/v1/delta/tasks/{task_id}/checkpoints")
+    def delta_checkpoint(task_id: str, body: dict) -> dict[str, Any]:
+        manager.governance_store.checkpoint(
+            task_id, str(body.get("summary", "")), str(body.get("next_step", "")),
+            risks=body.get("risks"),
+        )
+        return {"ok": True}
+
     @app.get("/v1/browser/state")
     def browser_state_get() -> dict[str, Any]:
         return manager.browser_state()

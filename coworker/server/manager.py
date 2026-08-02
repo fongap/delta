@@ -35,6 +35,7 @@ from ..subscriptions import ChannelBuffer, SubscriptionStore
 from ..unrouted import UnroutedStore
 from ..unattended import UnattendedRegistry
 from ..audit import AuditStore
+from ..delta_governance import GovernanceStore
 from ..config import load_config, workspace_allowed_commands
 from ..conversations import ConversationStore, title_from
 from ..engine import ApprovalOutcome, Approver, TurnEngine
@@ -137,6 +138,7 @@ class SessionManager:
 
         self.memory_store: MemoryStore = SQLiteMemoryStore(base / "coworker.db")
         self.audit_store = AuditStore(base / "coworker.db")
+        self.governance_store = GovernanceStore(base / "delta.db")
         self.session_store = ConversationStore(base)
         self.session_store.canonicalize_workspaces()  # collapse /tmp vs /private/tmp etc.
         if self.default_workspace:
