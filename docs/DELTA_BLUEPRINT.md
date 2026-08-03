@@ -1,64 +1,230 @@
-Delta is a personal AI work system running locally — tasks, resources, keys, approvals, and deliverables are completely stored locally. Supports pause/resume, complete audit, source traceability, and controlled learning. No cloud sync, cloud memory, or managed automation.
+# 设计基线
 
-### Core Principles
+## 范围
 
-- **Local First**: All data stored offline
-- **Evidence-based**: Conclusions traceable to local source fragments
-- **Human in Control**: High-risk actions require approval
-- **Checkpointable & Recoverable**: Pause, resume, and replay at any checkpoint
-- **Improvable Without Loss of Control**: Experience and skills require evaluation before enablement
-- **Model Agnostic**: Users configure their own models and keys
+本地运行、可复盘、可持续改进、能够交付办公成果的个人 AI 工作系统。
 
-### System Architecture
+---
 
-| Layer | Responsibility |
-|-------|-----------------|
-| **Workspace** | Workspace, tasks, deliverables entry point |
-| **Orchestration** | Planning, execution, checkpoint, approval orchestration |
-| **Learning** | Experience, failure memory, controlled skill updates |
-| **Source** | Local resource import, indexing, referencing |
-| **Context** | Hierarchical context construction, compression, recovery |
-| **Execution** | Model invocation, tool invocation, result validation |
-| **Storage** | SQLite, key storage, version archive |
+## 1. 产品原则
 
-### Task Closure Loop
+**Delta** 是用户机器上的个人工作系统，不是云端聊天产品，也不是托管式自动化服务。
 
-Goal → Planning & Plan Critic → Execution → Hard Validation/Approval → Checkpoint & Deliverables → Review → Experience Update
+### 核心约束
 
-- **Plan Critic** independently checks for plan gaps and risks
-- High-risk actions require approval before execution
-- Failure logs record reproducible error evidence, not just text conclusions
-- **M0 Acceptance**: One complete local, auditable, verifiable office delivery
+- **本地优先** — 任务、对话、来源资料、密钥、审批、交付物、记忆和执行日志保存在本机
+- **可证据化** — 涉及资料事实的回答与交付物必须能回溯到本地来源片段
+- **人掌握后果** — 发送、修改外部数据、执行命令或覆盖文件前，必须经过审批策略
+- **可恢复、可复盘** — 任务在任何检查点可暂停、恢复、审计或重放
+- **可改进但不可自我失控** — 经验、技能和失败记忆必须经过评估后才能进入长期层，并可撤销、过期和删除
+- **模型中立** — 用户自行配置模型与密钥；Delta 不依赖模型市场、云端模型目录或云端记忆
 
-### Key Features
+### 明确不做
 
-#### Source Layer (Grounding Resources)
+- 云同步
+- 云端记忆
+- 云端团队空间
+- 托管式自动化
+- 云端登录依赖
+- 云端 OAuth broker
 
-Supports local documents, PDFs, spreadsheets, image OCR, and audio transcription. Each deliverable retains clickable local references with precise locations (file/page/paragraph). Automatically generates a source guide to identify resource gaps.
+---
 
-#### Learning Layer (Continuous Advancement)
+## 2. 系统分层
 
-Inspired by Hermes. Tasks can resume from checkpoints. Experience, skills, and preferences require evaluation before enablement. Users can revoke or delete entries.
+| Layer | 职责 | 本地持久化对象 |
+|-------|------|----------------|
+| Workspace Layer | 工作区、任务、文件和交付物的用户入口 | workspaces、tasks、artifacts |
+| Orchestration Layer | 目标分解、计划、执行、检查点、审批编排 | plans、runs、checkpoints、approvals |
+| Learning Layer | 从成功与失败中形成受控改进 | experiences、failure_memories、skills、preferences |
+| Source Layer | 本地资料导入、索引、引用、资料导览 | sources、chunks、citations、source_guides |
+| Context Layer | 分层上下文构建、压缩、检索与恢复 | context_snapshots、retrievals |
+| Execution Layer | 模型调用、工具调用、文件操作和结果校验 | tool_calls、validation_results |
+| Storage Layer | SQLite、文件存储、加密密钥与版本归档 | database、artifact store、local secret store |
 
-#### Context Management (Claude Principles)
+---
 
-Separates current work, task summaries, sources, long-term experience, and archives. Compression preserves source evidence, approval conclusions, and risks.
+## 3. 任务闭环
 
-### Engineering Roadmap
+### 流程
 
-| Milestone | Content |
-|-----------|---------|
-| **M0** | Windows local execution; complete audit chain |
-| **M1** | Remove cloud login/OAuth; configurable local keys; offline capable |
-| **M2a** | Artifacts, approvals, hard validation, Plan Critic |
-| **M2b** | Source Layer, referencing, hierarchical context, learning loop |
+```
+目标 → 计划与 Plan Critic → 执行 → 硬性校验 / 审批 
+→ 检查点与交付物 → 复盘 → 经验、技能或失败记忆的受控更新
+```
 
-Based on OpenWorker, preserving upstream Git history. Each refactoring submitted independently with continuous backport of upstream fixes.
+### 3.1 计划与执行
 
-### Quick Start
+- 每个任务都保存目标、计划版本、执行记录、审批记录和交付物版本
+- **Plan Critic** 独立检查计划是否遗漏来源、风险、验收条件和审批点；不通过时要求重新规划
+- 任何高后果动作进入 `approvals`，无人批准时保持待处理而不是自行执行
+- 每个交付物进入 `artifacts`，附带来源、生成步骤、验证结果与版本信息
+- **M0 是硬性 go/no-go** — 本地任务能完成一次可审计、可审批、可验证的办公交付；否则不扩大功能范围
 
-```bash
-git clone https://github.com/fongap/delta.git
-cd delta
-git remote add upstream https://github.com/andrewyng/openworker.git
-npm install && npm run dev
+### 3.2 硬性校验
+
+校验清单：
+
+- 文件存在、格式正确、目标路径正确
+- 来源引用存在且能定位到本地原文
+- 高风险动作已有审批
+- 任务定义的验收条件全部通过
+- 失败时记录可复现的错误证据，而不是只保留自然语言结论
+
+---
+
+## 4. 分层上下文管理
+
+Delta 吸收 Claude 类上下文管理原则：模型上下文是有限的工作内存，需要编排、压缩与恢复，不能把聊天历史无限堆入提示词。
+
+### 上下文分层
+
+- **当前工作上下文** — 当前目标、计划、运行步骤、工具状态、待审批事项；短小且结构化
+- **任务摘要与检查点** — 阶段完成时记录已确认事实、未决问题、文件变更、下一步与风险；恢复任务时从此重建
+- **来源上下文** — 选定本地资料、引用片段、页码/段落、可信度和冲突信息；不得被一般聊天摘要覆盖
+- **长期经验上下文** — 已验证的技能、个人偏好、交付模板和失败模式；按需检索，不全量注入
+- **归档上下文** — 原始对话、工具调用、审批、计划版本与交付物版本；用于审计与复盘，默认不进入模型上下文
+
+### 上下文压缩规则
+
+- 优先压缩过程性记录
+- 不得压缩来源证据、审批结论和未解决风险
+- 每次压缩均写入可追溯的 `context_snapshot`
+
+---
+
+## 5. Source Layer：本地资料接地
+
+参考 NotebookLM 的本地资料接地能力。
+
+### 资料管理
+
+- 以"资料库 / 项目本"为边界；任务只使用用户明确选定的本地来源
+- 支持导入与索引：本地文档、表格、演示文稿、PDF、Markdown、纯文本、图片 OCR 和音频转录
+- 结论、摘要和交付物段落保留可点击的本地引用，定位到文件、页码、段落或时间片段
+- 自动生成 **source guide**：资料摘要、关键主题、可追问问题、缺失资料、冲突与过期提示
+- 支持将资料直接转化为报告大纲、会议简报、对比表和学习材料，但引用链与可验证性优先于语言流畅度
+
+### 明确不采用
+
+- NotebookLM 的云端资料托管
+- 在线共享工作本
+- 账户同步模式
+
+---
+
+## 6. Learning Layer：Hermes 式持续推进与受控学习
+
+### 6.1 持续推进
+
+- 用户给出结果方向后，系统拆解为可检查目标与步骤，并在检查点继续推进
+- 执行因上下文不足、工具失败、审批等待或资料冲突而中断时，任务以结构化状态暂停，而不是丢失在聊天记录中
+- 恢复时使用任务检查点、来源上下文和必要的长期经验，而不是重放完整历史
+
+### 6.2 经验与失败记忆
+
+| 组件 | 作用 | 生命周期 |
+|------|------|---------|
+| Experience Store | 保存已完成任务的结构化经验 | 原始记录可审计 |
+| Failure Memory | 保存可复现失败模式、触发条件和修复结果 | 候选 → 已验证 → 过期/撤销 |
+| Reflection Engine | 对任务结果和失败原因做复盘 | 生成候选经验 |
+| Skill Registry | 保存可复用流程与工具配置 | 版本化、可禁用 |
+| Skill Evaluator | 以量化任务验证技能是否有效 | 未通过不得推广 |
+| Preference Learner | 记录经用户确认的格式、语气与工作偏好 | 用户可查看、修改和删除 |
+
+### 受控学习原则
+
+- 自动学习不直接改变执行行为
+- 候选技能或偏好必须说明证据、适用范围、风险与评估结果
+- 用户可以批准、拒绝或撤销
+
+---
+
+## 7. 模型适配
+
+采用"少预设 + 手填"的模型策略。
+
+### 配置策略
+
+- 提供少量经验证的连接预设：OpenAI、Anthropic、Gemini、Ollama
+- 高级配置仅保留 Base URL、API Key、Model ID；不建设模型市场、在线模型发现或大量厂商专属配置页
+- 统一适配 OpenAI-compatible 与少量 provider adapter 接口，执行时检测工具调用、结构化输出、长上下文等关键能力
+- 兼容性标签仅标注"已验证 / 未验证 / 不支持"，不以配置项数量代替可靠性
+- 模型密钥只进入本地 secret store；模型调用是否出机由用户选择的模型提供商决定，并在界面中明示
+
+---
+
+## 8. OpenWorker 演进策略
+
+OpenWorker 作为初期桌面运行时、工具连接和执行交互基础；Delta 的独特能力以边界清晰的本地模块接入。
+
+### 演进阶段
+
+| 阶段 | 目标 | 关键工作 |
+|------|------|---------|
+| M0 | 可运行基线 | 保留 OpenWorker Git 历史，设置 upstream=andrewyng/openworker 与 origin=fongap/delta，在 Windows 本地完成端到端运行和测试 |
+| M1 | 本地化改造 | 移除 Cloud 登录、云端 OAuth broker、云端记忆、云同步与托管自动化；保留本地模型密钥、Ollama、手工 API 凭据和本地文件能力 |
+| M2a | Delta 治理基座 | 接入 artifacts、approvals、检查点、硬性校验、Plan Critic 和可复盘执行链 |
+| M2b | 资料与学习能力 | 接入 Source Layer、引用、source guide、分层上下文、经验与失败记忆闭环 |
+
+### 维护规则
+
+- 持续跟踪 OpenWorker 的已验证 bug 修复和高价值反馈，以小范围、可单独回退的补丁合入
+- 不在早期大规模移动目录或重命名上游文件
+- 每项 Delta 改造保持独立提交（例如 `delta-core`、`local-only`、`i18n-zh-CN`、`bugfix`、`upstream-backport`）
+- 持续拉取上游更新，避免退化为手工搬运
+
+---
+
+## 9. 中文化与界面设计
+
+### 9.1 中文化原则
+
+- 所有用户可见文本进入集中词条；禁止将中文直接散落在组件逻辑中
+- 优先中文的任务、审批、来源、交付物和错误提示；保留必要技术名词的英文原文
+- 中文化与功能改动分开提交，降低上游合并冲突
+
+### 9.2 UI 设计原则
+
+#### 视觉气质
+
+- 参考 Apple 与 Flyme：克制、清晰、轻盈、精确的层级与状态反馈
+- 不做拟物复刻
+- 使用充分留白、低饱和中性色、清楚的排版层级和短促克制的动效
+
+#### 信息设计
+
+- 优先任务扫描效率：计划、审批、来源、交付物与复盘保持高信息密度，避免营销式大卡片堆叠
+- 风险、审批和验证状态必须在任务流中可见，而不是隐藏在设置页
+
+#### 命名规范
+
+- 新增或修改的前端/组件/CSS 命名严格使用 BEM：`block`、`block__element`、`block--modifier`、`block__element--modifier`
+- 不为遵守 BEM 而在初期全量重命名上游 UI
+- 仅对 Delta 新模块和被修改的界面执行该规范，以控制上游同步成本
+
+---
+
+## 10. 量化验收
+
+| 阶段 | 必须通过的验收 |
+|------|----------------|
+| M0 | Windows 本地可运行；完成一次办公交付；产生任务、计划、审批、执行与交付物审计链；测试可重复执行 |
+| M1 | 不存在 Cloud 登录和云端同步路径；本地密钥可配置；断网时本地数据可浏览、复盘和导出 |
+| M2a | 高风险动作审批率 100%；定义的硬性校验全部可自动记录；失败任务可从检查点恢复 |
+| M2b | 每个资料型交付物具备可定位引用；source guide 可识别资料缺口；候选技能需经评估才可启用 |
+| 持续更新 | 每次上游回补有来源、测试、影响范围和可回退提交；不破坏本地优先约束 |
+
+---
+
+## 11. 当前决策记录
+
+- **产品名** — Delta
+- **云端部署** — 不规划域名或云端部署
+- **工程命名** — 语义优先，前端相关命名遵循 BEM
+- **上游基础** — OpenWorker 是可维护的上游基础，不是一次性复制后分叉遗弃的代码来源
+- **模型配置** — 少而稳定，手填为主
+- **UI 风格** — 保持 Apple / Flyme 的克制与精致，同时以办公任务效率为第一目标
+- **能力吸收** — NotebookLM 的来源接地与引用能力、Hermes 的目标持续推进与技能学习、Claude 的分层上下文管理，均以本地实现方式吸收
+
+---
