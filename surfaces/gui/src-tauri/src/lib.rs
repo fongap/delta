@@ -628,8 +628,16 @@ pub fn run() {
             // 1. Start the Python server sidecar on the chosen port (inherits our env).
             let mut server_cmd = Command::new(server_bin());
             server_cmd
-                .args(["--host", "127.0.0.1", "--port", &port.to_string()])
-                // The sidecar self-exits if we die abruptly (dev-watcher restart, crash) —
+                .args(["--host", "127.0.0.1", "--port", &port.to_string()]);
+            // Portable mode (the root Delta.exe launcher sets DELTA_PORTABLE + the data
+            // env): seed the default workspace inside the portable Data dir so the Code
+            // persona opens <ROOT>\Data\workspace instead of a dev/home path. state_dir()
+            // already resolves to <ROOT>\Data via COWORKER_STATE_DIR, so this is recomputed
+            // from the current location on every launch — never a persisted absolute path.
+            if std::env::var("DELTA_PORTABLE").is_ok() {
+                server_cmd.arg("--cwd").arg(state_dir().join("workspace"));
+            }
+            // The sidecar self-exits if we die abruptly (dev-watcher restart, crash) —
                 // belt-and-suspenders alongside the RunEvent::ExitRequested kill below.
                 // The explicit PID matters: under PyInstaller onefile the python process is a
                 // *grandchild* (bootloader in between), so getppid() never points at us and a

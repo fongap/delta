@@ -109,7 +109,7 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
         {t(
           "personas.intro",
           undefined,
-          "Enable a coworker, then choose whether it appears in the new-session picker. The starred persona is the default for new sessions.",
+          "Enable a Delta agent, then choose whether it appears in the new-session picker. The starred persona is the default for new sessions.",
         )}
       </p>
 

@@ -32,7 +32,7 @@ import { useI18n } from "../i18n/I18nContext";
 // Session surfaces shown as accordions, in display order. The surfaced personas drive this list
 // (so third-party / Ops personas appear); the hardcoded set is the fallback before personas load.
 const SURFACES: { key: string; label: string; icon: IconName; cls: string }[] = [
-  { key: "cowork", label: "Coworker", icon: "diamond", cls: "ico-cowork" },
+  { key: "cowork", label: "Delta", icon: "diamond", cls: "ico-cowork" },
   { key: "chat", label: "Chat", icon: "chat", cls: "ico-chat" },
   { key: "code", label: "Code", icon: "code", cls: "ico-code" },
 ];
@@ -763,7 +763,7 @@ export function Sidebar(props: Props) {
                 <div className="my-1 border-t border-line" />
                 <div className="px-2 pt-1 pb-1 flex items-center justify-between">
                   <span className="text-[10.5px] uppercase tracking-[0.06em] text-faint font-semibold">
-                    {t("nav.filterBy", undefined, "Filter by coworker")}
+                    {t("nav.filterBy", undefined, "Filter by Delta agent")}
                   </span>
                   {filterPersonas.size > 0 && (
                     <button className="text-[11px] text-accent" onClick={() => setFilterPersonas(new Set())}>

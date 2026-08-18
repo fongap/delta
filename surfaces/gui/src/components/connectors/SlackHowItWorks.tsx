@@ -256,7 +256,7 @@ function OwRail({ hot, hotSub, glow }: { hot?: string; hotSub?: string; glow?: b
           {hotSub}
         </div>
       )}
-      <div className="hiw-sess"><b>Jira vs Linear</b>Coworker</div>
+      <div className="hiw-sess"><b>Jira vs Linear</b>Delta</div>
     </div>
   );
 }
@@ -407,7 +407,7 @@ function SceneThread({ meFirst, meInitial }: { meFirst: string; meInitial: strin
           <div className="hiw-sess hot hiw-stay hiw-glow" style={{ "--g": "2.4s" } as React.CSSProperties}>
             <b>Summarize #launch-room</b>via Slack
           </div>
-          <div className="hiw-sess"><b>Jira vs Linear</b>Coworker</div>
+          <div className="hiw-sess"><b>Jira vs Linear</b>Delta</div>
         </div>
         <div className="hiw-owmain">
           <div className="hiw-owtitle">

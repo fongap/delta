@@ -68,7 +68,7 @@ describe("PersonaView", () => {
     ]);
     renderView(<PersonaView personaId="ops" />);
 
-    expect(await screen.findByText("Ops Coworker")).toBeTruthy();
+    expect(await screen.findByText("Delta Ops")).toBeTruthy();
     expect(screen.getByText("Operate and investigate")).toBeTruthy();
     expect(screen.getByText("A careful, methodical operations engineer.")).toBeTruthy();
     // tools rendered as chips
@@ -98,7 +98,7 @@ describe("PersonaView", () => {
       },
     ]);
     renderView(<PersonaView personaId="ops" />);
-    await screen.findByText("Ops Coworker");
+    await screen.findByText("Delta Ops");
 
     // Switches in DOM order: [0] persona Enable, then the default-connection toggles. Slack is the
     // checked+enabled default; datadog is disabled (not connected). Target the last checked+enabled
@@ -125,7 +125,7 @@ describe("PersonaView", () => {
       { match: "/v1/personas/ops/enable", method: "POST", json: { ok: true } },
     ]);
     renderView(<PersonaView personaId="ops" />);
-    await screen.findByText("Ops Coworker");
+    await screen.findByText("Delta Ops");
 
     // The enable switch is the first one in DOM order (identity header).
     const enableToggle = screen.getAllByRole("switch")[0];

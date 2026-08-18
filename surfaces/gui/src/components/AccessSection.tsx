@@ -525,7 +525,7 @@ function ConnectInline({
       {/* Scope semantics, stated once (owner ask 2026-07-13): connecting is account-level,
           the toggle above is what scopes it to a session. */}
       <p className="text-[10.5px] text-faint mt-2 leading-snug">
-        {t("access.connectScope", { name: c.title }, `Connecting makes ${c.title} available to all your coworkers — the toggle in this list controls just this session.`)}
+        {t("access.connectScope", { name: c.title }, `Connecting makes ${c.title} available to all your Delta agents — the toggle in this list controls just this session.`)}
       </p>
     </div>
   );

@@ -46,7 +46,7 @@ export function FolderGate({ onChoose, onCancel, create }: Props) {
         <p className="gate-sub">
           {create
             ? t("folder.createSub", undefined, "Pick a folder or enter a path. If the path doesn't exist, it will be created.")
-            : t("folder.chooseSub", undefined, "This coworker needs a workspace to read, edit, and run in.")}
+            : t("folder.chooseSub", undefined, "Delta needs a workspace to read, edit, and run in.")}
         </p>
 
         <div className="gate-input">

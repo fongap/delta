@@ -53,7 +53,7 @@ test("disabling a persona with conversations asks first, then archives them", as
   await page.getByTestId("account-row").click();
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Personas", exact: true }).click();
-  const row = page.locator(".divide-y > div").filter({ hasText: "Ops Coworker" });
+  const row = page.locator(".divide-y > div").filter({ hasText: "Delta Ops" });
   const enabled = row.getByRole("checkbox", { name: "Enabled" });
 
   // Unchecking only ARMS the confirm — the flag must not flip yet.

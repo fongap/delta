@@ -44,7 +44,7 @@ const wrap = (el: JSX.Element) => (
   <I18nProvider locale="en-US">{el}</I18nProvider>
 );
 
-const box = () => screen.getByPlaceholderText(/Ask the coworker/);
+const box = () => screen.getByPlaceholderText(/Ask Delta/);
 
 afterEach(() => {
   cleanup();

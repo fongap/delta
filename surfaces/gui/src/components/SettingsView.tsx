@@ -758,7 +758,7 @@ function CompactionCard() {
       <div className={FIELD_LABEL}>Context compaction</div>
       <div className={FIELD_HELP}>
         Long sessions are compacted automatically: older turns are summarized so the
-        coworker keeps working instead of running out of context. Your visible transcript
+        Delta keeps working instead of running out of context. Your visible transcript
         is never changed — a small marker shows where compaction happened.
       </div>
 
@@ -894,7 +894,7 @@ function SidebarCard() {
     <div className={CARD + " p-4 mb-4"}>
       <div className={FIELD_LABEL}>Sidebar</div>
       <label className="flex items-center gap-3 mt-2.5">
-        <span className="text-[13px] text-ink">Conversations shown per coworker</span>
+        <span className="text-[13px] text-ink">Conversations shown per Delta agent</span>
         <input
           type="number"
           min={1}
@@ -905,7 +905,7 @@ function SidebarCard() {
         />
       </label>
       <div className={FIELD_HELP}>
-        Longer lists collapse behind &ldquo;Show more&rdquo;. Applies per coworker and per project.
+        Longer lists collapse behind &ldquo;Show more&rdquo;. Applies per Delta agent and per project.
       </div>
     </div>
   );

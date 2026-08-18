@@ -351,7 +351,18 @@ class SessionManager:
     DEFAULT_SCRATCH_BASE = "~/OpenWorker"
 
     def scratch_base(self) -> Path:
-        """Common area for per-conversation scratch directories. Configurable via prefs."""
+        """Common area for per-conversation scratch directories. Configurable via prefs.
+
+        In portable mode (root launcher sets DELTA_PORTABLE + DELTA_DATA_DIR) the default
+        moves under the portable Data dir so scratch travels with the folder instead of
+        polluting the home directory. An explicit user pref still wins — it is persisted
+        as-is and may point anywhere the user chose."""
+        if "scratch_base" not in self._prefs:
+            portable = os.environ.get("DELTA_PORTABLE")
+            if portable:
+                data_dir = os.environ.get("DELTA_DATA_DIR")
+                if data_dir:
+                    return Path(data_dir) / "scratch"
         base = self._prefs.get("scratch_base") or self.DEFAULT_SCRATCH_BASE
         return Path(base).expanduser()
 

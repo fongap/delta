@@ -83,7 +83,7 @@ export function MemorySection() {
     <section>
       <PanelHead
         title={t("memory.title", undefined, "Memory")}
-        sub={t("memory.sub", undefined, "Your coworkers can remember useful things about you between conversations. Everything they know is listed here.")}
+        sub={t("memory.sub", undefined, "Your Delta agents can remember useful things about you between conversations. Everything they know is listed here.")}
       />
 
       {/* On/off — one switch, no other setup (§5.4). */}
@@ -171,7 +171,7 @@ function UserRulesCard({
     <div className={CARD + " p-4"} data-testid="user-rules-card">
       <div className={FIELD_LABEL}>{t("memory.rulesTitle", undefined, "Your instructions")}</div>
       <div className={FIELD_HELP}>
-        {t("memory.rulesHelp", undefined, "Your coworkers follow these in every conversation.")}
+        {t("memory.rulesHelp", undefined, "Your Delta agents follow these in every conversation.")}
       </div>
       <textarea
         value={draft}

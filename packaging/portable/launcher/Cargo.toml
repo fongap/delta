@@ -1,0 +1,19 @@
+[package]
+name = "delta-portable-launcher"
+version = "0.1.0"
+description = "Delta Windows Portable root launcher (Delta.exe)"
+edition = "2021"
+rust-version = "1.77"
+
+# The launcher is a tiny relay: it resolves the portable ROOT from its own location,
+# initializes Data on first run, sets the portable env (COWORKER_STATE_DIR etc.), and
+# spawns App\Delta\Delta.exe with full argument passthrough. It must stay dependency-free
+# so it builds fast and is immune to upstream dep churn.
+[dependencies]
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+strip = true
+panic = "abort"
