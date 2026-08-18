@@ -87,10 +87,11 @@ export function Icon({
         </svg>
       );
     case "logo":
-      // The OpenWorker mark — a 6-point star, matching the app + macOS tray icon.
+      // The Delta mark — a 4-point sparkle outline (hollow center), traced from
+      // assets/logo/delta-logo-512x512.png (outer contour + inner hole, evenodd).
       return (
         <svg {...s} fill="currentColor" stroke="none">
-          <path d="M12.00 1.80 L13.35 9.66 L20.83 6.90 L14.70 12.00 L20.83 17.10 L13.35 14.34 L12.00 22.20 L10.65 14.34 L3.17 17.10 L9.30 12.00 L3.17 6.90 L10.65 9.66 Z" />
+          <path fillRule="evenodd" d="M 11.9 2.5 L 10.2 2.7 L 8.8 3.1 L 7.9 3.5 L 7.3 4.1 L 7.1 4.7 L 7.1 5.3 L 7.5 6.1 L 7.9 6.6 L 10.0 7.9 L 7.4 9.1 L 5.8 10.5 L 4.9 12.1 L 4.5 13.5 L 4.4 14.6 L 4.4 15.9 L 4.9 17.4 L 6.0 19.2 L 7.0 20.1 L 8.4 20.8 L 9.9 21.3 L 11.1 21.5 L 12.8 21.5 L 14.1 21.3 L 15.6 20.8 L 16.6 20.3 L 17.6 19.6 L 18.7 18.2 L 19.2 17.1 L 19.5 15.9 L 19.6 14.5 L 19.3 12.6 L 18.8 11.4 L 17.6 9.8 L 16.6 8.9 L 15.3 8.1 L 13.4 7.1 L 10.5 6.0 L 9.7 5.2 L 9.8 4.5 L 10.5 4.0 L 11.5 3.8 L 14.1 3.7 L 14.1 2.5 Z M 12.2 8.9 L 10.8 9.4 L 9.0 10.5 L 7.8 11.8 L 7.5 12.6 L 7.2 13.8 L 7.3 15.9 L 7.9 17.5 L 8.6 18.3 L 9.3 18.8 L 10.2 19.2 L 11.3 19.4 L 13.2 19.4 L 14.1 19.1 L 15.1 18.6 L 16.2 17.4 L 16.9 15.5 L 16.9 14.1 L 16.8 13.2 L 16.0 11.6 L 14.7 10.2 L 12.4 8.9 Z" />
         </svg>
       );
     case "sidebar":

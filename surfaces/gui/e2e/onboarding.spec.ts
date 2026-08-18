@@ -47,7 +47,7 @@ test("key form: Test verifies, saves, and returns to the gallery with the ✓", 
 
   await page.getByTestId("ob-provider-zai").click();
   // The header stays put (§39 fixed frame): the welcome headline is still on screen.
-  await expect(page.getByRole("heading", { name: "Welcome to OpenWorker" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Welcome to Delta" })).toBeVisible();
   // Optional endpoint is a quiet disclosure with no explainer copy (owner call 2026-07-18).
   await expect(page.getByTestId("ob-field-base_url")).toHaveCount(0);
   await page.getByTestId("ob-endpoint-link").click();
@@ -109,9 +109,9 @@ test("tools page: sign-in morphs the page into the connector gallery; a card con
   // the combined Google row says Coming soon, the band asks for sign-in, and the one
   // footer button is the quiet "Continue without sign-in".
   await expect(page.getByText("Chat can only advise")).toBeVisible();
-  await expect(page.getByTestId("ob-tool-outlook")).toContainText("Stay on top of email");
+  await expect(page.getByTestId("ob-tool-outlook")).toContainText("Email, from your inbox");
   await expect(page.getByTestId("ob-tool-outlook").getByRole("button")).toHaveCount(0);
-  await expect(page.getByTestId("ob-tool-attio")).toContainText("Track every relationship");
+  await expect(page.getByTestId("ob-tool-attio")).toContainText("Your team's CRM");
   await expect(page.getByTestId("ob-tool-google-soon")).toContainText("Coming soon");
   await expect(page.getByText("Sign in for one-click connections")).toBeVisible();
   await expect(page.getByTestId("ob-tools-skip")).toContainText("Continue without sign-in");

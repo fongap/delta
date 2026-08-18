@@ -31,7 +31,7 @@ ABOUT: dict[str, str] = {
     "websites — separate from your personal browser, with actions subject to "
     "approval.",
     "github": "Work with issues, pull requests, repository files, and CI "
-    "status. One click installs the OpenWorker GitHub App on the repositories "
+    "status. One click installs the Delta GitHub App on the repositories "
     "you pick; mention the agent on an issue or PR and it answers from your "
     "desktop.",
     "outlook": "Search, summarize, and send Microsoft 365 mail, and run your "

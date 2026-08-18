@@ -67,7 +67,7 @@ test("relay unreachable: Offline, not a Slack-outage claim", async ({ page }) =>
   await openConnectors(page);
   await expect(page.getByTestId("connector-slack")).toContainText("Offline");
   await page.getByTestId("connector-slack").click();
-  await expect(page.getByTestId("slack-mode-badge")).toContainText("can't reach the relay");
+  await expect(page.getByTestId("slack-mode-badge")).toContainText("can’t reach the relay");
 });
 
 test("one dead bot token: ⚠ chip + a warning on THAT workspace only", async ({ page }) => {

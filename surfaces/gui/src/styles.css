@@ -1375,7 +1375,7 @@ html[data-theme="dark"] :not(.connector-badge) > .connector-icon[data-dark-mark]
 /* ---- UX-027: Slack post-connect "how mentions reach you" card ----
    Split-scene carousel: the Slack window is PINNED to modern light-Slack (aubergine
    chrome, white pill for the active channel, purple top toolbar with the search
-   field — it should read as a screenshot of Slack, not our UI). The OpenWorker
+   field — it should read as a screenshot of Slack, not our UI). The Delta
    window uses app tokens. Everything enters via .hiw-k + an inline --d delay once
    .hiw-play is set. */
 .hiw-tab { position: relative; font: inherit; font-size: 12px; color: var(--muted); background: none;
@@ -1472,7 +1472,7 @@ html[data-theme="dark"] :not(.connector-badge) > .connector-icon[data-dark-mark]
 .hiw-slthread .hiw-treply { margin: 0 8px 7px; border: 1px solid #8d8d8daa; border-radius: 7px;
   padding: 3px 7px; font-size: 8.5px; color: #868686; flex: none; }
 
-/* ===== OpenWorker side — app tokens ===== */
+/* ===== Delta side — app tokens ===== */
 .hiw-ow { flex: 1 1 0; min-width: 0; background: var(--paper); }
 .hiw-owtop { display: flex; align-items: center; gap: 6px; padding: 4px 9px; font-size: 9.5px; font-weight: 600;
   background: var(--panel); color: var(--muted); border-bottom: 1px solid var(--line); }

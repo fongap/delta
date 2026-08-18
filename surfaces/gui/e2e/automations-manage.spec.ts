@@ -8,7 +8,7 @@ async function openAutomations(page) {
   await page.goto("/");
   await page.getByTestId("account-row").click();
   await page.getByTestId("account-menu").getByRole("button", { name: "Automations", exact: true }).click();
-  await expect(page.getByText("Recurring tasks OpenWorker runs on a schedule.")).toBeVisible();
+  await expect(page.getByText("Recurring tasks Delta runs on a schedule.")).toBeVisible();
 }
 
 test("lists a scheduled task with its schedule and run count", async ({ page }) => {
@@ -16,7 +16,7 @@ test("lists a scheduled task with its schedule and run count", async ({ page }) 
   const card = page.locator(".sched-card", { hasText: "Daily AI News" });
   await expect(card).toBeVisible();
   await expect(card).toContainText("Every day at ~5:40 PM");
-  await expect(card).toContainText("last running");
+  await expect(card).toContainText("last Running");
 });
 
 test("Run now triggers a manual run and opens its live session", async ({ page }) => {

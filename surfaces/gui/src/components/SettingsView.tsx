@@ -616,7 +616,7 @@ function UpdateInline() {
             ? "You're on the latest version."
             : state === "error"
               ? "Couldn't check right now — try again later."
-              : "Downloading — OpenWorker restarts by itself when it's ready."}
+              : "Downloading — Delta restarts by itself when it's ready."}
         </span>
       )}
     </span>
@@ -954,7 +954,7 @@ function FilesCard() {
           <input
             className={INPUT}
             type="text"
-            placeholder="~/OpenWorker"
+            placeholder="~/delta"
             value={scratchDraft}
             spellCheck={false}
             autoComplete="off"

@@ -49,7 +49,7 @@ test("unattended: a tool request parks (no inline approval card)", async ({ page
 
   const box = page.getByPlaceholder(/Ask the coworker/);
   await box.fill("please run a tool");
-  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
 
   // The turn still starts, but the live approval card is suppressed — the prompt is parked to the
   // Inbox instead. Give the (suppressed) card a beat to NOT appear.
@@ -96,7 +96,7 @@ test("answering the live approval never re-flashes its parked Inbox mirror", asy
   await page.goto("/");
   const box = page.getByPlaceholder(/Ask the coworker/);
   await box.fill("please run a tool");
-  await page.getByRole("button", { name: "Send", exact: true }).click();
+  await page.getByRole("button", { name: "Send message", exact: true }).click();
   await expect(page.getByText("The coworker wants to run a command.").first()).toBeVisible();
 
   mirrorResolved = true; // server side resolves with the decision; the stale client copy is the bug

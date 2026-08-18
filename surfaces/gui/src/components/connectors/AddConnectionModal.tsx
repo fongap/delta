@@ -131,7 +131,7 @@ export function AddConnectionModal({
 
 // One-click pane for MCP-BACKED connectors (monday, asana, jira — §42): the sidecar
 // runs a fully LOCAL OAuth flow against the vendor's hosted MCP server (DCR — no
-// client secret, no broker, no OpenWorker sign-in required). Poll until the card
+// client secret, no broker, no Delta sign-in required). Poll until the card
 // flips to connected, then close.
 function McpOneClick({ c, onConnected }: { c: Connector; onConnected: () => void }) {
   const { t } = useI18n();

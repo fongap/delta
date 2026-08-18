@@ -78,7 +78,7 @@ describe("Composer voice input (§37)", () => {
     fireEvent.click(await screen.findByLabelText("Start dictation"));
     const stop = await screen.findByLabelText("Stop dictation");
     expect(document.querySelector(".voice-wave-bars")).toBeTruthy();
-    expect(screen.getByLabelText("Send").hasAttribute("disabled")).toBe(true);
+    expect(screen.getByLabelText("Send message").hasAttribute("disabled")).toBe(true);
 
     invoke.mockImplementation(async (cmd: string) => {
       if (cmd === "stop_dictation") return "hello from the mic";

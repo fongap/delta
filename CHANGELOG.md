@@ -6,6 +6,16 @@
 
 ### 变更 (Changed)
 
+#### 2026-08-19 03:08
+
+- **OpenWorker 品牌全面替换为 Delta**
+  - 用户可见品牌统一为 Delta：窗口标题、托盘菜单与提示、Sidebar、设置页、onboarding、连接器展示文案、自动化/计划任务状态文案、loopback 登录页与后端服务端提示（en/zh 双语言字典同步）；"OpenWorker BETA" → "Delta BETA"，"OpenWorker Cloud" → "Delta Cloud"。
+  - Persona 显示名统一走 `fullPersonaName`/`shortPersonaName`（管理页、Sidebar 会话过滤弹层等）：内置 coworker 显示为 "Coworker"（去除品牌残影），"Ops Coworker"/"Code Coworker" 保持全称。
+  - 应用图标全面替换：以 `assets/logo` 为唯一来源重新生成 `src-tauri/icons/*`（含托盘 monochrome 模板图标）。
+  - 打包与应用元数据：Release 工件与安装器稳定名（Windows setup/msi、macOS dmg/app.tar.gz）改用 Delta；`Info.plist`、Cargo.toml、`build_dmg.sh`、`make_update_manifest.py` 同步。
+  - 自动更新：updater `endpoints` 置空——Delta 尚无自有更新源，不再指向 download.openworker.com。
+  - 内部标识按 §11/§12 保留：`com.openworker.desktop` identifier、`X-OpenWorker-Token`、`openworker-server` 进程名、状态目录等未改，保持数据兼容与上游同步。
+
 #### 2026-08-19 01:22
 
 - **连接器 About/Access 展示文案迁入 i18n**
@@ -27,6 +37,15 @@
   - 新增配套 Token：`--accent-hover`、`--on-accent`、`--focus`（键盘焦点环）、`--brand`（保留 Delta 商标蓝 `#2563eb` 用于 Logo/品牌标识）。既有 Token 语义按规范映射，未做批量改名。
   - 收编 17 个组件中的硬编码颜色为设计 Token：`bg-accent text-white` → `text-onAccent`；`bg-green-*/text-green-*`、`bg-red-*/text-red-*` → `ok/ok-soft`、`danger/danger-soft` 等。
   - 修复 `AutomationQuickstart.tsx` 中未定义的 `line2` 工具类 → `line`。
+
+### 修复 (Fixed)
+
+#### 2026-08-19 03:40
+
+- **Provider 卡片状态渲染与 e2e/vitest 断言同步**
+  - `providers.usedAgo` i18n 值去除多余的 ` · ` 前缀，修复「✓ Connected · · used 2h ago」双分隔符渲染（en/zh 字典同步；`ProviderSetup` 的 JSX 已自带分隔符）。
+  - 同步 6 个 e2e 用例与 1 个 vitest 用例的断言到实际渲染文案：`automations-manage`（last Running 大小写）、`automations-quickstart`（Today's 弯引号）、`onboarding`（工具 benefit 文案）、`slack-health`（can't 弯引号）、`unattended` + `Composer.voice`（Send 按钮 label 为 "Send message"）。
+  - 均为文案/定位同步，未改任何产品功能或测试语义。
 
 ### 修复 (Fixed) / 可访问性
 

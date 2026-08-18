@@ -11,6 +11,7 @@ import {
 import type { SessionInfo } from "../types";
 import { Icon } from "./Icon";
 import { useI18n } from "../i18n/I18nContext";
+import { fullPersonaName } from "../personaScope";
 
 // Personas management: enable a persona, choose whether it shows in the new-session picker,
 // set the default, and install more from a local directory or a GitHub repo (snapshotted).
@@ -118,7 +119,7 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
             <div className="flex items-center gap-4">
             <div className="min-w-0 flex-1">
               <div className="text-[13.5px] font-medium flex items-center gap-1.5">
-                <span className="truncate">{p.name}</span>
+                <span className="truncate">{fullPersonaName(p.name, p.id)}</span>
                 {p.default && (
                   <span
                     className="text-accent"
@@ -164,8 +165,8 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
             {onOpenPersona && (
               <button
                 className="text-faint hover:text-ink shrink-0 p-1"
-                title={t("personas.configureWithName", { name: p.name }, "Configure {name}")}
-                aria-label={t("personas.configureWithName", { name: p.name }, "Configure {name}")}
+                title={t("personas.configureWithName", { name: fullPersonaName(p.name, p.id) }, "Configure {name}")}
+                aria-label={t("personas.configureWithName", { name: fullPersonaName(p.name, p.id) }, "Configure {name}")}
                 data-testid={`persona-configure-${p.id}`}
                 onClick={() => onOpenPersona(p.id)}
               >
@@ -190,7 +191,7 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
                 <button
                   className="text-faint hover:text-danger shrink-0 p-1"
                   title={t("personas.deleteTitle", undefined, "Delete this persona")}
-                  aria-label={t("personas.deleteWithName", { name: p.name }, "Delete {name}")}
+                  aria-label={t("personas.deleteWithName", { name: fullPersonaName(p.name, p.id) }, "Delete {name}")}
                   data-testid={`persona-delete-${p.id}`}
                   onClick={() => setConfirmDel(p.id)}
                 >

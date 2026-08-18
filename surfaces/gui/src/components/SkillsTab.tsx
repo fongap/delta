@@ -245,7 +245,7 @@ export function SkillsTab({
                   }}
                 >
                   <div className="text-[13px] font-medium">
-                    {t("skills.menuCreate", undefined, "Create with OpenWorker")}
+                    {t("skills.menuCreate", undefined, "Create with Delta")}
                   </div>
                   <div className="text-[11.5px] text-muted">
                     {t(
