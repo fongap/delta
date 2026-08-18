@@ -37,6 +37,10 @@ export default {
         tealLine: tok("--teal-line"),
         solid: tok("--solid"),
         onSolid: tok("--on-solid"),
+        brand: tok("--brand"),
+        accentHover: tok("--accent-hover"),
+        onAccent: tok("--on-accent"),
+        focus: tok("--focus"),
       },
       fontFamily: {
         sans: ["-apple-system", "BlinkMacSystemFont", "Segoe UI", "Inter", "system-ui", "sans-serif"],

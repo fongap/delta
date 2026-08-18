@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { announceCloudChanged, cloudLogin, waitForCloudSignIn } from "../../api";
+import { useI18n } from "../../i18n/I18nContext";
 
 // The signed-out state of every one-click pane: a REAL sign-in button, not a
 // hint pointing at another page. Sign-in completes in the system browser; this
@@ -8,6 +9,7 @@ import { announceCloudChanged, cloudLogin, waitForCloudSignIn } from "../../api"
 // relying on "some other section's 5s poll" left the rail stuck on the prompt
 // (FB-013).
 export function CloudSignInInline({ blurb }: { blurb?: string }) {
+  const { t } = useI18n();
   const [waiting, setWaiting] = useState(false);
   const cancelRef = useRef<(() => void) | null>(null);
   useEffect(() => () => cancelRef.current?.(), []);
@@ -26,10 +28,10 @@ export function CloudSignInInline({ blurb }: { blurb?: string }) {
           });
         }}
       >
-        {waiting ? "Check your browser…" : "Sign in to OpenWorker Cloud"}
+        {waiting ? t("connectors.checkBrowser") : t("connectors.signInCloud")}
       </button>
       <div className="text-[11.5px] text-faint">
-        {blurb || "Sign-in unlocks one-click connects — or switch to Manual, which works without it."}
+        {blurb || t("connectors.signInBlurb")}
       </div>
     </div>
   );
@@ -39,12 +41,13 @@ export function CloudSignInInline({ blurb }: { blurb?: string }) {
 // Rendering the sign-in prompt here told signed-in users they weren't (FB-013) —
 // pending must look like pending.
 export function CloudStatusPending() {
+  const { t } = useI18n();
   return (
     <div
       className="text-[12px] text-faint py-2 text-center"
       data-testid="cloud-status-pending"
     >
-      Checking OpenWorker Cloud sign-in…
+      {t("connectors.checkingCloudSignIn")}
     </div>
   );
 }

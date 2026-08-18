@@ -4,6 +4,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { UpdateBanner } from "./UpdateBanner";
+import { I18nProvider } from "../i18n/I18nContext";
+
+const renderBanner = () => render(<I18nProvider locale="en-US"><UpdateBanner /></I18nProvider>);
 
 const FIRST_CHECK_MS = 15_000;
 const RECHECK_MS = 30 * 60_000;
@@ -35,7 +38,7 @@ const advance = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));
 
 describe("UpdateBanner", () => {
   it("shows after the boot-settle check finds an update", async () => {
-    render(<UpdateBanner />);
+    renderBanner();
     expect(screen.queryByTestId("update-banner")).toBeNull();
 
     await advance(FIRST_CHECK_MS);
@@ -47,7 +50,7 @@ describe("UpdateBanner", () => {
   });
 
   it("Later hides the banner and a same-version re-check keeps it hidden", async () => {
-    render(<UpdateBanner />);
+    renderBanner();
     await advance(FIRST_CHECK_MS);
 
     fireEvent.click(screen.getByTestId("update-later"));
@@ -58,7 +61,7 @@ describe("UpdateBanner", () => {
   });
 
   it("a NEWER version found by a later check overrides the dismissal", async () => {
-    render(<UpdateBanner />);
+    renderBanner();
     await advance(FIRST_CHECK_MS);
     fireEvent.click(screen.getByTestId("update-later"));
 
@@ -70,7 +73,7 @@ describe("UpdateBanner", () => {
   it("button reads Downloading… (disabled) until the pre-download resolves", async () => {
     let finish!: () => void;
     download = () => new Promise((resolve) => (finish = resolve));
-    render(<UpdateBanner />);
+    renderBanner();
     await advance(FIRST_CHECK_MS);
 
     const btn = screen.getByTestId("update-install") as HTMLButtonElement;
@@ -84,7 +87,7 @@ describe("UpdateBanner", () => {
 
   it("a failed pre-download falls back to the enabled download-on-click path", async () => {
     download = () => Promise.reject(new Error("offline"));
-    render(<UpdateBanner />);
+    renderBanner();
     await advance(FIRST_CHECK_MS);
 
     const btn = screen.getByTestId("update-install") as HTMLButtonElement;

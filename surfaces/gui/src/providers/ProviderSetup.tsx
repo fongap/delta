@@ -8,6 +8,7 @@ import {
   type ProviderInfo,
 } from "../api";
 import { openExternal } from "../tauri";
+import { useI18n } from "../i18n/I18nContext";
 import { PROVIDER_LOGOS, providerRank } from "./logos";
 
 // The provider gallery ⇄ key form, shared by Onboarding step 1 (§39) and
@@ -36,6 +37,24 @@ export const KEY_HELP: Record<string, { url: string; label: string }> = {
 
 export type Verify = { state: "idle" | "testing" | "ok" | "error"; msg?: string };
 
+// §7 H2: the server's test-failure strings are machine-readable diagnostics
+// (reason/code never localized); map the known shapes to localized UI text
+// here so the user-facing message is Chinese/English while the wire value
+// stays untouched. Unknown messages pass through verbatim.
+export function localizeVerifyMsg(msg: string | undefined, t: (k: string, v?: Record<string, string>) => string) {
+  if (!msg) return "";
+  let m: RegExpMatchArray | null;
+  if ((m = msg.match(/^Couldn't reach (.+) \(([^)]+)\)\.$/))) return t("providers.cantReach", { name: m[1], err: m[2] });
+  if (msg === "Invalid API key.") return t("providers.invalidKey");
+  if (msg === "Server rejected the request.") return t("providers.serverRejected");
+  if (msg === "Enter an API key to test.") return t("providers.enterKeyToTest");
+  if (msg === "Reached the server, but no OpenAI-compatible /v1 API there.") return t("providers.noOpenAiApi");
+  if ((m = msg.match(/^(.+) returned HTTP (\d+)\.$/))) return t("providers.httpError", { name: m[1], code: m[2] });
+  if ((m = msg.match(/^unknown provider: (.+)$/))) return t("providers.unknownProvider", { name: m[1] });
+  if (msg === "unreachable" || msg === "couldn't verify") return t("providers.unreachable");
+  return msg;
+}
+
 /** Brand chip: always a light plate so multicolor marks read on any theme. */
 export function ProviderMark({ name, title, size = 32 }: { name: string; title: string; size?: number }) {
   const url = PROVIDER_LOGOS[name];
@@ -54,15 +73,15 @@ export function ProviderMark({ name, title, size = 32 }: { name: string; title: 
 }
 
 /** "2h ago"-style label for a provider's last completion (null when never used). */
-export function relTime(epoch?: number | null): string | null {
+export function relTime(epoch?: number | null, t?: (key: string, vars?: Record<string, string | number>, fallback?: string) => string): string | null {
   if (!epoch) return null;
   const secs = Math.max(0, Math.floor(Date.now() / 1000 - epoch));
-  if (secs < 90) return "just now";
+  if (secs < 90) return t ? t("providers.justNow", undefined, "just now") : "just now";
   const mins = Math.floor(secs / 60);
-  if (mins < 60) return `${mins}m ago`;
+  if (mins < 60) return t ? t("providers.minutesAgo", { n: mins }, `${mins}m ago`) : `${mins}m ago`;
   const hrs = Math.floor(mins / 60);
-  if (hrs < 48) return `${hrs}h ago`;
-  return `${Math.floor(hrs / 24)}d ago`;
+  if (hrs < 48) return t ? t("providers.hoursAgo", { n: hrs }, `${hrs}h ago`) : `${hrs}h ago`;
+  return t ? t("providers.daysAgo", { n: Math.floor(hrs / 24) }, `${Math.floor(hrs / 24)}d ago`) : `${Math.floor(hrs / 24)}d ago`;
 }
 
 export interface ProviderSetupState {
@@ -95,6 +114,7 @@ export interface ProviderSetupState {
 }
 
 export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetupState {
+  const { t } = useI18n();
   const [providers, setProviders] = useState<ProviderInfo[]>([]);
   // null = the gallery; a provider name = that provider's key form.
   const [sel, setSel] = useState<string | null>(null);
@@ -216,20 +236,25 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
 
   const statusFor = (p: ProviderInfo, o?: { lastUsed?: boolean }) => {
     if (p.configured && p.needs_key) {
-      const used = o?.lastUsed ? relTime(p.last_used_at) : null;
+      const used = o?.lastUsed ? relTime(p.last_used_at, t) : null;
       return (
         <span className="block text-[11.5px] text-ok font-medium truncate">
-          ✓ Connected{used ? <span className="text-muted font-normal"> · used {used}</span> : ""}
+          ✓ {t("common.connected", undefined, "Connected")}
+          {used ? <span className="text-muted font-normal"> · {t("providers.usedAgo", { n: used }, `used ${used}`)}</span> : ""}
         </span>
       );
     }
     if (!p.needs_key)
       return (
         <span className="block text-[11.5px] text-faint truncate">
-          {keylessOk.has(p.name) ? <span className="text-ok font-medium">✓ Running</span> : "No key needed"}
+          {keylessOk.has(p.name) ? (
+            <span className="text-ok font-medium">✓ {t("providers.running", undefined, "Running")}</span>
+          ) : (
+            t("providers.noKeyNeeded", undefined, "No key needed")
+          )}
         </span>
       );
-    return <span className="block text-[11.5px] text-faint truncate">Not set up</span>;
+    return <span className="block text-[11.5px] text-faint truncate">{t("providers.notSetUp", undefined, "Not set up")}</span>;
   };
 
   return {
@@ -318,6 +343,7 @@ export function ProviderForm({
   tp: string;
   footer?: ReactNode;
 }) {
+  const { t } = useI18n();
   const { info, sel } = ps;
   const label = "block text-[12px] text-muted mt-3 mb-1";
   const input =
@@ -361,7 +387,7 @@ export function ProviderForm({
               className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-medium text-ok bg-okSoft rounded-full px-2 py-0.5 pointer-events-none"
               data-testid={`${tp}-field-saved-${f.key}`}
             >
-              ✓ Saved
+              ✓ {t("common.saved", undefined, "Saved")}
             </span>
           )}
           {/* §39: state lives IN the field — no status lines below. */}
@@ -370,7 +396,11 @@ export function ProviderForm({
               className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-medium text-ok bg-okSoft rounded-full px-2 py-0.5 pointer-events-none"
               data-testid={`${tp}-saved-pill`}
             >
-              {info?.needs_key ? <>✓ Tested &amp; saved</> : <>✓ Detected</>}
+              {info?.needs_key ? (
+                <>✓ {t("providers.testedAndSaved", undefined, "Tested & saved")}</>
+              ) : (
+                <>✓ {t("providers.detected", undefined, "Detected")}</>
+              )}
             </span>
           )}
         </div>
@@ -381,7 +411,7 @@ export function ProviderForm({
             disabled={ps.verify.state === "testing" || (!ps.secretFilled && !ps.credentialed)}
             data-testid={`${tp}-test`}
           >
-            {ps.verify.state === "testing" ? "…" : info?.needs_key ? "Test" : "Detect"}
+            {ps.verify.state === "testing" ? "…" : info?.needs_key ? t("common.test", undefined, "Test") : t("providers.detect", undefined, "Detect")}
           </button>
         )}
       </div>
@@ -392,7 +422,7 @@ export function ProviderForm({
   return (
     <div>
       <button className="text-[12.5px] text-muted hover:text-ink" onClick={ps.backToGallery} data-testid={`${tp}-back`}>
-        ‹ All providers
+        ‹ {t("providers.allProviders", undefined, "All providers")}
       </button>
       <div className="flex items-center gap-3 mt-3 mb-1">
         <ProviderMark name={info?.name || ""} title={info?.title || ""} size={36} />
@@ -401,7 +431,11 @@ export function ProviderForm({
           {info ? ps.statusFor(info) : null}
         </span>
       </div>
-      {info?.blurb && <p className="text-[11.5px] text-faint mt-1">{info.blurb}</p>}
+      {info?.blurb && (
+        <p className="text-[11.5px] text-faint mt-1">
+          {t("providers." + info.name + ".blurb", undefined, info.blurb)}
+        </p>
+      )}
 
       {fieldsAll
         .filter(
@@ -456,7 +490,7 @@ export function ProviderForm({
               <button
                 className="mt-2.5 inline-flex items-center gap-2 rounded-lg border border-line bg-panel px-2.5 py-1.5 text-[12px] font-mono text-ink hover:border-lineStrong"
                 onClick={() => void navigator.clipboard?.writeText(selected.command || "")}
-                title="Copy command"
+                title={t("common.copyCommand", undefined, "Copy command")}
                 data-testid={`${tp}-cmd-copy`}
               >
                 {selected.command}
@@ -467,18 +501,18 @@ export function ProviderForm({
             <div className="mt-3.5 flex items-center justify-between gap-3 border-t border-line pt-3">
               {ps.savedState ? (
                 <span className="text-[11.5px] font-medium text-ok" data-testid={`${tp}-saved-pill`}>
-                  ✓ Tested &amp; saved
+                  ✓ {t("providers.testedAndSaved", undefined, "Tested & saved")}
                 </span>
               ) : (
-                <span className="text-[11.5px] text-faint">Runs one read-only check, then saves.</span>
+                <span className="text-[11.5px] text-faint">{t("providers.checkThenSaves", undefined, "Runs one read-only check, then saves.")}</span>
               )}
               <button
-                className="shrink-0 rounded-lg border border-accent bg-accent px-4 py-1.5 text-[13px] font-medium text-white hover:brightness-105 disabled:opacity-40"
+                className="shrink-0 rounded-lg border border-accent bg-accent px-4 py-1.5 text-[13px] font-medium text-onAccent hover:brightness-105 disabled:opacity-40"
                 onClick={() => ps.runTestAndSave()}
                 disabled={ps.verify.state === "testing"}
                 data-testid={`${tp}-test`}
               >
-                {ps.verify.state === "testing" ? "…" : <>Test &amp; save</>}
+                {ps.verify.state === "testing" ? "…" : <>✓ {t("providers.testAndSave", undefined, "Test & save")}</>}
               </button>
             </div>
           </div>
@@ -487,24 +521,24 @@ export function ProviderForm({
 
       {info?.needs_key && KEY_HELP[sel] && (
         <p className="text-[11.5px] text-faint mt-2">
-          No key yet?{" "}
+          {t("providers.noKeyYet", undefined, "No key yet? ")}
           <button
             className="text-muted underline decoration-line underline-offset-2 hover:text-ink"
             onClick={() => openExternal(KEY_HELP[sel].url)}
           >
-            Create one at {KEY_HELP[sel].label} ↗
+            {t("providers.createOneAt", { n: KEY_HELP[sel].label }, `Create one at ${KEY_HELP[sel].label} ↗`)}
           </button>{" "}
-          — takes about a minute.
+          {t("providers.takesAboutAMinute", undefined, "— takes about a minute.")}
         </p>
       )}
       {info && !info.needs_key && (
         <p className="text-[11.5px] text-faint mt-2">
-          No API key needed — Ollama runs models on this computer.{" "}
+          {t("providers.noApiKeyNeeded", undefined, "No API key needed — Ollama runs models on this computer. ")}
           <button
             className="text-muted underline decoration-line underline-offset-2 hover:text-ink"
             onClick={() => openExternal("https://ollama.com/download")}
           >
-            Install Ollama ↗
+            {t("providers.installOllama", undefined, "Install Ollama ↗")}
           </button>
         </p>
       )}
@@ -523,7 +557,7 @@ export function ProviderForm({
               onClick={() => ps.setShowEndpoint(true)}
               data-testid={`${tp}-endpoint-link`}
             >
-              Custom endpoint ⌄
+              {t("providers.customEndpoint", undefined, "Custom endpoint ⌄")}
             </button>
           );
         return (
@@ -544,7 +578,7 @@ export function ProviderForm({
                   className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-medium text-ok bg-okSoft rounded-full px-2 py-0.5 pointer-events-none"
                   data-testid={`${tp}-field-saved-${ep.key}`}
                 >
-                  ✓ Saved
+                  ✓ {t("common.saved", undefined, "Saved")}
                 </span>
               )}
             </div>
@@ -555,7 +589,7 @@ export function ProviderForm({
 
       {/* Error line: fixed height so failures never reflow the form. */}
       <div className="mt-3 min-h-[19px] text-[12.5px]">
-        {ps.verify.state === "error" && <span className="text-warnInk">{ps.verify.msg}</span>}
+        {ps.verify.state === "error" && <span className="text-warnInk">{localizeVerifyMsg(ps.verify.msg, t)}</span>}
       </div>
       {footer}
     </div>

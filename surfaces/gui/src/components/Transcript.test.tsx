@@ -2,9 +2,13 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Transcript } from "./Transcript";
 import { humanizeTool } from "../humanize";
+import { I18nProvider } from "../i18n/I18nContext";
 import type { Item } from "../types";
 
 afterEach(cleanup);
+
+const renderTranscript = (ui: React.ReactElement) =>
+  render(<I18nProvider locale="en-US">{ui}</I18nProvider>);
 
 // §33 TurnGroup: the user-message → final-answer span is ONE disclosure; interior assistant
 // text is narration INSIDE it, the trailing assistant text is the answer OUTSIDE it; steps
@@ -20,7 +24,7 @@ const TURN: Item[] = [
 
 describe("TurnGroup (Transcript §33)", () => {
   it("groups the whole turn; answer stays outside; narration and humanized steps inside", () => {
-    const { container } = render(<Transcript items={TURN} onApprove={vi.fn()} />);
+    const { container } = renderTranscript(<Transcript items={TURN} onApprove={vi.fn()} />);
 
     // Collapsed at rest: "2 steps", NO approval count, and no step/narration content visible.
     expect(screen.getByText("2 steps")).toBeTruthy();
@@ -50,7 +54,7 @@ describe("TurnGroup (Transcript §33)", () => {
       { kind: "assistant", text: "Looking at the repo." },
       { kind: "tool", id: "t1", name: "grep", args: { pattern: "TODO" }, status: "…" },
     ];
-    const { container } = render(<Transcript items={items} onApprove={vi.fn()} />);
+    const { container } = renderTranscript(<Transcript items={items} onApprove={vi.fn()} />);
     expect(screen.getByText(/Running 1 step…/)).toBeTruthy();
     expect(screen.queryByTestId("turn-narration")).toBeNull(); // collapsed by default
     expect(screen.getByTestId("turn-live-line").textContent).toContain("Looking at the repo");
@@ -63,7 +67,7 @@ describe("TurnGroup (Transcript §33)", () => {
       { kind: "tool", id: "t1", name: "read_file", args: { path: "a.md" }, status: "ok" },
       { kind: "approval", name: "run_shell", args: { command: "rm -rf build/" }, reason: "", resolved: "deny" },
     ];
-    const { container } = render(<Transcript items={items} onApprove={vi.fn()} />);
+    const { container } = renderTranscript(<Transcript items={items} onApprove={vi.fn()} />);
     expect(screen.getByTestId("stepgroup-declined").textContent).toBe("1 declined");
     fireEvent.click(container.querySelector("summary.stepgroup-head")!);
     const ask = screen.getByTestId("turn-ask");
@@ -77,7 +81,7 @@ describe("TurnGroup (Transcript §33)", () => {
       { kind: "user", text: "hi" },
       { kind: "assistant", text: "Hello there." },
     ];
-    const { container } = render(<Transcript items={items} onApprove={vi.fn()} />);
+    const { container } = renderTranscript(<Transcript items={items} onApprove={vi.fn()} />);
     expect(container.querySelector("details.stepgroup")).toBeNull();
     expect(screen.getByText("Hello there.")).toBeTruthy();
   });
@@ -91,7 +95,7 @@ describe("live turns (§33 flicker fix)", () => {
   ];
 
   it("while running, trailing assistant text stays INSIDE the group — no answer bubble flash", () => {
-    const { container } = render(<Transcript items={LIVE} onApprove={vi.fn()} running />);
+    const { container } = renderTranscript(<Transcript items={LIVE} onApprove={vi.fn()} running />);
     // No assistant bubble anywhere; the group starts COLLAPSED with the narration riding
     // the header as the live line (§33 ref #3 — expanding is opt-in).
     expect(container.querySelector(".bubble-assistant")).toBeNull();
@@ -102,14 +106,14 @@ describe("live turns (§33 flicker fix)", () => {
     expect(screen.getByTestId("turn-narration").textContent).toContain("Inspecting the fetched dataset");
     // Once the turn ends (running=false), the same trailing text IS the answer bubble.
     cleanup();
-    const done = render(<Transcript items={LIVE} onApprove={vi.fn()} />);
+    const done = renderTranscript(<Transcript items={LIVE} onApprove={vi.fn()} />);
     expect(done.container.querySelector(".bubble-assistant")?.textContent).toContain(
       "Inspecting the fetched dataset",
     );
   });
 
   it("quiet streamed text rides the collapsed header and the expanded body — never floats", () => {
-    const { container } = render(
+    const { container } = renderTranscript(
       <Transcript
         items={LIVE}
         onApprove={vi.fn()}
@@ -130,7 +134,7 @@ describe("live turns (§33 flicker fix)", () => {
       ...LIVE,
       { kind: "approval", name: "write_file", args: { path: "app.html" }, reason: "" }, // unresolved
     ];
-    const { container } = render(<Transcript items={items} onApprove={vi.fn()} running />);
+    const { container } = renderTranscript(<Transcript items={items} onApprove={vi.fn()} running />);
     expect(container.querySelectorAll("details.stepgroup")).toHaveLength(1);
     expect(container.querySelector(".bubble-assistant")).toBeNull();
   });
@@ -140,7 +144,7 @@ describe("live turns (§33 flicker fix)", () => {
       { kind: "user", text: "hi" },
       { kind: "assistant", text: "Hello!" },
     ];
-    const { container } = render(<Transcript items={items} onApprove={vi.fn()} running />);
+    const { container } = renderTranscript(<Transcript items={items} onApprove={vi.fn()} running />);
     expect(container.querySelector("details.stepgroup")).toBeNull();
     expect(container.querySelector(".bubble-assistant")?.textContent).toContain("Hello!");
   });
@@ -156,7 +160,7 @@ describe("bubble hover affordances (FB-005)", () => {
   it("copy button copies the bubble's raw text and flashes Copied", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", { value: { writeText }, configurable: true });
-    render(<Transcript items={ITEMS} onApprove={vi.fn()} />);
+    renderTranscript(<Transcript items={ITEMS} onApprove={vi.fn()} />);
 
     const copies = screen.getAllByTestId("bubble-copy");
     expect(copies).toHaveLength(2); // user + assistant bubbles both get one
@@ -170,7 +174,7 @@ describe("bubble hover affordances (FB-005)", () => {
   });
 
   it("timestamp renders only when the item carries ts; full date rides the title", () => {
-    render(<Transcript items={ITEMS} onApprove={vi.fn()} />);
+    renderTranscript(<Transcript items={ITEMS} onApprove={vi.fn()} />);
 
     const stamps = screen.getAllByTestId("bubble-ts");
     expect(stamps).toHaveLength(1); // the ts-less assistant bubble shows none
@@ -185,7 +189,7 @@ describe("bubble hover affordances (FB-005)", () => {
 describe("memory save notice", () => {
   it("announces the save inline and offers Undo", () => {
     const onUndo = vi.fn();
-    render(
+    renderTranscript(
       <Transcript
         items={[{ kind: "memory", id: 7, text: "prefers short replies" }]}
         onApprove={vi.fn()}
@@ -203,7 +207,7 @@ describe("memory save notice", () => {
 
   it("says an existing memory was UPDATED and undoes by restoring its old text", () => {
     const onUndo = vi.fn();
-    render(
+    renderTranscript(
       <Transcript
         items={[
           {
@@ -226,7 +230,7 @@ describe("memory save notice", () => {
   });
 
   it("confirms in place once undone, with no Undo left to click", () => {
-    render(
+    renderTranscript(
       <Transcript
         items={[{ kind: "memory", id: 7, text: "prefers short replies", undone: true }]}
         onApprove={vi.fn()}

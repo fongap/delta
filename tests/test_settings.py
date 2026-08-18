@@ -130,6 +130,34 @@ def test_nav_layout_setting_roundtrips(tmp_path, monkeypatch):
     assert reborn.get_settings()["nav_layout"] == "grouped"
 
 
+def test_language_setting_roundtrips(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from coworker.server.app import create_app
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    data_dir = tmp_path / "data"
+    client = TestClient(create_app(SessionManager(data_dir=data_dir)))
+
+    # defaults to no language (GUI falls back to its own default)
+    assert client.get("/v1/settings").json()["language"] is None
+
+    # set a locale; it round-trips through GET
+    resp = client.post("/v1/settings/language", json={"language": "zh-CN"}).json()
+    assert resp["ok"] is True and resp["language"] == "zh-CN"
+    assert client.get("/v1/settings").json()["language"] == "zh-CN"
+
+    # persists across a fresh manager over the same data dir (prefs.json)
+    reborn = SessionManager(data_dir=data_dir)
+    assert reborn.get_settings()["language"] == "zh-CN"
+
+    # clearing removes the pref (back to null), not an empty string
+    cleared = client.post("/v1/settings/language", json={"language": "  "}).json()
+    assert cleared["language"] is None
+    assert client.get("/v1/settings").json()["language"] is None
+
+
 def test_scratch_base_setting_persists_and_drives_provisioning(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 

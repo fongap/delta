@@ -1433,6 +1433,10 @@ def create_app(manager: SessionManager) -> FastAPI:
     def settings_set_onboarded(body: dict) -> dict[str, Any]:
         return manager.set_onboarded(bool((body or {}).get("value", True)))
 
+    @app.post("/v1/settings/language")
+    def settings_set_language(body: dict) -> dict[str, Any]:
+        return manager.set_language((body or {}).get("language"))
+
     @app.post("/v1/settings/experimental-connectors")
     def settings_set_experimental(body: dict) -> dict[str, Any]:
         return manager.set_experimental_connectors(bool((body or {}).get("value")))

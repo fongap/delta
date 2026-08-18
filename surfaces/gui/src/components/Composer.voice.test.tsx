@@ -3,6 +3,9 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Composer } from "./Composer";
+import { I18nProvider } from "../i18n/I18nContext";
+
+const wrap = (el: JSX.Element) => <I18nProvider locale="en-US">{el}</I18nProvider>;
 
 const READY = {
   recording: false,
@@ -51,7 +54,7 @@ afterEach(() => {
 describe("Composer voice input (§37)", () => {
   it("renders no mic at all outside the desktop app", () => {
     delete (globalThis as any).__TAURI__;
-    render(<Composer {...props()} />);
+    render(wrap(<Composer {...props()} />));
     expect(screen.queryByLabelText(/dictation|Voice Input/)).toBeNull();
   });
 
@@ -60,7 +63,7 @@ describe("Composer voice input (§37)", () => {
       cmd === "get_dictation_status" ? NOT_READY : null,
     );
     const onConfigureVoiceInput = vi.fn();
-    render(<Composer {...props({ onConfigureVoiceInput })} />);
+    render(wrap(<Composer {...props({ onConfigureVoiceInput })} />));
 
     const mic = await screen.findByLabelText("Configure Voice Input in Settings");
     expect(mic.getAttribute("aria-disabled")).toBe("true");
@@ -70,7 +73,7 @@ describe("Composer voice input (§37)", () => {
   });
 
   it("ready → record shows the waveform and protects Send; stop inserts an editable draft", async () => {
-    render(<Composer {...props()} />);
+    render(wrap(<Composer {...props()} />));
 
     fireEvent.click(await screen.findByLabelText("Start dictation"));
     const stop = await screen.findByLabelText("Stop dictation");
@@ -95,7 +98,7 @@ describe("Composer voice input (§37)", () => {
       if (cmd === "start_dictation") throw new Error("No microphone is available.");
       return null;
     });
-    render(<Composer {...props()} />);
+    render(wrap(<Composer {...props()} />));
 
     fireEvent.click(await screen.findByLabelText("Start dictation"));
     expect((await screen.findByRole("alert")).textContent).toContain("No microphone is available.");

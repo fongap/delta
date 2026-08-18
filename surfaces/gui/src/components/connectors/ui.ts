@@ -15,7 +15,7 @@ export const GRP_H = "text-[12px] font-semibold text-muted px-4 mt-6 mb-1.5";
 export const FOOT = "text-[12px] text-faint px-4 pt-1.5";
 
 export const PILL_ACCENT =
-  "text-[12.5px] font-medium px-3 py-1.5 rounded-full bg-accent text-white shrink-0 disabled:opacity-50";
+  "text-[12.5px] font-medium px-3 py-1.5 rounded-full bg-accent text-onAccent shrink-0 disabled:opacity-50";
 export const PILL_QUIET =
   "text-[12.5px] font-medium px-3 py-1.5 rounded-full bg-paper border border-line text-accent shrink-0 hover:border-lineStrong";
 export const PILL_LINE =

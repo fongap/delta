@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { ModelChecklist } from "./ModelChecklist";
+import { I18nProvider } from "../i18n/I18nContext";
 
 vi.mock("../api", () => ({
   addModel: vi.fn(async (id: string) => ({ ok: true, models: [id], model: id })),
@@ -23,14 +24,16 @@ const KNOWN = ["openai", "anthropic", "bedrock", "vertex", "openrouter"];
 
 function renderList(provider: string) {
   return render(
-    <ModelChecklist
-      provider={provider}
-      knownProviders={KNOWN}
-      suggested={[]}
-      curated={[]}
-      defaultModel=""
-      onChanged={() => {}}
-    />,
+    <I18nProvider locale="en-US">
+      <ModelChecklist
+        provider={provider}
+        knownProviders={KNOWN}
+        suggested={[]}
+        curated={[]}
+        defaultModel=""
+        onChanged={() => {}}
+      />
+    </I18nProvider>,
   );
 }
 

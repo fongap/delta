@@ -1859,6 +1859,10 @@ class SessionManager:
             "model_ready": self._provider_configured(self._model_provider(self.model)),
             "source": "env" if env_key else ("store" if stored else None),
             "onboarded": bool(self._prefs.get("onboarded")),
+            # Single source of truth for the user's language. Drives the GUI's i18n and the
+            # agent/persona/compaction natural-language behavior (§3). Absent → null: the
+            # GUI falls back to its own default rather than the server guessing.
+            "language": self._prefs.get("language") or None,
             "experimental_connectors": experimental_enabled(self.secrets),
             "surfaces": self._surfaces(),
             "nav_layout": self._nav_layout(),
@@ -2063,6 +2067,19 @@ class SessionManager:
             return {"ok": False, "error": "empty model"}
         self.model = model
         self._prefs["default_model"] = model
+        self._save_prefs()
+        return {"ok": True, **self.get_settings()}
+
+    def set_language(self, value: str | None) -> dict[str, Any]:
+        """Set + persist the UI/agent language (a Locale like `zh-CN` or `en-US`), or clear it
+        (None → the GUI falls back to its own default). Unknown values are stored as-is so the
+        GUI can decide; only the two supported Locales are ever written by the UI.
+        """
+        value = (value or "").strip() or None
+        if value:
+            self._prefs["language"] = value
+        else:
+            self._prefs.pop("language", None)
         self._save_prefs()
         return {"ok": True, **self.get_settings()}
 

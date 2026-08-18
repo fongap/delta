@@ -5,6 +5,7 @@ import { humanizeAsk, humanizeTool, type HumanLine } from "../humanize";
 import { Markdown } from "./Markdown";
 import { ConnectorMessageCard } from "./ConnectorMessageCard";
 import { Icon } from "./Icon";
+import { useI18n } from "../i18n/I18nContext";
 
 // Long user pastes swallow the transcript (owner ask 2026-07-30): clamp past a generous
 // threshold with a more…/less… toggle. Normal typed messages never see the control; the
@@ -12,6 +13,7 @@ import { Icon } from "./Icon";
 const USER_CLAMP_CHARS = 1200;
 
 function ClampedUserText({ text }: { text: string }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   if (text.length <= USER_CLAMP_CHARS) return <>{text}</>;
   return (
@@ -22,7 +24,7 @@ function ClampedUserText({ text }: { text: string }) {
         onClick={() => setOpen((o) => !o)}
         className="block ml-auto mt-1.5 text-[12.5px] font-medium opacity-75 hover:opacity-100"
       >
-        {open ? "less…" : "more…"}
+        {open ? t("transcript.less", undefined, "less…") : t("transcript.more", undefined, "more…")}
       </button>
     </>
   );
@@ -33,6 +35,7 @@ function ClampedUserText({ text }: { text: string }) {
 // so revealing it on group-hover never shifts the layout. `ts` is unix seconds — canonical
 // messages carry it, pre-stamp history doesn't, so the time simply omits itself when absent.
 function BubbleMeta({ text, ts, align }: { text: string; ts?: number; align: "left" | "right" }) {
+  const { t } = useI18n();
   const [copied, setCopied] = useState(false);
   const when = typeof ts === "number" ? new Date(ts * 1000) : null;
   const copy = () => {
@@ -57,10 +60,10 @@ function BubbleMeta({ text, ts, align }: { text: string; ts?: number; align: "le
         <button
           className="flex items-center cursor-pointer hover:text-muted"
           data-testid="bubble-copy"
-          title="Copy message"
+          title={t("transcript.copyMessage", undefined, "Copy message")}
           onClick={copy}
         >
-          {copied ? "Copied" : <Icon name="copy" size={11} />}
+          {copied ? t("transcript.copied", undefined, "Copied") : <Icon name="copy" size={11} />}
         </button>
         {when && (
           <span data-testid="bubble-ts" title={when.toLocaleString()}>
@@ -76,6 +79,7 @@ function BubbleMeta({ text, ts, align }: { text: string; ts?: number; align: "le
 // collapsed by default, the trace one click away. `live` = still streaming (pulsing label);
 // App renders that variant above the transcript, this one rides a finalized assistant item.
 export function ThinkingBlock({ text, live }: { text: string; live?: boolean }) {
+  const { t } = useI18n();
   const [open, setOpen] = useState(false);
   return (
     <div className="thinking">
@@ -86,7 +90,7 @@ export function ThinkingBlock({ text, live }: { text: string; live?: boolean }) 
       >
         <Icon name="chevronDown" size={12} className={"thinking-caret" + (open ? " open" : "")} />
         <span className={live ? "thinking-live" : undefined}>
-          {live ? "Thinking…" : "Thought process"}
+          {live ? t("transcript.thinkingLive", undefined, "Thinking…") : t("transcript.thoughtProcess", undefined, "Thought process")}
         </span>
       </button>
       {open && (
@@ -155,14 +159,15 @@ function buildRows(items: TurnItem[]): TurnRow[] {
 }
 
 function approvalChip(resolved: ApprovalDecision | undefined) {
+  const { t } = useI18n();
   if (resolved === "deny")
-    return <span className="text-[10.5px] px-1.5 rounded-full bg-dangerSoft text-danger shrink-0">✕ declined</span>;
+    return <span className="text-[10.5px] px-1.5 rounded-full bg-dangerSoft text-danger shrink-0">{t("approval.chipDeclined", undefined, "✕ declined")}</span>;
   return (
     <span
       className="text-[10.5px] px-1.5 rounded-full bg-okSoft text-ok shrink-0"
-      title={resolved ? `approved · ${resolved.replace(/_/g, " ")}` : "approved"}
+      title={resolved ? t("approval.chipApprovedWith", { mode: resolved.replace(/_/g, " ") }, `approved · ${resolved.replace(/_/g, " ")}`) : t("approval.chipApprovedTitle", undefined, "approved")}
     >
-      ✓ approved
+      {t("approval.chipApproved", undefined, "✓ approved")}
     </span>
   );
 }
@@ -178,6 +183,7 @@ function LineText({ line }: { line: HumanLine }) {
 }
 
 function StepRow({ tool, approval }: { tool: ToolItem; approval?: ApprovalItem }) {
+  const { t } = useI18n();
   const [raw, setRaw] = useState(false);
   const running = tool.status === "…";
   const failed = tool.status !== "ok" && !running;
@@ -192,7 +198,7 @@ function StepRow({ tool, approval }: { tool: ToolItem; approval?: ApprovalItem }
             // A refused load must not read as a success — "Used skill:" is the trust line
             // (SKILLS-SPEC §4.1 #4), so a blocked attempt gets honest wording instead.
             tool.name === "load_skill" && tool.preview?.includes('"error"')
-              ? { pre: "Tried skill: ", obj: String(tool.args?.name ?? ""), post: " — not available" }
+              ? { pre: t("transcript.triedSkill", undefined, "Tried skill: "), obj: String(tool.args?.name ?? ""), post: t("transcript.triedSkillUnavailable", undefined, " — not available") }
               : humanizeTool(tool.name, tool.args)
           }
         />
@@ -201,18 +207,18 @@ function StepRow({ tool, approval }: { tool: ToolItem; approval?: ApprovalItem }
           <span
             className="text-[10.5px] px-1.5 rounded-full bg-tealSoft text-tealInk shrink-0"
             data-testid="tool-standing-rule"
-            title={`Auto-allowed by this automation's standing approval: ${tool.standingRule}. Revoke on its Automations page.`}
+            title={t("transcript.autoAllowedTitle", { rule: tool.standingRule }, `Auto-allowed by this automation's standing approval: ${tool.standingRule}. Revoke on its Automations page.`)}
           >
-            auto-allowed
+            {t("transcript.autoAllowed", undefined, "auto-allowed")}
           </span>
         )}
         {!!tool.hidden && (
           <span
             className="text-[11px] text-warnInk shrink-0"
             data-testid="tool-hidden-count"
-            title="Removed by your privacy filters before the agent saw the results — agents get no trace of these."
+            title={t("transcript.hiddenCountTitle", undefined, "Removed by your privacy filters before the agent saw the results — agents get no trace of these.")}
           >
-            {tool.hidden} hidden
+            {t("transcript.hiddenCount", { n: tool.hidden }, `${tool.hidden} hidden`)}
           </span>
         )}
         {failed && <span className="text-[11px] text-danger shrink-0">{tool.status}</span>}
@@ -221,7 +227,7 @@ function StepRow({ tool, approval }: { tool: ToolItem; approval?: ApprovalItem }
             className="ml-auto shrink-0 text-[11px] text-faint opacity-0 group-hover:opacity-100 cursor-pointer"
             onClick={() => setRaw((v) => !v)}
           >
-            raw
+            {t("transcript.raw", undefined, "raw")}
           </button>
         )}
       </div>
@@ -246,6 +252,7 @@ function TurnGroup({
   // the header as the live line; expanded → the small quiet line under the steps.
   streamingText?: string;
 }) {
+  const { t } = useI18n();
   // Turns start COLLAPSED, running or not (owner call 2026-07-14) — the header's live
   // line is the pulse; expanding is opt-in.
   const rows = buildRows(items);
@@ -259,7 +266,7 @@ function TurnGroup({
   const nSteps = rows.filter((r) => r.type !== "narr").length;
   const declined = items.filter((it) => it.kind === "approval" && it.resolved === "deny").length;
   const hiddenTotal = tools.reduce((n, t) => n + (t.hidden || 0), 0);
-  const stepsLabel = `${nSteps} step${nSteps === 1 ? "" : "s"}`;
+  const stepsLabel = t("transcript.stepCount", { n: nSteps, s: nSteps === 1 ? "" : "s" }, `${nSteps} step${nSteps === 1 ? "" : "s"}`);
 
   return (
     <details className="stepgroup" open={open}>
@@ -272,12 +279,12 @@ function TurnGroup({
       >
         <span className={"chev inline-block transition-transform" + (open ? " rotate-90" : "")}>›</span>
         <span>
-          <span>{running ? `Running ${stepsLabel}…` : stepsLabel}</span>
+          <span>{running ? t("transcript.runningSteps", { label: stepsLabel }, `Running ${stepsLabel}…`) : stepsLabel}</span>
           {declined > 0 && (
             <>
               {" · "}
               <span className="text-danger" data-testid="stepgroup-declined">
-                {declined} declined
+                {t("transcript.declinedCount", { n: declined }, `${declined} declined`)}
               </span>
             </>
           )}
@@ -285,7 +292,7 @@ function TurnGroup({
             <>
               {" · "}
               <span className="text-warnInk" data-testid="stepgroup-hidden">
-                {hiddenTotal} hidden by your filters
+                {t("transcript.hiddenByFilters", { n: hiddenTotal }, `${hiddenTotal} hidden by your filters`)}
               </span>
             </>
           )}
@@ -360,6 +367,7 @@ export function retryAnchor(items: Item[]): number {
 }
 
 export function Transcript({ items, running, streamingText, onRetry, onUndoMemory }: Props) {
+  const { t } = useI18n();
   // §33 grouping: a turn = the maximal run of assistant/tool/resolved-approval items between
   // breakers (user, connector, notices, plan/dir requests…). Trailing assistant texts are the
   // ANSWER and render as bubbles after the group; interior assistant texts are narration and
@@ -446,7 +454,7 @@ export function Transcript({ items, running, streamingText, onRetry, onUndoMemor
               );
             return (
               <div className="group bubble-assistant" key={bi}>
-                <div className="who">assistant</div>
+                <div className="who">{t("transcript.whoAssistant", undefined, "assistant")}</div>
                 {item.reasoning && <ThinkingBlock text={item.reasoning} />}
                 <Markdown text={item.text} />
                 <BubbleMeta text={item.text} ts={item.ts} align="left" />
@@ -459,7 +467,7 @@ export function Transcript({ items, running, streamingText, onRetry, onUndoMemor
                 <span className={"status " + (item.resolved === "granted" ? "ok" : "denied")}>
                   {item.resolved === "granted" ? "✓" : "✕"}
                 </span>
-                <span>{item.resolved === "granted" ? "Granted folder access" : "Declined folder access"}</span>
+                <span>{item.resolved === "granted" ? t("transcript.grantedAccess", undefined, "Granted folder access") : t("transcript.declinedAccess", undefined, "Declined folder access")}</span>
                 {item.path && <span className="dim">{item.path}</span>}
               </div>
             );
@@ -467,13 +475,13 @@ export function Transcript({ items, running, streamingText, onRetry, onUndoMemor
             if (!item.resolved) return null; // pending plan renders in the composer head
             return (
               <div className="bubble-assistant" key={bi}>
-                <div className="who">proposed plan</div>
+                <div className="who">{t("transcript.whoProposedPlan", undefined, "proposed plan")}</div>
                 <Markdown text={item.plan} />
                 <div className="approval-inline">
                   <span className={"status " + (item.resolved === "approved" ? "ok" : "denied")}>
                     {item.resolved === "approved" ? "✓" : "✕"}
                   </span>
-                  <span>{item.resolved === "approved" ? "Plan approved" : "Sent back with feedback"}</span>
+                  <span>{item.resolved === "approved" ? t("transcript.planApproved", undefined, "Plan approved") : t("transcript.planFeedback", undefined, "Sent back with feedback")}</span>
                 </div>
               </div>
             );
@@ -483,7 +491,7 @@ export function Transcript({ items, running, streamingText, onRetry, onUndoMemor
                 {item.text}
                 {item.retriable && !running && onRetry && block.i === retryAnchor(items) && (
                   <button className="btn ml-2" data-testid="notice-retry" onClick={onRetry}>
-                    Retry
+                    {t("transcript.retry", undefined, "Retry")}
                   </button>
                 )}
               </div>
@@ -499,13 +507,13 @@ export function Transcript({ items, running, streamingText, onRetry, onUndoMemor
               >
                 {item.undone ? (
                   <span data-testid="memory-notice-undone">
-                    {item.previous ? "Okay — put back the way it was." : "Okay — forgotten."}
+                    {item.previous ? t("transcript.memoryUndonePrevious", undefined, "Okay — put back the way it was.") : t("transcript.memoryUndoneNew", undefined, "Okay — forgotten.")}
                   </span>
                 ) : (
                   <>
                     <span className="min-w-0">
                       <span className="font-medium">
-                        {item.previous ? "I've updated what I remember" : "I'll remember that"}
+                        {item.previous ? t("transcript.memoryUpdated", undefined, "I've updated what I remember") : t("transcript.memoryRemember", undefined, "I'll remember that")}
                       </span>
                       {item.text ? <span className="text-muted"> — {item.text}</span> : null}
                     </span>
@@ -515,7 +523,7 @@ export function Transcript({ items, running, streamingText, onRetry, onUndoMemor
                         data-testid="memory-notice-undo"
                         onClick={() => onUndoMemory(item.id, item.previous)}
                       >
-                        Undo
+                        {t("transcript.undo", undefined, "Undo")}
                       </button>
                     )}
                   </>

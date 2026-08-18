@@ -23,6 +23,7 @@ import {
   runAutomation,
   setSessionFlags,
   setUnattended,
+  setLanguage,
   Session,
   type InboxItem,
   type MessageSource,
@@ -41,6 +42,9 @@ import type {
   WsEvent,
 } from "./types";
 import { isProjectScoped } from "./personaScope";
+import { I18nProvider } from "./i18n/I18nContext";
+import { normalizeLocale } from "./i18n/dictionaries";
+import type { Locale } from "./i18n/types";
 import { baseName } from "./paths";
 import { itemsFromMessages } from "./itemsFromMessages";
 import { addTurnUsage, emptyUsage, usageFromMessages } from "./usage";
@@ -156,6 +160,7 @@ function fallbackWorkspace(current: string | null, projects: RecentWorkspace[]):
 }
 
 export function App() {
+  const [locale, setLocaleState] = useState<Locale>(() => normalizeLocale(navigator.language));
   const [workspace, setWorkspace] = useState<string | null>(null);
   const [branch, setBranch] = useState<string | null>(null);
   const [showGate, setShowGate] = useState(false);
@@ -517,8 +522,20 @@ export function App() {
         setContextBar(s.context_bar === true);
         setModelReady(s.model_ready);
         if (s.surfaces) setSurfaces(s.surfaces);
+        // Single Locale source of truth: the backend language setting wins once loaded.
+        if (s.language) setLocaleState(normalizeLocale(s.language));
       })
       .catch(() => {});
+
+  // Persist a user-chosen language to the backend so it survives restarts and drives the
+  // agent/persona/compaction natural-language layers (§3). Applies the switch immediately.
+  const setLocale = useCallback(
+    (l: Locale) => {
+      setLocaleState(l);
+      setLanguage(l).catch(() => {});
+    },
+    [],
+  );
 
   // Open Settings → Configure Models (from the composer's "No model connected" chip).
   const openModelSetup = () => openSettings("models");
@@ -1245,6 +1262,7 @@ export function App() {
   }
 
   return (
+    <I18nProvider locale={locale} onLocaleChange={setLocale}>
     <div
       className={
         "app" +
@@ -1750,6 +1768,7 @@ export function App() {
         />
       )}
     </div>
+    </I18nProvider>
   );
 }
 

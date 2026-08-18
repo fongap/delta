@@ -19,11 +19,15 @@
   --panel: #ffffff;
   --ink: #17191c;
   --muted: #5b616b;
-  --faint: #9aa1aa;
+  --faint: #717173;
   --line: #e8eaed;
   --line-strong: #d8dce1;
-  --accent: #2563eb; /* cobalt — our signature, distinct from the coral-leaning tools */
-  --accent-soft: #e9f0fd;
+  --accent: #4A6572; /* Gray Blue — the UI signature (was cobalt #2563eb) */
+  --accent-hover: #3A515D; /* primary-action hover */
+  --accent-soft: #E0E7EC; /* faint accent tint */
+  --focus: #6C8493; /* keyboard focus ring (WCAG non-text ≥3:1 on paper/panel) */
+  --on-accent: #ffffff; /* text on accent fills (light theme) */
+  --brand: #2563eb; /* Delta brand mark — brighter blue kept for the logo */
   --ok: #2f7d57;
   --ok-soft: #eef6f0;
   --ok-line: #cfe6d6;
@@ -59,11 +63,15 @@ html[data-theme="dark"] {
   --panel: #1c1e22;
   --ink: #e6e8eb;
   --muted: #9aa1ab;
-  --faint: #62686f;
+  --faint: #8a8c8e;
   --line: #2a2d33;
   --line-strong: #3a3e46;
-  --accent: #4c8dff;          /* lifted cobalt — keeps contrast on dark panels */
-  --accent-soft: #1c2a44;
+  --accent: #8FA6B5;          /* lifted Gray Blue — keeps ≥4.5:1 on dark panels */
+  --accent-hover: #A9BDCA;
+  --accent-soft: #263440;
+  --focus: #9BB2C1;           /* lifted focus ring for dark */
+  --on-accent: #10161B;       /* near-black text on light accent fills (dark theme) */
+  --brand: #2563eb;           /* brand mark stays Delta blue in both themes */
   --ok: #58b07f;
   --ok-soft: #1a2b21;
   --ok-line: #2c4736;
@@ -449,7 +457,7 @@ button.btn { font: inherit; font-size: 13px; padding: 7px 12px; border-radius: 8
 button.btn.icon-only { display: inline-flex; align-items: center; justify-content: center; padding: 7px 9px; flex: none; color: var(--muted); }
 button.btn.icon-only:hover { color: var(--ink); }
 button.btn:hover { background: var(--paper); }
-button.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+button.btn.primary { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }
 button.btn.danger { color: var(--accent); }
 
 /* composer — the wrap/card/head/bar layout is supplied by Tailwind utilities on the elements
@@ -507,7 +515,7 @@ button.btn.danger { color: var(--accent); }
 .dd-label { font-size: 13.5px; color: var(--ink); display: flex; justify-content: space-between; align-items: center; }
 .dd-item .chk { color: var(--accent); }
 .dd-desc { font-size: 12px; color: var(--faint); margin-top: 1px; }
-.send { width: 34px; height: 34px; border-radius: 50%; border: none; background: var(--accent); color: #fff; cursor: pointer; font-size: 16px; }
+.send { width: 34px; height: 34px; border-radius: 50%; border: none; background: var(--accent); color: var(--on-accent); cursor: pointer; font-size: 16px; }
 .send:disabled { opacity: 0.4; cursor: default; }
 .statusline { max-width: 760px; margin: 6px auto 0; font-size: 12px; color: var(--faint); display: flex; gap: 12px; }
 .dot { width: 7px; height: 7px; border-radius: 50%; display: inline-block; }
@@ -578,7 +586,7 @@ button.btn.danger { color: var(--accent); }
 }
 .rail-todo.done .rail-todo-mark::after {
   content: ""; display: block; width: 5px; height: 3px; margin: 3px 0 0 2.5px;
-  border-left: 1.5px solid #fff; border-bottom: 1.5px solid #fff; transform: rotate(-45deg);
+  border-left: 1.5px solid var(--on-accent); border-bottom: 1.5px solid var(--on-accent); transform: rotate(-45deg);
 }
 .rail-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .rail-actions .btn { padding: 6px 9px; font-size: 12px; border-radius: 8px; }
@@ -781,7 +789,7 @@ button.btn.danger { color: var(--accent); }
 .topbar-artifacts-btn:hover { color: var(--ink); border-color: var(--accent); }
 .topbar-artifacts-count {
   min-width: 17px; padding: 0 5px; border-radius: 9px;
-  background: var(--accent); color: #fff; font-size: 11px; font-weight: 600; text-align: center;
+  background: var(--accent); color: var(--on-accent); font-size: 11px; font-weight: 600; text-align: center;
 }
 /* the inline add-folder form sits under the "Analyze the files in a directory" task row */
 .intro-addfolder { padding: 4px 6px 14px 6px; border-top: 1px solid var(--line); }
@@ -875,7 +883,7 @@ button.btn.danger { color: var(--accent); }
    (ManageTabs McpTab/McpRow/AddForm). */
 .mcp-error { color: var(--accent); font-size: 12.5px; margin-top: 6px; }
 
-button.btn-primary { font: inherit; font-size: 13px; padding: 8px 16px; border-radius: 9px; border: 1px solid var(--accent); background: var(--accent); color: #fff; cursor: pointer; align-self: flex-start; }
+button.btn-primary { font: inherit; font-size: 13px; padding: 8px 16px; border-radius: 9px; border: 1px solid var(--accent); background: var(--accent); color: var(--on-accent); cursor: pointer; align-self: flex-start; }
 button.btn-primary:hover { filter: brightness(1.05); }
 button.link { font: inherit; font-size: 12.5px; background: none; border: none; color: var(--muted); cursor: pointer; padding: 0; }
 button.link:hover { color: var(--ink); }
@@ -950,7 +958,7 @@ button.btn.sm.danger-btn:hover { border-color: var(--danger); }
 /* UX-023: marks runs newer than the seen mark captured when the detail opened. */
 .run-new-pill {
   display: inline-block; margin-right: 8px; padding: 0 6px; border-radius: 999px;
-  background: var(--accent); color: #fff; font-size: 10px; font-weight: 600; line-height: 16px;
+  background: var(--accent); color: var(--on-accent); font-size: 10px; font-weight: 600; line-height: 16px;
 }
 /* Run row = a launcher into the run's conversation. */
 .sched-run.open { border: 1px solid var(--line); border-radius: 10px; margin-bottom: 8px; padding: 4px 12px 10px; cursor: pointer; background: var(--panel); }
@@ -972,7 +980,7 @@ button.btn.sm.danger-btn:hover { border-color: var(--danger); }
 }
 .boot-mark {
   font-size: 38px;
-  color: var(--accent);
+  color: var(--brand);
   opacity: 0.9;
   animation: boot-pulse 1.4s ease-in-out infinite;
 }
@@ -1024,7 +1032,7 @@ button.btn.sm.danger-btn:hover { border-color: var(--danger); }
   user-select: none;
 }
 .titlebar-brand { display: inline-flex; align-items: center; gap: 5px; font-size: 12.5px; font-weight: 600; color: var(--muted); user-select: none; }
-.titlebar-brand .mark { color: var(--accent); }
+.titlebar-brand .mark { color: var(--brand); }
 /* The sidebar's brand row IS the desktop title bar (pin control + wordmark). On desktop the
    traffic lights float top-left, so shift the row RIGHT (not down) to clear them and keep it at
    the top — that puts the pin button just right of the lights, aligned with the reveal button.
@@ -1088,7 +1096,7 @@ button.btn.sm.danger-btn:hover { border-color: var(--danger); }
   color: var(--muted);
   flex: none;
 }
-.ob-rail-item.active .ob-dot { background: var(--accent); color: #fff; }
+.ob-rail-item.active .ob-dot { background: var(--accent); color: var(--on-accent); }
 .ob-rail-item.done .ob-dot { background: var(--ok); color: #fff; }
 .ob-body { grid-column: 2; padding: 40px 40px 16px; overflow-y: auto; }
 .ob-step h2 { font-family: var(--serif); margin: 0 0 8px; font-size: 25px; color: var(--ink); }
@@ -1185,7 +1193,7 @@ button.btn.ghost:hover { color: var(--ink); }
 .ob-skipwarn-actions { display: flex; gap: 8px; }
 
 /* ---- Attachments ----------------------------------------------------------- */
-.composer.dragging { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.composer.dragging { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus); }
 .attach-chip {
   position: relative; display: inline-flex; align-items: center; gap: 6px;
   border: 1px solid var(--line-strong); border-radius: 9px; background: var(--paper);
@@ -1217,7 +1225,7 @@ button.btn.ghost:hover { color: var(--ink); }
   font: inherit; font-size: 13px; color: var(--ink); background: var(--panel);
   border: 1px solid var(--line-strong); border-radius: 8px; padding: 7px 10px; outline: none;
 }
-.tmpl-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+.tmpl-input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--focus); }
 .tmpl-input::placeholder { color: var(--faint); }
 .tmpl-textarea { resize: vertical; min-height: 64px; line-height: 1.45; }
 .tmpl-sched { display: flex; gap: 14px; flex-wrap: wrap; }
@@ -1238,7 +1246,7 @@ button.btn.ghost:hover { color: var(--ink); }
 .inbox-session-chip:disabled { cursor: default; opacity: 0.6; }
 .inbox-chip-ico { width: 18px; height: 18px; border-radius: 5px; display: inline-flex; align-items: center; justify-content: center; color: #fff; flex: none; }
 .inbox-chip-ico.ico-cowork { background: #16a34a; }
-.inbox-chip-ico.ico-chat { background: var(--accent); }
+.inbox-chip-ico.ico-chat { background: var(--accent); color: var(--on-accent); }
 .inbox-chip-ico.ico-code { background: #7c3aed; }
 .inbox-chip-ico.ico-ops { background: #ea580c; }
 .inbox-chip-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -1473,7 +1481,7 @@ html[data-theme="dark"] :not(.connector-badge) > .connector-icon[data-dark-mark]
 .hiw-owbody { display: flex; flex: 1; min-height: 0; }
 .hiw-owrail { width: 96px; flex: none; background: var(--panel); border-right: 1px solid var(--line); padding: 6px 5px; }
 .hiw-owrail .hiw-brand { font-weight: 700; font-size: 9px; letter-spacing: -.015em; padding: 0 3px 5px; color: var(--ink); }
-.hiw-newbtn { background: var(--accent); color: #fff; border-radius: 5px; padding: 3px 6px; font-size: 8px;
+.hiw-newbtn { background: var(--accent); color: var(--on-accent); border-radius: 5px; padding: 3px 6px; font-size: 8px;
   font-weight: 600; margin-bottom: 5px; }
 .hiw-ownav { display: flex; align-items: center; gap: 4px; color: var(--muted); font-size: 8px; padding: 2px 3px; }
 .hiw-owrail .hiw-sect { font-size: 7px; letter-spacing: .07em; font-weight: 700; color: var(--faint); margin: 6px 3px 2px; }
@@ -1493,7 +1501,7 @@ html[data-theme="dark"] :not(.connector-badge) > .connector-icon[data-dark-mark]
   font-size: 8.5px; color: var(--faint); background: var(--panel); flex: none; }
 .hiw-waitrow { display: flex; align-items: center; gap: 6px; font-size: 8.5px; padding: 5px 7px; margin: 9px 8px 0;
   border: 1px solid var(--line); border-radius: 7px; background: var(--warn-soft); color: var(--ink); }
-.hiw-allowbtn { font-size: 8.5px; font-weight: 600; color: #fff; background: var(--accent); border: 0;
+.hiw-allowbtn { font-size: 8.5px; font-weight: 600; color: var(--on-accent); background: var(--accent); border: 0;
   border-radius: 999px; padding: 2px 8px; white-space: nowrap; flex: none; }
 .hiw-waitcap { margin: 5px 10px; font-size: 8.5px; color: var(--muted); }
 

@@ -36,6 +36,8 @@ import {
   type DictationStatus,
 } from "../tauri";
 import { useThemePref } from "../theme";
+import { useI18n, type TranslationKey } from "../i18n/I18nContext";
+import type { Locale } from "../i18n/types";
 import { Icon } from "./Icon";
 import { PanelHead } from "./IntegrationsView";
 import { ModelsTab } from "./ManageTabs";
@@ -59,21 +61,21 @@ const FIELD_LABEL = "text-[12.5px] font-medium text-ink";
 const FIELD_HELP = "text-[12px] text-muted mt-1.5 leading-relaxed";
 const INPUT =
   "flex-1 min-w-0 px-3 py-2 rounded-lg border border-line bg-paper text-[13px] text-ink outline-none focus:border-accent";
-const BTN_ACCENT = "text-[12.5px] px-3 py-2 rounded-lg bg-accent text-white shrink-0 disabled:opacity-40";
+const BTN_ACCENT = "text-[12.5px] px-3 py-2 rounded-lg bg-accent text-onAccent shrink-0 disabled:opacity-40";
 const BTN_BORDERED =
   "text-[12.5px] px-3 py-2 rounded-lg border border-line bg-paper hover:border-lineStrong shrink-0";
 
 const SET_TABS: {
   key: SetTab;
-  label: string;
+  labelKey: TranslationKey;
   icon: "sliders" | "code" | "mic" | "archive" | "sparkle" | "book";
 }[] = [
-  { key: "appearance", label: "General", icon: "sliders" },
-  { key: "models", label: "Models", icon: "code" },
-  { key: "skills", label: "Skills", icon: "book" },
-  { key: "voice", label: "Voice input", icon: "mic" },
-  { key: "memory", label: "Memory", icon: "archive" },
-  { key: "personas", label: "Personas", icon: "sparkle" },
+  { key: "appearance", labelKey: "settings.general.title", icon: "sliders" },
+  { key: "models", labelKey: "settings.models.title", icon: "code" },
+  { key: "skills", labelKey: "settings.skills.title", icon: "book" },
+  { key: "voice", labelKey: "settings.voice.title", icon: "mic" },
+  { key: "memory", labelKey: "settings.memory.title", icon: "archive" },
+  { key: "personas", labelKey: "settings.personas.title", icon: "sparkle" },
 ];
 
 export function SettingsView({
@@ -90,6 +92,7 @@ export function SettingsView({
   // Personas is flag-gated (hidden for launch) — filter the tab AND coerce a stale
   // deep-link to it (openSettings("personas") callers) so the page never opens on a
   // section with no nav entry.
+  const { t } = useI18n();
   const personas = showPersonas();
   const tabs = personas ? SET_TABS : SET_TABS.filter((t) => t.key !== "personas");
   const wanted = initialTab && (personas || initialTab !== "personas") ? initialTab : "appearance";
@@ -99,20 +102,20 @@ export function SettingsView({
     <main className="flex-1 min-w-0 flex bg-paper">
       <nav className="page-subnav w-[208px] shrink-0 border-r border-line bg-panel/40 px-3 py-4">
         <div className="px-2 text-[13.5px] font-semibold mb-3 flex items-center gap-2">
-          <Icon name="gear" size={16} /> Settings
+          <Icon name="gear" size={16} /> {t("settings.title")}
         </div>
-        {tabs.map((t) => {
-          const active = tab === t.key;
+        {tabs.map((tb) => {
+          const active = tab === tb.key;
           return (
             <button
-              key={t.key}
+              key={tb.key}
               className={
                 "w-full text-left px-2.5 py-2 rounded-lg text-[13px] flex items-center gap-2 " +
                 (active ? "bg-paper text-accent font-medium" : "text-muted hover:bg-paper hover:text-ink")
               }
-              onClick={() => setTab(t.key)}
+              onClick={() => setTab(tb.key)}
             >
-              <Icon name={t.icon} size={15} /> {t.label}
+              <Icon name={tb.icon} size={15} /> {t(tb.labelKey)}
             </button>
           );
         })}
@@ -125,8 +128,8 @@ export function SettingsView({
           ) : tab === "models" ? (
             <section>
               <PanelHead
-                title="Models"
-                sub="Providers and the models offered in the composer's picker. Keys are stored only on this computer."
+                title={t("settings.models.title")}
+                sub={t("settings.models.sub")}
               />
               <ModelsTab />
               {/* Token savings is model-spend behavior, so it lives here (UX-021),
@@ -161,6 +164,7 @@ const formatBytes = (bytes: number) => {
 };
 
 function VoiceInputSection() {
+  const { t } = useI18n();
   const [status, setStatus] = useState<DictationStatus | null>(null);
   const [progress, setProgress] = useState<DictationDownloadProgress | null>(null);
   const [phase, setPhase] = useState<"idle" | "downloading" | "verifying" | "testing" | "transcribing">("idle");
@@ -235,7 +239,7 @@ function VoiceInputSection() {
   };
 
   const remove = async () => {
-    if (!window.confirm("Delete the local Whisper model and disable Voice Input?")) return;
+    if (!window.confirm(t("settings.voice.deleteConfirm"))) return;
     setError(null);
     try {
       publish(await deleteDictationModel());
@@ -254,7 +258,7 @@ function VoiceInputSection() {
         setPhase("transcribing");
         const transcript = (await stopDictation()).trim();
         setTestTranscript(transcript);
-        if (!transcript) throw new Error("No speech was detected. Try again and speak for a little longer.");
+        if (!transcript) throw new Error(t("settings.voice.noSpeech"));
         publish(await markDictationTestPassed());
       } else {
         setTestTranscript("");
@@ -278,37 +282,37 @@ function VoiceInputSection() {
   return (
     <section>
       <PanelHead
-        title="Voice input"
-        sub="Speak naturally in the composer. Recordings and transcripts stay on this device."
+        title={t("settings.voice.title")}
+        sub={t("settings.voice.sub")}
       />
 
       {!desktop ? (
-        <div className={CARD + " p-4 text-[13px] text-muted"}>Voice Input setup is available in the OpenWorker desktop app.</div>
+        <div className={CARD + " p-4 text-[13px] text-muted"}>{t("settings.voice.desktopOnly")}</div>
       ) : (
         <div className="space-y-4">
-          <div className="rounded-xl border border-green-200 bg-green-50/70 px-4 py-3 text-[12.5px] text-green-800">
-            <span className="font-medium">Private by design.</span> Audio is held in memory only while you record and is transcribed locally.
+          <div className="rounded-xl border border-okLine bg-okSoft/70 px-4 py-3 text-[12.5px] text-ok">
+            <span className="font-medium">{t("settings.voice.privateByDesign")}</span> {t("settings.voice.privateByDesignSub")}
           </div>
 
           <div className={CARD}>
             <div className="p-4 flex items-start gap-3">
               <Icon name="code" size={18} className="text-accent mt-0.5" />
               <div className="min-w-0 flex-1">
-                <div className="text-[13.5px] font-medium">This device</div>
-                <div className="text-[12px] text-muted mt-1">{status?.device_summary || "Checking compatibility…"}</div>
-                {status?.compatibility_reason && <div className="text-[12px] text-red-600 mt-1.5">{status.compatibility_reason}</div>}
+                <div className="text-[13.5px] font-medium">{t("settings.voice.thisDevice")}</div>
+                <div className="text-[12px] text-muted mt-1">{status?.device_summary || t("settings.voice.checkingCompat")}</div>
+                {status?.compatibility_reason && <div className="text-[12px] text-danger mt-1.5">{status.compatibility_reason}</div>}
               </div>
               {status && (
-                <span className={"text-[11.5px] px-2 py-1 rounded-full " + (status.supported ? "bg-green-50 text-green-700" : "bg-red-50 text-red-600")}>
-                  {status.supported ? "● Compatible" : "Unsupported"}
+                <span className={"text-[11.5px] px-2 py-1 rounded-full " + (status.supported ? "bg-okSoft text-ok" : "bg-dangerSoft text-danger")}>
+                  {status.supported ? t("settings.voice.compatible") : t("settings.voice.unsupported")}
                 </span>
               )}
             </div>
             <div className="border-t border-line bg-paper/50 px-4 py-3 grid grid-cols-2 gap-3 text-[12px] text-muted">
               <div><span className="block text-ink font-medium">Mac</span>macOS 12+ · Apple Silicon M1+</div>
               <div><span className="block text-ink font-medium">Windows</span>Windows 10 22H2/11 · x64</div>
-              <div><span className="block text-ink font-medium">Memory</span>8 GB recommended</div>
-              <div><span className="block text-ink font-medium">Processor</span>4 CPU cores recommended</div>
+              <div><span className="block text-ink font-medium">{t("settings.voice.memory")}</span>8 GB recommended</div>
+              <div><span className="block text-ink font-medium">{t("settings.voice.processor")}</span>4 CPU cores recommended</div>
             </div>
           </div>
 
@@ -318,50 +322,50 @@ function VoiceInputSection() {
               <div className="min-w-0 flex-1">
                 <div className="text-[13.5px] font-medium">Whisper Base · English</div>
                 <div className="text-[12px] text-muted mt-0.5">
-                  {status?.model_verified ? `Installed and verified · ${formatBytes(status.model_bytes)}` : `Local voice model · ${formatBytes(status?.model_bytes || 147_964_211)}`}
+                  {status?.model_verified ? t("settings.voice.installedAndVerified", { size: formatBytes(status.model_bytes) }) : t("settings.voice.localVoiceModel", { size: formatBytes(status?.model_bytes || 147_964_211) })}
                 </div>
               </div>
               {status?.model_verified ? (
                 <>
-                  <span className="text-[11.5px] px-2 py-1 rounded-full bg-green-50 text-green-700">Verified</span>
-                  <button className={BTN_BORDERED} onClick={() => void repair()}>Repair</button>
-                  <button className="text-[12px] text-red-600 px-2 py-2" onClick={() => void remove()}>Delete</button>
+                  <span className="text-[11.5px] px-2 py-1 rounded-full bg-okSoft text-ok">{t("settings.voice.verified")}</span>
+                  <button className={BTN_BORDERED} onClick={() => void repair()}>{t("common.retry")}</button>
+                  <button className="text-[12px] text-danger px-2 py-2" onClick={() => void remove()}>{t("common.delete")}</button>
                 </>
               ) : downloading ? (
-                <button className={BTN_BORDERED} onClick={() => void cancelDownload()}>Cancel</button>
+                <button className={BTN_BORDERED} onClick={() => void cancelDownload()}>{t("common.cancel")}</button>
               ) : phase === "verifying" ? (
-                <span className="text-[12px] text-muted">Verifying…</span>
+                <span className="text-[12px] text-muted">{t("settings.voice.verifying")}</span>
               ) : (
-                <button className={BTN_ACCENT} disabled={!status?.supported} onClick={() => void download()}>Download model</button>
+                <button className={BTN_ACCENT} disabled={!status?.supported} onClick={() => void download()}>{t("settings.voice.downloadModel")}</button>
               )}
             </div>
             {downloading && (
               <div className="border-t border-line px-4 py-3">
                 <div className="h-1.5 rounded-full bg-line overflow-hidden"><div className="h-full bg-accent transition-all" style={{ width: `${progressPercent}%` }} /></div>
-                <div className="mt-1.5 text-[11.5px] text-muted flex"><span>{formatBytes(progress?.downloaded_bytes || 0)} of {formatBytes(progressTotal)}</span><span className="ml-auto">{progressPercent}%</span></div>
+                <div className="mt-1.5 text-[11.5px] text-muted flex"><span>{formatBytes(progress?.downloaded_bytes || 0)} {t("settings.voice.of")} {formatBytes(progressTotal)}</span><span className="ml-auto">{progressPercent}%</span></div>
               </div>
             )}
           </div>
 
           <div className={CARD}>
             <div className="p-4 flex items-center gap-3">
-              <Icon name="mic" size={18} className={ready ? "text-green-600" : "text-muted"} />
+              <Icon name="mic" size={18} className={ready ? "text-ok" : "text-muted"} />
               <div className="min-w-0 flex-1">
-                <div className="text-[13.5px] font-medium">Microphone test</div>
+                <div className="text-[13.5px] font-medium">{t("settings.voice.micTest")}</div>
                 <div className="text-[12px] text-muted mt-0.5">
-                  {ready ? "Your microphone and local transcription engine are working." : "Record a short phrase to enable the composer microphone."}
+                  {ready ? t("settings.voice.micReady") : t("settings.voice.micHint")}
                 </div>
               </div>
-              {ready && <span className="text-[11.5px] px-2 py-1 rounded-full bg-green-50 text-green-700">● Ready</span>}
+              {ready && <span className="text-[11.5px] px-2 py-1 rounded-full bg-okSoft text-ok">● {t("settings.voice.ready")}</span>}
               <button className={BTN_BORDERED} disabled={!status?.supported || !status?.model_verified || phase === "transcribing"} onClick={() => void toggleTest()}>
-                {status?.recording ? "Stop and check" : phase === "transcribing" ? "Transcribing…" : ready ? "Test again" : "Test microphone"}
+                {status?.recording ? t("settings.voice.stopAndCheck") : phase === "transcribing" ? t("settings.voice.transcribing") : ready ? t("settings.voice.testAgain") : t("settings.voice.testMic")}
               </button>
             </div>
-            {status?.recording && <div className="border-t border-line px-4 py-3 text-[12px] text-accent" role="status">● Listening… speak a short phrase, then stop.</div>}
+            {status?.recording && <div className="border-t border-line px-4 py-3 text-[12px] text-accent" role="status">● {t("settings.voice.listening")}</div>}
             {testTranscript && <div className="border-t border-line bg-paper/50 px-4 py-3 text-[13px]">“{testTranscript}”</div>}
           </div>
 
-          {error && <div role="alert" className="rounded-lg border border-red-200 bg-red-50 px-3 py-2.5 text-[12px] text-red-700">{error}</div>}
+          {error && <div role="alert" className="rounded-lg border border-dangerSoft bg-dangerSoft px-3 py-2.5 text-[12px] text-danger">{error}</div>}
         </div>
       )}
     </section>
@@ -374,12 +378,13 @@ function VoiceInputSection() {
 function PersonasSection({ onOpenPersona }: { onOpenPersona?: (id: string) => void }) {
   const [galleryBump, setGalleryBump] = useState(0);
   const [galleryOpen, setGalleryOpen] = useState(false);
+  const { t } = useI18n();
 
   return (
     <section>
       <PanelHead
-        title="Personas"
-        sub="Which coworkers are enabled and shown in the picker, plus installing new persona bundles."
+        title={t("settings.personas.title")}
+        sub={t("settings.personas.sub")}
       />
       <PersonasTab key={galleryBump} onOpenPersona={onOpenPersona} />
       <button
@@ -389,12 +394,12 @@ function PersonasSection({ onOpenPersona }: { onOpenPersona?: (id: string) => vo
       >
         <Icon name="sparkle" size={16} className="text-accent shrink-0" />
         <span className="min-w-0 flex-1">
-          <span className="block text-[13.5px] font-medium">Browse the Persona Gallery</span>
+          <span className="block text-[13.5px] font-medium">{t("settings.personas.browseGallery")}</span>
           <span className="block text-[12px] text-muted">
-            Curated coworkers from the OpenWorker team — see what each can do before installing.
+            {t("settings.personas.browseGallerySub")}
           </span>
         </span>
-        <span className="text-[12.5px] text-accent shrink-0">Open →</span>
+        <span className="text-[12.5px] text-accent shrink-0">{t("settings.personas.open")} →</span>
       </button>
       {galleryOpen && (
         <GalleryModal
@@ -411,6 +416,7 @@ function AppearanceSection() {
   const [theme, setTheme] = useThemePref();
   const [autostart, setAuto] = useState(false);
   const [keepAwake, setKeep] = useState(false);
+  const { locale, setLocale, t } = useI18n();
   const desktop = isTauri();
 
   useEffect(() => {
@@ -426,21 +432,38 @@ function AppearanceSection() {
     await setOnboarded(false);
     window.dispatchEvent(new CustomEvent("coworker:open-onboarding"));
   };
+  const langOptions: Locale[] = ["zh-CN", "en-US"];
 
   return (
     <section>
-      <PanelHead title="General" sub="How OpenWorker looks and behaves on this machine." />
+      <PanelHead title={t("settings.general.title")} sub={t("settings.general.sub")} />
 
       <div className={CARD + " p-4 mb-4"}>
-        <div className={FIELD_LABEL}>Theme</div>
-        <div className="seg mt-2.5" role="radiogroup" aria-label="Appearance">
+        <div className={FIELD_LABEL}>{t("settings.general.theme")}</div>
+        <div className="seg mt-2.5" role="radiogroup" aria-label={t("common.appearance")}>
           {(["light", "dark", "auto"] as const).map((p) => (
             <button key={p} className={p === theme ? "active" : ""} onClick={() => setTheme(p)}>
-              {p === "light" ? "Light" : p === "dark" ? "Dark" : "Auto"}
+              {p === "light" ? t("common.light") : p === "dark" ? t("common.dark") : t("common.auto")}
             </button>
           ))}
         </div>
-        <div className={FIELD_HELP}>Auto follows your Mac&rsquo;s appearance.</div>
+        <div className={FIELD_HELP}>{t("settings.general.autoFollows")}</div>
+      </div>
+
+      <div className={CARD + " p-4 mb-4"}>
+        <div className={FIELD_LABEL}>{t("settings.general.language")}</div>
+        <div className="seg mt-2.5" role="radiogroup" aria-label={t("settings.general.language")}>
+          {langOptions.map((l) => (
+            <button
+              key={l}
+              className={l === locale ? "active" : ""}
+              onClick={() => setLocale(l)}
+            >
+              {l === "zh-CN" ? "简体中文" : "English"}
+            </button>
+          ))}
+        </div>
+        <div className={FIELD_HELP}>{t("settings.general.languageSub")}</div>
       </div>
 
       <SidebarCard />
@@ -453,19 +476,19 @@ function AppearanceSection() {
 
       {desktop && (
         <div className={CARD + " p-4"}>
-          <div className={FIELD_LABEL + " mb-2.5"}>Always-on</div>
+          <div className={FIELD_LABEL + " mb-2.5"}>{t("settings.general.alwaysOn")}</div>
           <label className="flex items-start gap-3 py-2">
             <input type="checkbox" className="mt-0.5" checked={autostart} onChange={(e) => toggleAuto(e.target.checked)} />
             <span>
-              <span className="block text-[13px] text-ink">Open at login</span>
-              <span className="block text-[12px] text-muted">Launch OpenWorker automatically when you sign in.</span>
+              <span className="block text-[13px] text-ink">{t("settings.general.startAtLogin")}</span>
+              <span className="block text-[12px] text-muted">{t("settings.general.startAtLoginSub")}</span>
             </span>
           </label>
           <label className="flex items-start gap-3 py-2">
             <input type="checkbox" className="mt-0.5" checked={keepAwake} onChange={(e) => toggleKeep(e.target.checked)} />
             <span>
-              <span className="block text-[13px] text-ink">Keep this system awake</span>
-              <span className="block text-[12px] text-muted">Prevent idle sleep so scheduled tasks fire on time.</span>
+              <span className="block text-[13px] text-ink">{t("settings.general.keepAwake")}</span>
+              <span className="block text-[12px] text-muted">{t("settings.general.keepAwakeSub")}</span>
             </span>
           </label>
         </div>
@@ -475,10 +498,10 @@ function AppearanceSection() {
           every build, the browser dev shell runs the same first-run flow) and, on
           desktop, the manual update check (launch also checks automatically). */}
       <div className={CARD + " p-4 mt-4"}>
-        <div className={FIELD_LABEL + " mb-2"}>Setup &amp; updates</div>
+        <div className={FIELD_LABEL + " mb-2"}>{t("settings.general.setupUpdates")}</div>
         <div className="flex items-center gap-2">
           <button className={BTN_BORDERED} onClick={runSetupAgain}>
-            Run setup again
+            {t("settings.general.runSetupAgain")}
           </button>
           {desktop && <UpdateInline />}
         </div>
@@ -530,7 +553,7 @@ function TrustedWorkspacesCard() {
                 </div>
               </div>
               <button
-                className="text-[12px] text-red-600 px-2 py-1"
+                className="text-[12px] text-danger px-2 py-1"
                 onClick={() => void revoke(workspace.workspace)}
               >
                 Revoke

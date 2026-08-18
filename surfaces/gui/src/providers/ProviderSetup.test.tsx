@@ -3,9 +3,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { ProviderForm, type ProviderSetupState } from "./ProviderSetup";
+import { I18nProvider } from "../i18n/I18nContext";
 import type { ProviderInfo } from "../api";
 
 vi.mock("../tauri", () => ({ openExternal: vi.fn() }));
+
+// ProviderForm calls useI18n() — wrap every render in the provider (Sidebar.test.tsx pattern).
+const wrap = (ui: React.ReactElement) => <I18nProvider locale="en-US">{ui}</I18nProvider>;
 
 afterEach(cleanup);
 
@@ -69,7 +73,7 @@ function makePs(fields: Record<string, string>, setFieldValue = vi.fn()): Provid
 
 describe("ProviderForm auth-method choice", () => {
   it("renders only the selected method's fields", () => {
-    render(<ProviderForm ps={makePs({ auth_method: "api_key" })} tp="t" />);
+    render(wrap(<ProviderForm ps={makePs({ auth_method: "api_key" })} tp="t" />));
     expect(screen.getByTestId("t-field-bedrock_api_key")).toBeTruthy();
     expect(screen.queryByTestId("t-field-aws_profile")).toBeNull();
     expect(screen.queryByTestId("t-field-aws_secret_access_key")).toBeNull();
@@ -79,17 +83,17 @@ describe("ProviderForm auth-method choice", () => {
   it("switching the segment swaps the visible fields", () => {
     const setFieldValue = vi.fn();
     const { rerender } = render(
-      <ProviderForm ps={makePs({ auth_method: "api_key" }, setFieldValue)} tp="t" />,
+      wrap(<ProviderForm ps={makePs({ auth_method: "api_key" }, setFieldValue)} tp="t" />),
     );
     fireEvent.click(screen.getByTestId("t-choice-auth_method-profile"));
     expect(setFieldValue).toHaveBeenCalledWith("auth_method", "profile");
-    rerender(<ProviderForm ps={makePs({ auth_method: "profile" }, setFieldValue)} tp="t" />);
+    rerender(wrap(<ProviderForm ps={makePs({ auth_method: "profile" }, setFieldValue)} tp="t" />));
     expect(screen.getByTestId("t-field-aws_profile")).toBeTruthy();
     expect(screen.queryByTestId("t-field-bedrock_api_key")).toBeNull();
   });
 
   it("iam segment shows the key-pair fields", () => {
-    render(<ProviderForm ps={makePs({ auth_method: "iam" })} tp="t" />);
+    render(wrap(<ProviderForm ps={makePs({ auth_method: "iam" })} tp="t" />));
     expect(screen.getByTestId("t-field-aws_secret_access_key")).toBeTruthy();
     expect(screen.queryByTestId("t-field-bedrock_api_key")).toBeNull();
   });

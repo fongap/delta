@@ -3,6 +3,10 @@ import { type CloudStatus, type Connector, type SlackStatus } from "../../api";
 import { ConnectorBadge } from "../../connectors/ConnectorIcon";
 import { AddConnectionModal } from "./AddConnectionModal";
 import { CHIP_OK, CHIP_OFF, CHIP_WARN, GRP, GRP_H, FOOT, PILL_QUIET, ROW } from "./ui";
+import { useI18n } from "../../i18n/I18nContext";
+
+/** The `t` function shape, for the module-level helpers below. */
+type T = (key: string, vars?: Record<string, string | number>) => string;
 
 // The Connectors LIST (UX-DECISIONS §21): connected first in their own inset group —
 // rows navigate to the connector's detail subpage; problems surface as a chip in the
@@ -23,6 +27,7 @@ export function ConnectorsList({
   onOpen: (name: string) => void;
   onChanged: () => void;
 }) {
+  const { t } = useI18n();
   const [filter, setFilter] = useState("");
   const [showAll, setShowAll] = useState(false);
   const [connecting, setConnecting] = useState<string | null>(null);
@@ -38,7 +43,7 @@ export function ConnectorsList({
     <div>
       <div className="flex items-center justify-end mb-4">
         <input
-          placeholder="Search"
+          placeholder={t("common.search")}
           value={filter}
           onChange={(e) => setFilter(e.target.value)}
           className="w-44 px-3.5 py-1.5 rounded-full border border-line bg-panel text-[13px] outline-none focus:border-accent"
@@ -49,7 +54,7 @@ export function ConnectorsList({
           sign-in home, and the connect modals keep their inline sign-in panes. */}
       {connected.length > 0 && (
         <>
-          <div className={GRP_H + " !mt-0"}>Connected · {connected.length}</div>
+          <div className={GRP_H + " !mt-0"}>{t("connectors.connectedGroup", { n: connected.length })}</div>
           <div className={GRP}>
             {connected.map((c) => (
               <button
@@ -61,9 +66,9 @@ export function ConnectorsList({
                 <ConnectorBadge connector={c} size={34} title={c.title} />
                 <span className="min-w-0 flex-1">
                   <span className="font-medium text-[13.5px]">{c.title}</span>
-                  <span className="block text-[12px] text-muted">{statusLine(c)}</span>
+                  <span className="block text-[12px] text-muted">{statusLine(c, t)}</span>
                 </span>
-                {healthChip(c, slack)}
+                {healthChip(c, slack, t)}
                 <span className="text-faint text-[15px] shrink-0">›</span>
               </button>
             ))}
@@ -71,7 +76,7 @@ export function ConnectorsList({
         </>
       )}
 
-      <div className={GRP_H}>Available</div>
+      <div className={GRP_H}>{t("connectors.available")}</div>
       <div className={GRP}>
         {shown.map((c) => (
           /* The row navigates to the pre-connect detail page (§38); the pill
@@ -85,7 +90,9 @@ export function ConnectorsList({
             <ConnectorBadge connector={c} size={34} title={c.title} />
             <span className="min-w-0 flex-1">
               <span className="font-medium text-[13.5px]">{c.title}</span>
-              <span className="block text-[12px] text-muted truncate">{c.blurb}</span>
+              <span className="block text-[12px] text-muted truncate">
+                {t("connectors." + c.name + ".blurb", undefined, c.blurb)}
+              </span>
             </span>
             <span
               className={PILL_QUIET + " cursor-pointer"}
@@ -95,19 +102,19 @@ export function ConnectorsList({
                 setConnecting(c.name);
               }}
             >
-              Connect
+              {t("connectors.connect")}
             </span>
           </button>
         ))}
         {shown.length === 0 && (
-          <div className={ROW + " text-[12.5px] text-muted"}>Nothing matches.</div>
+          <div className={ROW + " text-[12.5px] text-muted"}>{t("connectors.noMatch")}</div>
         )}
       </div>
       {!showAll && !q && available.length > AVAILABLE_FOLD && (
         <div className={FOOT}>
-          {available.length - AVAILABLE_FOLD} more ·{" "}
+          {t("connectors.moreCount", { n: available.length - AVAILABLE_FOLD })}
           <button className="text-muted hover:text-ink" onClick={() => setShowAll(true)}>
-            show all
+            {t("connectors.showAll")}
           </button>
         </div>
       )}
@@ -124,31 +131,31 @@ export function ConnectorsList({
   );
 }
 
-function statusLine(c: Connector): string {
+function statusLine(c: Connector, t: T): string {
   if (c.name === "slack" && c.mode === "relay") {
     const n = c.workspaces?.length ?? 0;
-    return `${n} workspace${n === 1 ? "" : "s"} · relay`;
+    return t("connectors.statusRelayWorkspaces", { n });
   }
-  if ((c.accounts?.length ?? 0) > 1) return `${c.accounts!.length} accounts`;
-  if ((c.portals?.length ?? 0) > 1) return `${c.portals!.length} portals`;
-  if (c.auth === "none") return "Built in";
-  return c.account || "Connected";
+  if ((c.accounts?.length ?? 0) > 1) return t("connectors.accountCount", { n: c.accounts!.length });
+  if ((c.portals?.length ?? 0) > 1) return t("connectors.portalCount", { n: c.portals!.length });
+  if (c.auth === "none") return t("connectors.statusBuiltIn");
+  return c.account || t("connectors.connected");
 }
 
-function healthChip(c: Connector, slack: SlackStatus | null) {
+function healthChip(c: Connector, slack: SlackStatus | null, t: T) {
   // Slack relay gets a LIVE chip from /v1/connectors/slack/status — problems
   // surface in the list, never one click deep. Named honestly per layer; we
   // never claim "Slack↔cloud down" (the desktop can't see that leg).
   if (c.name === "slack" && c.mode === "relay" && slack) {
-    if (!slack.signed_in) return <span className={CHIP_WARN}>● Sign-in needed</span>;
-    if (slack.relay.state === "offline") return <span className={CHIP_OFF}>● Offline</span>;
+    if (!slack.signed_in) return <span className={CHIP_WARN}>{t("connectors.healthSignInNeeded")}</span>;
+    if (slack.relay.state === "offline") return <span className={CHIP_OFF}>{t("connectors.healthOffline")}</span>;
     if (slack.relay.state === "reconnecting")
-      return <span className={CHIP_WARN}>● Reconnecting</span>;
+      return <span className={CHIP_WARN}>{t("connectors.healthReconnecting")}</span>;
     if (Object.values(slack.teams).some((t) => !t.token_ok))
-      return <span className={CHIP_WARN}>⚠ Token</span>;
-    return <span className={CHIP_OK}>● Live</span>;
+      return <span className={CHIP_WARN}>{t("connectors.healthToken")}</span>;
+    return <span className={CHIP_OK}>{t("connectors.healthLive")}</span>;
   }
-  if (c.two_way && c.connected) return <span className={CHIP_OK}>● Live</span>;
-  return <span className={CHIP_OK}>● Ready</span>;
+  if (c.two_way && c.connected) return <span className={CHIP_OK}>{t("connectors.healthLive")}</span>;
+  return <span className={CHIP_OK}>{t("connectors.healthReady")}</span>;
 }
 

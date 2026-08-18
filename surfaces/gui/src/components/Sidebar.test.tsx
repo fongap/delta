@@ -1,7 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Sidebar } from "./Sidebar";
+import { I18nProvider } from "../i18n/I18nContext";
 import type { SessionInfo } from "../types";
+
+// All Sidebar renders go through the provider so the sidebar's useI18n() calls resolve.
+function renderSidebar(ui: React.ReactElement) {
+  return render(<I18nProvider locale="en-US">{ui}</I18nProvider>);
+}
 
 // Hermetic fetch stub routing by URL substring + method; records calls for POST assertions.
 type Call = { url: string; method: string; body: any };
@@ -78,14 +84,14 @@ describe("Sidebar group/filter control", () => {
       { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
       { match: "/v1/settings/nav-layout", method: "POST", json: { ok: true, nav_layout: "grouped" } },
     ]);
-    render(<Sidebar {...baseProps} />);
+    renderSidebar(<Sidebar {...baseProps} />);
 
     // personas load drives the surfaces; the RECENT header's group/filter control is always present.
     const control = await screen.findByLabelText("Group and filter conversations");
 
     // Open the popover and choose "Group by → Persona".
     fireEvent.click(control);
-    fireEvent.click(await screen.findByText("Persona"));
+    fireEvent.click(await screen.findByText("Group by persona"));
 
     // POSTs the new layout pref.
     await waitFor(() => {
@@ -116,7 +122,7 @@ describe("Chronological list row actions (⋮ menu)", () => {
       { match: "/v1/personas", method: "GET", json: PERSONAS },
       { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
     ]);
-    render(<Sidebar {...baseProps} />);
+    renderSidebar(<Sidebar {...baseProps} />);
     await screen.findByText("incident watch"); // flat Recent list rendered
 
     // Rename: menu item → inline input → Enter commits.
@@ -151,7 +157,7 @@ describe("Chronological list row actions (⋮ menu)", () => {
       { match: "/v1/personas", method: "GET", json: PERSONAS },
       { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
     ]);
-    render(<Sidebar {...baseProps} />);
+    renderSidebar(<Sidebar {...baseProps} />);
     await screen.findByText("incident watch");
 
     openOpsMenu();
@@ -184,7 +190,7 @@ describe("From Slack group (§31)", () => {
       { match: "/v1/personas", method: "GET", json: PERSONAS },
       { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
     ]);
-    render(<Sidebar {...baseProps} sessions={[...SESSIONS, SLACK_SESSION]} />);
+    renderSidebar(<Sidebar {...baseProps} sessions={[...SESSIONS, SLACK_SESSION]} />);
     await screen.findByText("incident watch"); // flat Recent rendered
 
     // No collapsed band — the session sits directly in the Recent list, exactly once…
@@ -208,7 +214,7 @@ describe("New-session split button", () => {
       },
       { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
     ]);
-    const { container } = render(<Sidebar {...baseProps} />);
+    const { container } = renderSidebar(<Sidebar {...baseProps} />);
     await screen.findByText("incident watch");
 
     // No ▾ — nothing to pick; the primary button starts the sole enabled persona.
@@ -223,7 +229,7 @@ describe("New-session split button", () => {
       { match: "/v1/personas", method: "GET", json: PERSONAS },
       { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
     ]);
-    const { container } = render(<Sidebar {...baseProps} />);
+    const { container } = renderSidebar(<Sidebar {...baseProps} />);
     await screen.findByLabelText("Group and filter conversations");
 
     // Primary action → a new session with the current (last-used) persona.
@@ -255,7 +261,7 @@ describe("New-session split button", () => {
       { match: "/v1/personas", method: "GET", json: PERSONAS },
       { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
     ]);
-    render(<Sidebar {...baseProps} />);
+    renderSidebar(<Sidebar {...baseProps} />);
     await screen.findByLabelText("Group and filter conversations");
     fireEvent.click(screen.getByLabelText("Choose a persona"));
     const menu = (await screen.findByText("Start a session as")).closest(".newsplit-menu") as HTMLElement;

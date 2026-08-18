@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { SlackWorkspace } from "../../api";
+import { useI18n } from "../../i18n/I18nContext";
 
 // UX-027: the post-connect "how mentions reach you" card. A tabbed carousel of
 // animated split-scenes — Slack on the left (pinned to light-Slack colors, so it
@@ -12,22 +13,27 @@ import type { SlackWorkspace } from "../../api";
 
 const KEY = "ocw.slack.howitworks.collapsed";
 const DUR = 8000; // per-scene loop, ms
-const TABS = ["Mention → session", "Threads stay connected", "Allow teammates"];
+const TABS = [
+  "connectors.hiwTabMention",
+  "connectors.hiwTabThreads",
+  "connectors.hiwTabTeammates",
+] as const;
 const CAPTIONS = [
-  "Mention @OpenWorker in any channel it's invited to — a session opens here, and the answer lands back in Slack as a thread.",
-  "Mention it again inside the thread — the conversation continues in the same session, context intact. The thread is the session.",
-  "Teammates aren't auto-trusted: their first mention waits for your OK, then they're on the People list.",
-];
+  "connectors.hiwCaptionMention",
+  "connectors.hiwCaptionThreads",
+  "connectors.hiwCaptionTeammates",
+] as const;
 
 function readCollapsed(): boolean {
   try { return localStorage.getItem(KEY) === "1"; } catch { return false; }
 }
 
 export function SlackHowItWorks({ workspaces }: { workspaces: SlackWorkspace[] }) {
+  const { t } = useI18n();
   const [collapsed, setCollapsed] = useState(readCollapsed);
   const [tab, setTab] = useState(0);
   const [cycle, setCycle] = useState(0); // bump = remount the scene = restart its animations
-  const tourRef = useRef(TABS.length); // auto-advances left in the one-time story tour
+  const tourRef = useRef<number>(TABS.length); // auto-advances left in the one-time story tour
 
   useEffect(() => {
     if (collapsed) return;
@@ -74,15 +80,15 @@ export function SlackHowItWorks({ workspaces }: { workspaces: SlackWorkspace[] }
     <div className="mb-5" data-testid="slack-howitworks">
       <div className="flex items-baseline gap-2.5">
         <h3 className="text-[13.5px] font-semibold tracking-tight">
-          Getting started with Slack &amp; OpenWorker
+          {t("connectors.slackHowItWorksTitle")}
         </h3>
         <button
           className="ml-auto shrink-0 inline-flex items-center gap-1.5 text-[12px] text-muted hover:text-ink"
           data-testid="hiw-collapse"
-          title={collapsed ? "Show how mentions work" : "Collapse — reopen anytime"}
+          title={collapsed ? t("connectors.showHowMentionsWork") : t("connectors.collapseReopen")}
           onClick={toggle}
         >
-          {collapsed ? "How it works" : "Hide"}
+          {collapsed ? t("connectors.howItWorks") : t("common.hide")}
           <span
             className="text-[9px] transition-transform"
             style={collapsed ? { transform: "rotate(-90deg)" } : undefined}
@@ -93,24 +99,24 @@ export function SlackHowItWorks({ workspaces }: { workspaces: SlackWorkspace[] }
       </div>
       <div className="text-[12px] text-muted mt-0.5">
         <span className="text-ok font-bold">✓ </span>
-        {ws?.account || "Workspace"} connected
+        {ws?.account || t("connectors.workspace")} {t("connectors.slackConnected")}
         {mine
-          ? " — you're on the People list, so your mentions get through."
-          : " — here's how mentions reach you."}
+          ? t("connectors.slackMentionsGetThrough")
+          : t("connectors.slackHowMentionsReach")}
       </div>
 
       {!collapsed && (
         <div className="mt-3">
           <div className="flex gap-1 border-b border-line mb-3">
-            {TABS.map((t, i) => (
+            {TABS.map((label, i) => (
               <button
-                key={t}
+                key={label}
                 className={"hiw-tab" + (i === tab ? " on" : "")}
                 data-testid={`hiw-tab-${i}`}
                 style={{ "--hiw-dur": `${DUR}ms` } as React.CSSProperties}
                 onClick={() => jump(i)}
               >
-                {t}
+                {t(label)}
                 <span className="hiw-prog"><i /></span>
               </button>
             ))}
@@ -122,7 +128,7 @@ export function SlackHowItWorks({ workspaces }: { workspaces: SlackWorkspace[] }
             {tab === 2 && <SceneTeammates />}
           </div>
           <div className="mt-2.5 text-[12px] text-muted" data-testid="hiw-caption">
-            {CAPTIONS[tab]}
+            {t(CAPTIONS[tab])}
           </div>
         </div>
       )}

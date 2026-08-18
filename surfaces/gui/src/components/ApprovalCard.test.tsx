@@ -1,9 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render as rtlRender, screen } from "@testing-library/react";
+import type { ReactElement } from "react";
 import { ApprovalCard } from "./ApprovalCard";
 import { InboxItemCard } from "./InboxItemCard";
+import { I18nProvider } from "../i18n/I18nContext";
 import type { Item } from "../types";
 import type { InboxItem } from "../api";
+
+const render = (ui: ReactElement) => rtlRender(<I18nProvider locale="en-US">{ui}</I18nProvider>);
 
 type ApprovalItem = Extract<Item, { kind: "approval" }>;
 

@@ -4,6 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Composer } from "./Composer";
+import { I18nProvider } from "../i18n/I18nContext";
 
 const MENU = {
   skills: [
@@ -39,6 +40,10 @@ const props = (extra: Partial<Parameters<typeof Composer>[0]> = {}) => ({
   ...extra,
 });
 
+const wrap = (el: JSX.Element) => (
+  <I18nProvider locale="en-US">{el}</I18nProvider>
+);
+
 const box = () => screen.getByPlaceholderText(/Ask the coworker/);
 
 afterEach(() => {
@@ -49,7 +54,7 @@ afterEach(() => {
 describe("Composer / skills popup", () => {
   it("opens on a leading '/' and lists only enabled skills from the effective menu", async () => {
     stubFetch();
-    render(<Composer {...props()} />);
+    render(wrap(<Composer {...props()} />));
     fireEvent.change(box(), { target: { value: "/" } });
     await screen.findByTestId("skill-popup");
     expect(await screen.findByText("/weekly-report")).toBeTruthy();
@@ -60,7 +65,7 @@ describe("Composer / skills popup", () => {
 
   it("filters as you type", async () => {
     stubFetch();
-    render(<Composer {...props()} />);
+    render(wrap(<Composer {...props()} />));
     fireEvent.change(box(), { target: { value: "/" } });
     await screen.findByText("/weekly-report");
     fireEvent.change(box(), { target: { value: "/wee" } });
@@ -70,7 +75,7 @@ describe("Composer / skills popup", () => {
 
   it("does NOT open for a mid-text slash", async () => {
     stubFetch();
-    render(<Composer {...props()} />);
+    render(wrap(<Composer {...props()} />));
     fireEvent.change(box(), { target: { value: "rate 5/10 please" } });
     expect(screen.queryByTestId("skill-popup")).toBeNull();
   });
@@ -78,7 +83,7 @@ describe("Composer / skills popup", () => {
   it("selecting inserts /name inline; the send strips the prefix and carries the skill field", async () => {
     stubFetch();
     const p = props();
-    render(<Composer {...p} />);
+    render(wrap(<Composer {...p} />));
     fireEvent.change(box(), { target: { value: "/gr" } });
     fireEvent.click(await screen.findByRole("option", { name: /greet/ }));
     expect((box() as HTMLTextAreaElement).value).toBe("/greet "); // inline, no chip
@@ -91,7 +96,7 @@ describe("Composer / skills popup", () => {
   it("a skill-only send works and Enter inside the popup never sends the query text", async () => {
     stubFetch();
     const p = props();
-    render(<Composer {...p} />);
+    render(wrap(<Composer {...p} />));
     fireEvent.change(box(), { target: { value: "/wee" } });
     await screen.findByText("/weekly-report");
     fireEvent.keyDown(box(), { key: "Enter" }); // selects, does not send
@@ -104,7 +109,7 @@ describe("Composer / skills popup", () => {
   it("editing the /name prefix away un-picks the skill", async () => {
     stubFetch();
     const p = props();
-    render(<Composer {...p} />);
+    render(wrap(<Composer {...p} />));
     fireEvent.change(box(), { target: { value: "/gr" } });
     fireEvent.click(await screen.findByRole("option", { name: /greet/ }));
     fireEvent.change(box(), { target: { value: "hello plain" } }); // prefix gone
@@ -114,14 +119,14 @@ describe("Composer / skills popup", () => {
 
   it("Escape closes the popup and no popup ever opens without a sessionId", async () => {
     stubFetch();
-    render(<Composer {...props()} />);
+    render(wrap(<Composer {...props()} />));
     fireEvent.change(box(), { target: { value: "/gr" } });
     await screen.findByTestId("skill-popup");
     fireEvent.keyDown(box(), { key: "Escape" });
     expect(screen.queryByTestId("skill-popup")).toBeNull();
     cleanup();
     stubFetch();
-    render(<Composer {...props({ sessionId: undefined })} />);
+    render(wrap(<Composer {...props({ sessionId: undefined })} />));
     fireEvent.change(box(), { target: { value: "/" } });
     expect(screen.queryByTestId("skill-popup")).toBeNull();
   });
@@ -130,16 +135,18 @@ describe("Composer / skills popup", () => {
 describe("Composer — the doorway prefill (SKILLS-SPEC §5.2)", () => {
   it("a prefill arriving together with a session switch survives the draft clear", async () => {
     stubFetch();
-    const { rerender } = render(<Composer {...props({ resetKey: "s1" })} />);
+    const { rerender } = render(wrap(<Composer {...props({ resetKey: "s1" })} />));
     // The doorway does both in one render: new session (resetKey) + prefill. The clear
     // effect must run BEFORE the prefill effect or the prefill is wiped (regression).
     rerender(
-      <Composer
-        {...props({
-          resetKey: "s2",
-          prefill: { text: "Build a new skill for me: release procedure", nonce: 1 },
-        })}
-      />,
+      wrap(
+        <Composer
+          {...props({
+            resetKey: "s2",
+            prefill: { text: "Build a new skill for me: release procedure", nonce: 1 },
+          })}
+        />,
+      ),
     );
     await waitFor(() => {
       expect((box() as HTMLTextAreaElement).value).toBe(

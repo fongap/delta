@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { I18nProvider } from "../i18n/I18nContext";
 import { PersonaView } from "./PersonaView";
+
+// PersonaView calls useI18n() — wrap every render in the provider (Sidebar.test.tsx pattern).
+const renderView = (ui: React.ReactElement) => render(<I18nProvider locale="en-US">{ui}</I18nProvider>);
 
 // A hermetic fetch stub routing by URL substring + method. Records calls so tests can assert POSTs.
 type Call = { url: string; method: string; body: any };
@@ -62,7 +66,7 @@ describe("PersonaView", () => {
       { match: "/v1/personas/ops", method: "GET", json: DETAIL },
       { match: "/v1/connectors", method: "GET", json: CONNECTORS },
     ]);
-    render(<PersonaView personaId="ops" />);
+    renderView(<PersonaView personaId="ops" />);
 
     expect(await screen.findByText("Ops Coworker")).toBeTruthy();
     expect(screen.getByText("Operate and investigate")).toBeTruthy();
@@ -93,7 +97,7 @@ describe("PersonaView", () => {
         },
       },
     ]);
-    render(<PersonaView personaId="ops" />);
+    renderView(<PersonaView personaId="ops" />);
     await screen.findByText("Ops Coworker");
 
     // Switches in DOM order: [0] persona Enable, then the default-connection toggles. Slack is the
@@ -120,7 +124,7 @@ describe("PersonaView", () => {
       { match: "/v1/connectors", method: "GET", json: CONNECTORS },
       { match: "/v1/personas/ops/enable", method: "POST", json: { ok: true } },
     ]);
-    render(<PersonaView personaId="ops" />);
+    renderView(<PersonaView personaId="ops" />);
     await screen.findByText("Ops Coworker");
 
     // The enable switch is the first one in DOM order (identity header).

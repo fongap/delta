@@ -22,6 +22,10 @@ test("collapse hides the sidebar and reclaims the width; reveal button docks it 
 
 test("⌘B toggles the sidebar collapse", async ({ page }) => {
   await page.goto("/");
+  // Wait for boot to finish: the ⌘B keydown handler mounts only after the splash clears,
+  // so a press fired mid-boot is silently dropped (the very first `.app` paint carries
+  // `boot-splash`). Same guard as session-shell.spec.ts.
+  await expect(page.locator(".app")).not.toHaveClass(/boot-splash/);
   const app = page.locator(".app");
   await page.keyboard.press("Meta+b");
   await expect(app).toHaveClass(/nav-collapsed/);

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { I18nProvider } from "../i18n/I18nContext";
 import { SkillsTab } from "./SkillsTab";
 
 // SKILLS-SPEC §5/§6 GUI — Settings ▸ Skills: list + badges + rich-skill file counts, form
@@ -43,6 +44,9 @@ const UPLOADED_ROW = {
 
 const LIST = { skills: [ROW, UPLOADED_ROW] };
 
+// SkillsTab calls useI18n() — wrap every render in the provider (Sidebar.test.tsx pattern).
+const renderWithI18n = (ui: React.ReactElement) => render(<I18nProvider locale="en-US">{ui}</I18nProvider>);
+
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -57,7 +61,7 @@ const openWriteForm = async () => {
 describe("SkillsTab", () => {
   it("renders rows with provenance badges and dims disabled skills", async () => {
     stubFetch([{ match: "/v1/skills", method: "GET", json: LIST }]);
-    render(<SkillsTab />);
+    renderWithI18n(<SkillsTab />);
     expect(await screen.findByText("weekly-report")).toBeTruthy();
     expect(screen.getByText("Monday status report")).toBeTruthy();
     expect(screen.queryByText("global")).toBeNull(); // no scope badges — global-only (§4.7)
@@ -69,7 +73,7 @@ describe("SkillsTab", () => {
 
   it("blocks Save until name and instructions are filled", async () => {
     stubFetch([{ match: "/v1/skills", method: "GET", json: { skills: [] } }]);
-    render(<SkillsTab />);
+    renderWithI18n(<SkillsTab />);
     await openWriteForm();
     const save = screen.getByText("Save skill") as HTMLButtonElement;
     expect(save.disabled).toBe(true);
@@ -86,7 +90,7 @@ describe("SkillsTab", () => {
       { match: "/v1/skills", method: "GET", json: { skills: [] } },
       { match: "/v1/skills", method: "POST", json: { ok: true } },
     ]);
-    render(<SkillsTab />);
+    renderWithI18n(<SkillsTab />);
     await openWriteForm();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "greet" } });
     fireEvent.change(screen.getByLabelText("Instructions"), {
@@ -107,7 +111,7 @@ describe("SkillsTab", () => {
       { match: "/v1/skills", method: "GET", json: LIST },
       { match: "/v1/skills/weekly-report", method: "PATCH", json: { ok: true } },
     ]);
-    render(<SkillsTab />);
+    renderWithI18n(<SkillsTab />);
     await screen.findByText("weekly-report");
     fireEvent.click(screen.getAllByTitle("Edit")[0]);
     const name = screen.getByLabelText("Name") as HTMLInputElement;
@@ -129,7 +133,7 @@ describe("SkillsTab", () => {
       { match: "/v1/skills", method: "GET", json: LIST },
       { match: "/v1/skills/weekly-report", method: "DELETE", json: { ok: true } },
     ]);
-    render(<SkillsTab />);
+    renderWithI18n(<SkillsTab />);
     await screen.findByText("weekly-report");
     // arm via the trash button (renders "Confirm delete" once armed)
     fireEvent.click(screen.getByLabelText("Delete weekly-report"));
@@ -146,7 +150,7 @@ describe("SkillsTab", () => {
       { match: "/v1/skills", method: "GET", json: LIST },
       { match: "/v1/skills/weekly-report", method: "PATCH", json: { ok: true } },
     ]);
-    render(<SkillsTab />);
+    renderWithI18n(<SkillsTab />);
     await screen.findByText("weekly-report");
     fireEvent.click(screen.getByLabelText("weekly-report enabled"));
     await waitFor(() => {
@@ -176,7 +180,7 @@ describe("SkillsTab", () => {
       },
       { match: "/v1/skills", method: "GET", json: { skills: [] } },
     ]);
-    render(<SkillsTab />);
+    renderWithI18n(<SkillsTab />);
     const input = (await screen.findByLabelText("Upload a skill archive")) as HTMLInputElement;
     const file = new File([new Uint8Array([80, 75, 3, 4])], "greet.zip", { type: "application/zip" });
     fireEvent.change(input, { target: { files: [file] } });
@@ -194,7 +198,7 @@ describe("SkillsTab", () => {
   it("Add skill menu: three doors; Create with OpenWorker hands off to a conversation", async () => {
     const calls = stubFetch([{ match: "/v1/skills", method: "GET", json: { skills: [] } }]);
     const onCreateSkill = vi.fn();
-    render(<SkillsTab onCreateSkill={onCreateSkill} />);
+    renderWithI18n(<SkillsTab onCreateSkill={onCreateSkill} />);
     fireEvent.click(await screen.findByRole("button", { name: /Add skill/ }));
     // The three doors (§5), each with its teaching subtitle.
     expect(screen.getByText("Write it myself")).toBeTruthy();
@@ -210,7 +214,7 @@ describe("SkillsTab", () => {
 
   it("offers no scope UI at all — skills are global (§4.7)", async () => {
     stubFetch([{ match: "/v1/skills", method: "GET", json: { skills: [] } }]);
-    render(<SkillsTab />);
+    renderWithI18n(<SkillsTab />);
     await openWriteForm();
     expect(screen.queryByText("Available in")).toBeNull();
     expect(screen.queryByLabelText("Everywhere")).toBeNull();
@@ -223,7 +227,7 @@ describe("SkillsTab", () => {
       { match: "/v1/skills", method: "GET", json: { skills: [] } },
       { match: "/v1/skills", method: "POST", json: { ok: true } },
     ]);
-    render(<SkillsTab />);
+    renderWithI18n(<SkillsTab />);
     await openWriteForm();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "greet" } });
     fireEvent.change(screen.getByLabelText("Instructions"), { target: { value: "x" } });
@@ -235,7 +239,7 @@ describe("SkillsTab", () => {
 
   it("the list is the page: no standing add-surfaces, no drafting remnants", async () => {
     stubFetch([{ match: "/v1/skills", method: "GET", json: { skills: [] } }]);
-    render(<SkillsTab onCreateSkill={vi.fn()} />);
+    renderWithI18n(<SkillsTab onCreateSkill={vi.fn()} />);
     await screen.findByRole("button", { name: /Add skill/ });
     // No permanently-open description box or draft-era UI (§5.2/§9) — adding is menu-only.
     expect(screen.queryByLabelText("Describe the skill")).toBeNull();
@@ -253,7 +257,7 @@ describe("SkillsTab", () => {
       { match: "/v1/skills", method: "GET", json: { skills: [] } },
       { match: "/v1/skills", method: "POST", json: { ok: false, error: "A skill named 'x' already exists in that scope." } },
     ]);
-    render(<SkillsTab />);
+    renderWithI18n(<SkillsTab />);
     await openWriteForm();
     fireEvent.change(screen.getByLabelText("Name"), { target: { value: "x" } });
     fireEvent.change(screen.getByLabelText("Instructions"), { target: { value: "y" } });
@@ -277,7 +281,7 @@ describe("SkillsTab — rich-skill disclosure (§6)", () => {
         },
       },
     ]);
-    render(<SkillsTab />);
+    renderWithI18n(<SkillsTab />);
     const note = await screen.findByTitle("Show folder");
     expect(note.textContent).toContain("3 files");
     // The one-file skill carries no count at all — only rich skills are marked.

@@ -685,6 +685,9 @@ export interface ModelSettings {
   model_ready: boolean; // can the default model's provider actually run (any provider)?
   source: "env" | "store" | null;
   onboarded: boolean;
+  // UI/agent language (a Locale like "zh-CN" / "en-US"). Absent → null: the GUI falls back
+  // to its own default rather than the server guessing.
+  language?: string | null;
   surfaces: SurfaceVisibility;
   scratch_base: string;
   secrets_path: string;  // OS-native on-disk location the server reports (not hardcoded)
@@ -1438,6 +1441,18 @@ export async function setOnboarded(value: boolean): Promise<{ ok: boolean; onboa
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ value }),
+  });
+  return res.json();
+}
+
+/** Persist the UI/agent language (a Locale like `zh-CN` / `en-US`). */
+export async function setLanguage(
+  language: string,
+): Promise<{ ok: boolean; language?: string | null } & Partial<ModelSettings>> {
+  const res = await fetch(`${httpBase()}/v1/settings/language`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ language }),
   });
   return res.json();
 }

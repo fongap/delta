@@ -10,6 +10,7 @@ import { ConnectSetup } from "../ManageTabs";
 import type { DetailProps } from "./ConnectorsSection";
 import { ToolsDisclosure } from "./ToolsDisclosure";
 import { FOOT, GRP, GRP_H, PILL_ACCENT, ROW, TAG_ACCENT, XBTN } from "./ui";
+import { useI18n } from "../../i18n/I18nContext";
 
 // The generic detail page for multi-account connectors on the accounts layer
 // (Notion, Attio, PostHog, Mixpanel, Amplitude, Apollo, Hunter — batch 2).
@@ -19,6 +20,7 @@ import { FOOT, GRP, GRP_H, PILL_ACCENT, ROW, TAG_ACCENT, XBTN } from "./ui";
 // always available underneath — signed out or in, local-only stays first-class.
 
 export function AccountsDetail({ c, cloud, slack: _slack, onChanged }: DetailProps) {
+  const { t } = useI18n();
   const [busy, setBusy] = useState(false);
   const [showManual, setShowManual] = useState(false);
   const accounts = (c.accounts ?? []) as AccountRow[];
@@ -43,11 +45,11 @@ export function AccountsDetail({ c, cloud, slack: _slack, onChanged }: DetailPro
               <>
                 <span className="w-2 h-2 rounded-full bg-ok" />
                 <span data-testid="accounts-status">
-                  {accounts.length} account{accounts.length === 1 ? "" : "s"}
+                  {t("connectors.accountCount", { n: accounts.length })}
                 </span>
               </>
             ) : (
-              <span>Not connected</span>
+              <span>{t("connectors.notConnected")}</span>
             )}
           </div>
         </div>
@@ -57,18 +59,16 @@ export function AccountsDetail({ c, cloud, slack: _slack, onChanged }: DetailPro
           onClick={() => (canOneClick ? addManaged() : setShowManual((v) => !v))}
           disabled={busy}
           title={
-            c.managed && !cloud?.signed_in
-              ? "Sign in to OpenWorker Cloud for one-click — or add a token below"
-              : ""
+            c.managed && !cloud?.signed_in ? t("connectors.addAccountTitle") : ""
           }
         >
-          {busy ? "Check your browser…" : "＋ Add account"}
+          {busy ? t("connectors.checkBrowser") : t("connectors.addAccount")}
         </button>
       </div>
 
       {accounts.length > 0 && (
         <>
-          <div className={GRP_H + " !mt-0"}>Accounts</div>
+          <div className={GRP_H + " !mt-0"}>{t("connectors.accounts")}</div>
           <div className={GRP} data-testid="accounts-group">
             {accounts.map((a) => (
               <Row key={a.account_id} connector={c.name} a={a} onChanged={onChanged} />
@@ -80,7 +80,7 @@ export function AccountsDetail({ c, cloud, slack: _slack, onChanged }: DetailPro
       {(showManual || !c.connected) && (
         <>
           <div className={GRP_H + (accounts.length ? "" : " !mt-0")}>
-            {c.managed ? "Add manually" : "Add an account"}
+            {c.managed ? t("connectors.addManually") : t("connectors.addAnAccount")}
           </div>
           <div className={GRP} data-testid="accounts-manual-add">
             <div className="px-1.5 py-1">
@@ -98,10 +98,7 @@ export function AccountsDetail({ c, cloud, slack: _slack, onChanged }: DetailPro
       )}
 
       <ToolsDisclosure c={c} onChanged={onChanged} />
-      <div className={FOOT + " mt-2"}>
-        Each account stays separate — tool results and approvals name the account
-        they used.
-      </div>
+      <div className={FOOT + " mt-2"}>{t("connectors.accountsSeparate")}</div>
     </div>
   );
 }
@@ -115,6 +112,7 @@ function Row({
   a: AccountRow;
   onChanged: () => void;
 }) {
+  const { t } = useI18n();
   const [busy, setBusy] = useState(false);
   return (
     <div className={ROW} data-testid={`account-${a.account_id}`}>
@@ -125,7 +123,7 @@ function Row({
             {a.account_id}
           </span>
         )}
-        {a.default && <span className={TAG_ACCENT}>Default</span>}
+        {a.default && <span className={TAG_ACCENT}>{t("common.default")}</span>}
       </span>
       {!a.default && (
         <button
@@ -136,12 +134,12 @@ function Row({
             onChanged();
           }}
         >
-          Make default
+          {t("connectors.makeDefault")}
         </button>
       )}
       <button
         className={XBTN}
-        title="Disconnect this account"
+        title={t("connectors.disconnectAccountTitle")}
         data-testid={`account-disconnect-${a.account_id}`}
         disabled={busy}
         onClick={async () => {

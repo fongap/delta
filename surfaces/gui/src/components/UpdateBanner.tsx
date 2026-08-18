@@ -7,6 +7,7 @@ import {
   isTauri,
   type UpdateInfo,
 } from "../tauri";
+import { useI18n } from "../i18n/I18nContext";
 
 // Auto-update prompt (desktop shell only — the browser build never renders this).
 // Deliberately a PROMPT, not a silent background install: swapping the app under a
@@ -31,6 +32,7 @@ const RECHECK_MS = 30 * 60_000;
 type Phase = "downloading" | "ready" | "fallback" | "installing" | "error";
 
 export function UpdateBanner() {
+  const { t } = useI18n();
   const [update, setUpdate] = useState<UpdateInfo | null>(null);
   const [phase, setPhase] = useState<Phase>("downloading");
   // Per-run, per-version dismissal — no localStorage, so a restart re-offers, and a
@@ -88,23 +90,23 @@ export function UpdateBanner() {
       role="status"
       data-testid="update-banner"
     >
-      <div className="text-[13px] font-semibold">Update available</div>
+      <div className="text-[13px] font-semibold">{t("update.available", undefined, "Update available")}</div>
       <div className="text-[12px] text-muted mt-0.5">
-        OpenWorker v{update.version} is ready to install.
+        {t("update.ready", { version: update.version }, `OpenWorker v${update.version} is ready to install.`)}
       </div>
       {phase === "error" && (
         <div className="text-[11.5px] text-warnInk mt-1.5">
-          The update couldn't be installed — it will be offered again next launch.
+          {t("update.installError", undefined, "The update couldn't be installed — it will be offered again next launch.")}
         </div>
       )}
       <div className="flex items-center gap-2 mt-2.5">
         <button
-          className="px-3 py-1.5 rounded-full bg-accent text-white text-[12.5px] disabled:opacity-50"
+          className="px-3 py-1.5 rounded-full bg-accent text-onAccent text-[12.5px] disabled:opacity-50"
           onClick={install}
           disabled={busy}
           data-testid="update-install"
         >
-          {busy ? "Downloading…" : "Restart to update"}
+          {busy ? t("update.downloading", undefined, "Downloading…") : t("update.restart", undefined, "Restart to update")}
         </button>
         <button
           className="px-2 py-1.5 text-[12.5px] text-faint hover:text-muted"
@@ -119,7 +121,7 @@ export function UpdateBanner() {
           disabled={phase === "installing"}
           data-testid="update-later"
         >
-          Later
+          {t("update.later", undefined, "Later")}
         </button>
       </div>
     </div>
