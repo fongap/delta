@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### 新增 (Added)
+
+#### 2026-08-19 14:07
+
+- **Delta Windows 便携版（DeltaPortable）打包**
+  - 新增 `packaging/build_portable.ps1`：按现有 `build_windows.ps1` 流程构建服务器 sidecar 与 Tauri 应用（`tauri build --no-bundle`），将已构建的根启动器嵌入为 `Delta.exe`，组装可整体移动的 `App/Data/Other/AppInfo` 目录结构，并产出可重新分发的 ZIP + SHA-256。
+  - 新增 `packaging/scan_portable_paths.ps1` 作为发布门禁：扫描打包树中所有文本与二进制字符串，检出构建机的绝对路径/源码路径泄漏（如 `C:\...`、repo 根目录），命中即构建失败，确保便携版完全可重定位。
+  - 便携版行为与 `packaging/portable/launcher` 一致：运行时由 `Delta.exe` 自身位置解析根目录，`COWORKER_STATE_DIR` 指向 `Data\`，密钥/数据/日志全部随文件夹移动，不写注册表、不依赖 `%APPDATA%`。
+
 ### 变更 (Changed)
 
 #### 2026-08-19 03:08
