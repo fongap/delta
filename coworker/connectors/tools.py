@@ -106,7 +106,7 @@ def _resolve_slack_channel(
     chat_id = str(c["id"]) if team == "default" else f"{team}/{c['id']}"
     if not c.get("is_member"):
         return None, (
-            f"found #{query}, but the bot isn't a member — invite @OpenWorker to #{query} "
+            f"found #{query}, but the bot isn't a member — invite @Delta to #{query} "
             "in Slack, then retry"
         )
     return chat_id, None
