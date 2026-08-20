@@ -27,7 +27,7 @@
   --accent-soft: #E0E7EC; /* faint accent tint */
   --focus: #6C8493; /* keyboard focus ring (WCAG non-text ≥3:1 on paper/panel) */
   --on-accent: #ffffff; /* text on accent fills (light theme) */
-  --brand: #2563eb; /* Delta brand mark — brighter blue kept for the logo */
+  --brand: #286f78; /* Delta brand mark — teal from the logo's background (#286f78) */
   --ok: #2f7d57;
   --ok-soft: #eef6f0;
   --ok-line: #cfe6d6;
@@ -71,7 +71,7 @@ html[data-theme="dark"] {
   --accent-soft: #263440;
   --focus: #9BB2C1;           /* lifted focus ring for dark */
   --on-accent: #10161B;       /* near-black text on light accent fills (dark theme) */
-  --brand: #2563eb;           /* brand mark stays Delta blue in both themes */
+  --brand: #286f78;           /* brand mark stays teal (#286f78, logo background) in both themes */
   --ok: #58b07f;
   --ok-soft: #1a2b21;
   --ok-line: #2c4736;
@@ -258,6 +258,21 @@ body {
   border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer;
 }
 .topbar-icon-btn:hover { color: var(--ink); background: var(--paper); }
+/* A1: the topbar search — a bare magnifier that expands into a small input on click and
+   collapses on outside interaction. Stays in the icon-button footprint until expanded. */
+.topbar-search { display: flex; align-items: center; }
+.topbar-search-box {
+  display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 9px;
+  border: 1px solid var(--line); border-radius: 8px; background: var(--panel);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+.topbar-search-ico { color: var(--faint); flex: none; }
+.topbar-search-input {
+  width: 200px; background: transparent; border: 0; outline: none; color: var(--ink);
+  font-size: 13px;
+}
+.topbar-search-input::placeholder { color: var(--faint); }
+
 .app.tauri-overlay .main-title,
 .app.tauri-overlay .main-drag-fill {
   -webkit-app-region: drag;
@@ -1595,24 +1610,6 @@ html[data-platform="linux"] ::-webkit-scrollbar-thumb:hover { background-color: 
   white-space: pre-wrap; overflow-wrap: anywhere;
   border-left: 2px solid var(--line); padding: 4px 0 4px 10px; margin: 4px 0 6px 4px;
   max-height: 280px; overflow-y: auto;
-}
-
-/* -- BETA tag (quiet gray chip beside the wordmark; presentation-only, never in
-   bundle/artifact names — those feed the updater) --------------------------------- */
-.beta-tag {
-  display: inline-block;
-  margin-left: 5px;
-  padding: 0.5px 4.5px;
-  border-radius: 999px;
-  border: 1px solid var(--line-strong);
-  background: var(--paper);
-  color: var(--muted);
-  font-size: 8.5px;
-  font-weight: 600;
-  letter-spacing: 0.07em;
-  /* Raised toward the cap line — superscript-ish without true `super` (which reads
-     fussy on a pill); small + high keeps the wordmark the star. */
-  vertical-align: 3px;
 }
 
 /* Folder artifact listing (a linked package dir renders as rows, not "not found"). */

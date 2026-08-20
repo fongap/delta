@@ -9,8 +9,7 @@ import { test } from "./fixtures";
 
 async function openOnboarding(page) {
   await page.goto("/");
-  await page.getByTestId("account-row").click();
-  await page.getByTestId("account-menu").getByRole("button", { name: "Settings" }).click();
+  await page.getByTestId("sidebar-footer-settings").click();
   await page.getByRole("button", { name: "Run setup again" }).click();
   await expect(page.getByTestId("ob-step-model")).toBeVisible();
 }

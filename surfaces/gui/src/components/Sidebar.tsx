@@ -9,7 +9,6 @@ import {
   getCloudStatus,
   getPersonas,
   getSettings,
-  INBOX_UNLOCK,
   PERSONAS_CHANGED,
   setNavLayout,
   waitForCloudSignIn,
@@ -24,7 +23,6 @@ import { isProjectScoped, shortPersonaName } from "../personaScope";
 import { ConnectorIcon } from "../connectors/ConnectorIcon";
 import { Icon, type IconName } from "./Icon";
 import { PersonaGlyph, personaGlyph } from "./personaIcon";
-import { SearchModal } from "./SearchModal";
 import { baseName } from "../paths";
 import { showPersonas } from "../flags";
 import { useI18n } from "../i18n/I18nContext";
@@ -56,6 +54,52 @@ function AttnBadge({ n }: { n: number }) {
     >
       {n > 99 ? "99+" : n}
     </span>
+  );
+}
+
+// A3 (§26): one uniform footer icon button. Same size, spacing, and selected style as the
+// account anchor button next to it, so the four footer actions read as a single row. The
+// `label` doubles as the hover tooltip (title) and the accessible name — one-to-one, no
+// misalignment. An optional attention badge (Inbox) sits top-right like the account dot.
+function SidebarFooterIcon({
+  icon,
+  label,
+  active,
+  onClick,
+  badge,
+  badgeTitle,
+  testid,
+}: {
+  icon: IconName;
+  label: string;
+  active?: boolean;
+  onClick: () => void;
+  badge?: number | null;
+  badgeTitle?: string;
+  testid: string;
+}) {
+  return (
+    <button
+      className={
+        "relative w-8 h-8 grid place-items-center rounded-lg text-muted transition-colors " +
+        (active ? "bg-paper text-ink" : "hover:bg-paper")
+      }
+      data-testid={testid}
+      title={label}
+      aria-label={label}
+      aria-pressed={active}
+      onClick={onClick}
+    >
+      <Icon name={icon} size={16} />
+      {badge ? (
+        <span
+          className="absolute top-0.5 right-0.5 leading-none"
+          title={badgeTitle || undefined}
+        >
+          <AttnBadge n={badge} />
+        </span>
+      ) : null}
+    </button>
   );
 }
 
@@ -181,31 +225,20 @@ const compactAge = (iso?: string | null): string => {
 
 export function Sidebar(props: Props) {
   const { t } = useI18n();
-  const [searchModalOpen, setSearchModalOpen] = useState(false);
   const [appMenuOpen, setAppMenuOpen] = useState(false);
-  // The account row (§26): cloud sign-in status drives the avatar/name/dot; refreshed on
-  // focus and whenever the menu opens (sign-in completes out-of-band in the browser).
+  // The Sign-in icon (§26): cloud sign-in status drives its label/tooltip and whether the
+  // account menu shows identity + Sign out; refreshed on focus and whenever the menu opens
+  // (sign-in completes out-of-band in the browser).
   const [cloud, setCloud] = useState<CloudStatus | null>(null);
-  // Inbox chip sticky unlock (§26): absent until the product first parks an item (or a
-  // session first goes Unattended), then permanent. Per-device, like nav collapse.
-  const [inboxUnlocked, setInboxUnlocked] = useState(
-    () => localStorage.getItem("ocw:inbox-unlocked") === "1",
-  );
   const refreshCloud = () => getCloudStatus().then(setCloud).catch(() => {});
   useEffect(() => {
     refreshCloud();
     const onFocus = () => refreshCloud();
     window.addEventListener("focus", onFocus);
     window.addEventListener(CLOUD_CHANGED, onFocus);
-    const unlock = () => {
-      localStorage.setItem("ocw:inbox-unlocked", "1");
-      setInboxUnlocked(true);
-    };
-    window.addEventListener(INBOX_UNLOCK, unlock);
     return () => {
       window.removeEventListener("focus", onFocus);
       window.removeEventListener(CLOUD_CHANGED, onFocus);
-      window.removeEventListener(INBOX_UNLOCK, unlock);
     };
   }, []);
   // UX-023: automations feed the nav row's badge + the Scheduled band. The 15s poll
@@ -401,15 +434,6 @@ export function Sidebar(props: Props) {
     else if (s.liveness === "sleeping" && liveByPersona.get(s.agent) !== "working")
       liveByPersona.set(s.agent, "sleeping");
   }
-
-  // First pending item ever observed → the inbox chip unlocks and stays (§26 sticky unlock).
-  useEffect(() => {
-    if (totalAttention > 0 && !inboxUnlocked) {
-      localStorage.setItem("ocw:inbox-unlocked", "1");
-      setInboxUnlocked(true);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [totalAttention]);
 
   // Body data is keyed to the BROWSED persona (only one body renders at a time). Pinned sessions are
   // EXCLUDED here: they live in the cross-persona Pinned band only, so they don't repeat inside the
@@ -1020,7 +1044,7 @@ export function Sidebar(props: Props) {
             <Icon name="sidebar" size={16} />
           </button>
         )}
-        <div className="brand-wordmark text-[15px]">Delta<span className="beta-tag">BETA</span></div>
+        <div className="brand-wordmark text-[15px]">Delta</div>
       </div>
 
       {/* New session: split button — primary starts the last-used persona; ▾ picks a specific one. */}
@@ -1031,16 +1055,9 @@ export function Sidebar(props: Props) {
         onManage={props.onManagePersonas}
       />
 
-      {/* Search: a borderless nav-style entry (not a boxed input) that opens the command-palette
-          SearchModal over the whole app. Matches the bottom-nav rows to reduce the boxy look. */}
-      <div className="px-2.5 mt-1">
-        <button
-          className="w-full flex items-center gap-2.5 px-2.5 py-2 rounded-lg text-[13px] text-left text-muted hover:bg-paper hover:text-ink"
-          onClick={() => setSearchModalOpen(true)}
-        >
-          <Icon name="search" size={15} className="shrink-0" /> {t("common.search", undefined, "Search")}
-        </button>
-      </div>
+      {/* A1: search moved to the top toolbar (TopbarSearch). The sidebar no longer renders a
+          search entry — the topbar instance is reachable whether or not the sidebar is
+          collapsed, so the sidebar's own SearchModal instance is retired too. */}
 
       {/* Automations: a first-class nav row (UX-023) — the account menu keeps its entry.
           The badge is the cross-automation unseen-run total. */}
@@ -1141,12 +1158,18 @@ export function Sidebar(props: Props) {
         </div>
       </div>
 
-      {/* Bottom (§26): exactly ONE row — the account anchor. The inbox chip on it is
-          state-driven with a sticky unlock (quiet when empty, accent + count when pending);
-          everything else lives in the account menu, which ALWAYS lists Inbox + Connectors. */}
+      {/* A3 (§26): sidebar footer = four uniform icon actions — Inbox, Activity, Sign-in, Settings.
+          Each carries a hover tooltip (title/aria-label) that names it one-to-one (no misalignment).
+          The Sign-in icon doubles as the account anchor: signed in → opens the account menu (email,
+          Connectors, Sign out); not signed in → triggers Delta Cloud login directly. Inbox keeps its
+          attention badge. Order, spacing, and selected style are uniform across all four; the account
+          menu only carries account-specific items (identity + Connectors + Sign out) since Inbox,
+          Activity and Settings are now direct footer icons. */}
       <div className="px-2.5 py-2 border-t border-line">
-        <div className="relative">
-          {appMenuOpen && (
+        <div className="relative flex items-center justify-between gap-1">
+          {/* account menu — only when signed in (identity + Sign out only make sense
+              authenticated; when not signed in the icon triggers login directly). */}
+          {appMenuOpen && cloud?.signed_in && (
             <>
               <div className="fixed inset-0 z-30" onClick={() => setAppMenuOpen(false)} />
               <div
@@ -1154,160 +1177,112 @@ export function Sidebar(props: Props) {
                 data-testid="account-menu"
                 role="menu"
               >
-                {cloud?.signed_in ? (
-                  <div
-                    className="px-3 py-1.5 mb-1 text-[11px] text-faint truncate border-b border-line"
-                    title={`${accountEmail} · Delta Cloud`}
-                  >
-                    {accountEmail} · Delta Cloud
-                  </div>
-                ) : (
-                  <>
-                    <div className="px-3 py-1.5 text-[11px] text-faint border-b border-line">
-                      {t("nav.cloudOneClickNote", undefined, "Not signed in — one-click connections need Delta Cloud")}
-                    </div>
-                    <button
-                      className="w-full flex items-center gap-2.5 px-3 py-1.5 mb-1 text-[13px] text-left text-accent hover:bg-paper"
-                      data-testid="account-sign-in"
-                      onClick={async () => {
-                        setAppMenuOpen(false);
-                        // Opens the system browser server-side; completion lands out-of-band,
-                        // so poll until it flips (refocusing the window also refetches).
-                        await cloudLogin().catch(() => {});
-                        waitForCloudSignIn((s) => {
-                          if (s) setCloud(s);
-                          // Other always-mounted consumers (Settings' telemetry card,
-                          // connector panes) refetch on this.
-                          if (s?.signed_in) announceCloudChanged();
-                        });
-                      }}
-                    >
-                      <Icon name="plug" size={15} className="shrink-0" /> {t("nav.signInCloud", undefined, "Sign in to Delta Cloud")}
-                    </button>
-                  </>
-                )}
+                <div
+                  className="px-3 py-1.5 mb-1 text-[11px] text-faint truncate border-b border-line"
+                  title={`${accountEmail} · Delta Cloud`}
+                >
+                  {accountEmail} · Delta Cloud
+                </div>
                 {appMenuItem(
-                  "inbox",
-                  t("nav.inbox", undefined, "Inbox"),
-                  props.onOpenInbox,
-                  props.inboxActive,
-                  <AttnBadge n={totalAttention} />,
+                  "plug",
+                  t("nav.integrations", undefined, "Connectors"),
+                  props.onOpenIntegrations,
+                  props.integrationsActive,
                 )}
-                {appMenuItem("plug", t("nav.integrations", undefined, "Connectors"), props.onOpenIntegrations, props.integrationsActive)}
                 <div className="h-px bg-line my-1 mx-2" />
-                {appMenuItem(
-                  "gear",
-                  t("nav.settings", undefined, "Settings"),
-                  props.onManage,
-                  false,
-                  <span className="text-[11px] text-faint">⌘ ,</span>,
-                )}
-                {appMenuItem("clock", t("nav.scheduled", undefined, "Automations"), props.onOpenScheduled, props.scheduledActive)}
-                {appMenuItem("audit", t("nav.activity", undefined, "Activity"), props.onOpenAudit, props.auditActive)}
-                {cloud?.signed_in && (
-                  <>
-                    <div className="h-px bg-line my-1 mx-2" />
-                    {appMenuItem("signOut", t("common.signOut", undefined, "Sign out"), async () => {
-                      await cloudLogout().catch(() => {});
-                      announceCloudChanged();
-                    })}
-                  </>
-                )}
+                {appMenuItem("signOut", t("common.signOut", undefined, "Sign out"), async () => {
+                  await cloudLogout().catch(() => {});
+                  announceCloudChanged();
+                })}
               </div>
             </>
           )}
 
+          <SidebarFooterIcon
+            icon="inbox"
+            label={t("nav.inbox", undefined, "Inbox")}
+            active={props.inboxActive}
+            onClick={() => props.onOpenInbox()}
+            badge={totalAttention > 0 ? totalAttention : null}
+            badgeTitle={
+              totalAttention > 0
+                ? t("nav.inboxItemsNeedYou", { n: totalAttention }, `Inbox — ${totalAttention} items need you`)
+                : undefined
+            }
+            testid="sidebar-footer-inbox"
+          />
+          <SidebarFooterIcon
+            icon="audit"
+            label={t("nav.activity", undefined, "Activity")}
+            active={props.auditActive}
+            onClick={() => props.onOpenAudit()}
+            testid="sidebar-footer-activity"
+          />
+
+          {/* Sign-in / Account — the account anchor. Signed in: opens the account menu
+              (identity, Connectors, Sign out). Not signed in: triggers cloud login directly.
+              The sr-only span carries identity text so the accessible name (and the row's text
+              identity) stays in sync with sign-in state. */}
           <button
             className={
-              "w-full flex items-center gap-2 px-2.5 py-2 rounded-lg text-[13px] text-left " +
-              (appMenuOpen ? "bg-paper text-ink" : "hover:bg-paper")
+              "relative w-8 h-8 grid place-items-center rounded-lg text-muted transition-colors " +
+              (appMenuOpen && cloud?.signed_in ? "bg-paper text-ink" : "hover:bg-paper")
             }
             data-testid="account-row"
-            onClick={() => {
-              if (!appMenuOpen) refreshCloud();
-              setAppMenuOpen((v) => !v);
-            }}
-            aria-haspopup="menu"
-            aria-expanded={appMenuOpen}
+            title={
+              cloud?.signed_in
+                ? t("nav.accountWithEmail", { account: accountName }, `Account: ${accountName}`)
+                : t("nav.signInCloud", undefined, "Sign in to Delta Cloud")
+            }
             aria-label={
               cloud?.signed_in
-                ? t("nav.accountWithEmail", { account: accountEmail }, `Account: ${accountEmail}`)
-                : t("nav.accountNotSignedIn", undefined, "Account: not signed in")
+                ? t("nav.accountWithEmail", { account: accountName }, `Account: ${accountName}`)
+                : t("nav.signInCloud", undefined, "Sign in to Delta Cloud")
             }
-          >
-            <span
-              className={
-                "w-6 h-6 rounded-full grid place-items-center text-[10.5px] font-semibold shrink-0 " +
-                (cloud?.signed_in
-                  ? "bg-accentSoft text-accent"
-                  : "bg-paper text-faint border border-line")
+            aria-haspopup={cloud?.signed_in ? "menu" : undefined}
+            aria-expanded={cloud?.signed_in ? appMenuOpen : undefined}
+            onClick={async () => {
+              if (cloud?.signed_in) {
+                if (!appMenuOpen) refreshCloud();
+                setAppMenuOpen((v) => !v);
+              } else {
+                // Not signed in → the icon IS the sign-in trigger (opens the system browser
+                // server-side; completion lands out-of-band, so poll until it flips — refocusing
+                // the window also refetches).
+                await cloudLogin().catch(() => {});
+                waitForCloudSignIn((s) => {
+                  if (s) setCloud(s);
+                  // Other always-mounted consumers (Settings' telemetry card, connector panes)
+                  // refetch on CLOUD_CHANGED.
+                  if (s?.signed_in) announceCloudChanged();
+                });
               }
-              aria-hidden
-            >
-              {cloud?.signed_in ? accountName.slice(0, 1).toUpperCase() : "?"}
-            </span>
-            <span className={"truncate " + (cloud?.signed_in ? "" : "text-muted")}>
+            }}
+          >
+            <Icon name="plug" size={16} />
+            {/* sr-only: identity text for assistive tech + text-based assertions. */}
+            <span className="sr-only">
               {cloud?.signed_in ? accountName : t("common.notSignedIn", undefined, "Not signed in")}
             </span>
             {cloud?.signed_in && (
               <span
-                className="w-[7px] h-[7px] rounded-full bg-ok shrink-0"
+                className="absolute top-1 right-1 w-[7px] h-[7px] rounded-full bg-ok"
                 title={t("nav.signedInToCloud", undefined, "Signed in to Delta Cloud")}
                 aria-hidden
               />
             )}
-            <span className="flex-1" />
-            {inboxUnlocked && (
-              <span
-                className={
-                  "inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11.5px] shrink-0 cursor-pointer " +
-                  (totalAttention > 0
-                    ? "bg-accentSoft text-accent font-semibold"
-                    : "text-faint hover:text-ink")
-                }
-                data-testid="inbox-chip"
-                role="button"
-                aria-label={
-                  totalAttention > 0
-                    ? t("nav.inboxItemsNeedYou", { n: totalAttention }, `Inbox — ${totalAttention} items need you`)
-                    : t("nav.inbox", undefined, "Inbox")
-                }
-                title={
-                  totalAttention > 0
-                    ? t("nav.inboxItemsNeedYou", { n: totalAttention }, `Inbox — ${totalAttention} items need you`)
-                    : t("nav.inbox", undefined, "Inbox")
-                }
-                onClick={(e) => {
-                  // The chip goes STRAIGHT to Inbox — the menu is the row's target, not the chip's.
-                  e.stopPropagation();
-                  setAppMenuOpen(false);
-                  props.onOpenInbox();
-                }}
-              >
-                <Icon name="inbox" size={13} />
-                {totalAttention > 0 ? totalAttention : null}
-              </span>
-            )}
-            <Icon
-              name="chevronDown"
-              size={14}
-              className={"text-faint shrink-0 transition-transform " + (appMenuOpen ? "" : "rotate-180")}
-            />
           </button>
+
+          <SidebarFooterIcon
+            icon="gear"
+            label={t("nav.settings", undefined, "Settings")}
+            active={false}
+            onClick={props.onManage}
+            testid="sidebar-footer-settings"
+          />
         </div>
       </div>
 
-      {searchModalOpen && (
-        <SearchModal
-          sessions={props.sessions}
-          personas={personas ?? undefined}
-          onSelect={(id, ws, ag) => {
-            setSearchModalOpen(false);
-            props.onSelectSession(id, ws, ag);
-          }}
-          onClose={() => setSearchModalOpen(false)}
-        />
-      )}
     </div>
   );
 }
@@ -1343,7 +1318,7 @@ function NewSessionSplit({
           }
           onClick={() => onNew(solo && enabled.length === 1 ? enabled[0].id : current)}
         >
-          <Icon name="plus" size={15} className="shrink-0" /> {t("nav.newSession", undefined, "New session")}
+          <Icon name="plus" size={15} className="shrink-0" /> {t("nav.newSession", undefined, "New task")}
         </button>
         {!solo && (
           <button
@@ -1361,7 +1336,7 @@ function NewSessionSplit({
           <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
           <div className="newsplit-menu absolute left-3 right-3 mt-1 z-30 bg-panel border border-line rounded-xl2 shadow-xl p-1">
             <div className="px-2 py-1 text-[10.5px] uppercase tracking-[0.06em] text-faint font-semibold">
-              {t("nav.startSessionAs", undefined, "Start a session as")}
+              {t("nav.startSessionAs", undefined, "Start as")}
             </div>
             {enabled.map((p) => (
               <button

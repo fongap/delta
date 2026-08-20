@@ -110,7 +110,10 @@ Write-Host "    sidecar -> $SideDst"
 # ---- 2. Root launcher (Delta.exe) ---------------------------------------------
 Write-Host "==> [2/6] root launcher (Delta.exe)" -ForegroundColor Cyan
 if (-not $LauncherExe) {
-    $LauncherExe = Join-Path $Here "portable\target\release\delta-portable-launcher.exe"
+    # Cargo puts the artifact under the crate's own target dir
+    # (<here>\portable\launcher\target\release\...), NOT under <here>\portable\target —
+    # there is no workspace Cargo.toml at packaging\portable, so no shared target-dir.
+    $LauncherExe = Join-Path $Here "portable\launcher\target\release\delta-portable-launcher.exe"
 }
 if (-not (Test-Path $LauncherExe)) {
     Write-Host "    launcher binary missing -> building with cargo"
@@ -138,7 +141,21 @@ if (-not $SkipAppBuild) {
     Write-Host "==> [3/6] tauri build skipped (-SkipAppBuild), reusing existing app exe" -ForegroundColor DarkYellow
 }
 
-$AppExe = Join-Path $Gui "src-tauri\target\release\$AppName.exe"
+# The Cargo [package] name may differ from tauri.conf.json productName (here: the Cargo
+# package is "openworker-desktop" while productName is "Delta"), and Tauri names the built
+# exe after the Cargo binary, not productName. Resolve the real binary name from Cargo.toml
+# (explicit [[bin]] name wins, else [package] name), falling back to productName.
+$CargoToml = Join-Path $Gui "src-tauri\Cargo.toml"
+$BinName   = $AppName
+if (Test-Path $CargoToml) {
+    $cargoText = Get-Content $CargoToml -Raw
+    if ($cargoText -match '\[\[bin\]\]\s*\r?\nname\s*=\s*"([^"]+)"') {
+        $BinName = $Matches[1]
+    } elseif ($cargoText -match '(?m)^\[package\]\s*\r?\nname\s*=\s*"([^"]+)"') {
+        $BinName = $Matches[1]
+    }
+}
+$AppExe = Join-Path $Gui "src-tauri\target\release\$BinName.exe"
 if (-not (Test-Path $AppExe)) {
     throw "app exe not found at $AppExe — run without -SkipAppBuild (or check productName in tauri.conf.json)."
 }
@@ -151,7 +168,7 @@ $AppDir   = Join-Path $Portable "App\Delta"
 if (Test-Path $Portable) { Remove-Item -Recurse -Force $Portable }
 New-Item -ItemType Directory -Force -Path (Join-Path $Portable "Data")    | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $Portable "AppInfo") | Out-Null
-New-Item -ItemType Directory -Force -Path (Join-Path $AppDir)             | Out-Null
+New-Item -ItemType Directory -Force -Path $AppDir                          | Out-Null
 
 # App\ : real app exe + sidecar onedir (landing next to the exe, matching server_bin()).
 Copy-Item -Force $AppExe (Join-Path $AppDir "$AppName.exe")
@@ -194,16 +211,24 @@ Delta Portable — 绿色便携版（免安装）
   - 若文件夹被设为只读，程序会明确提示“便携版目录不可写”而不是静默失败。
 "@
 
-# AppInfo\appinfo.xml (PortableApps / relocatable conventions).
-[System.Xml.Linq.XDocument] @"
-<?xml version="1.0" encoding="UTF-8"?>
-<appinfo>
-  <name>$AppName Portable</name>
-  <version>$Version</version>
-  <launcher>$AppName.exe</launcher>
-  <layout relocatable="true" description="App/Data/Other convention; all data under Data\"/>
-</appinfo>
-"@ | ForEach-Object { $_.Save((Join-Path $Portable "AppInfo\appinfo.xml"), [System.Xml.Linq.SaveOptions]::DisableFormatting) }
+# AppInfo\appinfo.xml (PortableApps / relocatable conventions). Use System.Xml.XmlWriter
+# (System.Xml.Linq is not loaded by default on PowerShell 5.1 / Windows PowerShell).
+$AppInfoXml = Join-Path $Portable "AppInfo\appinfo.xml"
+$AppInfoWriter = [System.Xml.XmlWriter]::Create($AppInfoXml)
+try {
+    $AppInfoWriter.WriteStartDocument()
+    $AppInfoWriter.WriteStartElement("appinfo")
+    $AppInfoWriter.WriteElementString("name", "$AppName Portable")
+    $AppInfoWriter.WriteElementString("version", $Version)
+    $AppInfoWriter.WriteElementString("launcher", "$AppName.exe")
+    $AppInfoWriter.WriteStartElement("layout")
+    $AppInfoWriter.WriteAttributeString("relocatable", "true")
+    $AppInfoWriter.WriteAttributeString("description", "App/Data/Other convention; all data under Data\")
+    $AppInfoWriter.WriteEndElement()
+    $AppInfoWriter.WriteEndElement()
+    $AppInfoWriter.WriteEndDocument()
+}
+finally { $AppInfoWriter.Dispose() }
 
 # ---- 5. Absolute-path leak scan (gate) ------------------------------------------
 Write-Host "==> [5/6] absolute-path leak scan" -ForegroundColor Cyan

@@ -25,7 +25,7 @@ use serde::Serialize;
 use tauri::{
     menu::{Menu, MenuItem},
     tray::TrayIconBuilder,
-    Emitter, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent,
+    Emitter, LogicalSize, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_autostart::ManagerExt;
 use uuid::Uuid;
@@ -276,6 +276,22 @@ fn start_window_drag(window: tauri::WebviewWindow) -> bool {
     window.start_dragging().is_ok()
 }
 
+/// Make the OS window chrome (native title bar on Windows/Linux, traffic-light area on macOS)
+/// follow the app's selected theme. The webview's own `data-theme` only styles web content;
+/// without this the native title bar keeps following the OS theme even in Delta's dark mode.
+/// Tauri's `Theme` maps to the platform's title-bar appearance (Windows DWMWA dark title bar,
+/// macOS window appearance).
+#[tauri::command]
+fn set_native_theme(window: tauri::WebviewWindow, dark: bool) -> bool {
+    window
+        .set_theme(if dark {
+            Some(tauri::Theme::Dark)
+        } else {
+            Some(tauri::Theme::Light)
+        })
+        .is_ok()
+}
+
 // -- local dictation ---------------------------------------------------------------------------
 // The actual microphone/model code lives in the Tauri-free `ocw-stt` crate. This shell owns the
 // macOS permission prompt and translates the reusable API into React-friendly Tauri commands.
@@ -345,11 +361,20 @@ fn voice_input_compatibility() -> (bool, String, Option<String>) {
 
 #[cfg(target_os = "windows")]
 fn voice_input_compatibility() -> (bool, String, Option<String>) {
+    // `cmd /C ver` prints the localised "Windows [Version …]" line in the OEM codepage
+    // (e.g. GBK/CP936 on Chinese Windows); naive UTF-8 decoding turns '版本'/'Version'
+    // into replacement chars. We only need the ASCII "10.0.x" run, so broadcast-decode the
+    // bytes as CP936 (with lossy fallback) and pull the numeric tokens out of that — the
+    // number itself is pure ASCII and identical under any codepage.
+    let decode = |bytes: &[u8]| {
+        let (decoded, _, _) = encoding_rs::GBK.decode(bytes);
+        decoded.into_owned()
+    };
     let version = Command::new("cmd")
         .args(["/C", "ver"])
         .output()
         .ok()
-        .map(|output| String::from_utf8_lossy(&output.stdout).trim().to_owned())
+        .map(|output| decode(&output.stdout).trim().to_owned())
         .unwrap_or_else(|| "Windows (unknown version)".to_owned());
     let build = version
         .split(|character: char| !character.is_ascii_digit() && character != '.')
@@ -609,6 +634,7 @@ pub fn run() {
             get_keep_awake,
             set_keep_awake,
             start_window_drag,
+            set_native_theme,
             get_dictation_status,
             start_dictation,
             stop_dictation,
@@ -625,19 +651,24 @@ pub fn run() {
             install_update
         ])
         .setup(move |app| {
-            // 1. Start the Python server sidecar on the chosen port (inherits our env).
+            // Start the Python server sidecar on the chosen port (inherits our env).
             let mut server_cmd = Command::new(server_bin());
             server_cmd
-                .args(["--host", "127.0.0.1", "--port", &port.to_string()]);
-            // Portable mode (the root Delta.exe launcher sets DELTA_PORTABLE + the data
-            // env): seed the default workspace inside the portable Data dir so the Code
-            // persona opens <ROOT>\Data\workspace instead of a dev/home path. state_dir()
-            // already resolves to <ROOT>\Data via COWORKER_STATE_DIR, so this is recomputed
-            // from the current location on every launch — never a persisted absolute path.
-            if std::env::var("DELTA_PORTABLE").is_ok() {
-                server_cmd.arg("--cwd").arg(state_dir().join("workspace"));
-            }
-            // The sidecar self-exits if we die abruptly (dev-watcher restart, crash) —
+                .args(["--host", "127.0.0.1", "--port", &port.to_string()])
+                // Portable mode (the root Delta.exe launcher sets DELTA_PORTABLE + the data
+                // env): seed the default workspace inside the portable Data dir so the Code
+                // persona opens <ROOT>\Data\workspace instead of a dev/home path. state_dir()
+                // already resolves to <ROOT>\Data via COWORKER_STATE_DIR, so this is recomputed
+                // from the current location on every launch — never a persisted absolute path.
+                // DELTA_PORTABLE / COWORKER_STATE_DIR are forwarded explicitly rather than
+                // assumed inherited: the sidecar and the GUI may resolve different app-data
+                // dirs in edge cases, and the sidecar also needs DELTA_PORTABLE + DELTA_DATA_DIR
+                // (server scratch) even when the GUI env is passed through. Both vars are
+                // runtime-only — never persisted, always recomputed from the current location.
+                .env("DELTA_PORTABLE", std::env::var("DELTA_PORTABLE").unwrap_or_default())
+                .env("DELTA_DATA_DIR", std::env::var("DELTA_DATA_DIR").unwrap_or_default())
+                .env("COWORKER_STATE_DIR", state_dir())
+                // The sidecar self-exits if we die abruptly (dev-watcher restart, crash) —
                 // belt-and-suspenders alongside the RunEvent::ExitRequested kill below.
                 // The explicit PID matters: under PyInstaller onefile the python process is a
                 // *grandchild* (bootloader in between), so getppid() never points at us and a
@@ -696,10 +727,28 @@ pub fn run() {
 
             // 2. Build the window, injecting the sidecar endpoints before the SPA loads.
             //    Overlay title bar (macOS): traffic lights float over the edge-to-edge UI.
+            //
+            // Initial window = 65% of the primary monitor's work area (screen resolution minus
+            // taskbar/etc.), so the app adapts to whatever display it launches on. Falls back
+            // to the fixed 1360×900 default if the monitor can't be queried. work_area() is in
+            // PHYSICAL pixels while the builder's inner_size() takes LOGICAL pixels, so we
+            // scale by the monitors DPI factor before passing them in; the window is centered
+            // on that monitor rather than the default top-left placement.
+            let work = app.primary_monitor().ok().flatten();
+            let init_size = match work.as_ref() {
+                Some(m) => {
+                    let area = m.work_area();
+                    let sf = m.scale_factor();
+                    let w = area.size.width as f64 * 0.65 / sf;
+                    let h = area.size.height as f64 * 0.65 / sf;
+                    LogicalSize::new(w, h)
+                }
+                None => LogicalSize::new(1360.0, 900.0),
+            };
             let mut builder =
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                     .title("Delta")
-                    .inner_size(1360.0, 900.0)
+                    .inner_size(init_size.width, init_size.height)
                     .min_inner_size(980.0, 640.0)
                     // Let the WEBVIEW receive OS file drags: Tauri's own drag-drop handler
                     // otherwise intercepts them, so the composer's HTML5 onDrop (attach by
@@ -708,6 +757,17 @@ pub fn run() {
                     // composer navigating the page.
                     .disable_drag_drop_handler()
                     .initialization_script(&inject);
+            // Center on the primary monitor when we could query it (all positions/sizes are
+            // logical pixels here); otherwise leave the OS default placement.
+            if let Some(m) = work.as_ref() {
+                let sf = m.scale_factor();
+                let area = m.work_area();
+                let x = m.position().x as f64 / sf
+                    + (area.size.width as f64 / sf - init_size.width) / 2.0;
+                let y = m.position().y as f64 / sf
+                    + (area.size.height as f64 / sf - init_size.height) / 2.0;
+                builder = builder.position(x, y);
+            }
             #[cfg(target_os = "macos")]
             {
                 builder = builder
@@ -735,13 +795,12 @@ pub fn run() {
             let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open_i, &settings_i, &quit_i])?;
 
-            // A monochrome template icon (black + alpha, raw RGBA 44×44) so the menu bar tints
-            // it for light/dark automatically — not the full-color app icon.
-            let tray_icon = tauri::image::Image::new(include_bytes!("../icons/tray.rgba"), 44, 44);
+            // Full-color Delta brand icon (colored RGBA 32×32, downsampled from the same
+            // assets/logo as the desktop icon) so the tray matches the app icon.
+            let tray_icon = tauri::image::Image::new(include_bytes!("../icons/tray.rgba"), 32, 32);
             TrayIconBuilder::new()
                 .tooltip("Delta")
                 .icon(tray_icon)
-                .icon_as_template(true)
                 .menu(&menu)
                 .on_menu_event(|app, event| match event.id.as_ref() {
                     "open" => show_main(app),

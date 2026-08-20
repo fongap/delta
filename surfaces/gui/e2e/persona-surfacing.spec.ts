@@ -24,8 +24,7 @@ test("enabling an installed persona surfaces it in picker + sidebar without relo
   await expect(sidebar.getByText("Acme Notes")).toHaveCount(0);
 
   // Enable it on the Personas page.
-  await page.getByTestId("account-row").click();
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByTestId("sidebar-footer-settings").click();
   await page.getByRole("button", { name: "Personas", exact: true }).click();
   const row = page.locator(".divide-y > div").filter({ hasText: "Acme Notes" });
   // Controlled checkbox: the DOM state flips only after the POST round-trip, so click + expect
@@ -50,8 +49,7 @@ test("disabling a persona with conversations asks first, then archives them", as
   const sidebar = page.locator(".sidebar");
   await expect(sidebar.getByText("Ops", { exact: true })).toBeVisible();
 
-  await page.getByTestId("account-row").click();
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByTestId("sidebar-footer-settings").click();
   await page.getByRole("button", { name: "Personas", exact: true }).click();
   const row = page.locator(".divide-y > div").filter({ hasText: "Delta Ops" });
   const enabled = row.getByRole("checkbox", { name: "Enabled" });
@@ -76,8 +74,7 @@ test("disabling a persona with conversations asks first, then archives them", as
 
 test("disabling a persona with no conversations skips the confirm", async ({ page }) => {
   await page.goto("/");
-  await page.getByTestId("account-row").click();
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByTestId("sidebar-footer-settings").click();
   await page.getByRole("button", { name: "Personas", exact: true }).click();
   const row = page.locator(".divide-y > div").filter({ hasText: "Code" });
   const enabled = row.getByRole("checkbox", { name: "Enabled" });

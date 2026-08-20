@@ -8,9 +8,9 @@ import { test, expect } from "./fixtures";
 
 async function openInbox(page: import("@playwright/test").Page) {
   await page.goto("/");
-  // §26: the fixtures seed pending items, so the account row's inbox chip is unlocked and
-  // pending — clicking it goes STRAIGHT to Inbox (the menu is the row's target, not the chip's).
-  await page.getByTestId("inbox-chip").click();
+  // §26: the fixtures seed pending items, so the sidebar's inbox button is unlocked and
+  // pending — clicking it goes STRAIGHT to Inbox.
+  await page.getByTestId("sidebar-footer-inbox").click();
   await expect(page.getByText("Approve: run_shell")).toBeVisible();
 }
 

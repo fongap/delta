@@ -6,8 +6,7 @@ import { test, expect } from "./fixtures";
 
 test("skills-upload: preview installs nothing → confirm → uploaded badge", async ({ page }) => {
   await page.goto("/");
-  await page.getByTestId("account-row").click();
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByTestId("sidebar-footer-settings").click();
   await page.getByRole("button", { name: "Skills", exact: true }).click();
 
   // Add skill ▾ → Import a file → straight to the (hidden) picker.

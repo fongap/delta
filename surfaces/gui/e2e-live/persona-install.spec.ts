@@ -48,7 +48,7 @@ test("live: install a persona from a directory, enable it, and run a task as it"
   // Leave Settings (so the settings rows unmount), then start a fresh session AS the new persona.
   // Select by the unique tagline — it appears only on the dropdown item, whereas the name "E2E
   // Tester" also shows in the top bar/sidebar once a session is on it.
-  await page.getByRole("button", { name: "New session" }).click();
+  await page.getByRole("button", { name: "New task" }).click();
   await page.getByRole("button", { name: "Choose a persona" }).click();
   await page.getByText(/Throwaway persona/).click();
   await expect(page.getByText("E2E Tester").first()).toBeVisible(); // the session is this persona

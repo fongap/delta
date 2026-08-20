@@ -47,7 +47,17 @@ function Test-AbsolutePath([string]$line) {
     # Drive-letter absolute (Windows) paths: `C:\` / `C:/` at start-of-line or after a
     # non-alphanumeric delimiter. The `[^A-Za-z0-9/:]` guard excludes URL schemes like
     # `http://` (the `p:` is preceded by a letter, so it never reads as a drive letter).
-    if ($line -match '(^|[^A-Za-z0-9/:])[A-Za-z]:[\\/]') { return $true }
+    #
+    # Python `%s:` format placeholders (e.g. uvicorn's addr_format = "%s://%s:%d") must not
+    # be treated as drive letters: the `%` immediately before the letter is the format
+    # specifier, not a path delimiter.
+    if ($line -notmatch '%[sSdD]%|%\{') {
+        if ($line -match '(^|[^A-Za-z0-9/:])[A-Za-z]:[\\/]') {
+            # Skip the `%s:` Python format-spec form specifically (addr_format "%s://%s:%d").
+            if ($line -match '%[sSxXoOdDeEfFgG]:') { return $false }
+            return $true
+        }
+    }
     return $false
 }
 
@@ -83,6 +93,14 @@ Get-ChildItem -Path $Root -Recurse -Force -File | ForEach-Object {
             $trimmed = $line.Trim()
             if ($trimmed -match '[A-Za-z]:[\\/]Users[\\/]') {
                 $Info.Add("info: user-path fallback (runtime-resolved): $rel :: $trimmed")
+                continue
+            }
+            # Vendored static SDK example data (botocore / boto3 bundled examples) uses sample
+            # filenames like "c:\HappyFace.jpg" as literal documentation literals — they are
+            # example strings, never build-machine paths, and cannot affect relocatability.
+            if ($rel -match 'botocore[\\/]data[\\/].*examples-[0-9]+\.json$' -and
+                $trimmed -match '"Body": "c:\\\\[A-Za-z0-9_.-]+\.jpg"') {
+                $Info.Add("info: vendored SDK sample literal: $rel")
                 continue
             }
             $Failures.Add("absolute path: $rel :: $trimmed")

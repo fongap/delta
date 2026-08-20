@@ -8,8 +8,7 @@ import { test } from "./fixtures";
 
 async function openModels(page) {
   await page.goto("/");
-  await page.getByTestId("account-row").click();
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByTestId("sidebar-footer-settings").click();
   await page.getByRole("button", { name: "Models", exact: true }).click();
   await expect(page.getByTestId("set-provider-openai")).toBeVisible();
 }

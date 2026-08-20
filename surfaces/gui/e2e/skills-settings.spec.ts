@@ -6,8 +6,7 @@ import { test, expect } from "./fixtures";
 
 const openSkills = async (page: import("@playwright/test").Page) => {
   await page.goto("/");
-  await page.getByTestId("account-row").click();
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByTestId("sidebar-footer-settings").click();
   await page.getByRole("button", { name: "Skills", exact: true }).click();
 };
 

@@ -18,7 +18,7 @@ test("top-left cluster renders only while the sidebar is collapsed", async ({ pa
   const cluster = page.getByTestId("topbar-cluster");
   await expect(cluster).toBeVisible();
   await expect(cluster.getByRole("button", { name: "Show sidebar" })).toBeVisible();
-  await expect(cluster.getByRole("button", { name: "New session" })).toBeVisible();
+  await expect(cluster.getByRole("button", { name: "New task" })).toBeVisible();
   await expect(cluster.getByRole("button", { name: "Search" })).toBeVisible();
   await expect(page.locator(".nav-reveal-btn")).toHaveCount(0);
 

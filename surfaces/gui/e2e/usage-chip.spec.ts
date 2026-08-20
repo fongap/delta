@@ -62,7 +62,7 @@ test("usage resets on a new session", async ({ page }) => {
   await expect(page.getByTestId("usage-chip")).toBeVisible({ timeout: 10_000 });
 
   // "＋ New session" wipes the transcript — and the usage accumulation with it.
-  await page.getByRole("button", { name: /New session/ }).first().click();
+  await page.getByRole("button", { name: /New task/ }).first().click();
   await expect(page.getByTestId("usage-chip")).toHaveCount(0);
 });
 
@@ -76,8 +76,7 @@ test("Settings toggle turns the context bar on; default is the session total", a
   await expect(chip).toContainText("10k", { timeout: 10_000 }); // default: total, no bar
 
   // Turn the bar ON in Settings -> General.
-  await page.getByTestId("account-row").click();
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByTestId("sidebar-footer-settings").click();
   await expect(page.getByTestId("context-bar-toggle")).not.toBeChecked();
   const [req] = await Promise.all([
     page.waitForRequest(

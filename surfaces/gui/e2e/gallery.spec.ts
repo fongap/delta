@@ -9,8 +9,7 @@ async function openPersonas(page) {
   // Personas is launch-flagged off by default — these suites cover the flagged-on flows.
   await page.addInitScript(() => localStorage.setItem("ocw.flag.personas", "1"));
   await page.goto("/");
-  await page.getByTestId("account-row").click();
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByTestId("sidebar-footer-settings").click();
   await page.getByRole("button", { name: "Personas", exact: true }).click();
   await expect(page.getByTestId("gallery-link")).toBeVisible();
 }

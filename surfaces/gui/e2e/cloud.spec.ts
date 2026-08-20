@@ -6,14 +6,15 @@ import { test } from "./fixtures";
 
 async function openConnectors(page) {
   await page.goto("/");
-  await page.getByTestId("account-row").click();
-  await page.getByTestId("account-menu").getByRole("button", { name: "Connectors", exact: true }).click();
+  await page.getByTestId("account-row").click(); // signed out → triggers login directly
+  await expect(page.getByTestId("account-row")).toContainText("Rohit", { timeout: 10_000 });
+  await page.getByTestId("account-row").click(); // now signed in → opens account menu
+  await page.getByRole("button", { name: "Connectors", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Connectors" })).toBeVisible();
 }
 
 async function signIn(page) {
-  await page.getByTestId("account-row").click();
-  await page.getByTestId("account-sign-in").click();
+  await page.getByTestId("account-row").click(); // signed out → triggers login directly
   await expect(page.getByTestId("account-row")).toContainText("Rohit", { timeout: 10_000 });
 }
 
@@ -24,12 +25,15 @@ test("signed out: the account row is the sign-in home; managed connector still c
   const row = page.getByTestId("account-row");
   await expect(row).toContainText("Not signed in");
 
-  // The menu leads with the sign-in CTA and always lists Inbox + Connectors.
+  // When signed out, clicking the account-row triggers login directly (no menu). After
+  // the mock flips, the row carries the account name.
+  await row.click();
+  await expect(row).toContainText("Rohit", { timeout: 10_000 });
+
+  // Now signed in → clicking the row opens the account menu, which lists Connectors.
   await row.click();
   const menu = page.getByTestId("account-menu");
-  await expect(menu).toContainText("one-click connections need Delta Cloud");
-  await expect(menu.getByTestId("account-sign-in")).toBeVisible();
-  await expect(menu.getByRole("button", { name: "Inbox" })).toBeVisible();
+  await expect(menu).toContainText("rohit@openworker.com");
   await menu.getByRole("button", { name: "Connectors", exact: true }).click();
 
   // The managed-capable connector's add-modal shows the hint + manual fields, no
@@ -59,23 +63,20 @@ test("signed in: account row shows the name; one-click appears; sign out from th
   const menu = page.getByTestId("account-menu");
   await expect(menu).toContainText("rohit@openworker.com");
   await menu.getByRole("button", { name: "Sign out" }).click();
-  await page.getByTestId("account-row").click(); // reopen → status refetch
-  await expect(page.getByTestId("account-row")).toContainText("Not signed in");
+  await expect(page.getByTestId("account-row")).toContainText("Not signed in", { timeout: 10_000 });
 });
 
 test("telemetry/Privacy card is gone from Settings (owner ask 2026-07-22), signed in or out", async ({
   page,
 }) => {
   await page.goto("/");
-  await page.getByTestId("account-row").click();
-  await page.getByTestId("account-menu").getByRole("button", { name: "Settings" }).click();
+  await page.getByTestId("sidebar-footer-settings").click();
   await expect(page.getByRole("heading", { name: "General" })).toBeVisible();
   await expect(page.getByTestId("telemetry-toggle")).toHaveCount(0);
   await expect(page.getByText("Privacy", { exact: true })).toHaveCount(0);
 
   await signIn(page);
-  await page.getByTestId("account-row").click();
-  await page.getByTestId("account-menu").getByRole("button", { name: "Settings" }).click();
+  await page.getByTestId("sidebar-footer-settings").click();
   await expect(page.getByTestId("telemetry-toggle")).toHaveCount(0);
   await expect(page.getByText("Privacy", { exact: true })).toHaveCount(0);
 });

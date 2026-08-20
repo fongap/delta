@@ -60,12 +60,7 @@ export function SessionIntro({
 
   return (
     <div className="intro">
-      <h1 className="greeting">
-        <span className="mark">✦</span> {t("sessionIntro.greeting")}
-      </h1>
-      <p className="intro-lede">
-        {t("sessionIntro.lede")}
-      </p>
+      <h1 className="greeting">{t("sessionIntro.greeting")}</h1>
 
       <div className="intro-tasks">
         <button className="task-card" data-testid="intro-task-folder" onClick={pickFolder}>

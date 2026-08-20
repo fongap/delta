@@ -916,18 +916,18 @@ function ModeMenu({
             {onUnattendedChange && (
               <>
                 <div className="my-1 border-t border-line" />
-                <div className="flex items-center gap-2 px-2.5 py-1.5">
-                  <span className="flex-1 min-w-0">
-                    <span className="block text-[13px] text-ink">{t("composer.sendApprovalsInbox", undefined, "Send approvals to Inbox")}</span>
-                    <span className="block text-[11px] text-faint leading-snug">
-                      {t("composer.sendApprovalsInboxDesc", undefined, "Approvals & questions go to the Inbox; the agent keeps working.")}
-                    </span>
+                <div className="px-2.5 py-1.5">
+                  <div className="flex items-center gap-2">
+                    <span className="flex-1 min-w-0 text-[13px] text-ink">{t("composer.sendApprovalsInbox", undefined, "Send approvals to Inbox")}</span>
+                    <Toggle
+                      checked={!!unattended}
+                      onChange={onUnattendedChange}
+                      title={t("composer.sendApprovalsInbox", undefined, "Send approvals to the Inbox")}
+                    />
+                  </div>
+                  <span className="block text-[11px] text-faint leading-snug mt-0.5">
+                    {t("composer.sendApprovalsInboxDesc", undefined, "Approvals & questions go to the Inbox; the agent keeps working.")}
                   </span>
-                  <Toggle
-                    checked={!!unattended}
-                    onChange={onUnattendedChange}
-                    title={t("composer.sendApprovalsInbox", undefined, "Send approvals to the Inbox")}
-                  />
                 </div>
               </>
             )}

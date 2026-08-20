@@ -3,6 +3,7 @@
 // reachable. index.html sets data-theme inline pre-paint with the same key, so the first
 // frame is already the right color; this module keeps it current from then on.
 import { useEffect, useState } from "react";
+import { isTauri, setNativeTheme } from "./tauri";
 
 export type ThemePref = "light" | "dark" | "auto";
 
@@ -22,6 +23,9 @@ export function getThemePref(): ThemePref {
 function apply(pref: ThemePref) {
   const dark = pref === "dark" || (pref === "auto" && !!media?.matches);
   document.documentElement.dataset.theme = dark ? "dark" : "light";
+  // Follow the webview theme in the native chrome too (Windows/Linux title bar, macOS
+  // window appearance). Fire-and-forget: the browser build has no shell to talk to.
+  if (isTauri()) void setNativeTheme(dark);
 }
 
 export function setThemePref(pref: ThemePref) {

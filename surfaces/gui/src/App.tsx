@@ -43,8 +43,9 @@ import type {
 } from "./types";
 import { isProjectScoped } from "./personaScope";
 import { I18nProvider } from "./i18n/I18nContext";
-import { normalizeLocale } from "./i18n/dictionaries";
+import { dictionaries, normalizeLocale } from "./i18n/dictionaries";
 import type { Locale } from "./i18n/types";
+import { en, type TranslationKey } from "./i18n/en";
 import { baseName } from "./paths";
 import { itemsFromMessages } from "./itemsFromMessages";
 import { addTurnUsage, emptyUsage, usageFromMessages } from "./usage";
@@ -53,10 +54,10 @@ import { InboxItemCard } from "./components/InboxItemCard";
 import { isTauri, platformOS, startWindowDrag } from "./tauri";
 import { Icon } from "./components/Icon";
 import { Sidebar } from "./components/Sidebar";
-import { ThinkingBlock, Transcript } from "./components/Transcript";
+import { TopbarSearch } from "./components/TopbarSearch";
 import { Composer } from "./components/Composer";
+import { ThinkingBlock, Transcript } from "./components/Transcript";
 import { Markdown } from "./components/Markdown";
-import { SearchModal } from "./components/SearchModal";
 import { SessionIntro } from "./components/SessionIntro";
 import { FolderGate } from "./components/FolderGate";
 import { Onboarding } from "./components/Onboarding";
@@ -161,6 +162,9 @@ function fallbackWorkspace(current: string | null, projects: RecentWorkspace[]):
 
 export function App() {
   const [locale, setLocaleState] = useState<Locale>(() => normalizeLocale(navigator.language));
+  // App hosts the I18nProvider, so its own shell strings resolve straight from the locale's
+  // dictionary (mirrors useI18n().t with no fallback: keys are required in both locales).
+  const tr = (key: TranslationKey): string => dictionaries[locale][key] ?? en[key];
   const [workspace, setWorkspace] = useState<string | null>(null);
   const [branch, setBranch] = useState<string | null>(null);
   const [showGate, setShowGate] = useState(false);
@@ -316,9 +320,6 @@ export function App() {
     window.addEventListener("ocw-open-artifact", show);
     return () => window.removeEventListener("ocw-open-artifact", show);
   }, []);
-  // The command-palette search, openable from the collapsed-sidebar topbar cluster (§22). The
-  // expanded sidebar owns its own instance; this one exists so search never disappears with it.
-  const [searchOpen, setSearchOpen] = useState(false);
   // A pending composer prefill (text + attachments) pushed from the session start panel.
   const [composerPrefill, setComposerPrefill] = useState<{ text: string; attachments?: Attachment[]; nonce: number }>();
 
@@ -1215,7 +1216,7 @@ export function App() {
   const subtitleParts = [modelDisplay];
   if (isProjectScoped(personaOf(agent)) && workspace) subtitleParts.push(baseName(workspace));
   const activeInfo = sessions.find((s) => s.session_id === sessionId);
-  const activeTitle = activeInfo?.title || "New session";
+  const activeTitle = activeInfo?.title || tr("nav.newSession");
 
   const desktop = isTauri();
   // Dev-only: `?overlay=1` simulates the desktop overlay layout in the browser (adds the
@@ -1239,7 +1240,7 @@ export function App() {
         {overlay && (
           <div className="titlebar-drag" data-tauri-drag-region>
             <span className="titlebar-brand brand-wordmark">
-              <Icon name="logo" size={13} className="mark" /> Delta<span className="beta-tag">BETA</span>
+              <Icon name="logo" size={13} className="mark" /> Delta
             </span>
           </div>
         )}
@@ -1255,7 +1256,6 @@ export function App() {
         </div>
         <div className="boot-text">
           {resumedExisting ? "Restoring your session…" : "Starting Delta…"}
-          <span className="beta-tag">BETA</span>
         </div>
       </div>
     );
@@ -1458,18 +1458,10 @@ export function App() {
                 <button
                   className="topbar-icon-btn"
                   onClick={() => startNewSession()}
-                  aria-label="New session"
-                  title="New session"
+                  aria-label={tr("nav.newSession")}
+                  title={tr("nav.newSession")}
                 >
                   <Icon name="plus" size={16} />
-                </button>
-                <button
-                  className="topbar-icon-btn"
-                  onClick={() => setSearchOpen(true)}
-                  aria-label="Search"
-                  title="Search"
-                >
-                  <Icon name="search" size={16} />
                 </button>
               </div>
             )}
@@ -1495,13 +1487,19 @@ export function App() {
               </span>
             )}
           </div>
-          {/* Right: session-settings icon (§23) + panel toggle. Model/mode/persona chrome is
-              gone — the facts live in the subtitle, the controls in the composer (§22). */}
+          {/* Right: global search (A1 — moved up from the sidebar so it survives collapse) +
+              artifacts + the one session-panel toggle. Model/mode/persona chrome is gone — the
+              facts live in the subtitle, the controls in the composer (§22). */}
           <div className="main-topbar-side main-topbar-actions" onPointerDown={beginWindowDrag}>
+            <TopbarSearch
+              sessions={sessions}
+              personas={personas ?? undefined}
+              onSelect={selectSession}
+            />
             {agent === "cowork" && railHidden && artifactCount > 0 && (
               <button
                 className="topbar-artifacts-btn"
-                onMouseDown={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
                 onClick={() => setRailHidden(false)}
                 title="Show files this conversation produced"
               >
@@ -1515,7 +1513,7 @@ export function App() {
             {agent !== "chat" && (
               <button
                 className="topbar-icon-btn"
-                onMouseDown={(e) => e.stopPropagation()}
+                onPointerDown={(e) => e.stopPropagation()}
                 onClick={() => setRailHidden((h) => !h)}
                 aria-label={railHidden ? "Show side panel" : "Hide side panel"}
                 title={railHidden ? "Show side panel" : "Hide side panel"}
@@ -1568,10 +1566,7 @@ export function App() {
                   />
                 ) : (
                   <div className="hero">
-                    <h1 className="greeting">
-                      <span className="mark">✦</span>
-                      {agent === "chat" ? "How can I help?" : "Let's build something."}
-                    </h1>
+                    <h1 className="greeting">{agent === "chat" ? tr("sessionIntro.greeting") : "Let's build something."}</h1>
                     {needsWorkspace(agent) && (
                       <div className="suggestions">
                         <div className="suggest-head">Try a task</div>
@@ -1668,10 +1663,10 @@ export function App() {
               contextBar={contextBar}
               placeholder={
                 agent === "code"
-                  ? "Ask the coder to build, fix, or explain…  (drop or paste files)"
+                  ? tr("composer.placeholderCode")
                   : agent === "chat"
-                    ? "Ask anything…  (drop or paste files)"
-                    : "Ask Delta…  (drop or paste files)"
+                    ? tr("composer.placeholderChat")
+                    : tr("composer.placeholderCoworker")
               }
               approvalSlot={
                 // Live inline cards are for ATTENDED sessions only; when Unattended the prompt is
@@ -1731,20 +1726,6 @@ export function App() {
           />
         </div>
       </div>
-      )}
-
-      {/* Search from the collapsed-sidebar topbar cluster (the sidebar's own instance is
-          unreachable while it's collapsed). */}
-      {searchOpen && (
-        <SearchModal
-          sessions={sessions}
-          personas={personas ?? undefined}
-          onSelect={(id, ws, ag) => {
-            setSearchOpen(false);
-            selectSession(id, ws, ag);
-          }}
-          onClose={() => setSearchOpen(false)}
-        />
       )}
 
       {showGate && surface === "session" && gatesWorkspace(agent) && (

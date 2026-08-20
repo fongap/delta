@@ -121,7 +121,7 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
         {step === 0 && (
           <section data-testid="ob-step-model" className="flex-1 min-h-0 flex flex-col">
             {/* Persistent header — stays put while the region below swaps (§39). */}
-            <h1 className="text-[19px] font-semibold">{t("onboarding.welcomeTitle")}<span className="beta-tag">BETA</span></h1>
+            <h1 className="text-[19px] font-semibold">{t("onboarding.welcomeTitle")}</h1>
             <p className="text-[13px] text-muted mt-0.5 mb-4">
               {t("onboarding.pickProvider")}
             </p>

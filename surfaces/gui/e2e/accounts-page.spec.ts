@@ -6,15 +6,14 @@ import { test } from "./fixtures";
 
 async function openConnectors(page) {
   await page.goto("/");
-  await page.getByTestId("account-row").click();
+  await page.getByTestId("account-row").click(); // triggers login
+  await expect(page.getByTestId("account-row")).toContainText("Rohit", { timeout: 10_000 });
+  await page.getByTestId("account-row").click(); // now signed in → opens menu
   await page.getByRole("button", { name: "Connectors", exact: true }).click();
 }
 
 async function signInAndConnectFirstWorkspace(page) {
-  await openConnectors(page);
-  await page.getByTestId("account-row").click();
-  await page.getByTestId("account-sign-in").click();
-  await expect(page.getByTestId("account-row")).toContainText("Rohit", { timeout: 10_000 });
+  await openConnectors(page); // openConnectors signs in
   // Available row → modal with One click | Manual pills → generic one-click
   await page
     .getByTestId("connector-notion")
@@ -67,7 +66,11 @@ test("Make default moves the badge; disconnecting the default repoints it", asyn
 test("signed out: the modal's one-click pane offers inline cloud sign-in; manual pane has the token form", async ({
   page,
 }) => {
-  await openConnectors(page);
+  await openConnectors(page); // signs in
+  // sign out to return to the signed-out state so the modal shows inline-cloud-sign-in
+  await page.getByTestId("account-row").click(); // opens account menu
+  await page.getByRole("button", { name: "Sign out", exact: true }).click();
+  await expect(page.getByTestId("account-row")).not.toContainText("Rohit", { timeout: 10_000 });
   await page
     .getByTestId("connector-notion")
     .getByRole("button", { name: "Connect", exact: true })

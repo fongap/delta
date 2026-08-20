@@ -6,14 +6,73 @@
 
 ### 新增 (Added)
 
+#### 2026-08-20 08:14
+
+- **原生窗口标题栏跟随应用主题**
+  - 新增 `set_native_theme` Tauri 命令（封装 `WebviewWindow::set_theme`）：Webview 的 `data-theme` 只影响网页内容，此前在 Delta 深色模式下原生标题栏仍随系统主题；现由前端 `theme.ts` 的 `apply()` 在初始化、手动切换及 auto 跟随系统时一并下推深浅，使 Windows DWMWA 标题栏、macOS 窗口外观与界面一致。浏览器构建下该命令无 shell 可调，自然回退为空操作。
+
 #### 2026-08-19 14:07
 
 - **Delta Windows 便携版（DeltaPortable）打包**
   - 新增 `packaging/build_portable.ps1`：按现有 `build_windows.ps1` 流程构建服务器 sidecar 与 Tauri 应用（`tauri build --no-bundle`），将已构建的根启动器嵌入为 `Delta.exe`，组装可整体移动的 `App/Data/Other/AppInfo` 目录结构，并产出可重新分发的 ZIP + SHA-256。
+  - 新增 `packaging/build_portable.ps1` 二进制名解析：构建的可执行名取自 `Cargo.toml`（`[package] name`，如 `openworker-desktop`），而非 `tauri.conf.json` 的 `productName`（Delta），并在 `App\Delta\` 中按 productName 改名落地。
   - 新增 `packaging/scan_portable_paths.ps1` 作为发布门禁：扫描打包树中所有文本与二进制字符串，检出构建机的绝对路径/源码路径泄漏（如 `C:\...`、repo 根目录），命中即构建失败，确保便携版完全可重定位。
-  - 便携版行为与 `packaging/portable/launcher` 一致：运行时由 `Delta.exe` 自身位置解析根目录，`COWORKER_STATE_DIR` 指向 `Data\`，密钥/数据/日志全部随文件夹移动，不写注册表、不依赖 `%APPDATA%`。
+  - 便携版经多位置实测验证可整体重定位：`C:\DeltaPortable\`、`D:\Portable Apps\DeltaPortable\`、中文+空格+特殊字符路径 `G:\AI工具\深层 目录 & 测试(1)\子目录-嵌套_更多\Delta 工作助手(改名&测试)\` 下均正常启动；状态/密钥/日志/数据库全部落在 `<ROOT>\Data\`，未触碰 `%APPDATA%`，与开发/安装模式数据隔离。
 
 ### 变更 (Changed)
+
+#### 2026-08-20 06:47
+
+- **Voice Input 本地模型切换为多语言 Whisper Base**
+  - 默认语音模型由仅英文的 `ggml-base.en.bin` 换为多语言 `ggml-base.bin`（147,951,465 字节，SHA-256 已更新），转写时不再强制 `language=en`，改为自动检测语种，中文等非英语语音可直接转写。
+  - 同步更新模型名展示（"Whisper Base (local)"）与 GUI 提示文案/测试夹具中的字节数。
+
+#### 2026-08-20 06:17
+
+- **Composer 报批开关同行布局 + Settings 路径按钮配色**
+  - Composer ModeMenu 的「发送到收件箱」开关（unattended Toggle）从原独占一行的标签-描述-开关垂直布局改为：开关与「发送到收件箱」标签同行，说明文字单独另起一行；降低紧凑度符合报批模式的同行交互预期。
+  - Settings · 文件卡「选择文件夹」浏览按钮配色由边框式（`BTN_BORDERED`）改为 accent 强调式 (`bg-accentSoft text-accent border-accent`)，使其与同行「保存」主键按钮视觉一致，hover 不透明度反馈。
+
+#### 2026-08-20 05:24
+
+- **Composer 模式菜单文案本地化**
+  - 三种权限模式（讨论 / 审批 / 自动）的标签与描述由硬编码英文回退改为 i18n key（`access.mode.discuss` / `interactive` / `auto` 及其 `Desc` 后缀），zh 值分别为「讨论模式—仅讨论，不执行」「审批模式—执行前需获得批准」「自动模式—无需批准，自动执行全部操作」。
+
+#### 2026-08-20 05:20
+
+- **Access 展示文案本地化（"Access" → "访问权限"）**
+  - 右侧栏 Access 区块标题由硬编码英文回退文案改为 i18n key `access.sectionTitle`，zh 值为「访问权限」（此前缺 key 时回退英文 "Access"），与 `connectors.access` "访问权限" 一致。
+
+#### 2026-08-20 05:08
+
+- **侧边栏底部账户行改为四图标操作**
+  - 侧边栏底部由单一账户行改为四个统一图标：收件箱（Inbox）、活动（Activity）、登录（Sign-in）、设置（Settings），各带一对一 hover 提示。
+  - 登录图标承载账户菜单：已登录 → 点击打开账户菜单（邮箱身份、Connectors 入口、退出登录）；未登录 → 点击直接触发 Delta Cloud 登录。
+  - 收件箱图标保留待办计数徽章；Inbox、Activity、Settings 不再出现在账户菜单内，均为底部直达图标。Automations 仍为侧栏一级导航行。
+  - 同步迁移约 35 个 e2e 用例至新 testid 与结构（`sidebar-footer-inbox` / `sidebar-footer-activity` / `sidebar-footer-settings` / `nav-automations`；移除 `account-sign-in`、`inbox-chip` 旧标识）。
+
+#### 2026-08-20 03:54
+
+- **全局搜索入口移至顶部工具栏**
+  - 搜索入口从侧边栏（自动化与设置之间）移到顶部工具栏右侧、与 Delta 品牌同行的位置；默认仅显示放大镜图标，点击展开为输入框并自动聚焦，点击外部/Esc 自动收起，宽/窄屏下位置一致。
+  - 新增 `TopbarSearch` 组件，展开后输入并回车打开命令面板（`SearchModal`）；侧边栏搜索按钮及其独立 `SearchModal` 实例已移除，侧栏折叠时搜索依然可达。
+
+#### 2026-08-19 22:08
+
+- **侧边栏 / 输入区 / 文件 / 受信任工作区 / 设置 / 更新模块 UI 汉化**
+  - 将 Sidebar、Composer、Files、Trusted workspaces、Settings（Voice、Sidebar、Composer、Files、Trusted workspaces、Update、PDF、Compaction 等卡片）及 Update 模块的硬编码英文文案统一收敛到集中式 i18n 字典（`en.ts` / `zh.ts`），组件内改为 `t()` 调用，缺失键回退英文。
+  - 新增 `access.folderCount`、`settings.workspace.allowanceCount` 等带运行时插值（`{n}`）的键，随界面语言切换动态翻译。
+
+#### 2026-08-19 20:16
+
+- **品牌色调与标识统一**
+  - 品牌色 `--brand` 由钴蓝 `#2563eb` 改为 logo 背景色 `#286f78`（浅/深双主题一致），logo/品牌标识统一为 teal。
+  - 托盘图标由 44×44 黑色 monochrome 模板图改为 32×32 彩色品牌 logo（同一 `assets/logo` 下采样），去掉 `icon_as_template(true)`，托盘与桌面图标一致。
+  - 去除全部 4 处 BETA 徽章（titlebar、启动页、onboarding、sidebar）及 `.beta-tag` 样式。
+
+- **“新建会话”更名为“新任务”**
+  - 新建动作可见文案统一为“New task / 新任务”：侧边栏新建按钮、顶栏新建按钮（aria-label/title）、标题栏回退文案；下拉菜单“Start a session as / 以以下身份开始会话”→“Start as / 选择身份开始”；同步 `nav.newChat` 与 Slack 说明图。
+  - 内部 session/conversation 术语、后端与数据库标识保持不变。
 
 #### 2026-08-19 03:08
 
@@ -48,6 +107,22 @@
   - 修复 `AutomationQuickstart.tsx` 中未定义的 `line2` 工具类 → `line`。
 
 ### 修复 (Fixed)
+
+#### 2026-08-20 06:29
+
+- **Voice Input 系统信息在中文 Windows 乱码**
+  - `voice_input_compatibility` 读取 Windows 版本号（`cmd /C ver`）时，对 `from_utf8_lossy` 直接解码 OEM 字节（中文 Windows 下为 GBK/CP936），导致「版本」→ `·本§` 乱码；改为 `encoding_rs::GBK.decode` 广播解码，版本号为纯 ASCII 字段不受影响，`device_summary` 在中/英文 Windows 下均显示正常。
+  - 新增 `encoding_rs` 依赖。
+
+#### 2026-08-20 03:54
+
+- **顶栏右侧面板切换按钮点击无响应**
+  - 右侧操作区（`.main-topbar-actions`）的窗口拖拽 `onPointerDown` 抢先触发原生窗口拖动，使产物/侧栏面板切换按钮的 `onMouseDown` 拦截失效；改用 `onPointerDown` 停止冒泡，与折叠导航簇的既有模式一致。
+
+#### 2026-08-19 22:13
+
+- **补全 `skills.install` 缺失 i18n key**
+  - SkillsTab 上传确认按钮（"Install skill"）此前引用不存在的 `skills.install` 键，运行时触发 `[i18n] missing key` 警告并回退英文；已在 en.ts/zh.ts 补充（"Install skill" / "安装技能"），随界面语言正常翻译。
 
 #### 2026-08-19 03:40
 

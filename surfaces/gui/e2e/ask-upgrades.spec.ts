@@ -87,7 +87,7 @@ async function seedInbox(page: Page, items: Record<string, unknown>[]) {
 
 async function openInbox(page: Page, expectTitle: string) {
   await page.goto("/");
-  await page.getByTestId("inbox-chip").click();
+  await page.getByTestId("sidebar-footer-inbox").click();
   await expect(page.getByText(expectTitle)).toBeVisible();
 }
 

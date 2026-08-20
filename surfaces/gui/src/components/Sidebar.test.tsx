@@ -238,7 +238,7 @@ describe("New-session split button", () => {
 
     // ▾ opens the persona menu: enabled personas appear, the disabled one does not, plus a manage entry.
     fireEvent.click(screen.getByLabelText("Choose a persona"));
-    const menu = (await screen.findByText("Start a session as")).closest(".newsplit-menu") as HTMLElement;
+    const menu = (await screen.findByText("Start as")).closest(".newsplit-menu") as HTMLElement;
     const w = within(menu);
     expect(w.getByText("Ops")).toBeTruthy();
     expect(w.getByText("Code")).toBeTruthy();
@@ -264,7 +264,7 @@ describe("New-session split button", () => {
     renderSidebar(<Sidebar {...baseProps} />);
     await screen.findByLabelText("Group and filter conversations");
     fireEvent.click(screen.getByLabelText("Choose a persona"));
-    const menu = (await screen.findByText("Start a session as")).closest(".newsplit-menu") as HTMLElement;
+    const menu = (await screen.findByText("Start as")).closest(".newsplit-menu") as HTMLElement;
     expect(within(menu).getByText("Ops")).toBeTruthy();
     expect(within(menu).queryByText("Manage personas…")).toBeNull();
   });

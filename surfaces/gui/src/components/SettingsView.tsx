@@ -155,8 +155,12 @@ export function SettingsView({
 }
 
 // -- Voice input: deliberate model provisioning + compatibility + microphone test (§37) --------
-const voiceError = (error: unknown) =>
-  error instanceof Error ? error.message : typeof error === "string" ? error : "Voice Input could not complete that action.";
+const voiceError = (error: unknown, t: (k: string, v?: Record<string, string | number>, f?: string) => string) =>
+  error instanceof Error
+    ? error.message
+    : typeof error === "string"
+      ? error
+      : t("settings.voice.errorGeneric", undefined, "Voice Input could not complete that action.");
 
 const formatBytes = (bytes: number) => {
   if (!bytes) return "0 MiB";
@@ -196,7 +200,7 @@ function VoiceInputSection() {
           const verified = await verifyDictationModel();
           if (active) publish(verified);
         } catch (verifyError) {
-          if (active) setError(voiceError(verifyError));
+          if (active) setError(voiceError(verifyError, t));
         } finally {
           if (active) setPhase("idle");
         }
@@ -216,7 +220,7 @@ function VoiceInputSection() {
     try {
       publish(await downloadDictationModel());
     } catch (downloadError) {
-      setError(voiceError(downloadError));
+      setError(voiceError(downloadError, t));
       const latest = await getDictationStatus();
       if (latest) publish(latest);
     } finally {
@@ -234,7 +238,7 @@ function VoiceInputSection() {
       publish(await deleteDictationModel());
       await download();
     } catch (repairError) {
-      setError(voiceError(repairError));
+      setError(voiceError(repairError, t));
     }
   };
 
@@ -246,7 +250,7 @@ function VoiceInputSection() {
       setTestTranscript("");
       setProgress(null);
     } catch (deleteError) {
-      setError(voiceError(deleteError));
+      setError(voiceError(deleteError, t));
     }
   };
 
@@ -266,7 +270,7 @@ function VoiceInputSection() {
         publish(await startDictation());
       }
     } catch (testError) {
-      setError(voiceError(testError));
+      setError(voiceError(testError, t));
       const latest = await getDictationStatus();
       if (latest) publish(latest);
     } finally {
@@ -309,10 +313,10 @@ function VoiceInputSection() {
               )}
             </div>
             <div className="border-t border-line bg-paper/50 px-4 py-3 grid grid-cols-2 gap-3 text-[12px] text-muted">
-              <div><span className="block text-ink font-medium">Mac</span>macOS 12+ · Apple Silicon M1+</div>
-              <div><span className="block text-ink font-medium">Windows</span>Windows 10 22H2/11 · x64</div>
-              <div><span className="block text-ink font-medium">{t("settings.voice.memory")}</span>8 GB recommended</div>
-              <div><span className="block text-ink font-medium">{t("settings.voice.processor")}</span>4 CPU cores recommended</div>
+              <div><span className="block text-ink font-medium">{t("settings.voice.reqMac")}</span>{t("settings.voice.reqMacSpec")}</div>
+              <div><span className="block text-ink font-medium">{t("settings.voice.reqWin")}</span>{t("settings.voice.reqWinSpec")}</div>
+              <div><span className="block text-ink font-medium">{t("settings.voice.memory")}</span>{t("settings.voice.memoryReq")}</div>
+              <div><span className="block text-ink font-medium">{t("settings.voice.processor")}</span>{t("settings.voice.cpuReq")}</div>
             </div>
           </div>
 
@@ -320,9 +324,9 @@ function VoiceInputSection() {
             <div className="p-4 flex items-center gap-3">
               <div className="w-9 h-9 rounded-lg bg-accentSoft text-accent grid place-items-center font-semibold">W</div>
               <div className="min-w-0 flex-1">
-                <div className="text-[13.5px] font-medium">Whisper Base · English</div>
+              <div className="text-[13.5px] font-medium">Whisper Base</div>
                 <div className="text-[12px] text-muted mt-0.5">
-                  {status?.model_verified ? t("settings.voice.installedAndVerified", { size: formatBytes(status.model_bytes) }) : t("settings.voice.localVoiceModel", { size: formatBytes(status?.model_bytes || 147_964_211) })}
+                  {status?.model_verified ? t("settings.voice.installedAndVerified", { size: formatBytes(status.model_bytes) }) : t("settings.voice.localVoiceModel", { size: formatBytes(status?.model_bytes || 147_951_465) })}
                 </div>
               </div>
               {status?.model_verified ? (
@@ -505,13 +509,14 @@ function AppearanceSection() {
           </button>
           {desktop && <UpdateInline />}
         </div>
-        <div className={FIELD_HELP}>Replays the first-run setup: model, first automation, tips.</div>
+        <div className={FIELD_HELP}>{t("settings.general.setupUpdatesHelp")}</div>
       </div>
     </section>
   );
 }
 
 function TrustedWorkspacesCard() {
+  const { t } = useI18n();
   const [workspaces, setWorkspaces] = useState<WorkspaceCommandTrust[] | null>(null);
 
   const refresh = () =>
@@ -524,21 +529,19 @@ function TrustedWorkspacesCard() {
   }, []);
 
   const revoke = async (path: string) => {
-    if (!window.confirm(`Revoke command trust for ${path}?`)) return;
+    if (!window.confirm(t("settings.workspace.confirmRevoke", { path }))) return;
     await setWorkspaceTrusted(path, false);
     refresh();
   };
 
   return (
     <div className={CARD + " p-4 mb-4"} data-testid="trusted-workspaces-card">
-      <div className={FIELD_LABEL}>Trusted workspaces</div>
-      <div className={FIELD_HELP}>
-        Trusted projects may manage their command allowances in .coworker/config.toml.
-      </div>
+      <div className={FIELD_LABEL}>{t("settings.workspace.title")}</div>
+      <div className={FIELD_HELP}>{t("settings.workspace.help")}</div>
       {workspaces === null ? (
-        <div className="text-[12px] text-muted mt-3">Loading…</div>
+        <div className="text-[12px] text-muted mt-3">{t("common.loading")}</div>
       ) : workspaces.length === 0 ? (
-        <div className="text-[12px] text-muted mt-3">No workspaces are trusted.</div>
+        <div className="text-[12px] text-muted mt-3">{t("settings.workspace.empty")}</div>
       ) : (
         <div className="mt-3 divide-y divide-line">
           {workspaces.map((workspace) => (
@@ -547,16 +550,20 @@ function TrustedWorkspacesCard() {
                 <div className="text-[12.5px] text-ink break-all">{workspace.workspace}</div>
                 <div className="text-[11.5px] text-muted mt-0.5">
                   {workspace.requested_commands.length
-                    ? `${workspace.requested_commands.length} project command allowance${workspace.requested_commands.length === 1 ? "" : "s"}`
-                    : "No project command allowances currently declared"}
-                  {!workspace.exists ? " · Folder unavailable" : ""}
+                    ? t(
+                        "settings.workspace.allowanceCount",
+                        { n: workspace.requested_commands.length },
+                        `${workspace.requested_commands.length} project command allowance${workspace.requested_commands.length === 1 ? "" : "s"}`,
+                      )
+                    : t("settings.workspace.noAllowances")}
+                  {!workspace.exists ? t("settings.workspace.folderUnavailable") : ""}
                 </div>
               </div>
               <button
                 className="text-[12px] text-danger px-2 py-1"
                 onClick={() => void revoke(workspace.workspace)}
               >
-                Revoke
+                {t("settings.workspace.revoke")}
               </button>
             </div>
           ))}
@@ -567,6 +574,7 @@ function TrustedWorkspacesCard() {
 }
 
 function UpdateInline() {
+  const { t } = useI18n();
   const [state, setState] = useState<"idle" | "checking" | "none" | "found" | "installing" | "error">("idle");
   const [version, setVersion] = useState("");
 
@@ -598,7 +606,7 @@ function UpdateInline() {
     <span className="inline-flex items-center gap-2.5">
       {state === "found" ? (
         <button className={BTN_BORDERED} onClick={install} data-testid="settings-update-install">
-          Update to v{version} and restart
+          {t("settings.update.toLatest", { version })}
         </button>
       ) : (
         <button
@@ -607,16 +615,16 @@ function UpdateInline() {
           disabled={state === "checking" || state === "installing"}
           data-testid="settings-update-check"
         >
-          {state === "checking" ? "Checking…" : "Check for updates"}
+          {state === "checking" ? t("settings.update.checking") : t("settings.update.check")}
         </button>
       )}
       {(state === "none" || state === "error" || state === "installing") && (
         <span className="text-[12px] text-muted">
           {state === "none"
-            ? "You're on the latest version."
+            ? t("settings.update.latest")
             : state === "error"
-              ? "Couldn't check right now — try again later."
-              : "Downloading — Delta restarts by itself when it's ready."}
+              ? t("settings.update.checkFailed")
+              : t("settings.update.downloading")}
         </span>
       )}
     </span>
@@ -633,6 +641,7 @@ function UpdateInline() {
 // without native PDF support. (Long-history spend is handled by auto-compaction —
 // the CompactionCard below, OPE-27.)
 function TokenSavingsCard() {
+  const { t } = useI18n();
   const [pdf, setPdf] = useState<PdfSettings | null>(null);
 
   useEffect(() => {
@@ -655,36 +664,29 @@ function TokenSavingsCard() {
   if (!pdf) return null;
   return (
     <div className={CARD + " p-4 mb-4"} data-testid="token-savings-card">
-      <div className={FIELD_LABEL}>Token savings</div>
-      <div className={FIELD_HELP}>
-        PDF attachments travel with every turn of a conversation, so large documents multiply
-        what you spend on tokens.
-      </div>
+      <div className={FIELD_LABEL}>{t("settings.pdf.title")}</div>
+      <div className={FIELD_HELP}>{t("settings.pdf.help")}</div>
 
-      <div className="mt-3 text-[13px] text-ink">PDFs on models without native PDF support</div>
-      <div className="seg mt-2" role="radiogroup" aria-label="PDF fallback" data-testid="pdf-fallback">
+      <div className="mt-3 text-[13px] text-ink">{t("settings.pdf.fallbackLabel")}</div>
+      <div className="seg mt-2" role="radiogroup" aria-label={t("settings.pdf.fallbackAria")} data-testid="pdf-fallback">
         <button
           className={pdf.pdf_fallback === "text" ? "active" : ""}
           onClick={() => save({ pdf_fallback: "text" })}
         >
-          Extract text
+          {t("settings.pdf.extractText")}
         </button>
         <button
           className={pdf.pdf_fallback === "images" ? "active" : ""}
           onClick={() => save({ pdf_fallback: "images" })}
         >
-          Send page images
+          {t("settings.pdf.sendImages")}
         </button>
       </div>
-      <div className={FIELD_HELP}>
-        Claude, GPT and Gemini read PDFs natively — this only applies to models that
-        don&rsquo;t (GLM, Kimi, DeepSeek, local models…). Text extraction is cheapest; page
-        images cost more tokens and need a vision-capable model.
-      </div>
+      <div className={FIELD_HELP}>{t("settings.pdf.help2")}</div>
 
       <div className="mt-3 flex items-center gap-5">
         <label className="flex items-center gap-2.5">
-          <span className="text-[13px] text-ink">Max pages</span>
+          <span className="text-[13px] text-ink">{t("settings.pdf.maxPages")}</span>
           <input
             type="number"
             min={1}
@@ -696,7 +698,7 @@ function TokenSavingsCard() {
           />
         </label>
         <label className="flex items-center gap-2.5">
-          <span className="text-[13px] text-ink">Max size</span>
+          <span className="text-[13px] text-ink">{t("settings.pdf.maxSize")}</span>
           <input
             type="number"
             min={1}
@@ -709,10 +711,7 @@ function TokenSavingsCard() {
           <span className="text-[12.5px] text-muted">MB</span>
         </label>
       </div>
-      <div className={FIELD_HELP}>
-        PDFs over these limits are not attached — you&rsquo;ll see a notice in the composer
-        instead.
-      </div>
+      <div className={FIELD_HELP}>{t("settings.pdf.help3")}</div>
     </div>
   );
 }
@@ -722,6 +721,7 @@ function TokenSavingsCard() {
 // limit, so work continues instead of hitting a raw provider error. Two spec'd
 // overrides (trigger % + token cap) and the summarizer-model pin — nothing more.
 function CompactionCard() {
+  const { t } = useI18n();
   const [cfg, setCfg] = useState<CompactionSettings | null>(null);
   const [models, setModels] = useState<string[]>([]);
   const [labels, setLabels] = useState<Record<string, string>>({});
@@ -755,16 +755,12 @@ function CompactionCard() {
   const modelLabel = (id: string) => labels[id]?.split(" · ")[0] || id;
   return (
     <div className={CARD + " p-4 mb-4"} data-testid="compaction-card">
-      <div className={FIELD_LABEL}>Context compaction</div>
-      <div className={FIELD_HELP}>
-        Long sessions are compacted automatically: older turns are summarized so the
-        Delta keeps working instead of running out of context. Your visible transcript
-        is never changed — a small marker shows where compaction happened.
-      </div>
+      <div className={FIELD_LABEL}>{t("settings.compaction.title")}</div>
+      <div className={FIELD_HELP}>{t("settings.compaction.help")}</div>
 
       <div className="mt-3 flex items-center gap-5 flex-wrap">
         <label className="flex items-center gap-2.5">
-          <span className="text-[13px] text-ink">Compact at</span>
+          <span className="text-[13px] text-ink">{t("settings.compaction.atLabel")}</span>
           <input
             type="number"
             min={10}
@@ -779,10 +775,10 @@ function CompactionCard() {
               })
             }
           />
-          <span className="text-[12.5px] text-muted">% of the context window</span>
+          <span className="text-[12.5px] text-muted">{t("settings.compaction.pctUnit")}</span>
         </label>
         <label className="flex items-center gap-2.5">
-          <span className="text-[13px] text-ink">or at</span>
+          <span className="text-[13px] text-ink">{t("settings.compaction.orAt")}</span>
           <input
             type="number"
             min={10_000}
@@ -800,23 +796,20 @@ function CompactionCard() {
               })
             }
           />
-          <span className="text-[12.5px] text-muted">tokens, whichever is smaller</span>
+          <span className="text-[12.5px] text-muted">{t("settings.compaction.tokenUnit")}</span>
         </label>
       </div>
-      <div className={FIELD_HELP}>
-        The cap makes very-large-context models compact early — quality and speed degrade
-        well before their nominal limit.
-      </div>
+      <div className={FIELD_HELP}>{t("settings.compaction.capHelp")}</div>
 
       <div className="mt-3 flex items-center gap-2.5">
-        <span className="text-[13px] text-ink">Summarizer model</span>
+        <span className="text-[13px] text-ink">{t("settings.compaction.modelLabel")}</span>
         <select
           value={cfg.compaction_model}
           data-testid="compaction-model"
           className="px-2 py-1.5 rounded-lg border border-line bg-paper text-[13px] text-ink outline-none focus:border-accent"
           onChange={(e) => save({ compaction_model: e.target.value })}
         >
-          <option value="">Session&rsquo;s own model (default)</option>
+          <option value="">{t("settings.compaction.sessionModel")}</option>
           {models.map((m) => (
             <option key={m} value={m}>
               {modelLabel(m)}
@@ -824,10 +817,7 @@ function CompactionCard() {
           ))}
         </select>
       </div>
-      <div className={FIELD_HELP}>
-        The summary is written by this model. The default follows whatever model the
-        session is using.
-      </div>
+      <div className={FIELD_HELP}>{t("settings.compaction.modelHelp")}</div>
     </div>
   );
 }
@@ -836,6 +826,7 @@ function CompactionCard() {
 // The chip's bar is context-window occupancy; the session total (unbounded) lives in
 // the popover. Some people would rather not watch a meter at all, hence the toggle.
 function ContextBarCard() {
+  const { t } = useI18n();
   const [shown, setShown] = useState<boolean | null>(null);
 
   useEffect(() => {
@@ -852,7 +843,7 @@ function ContextBarCard() {
   if (shown === null) return null;
   return (
     <div className={CARD + " p-4 mb-4"} data-testid="context-bar-card">
-      <div className={FIELD_LABEL}>Composer</div>
+      <div className={FIELD_LABEL}>{t("settings.composer.title")}</div>
       <label className="flex items-start gap-3 py-2">
         <input
           type="checkbox"
@@ -862,12 +853,8 @@ function ContextBarCard() {
           onChange={(e) => save(e.target.checked)}
         />
         <span>
-          <span className="block text-[13px] text-ink">Show the context window bar</span>
-          <span className="block text-[12px] text-muted">
-            A small meter showing how full the model&rsquo;s context window is. Turn it off
-            to show this session&rsquo;s token total instead; either way the full breakdown
-            is one click away.
-          </span>
+          <span className="block text-[13px] text-ink">{t("settings.composer.showBar")}</span>
+          <span className="block text-[12px] text-muted">{t("settings.composer.showBarHelp")}</span>
         </span>
       </label>
     </div>
@@ -875,6 +862,7 @@ function ContextBarCard() {
 }
 
 function SidebarCard() {
+  const { t } = useI18n();
   const [peek, setPeek] = useState<number | null>(null);
 
   useEffect(() => {
@@ -892,9 +880,9 @@ function SidebarCard() {
   if (peek === null) return null;
   return (
     <div className={CARD + " p-4 mb-4"}>
-      <div className={FIELD_LABEL}>Sidebar</div>
+      <div className={FIELD_LABEL}>{t("settings.sidebar.title")}</div>
       <label className="flex items-center gap-3 mt-2.5">
-        <span className="text-[13px] text-ink">Conversations shown per Delta agent</span>
+        <span className="text-[13px] text-ink">{t("settings.sidebar.peekLabel")}</span>
         <input
           type="number"
           min={1}
@@ -904,9 +892,7 @@ function SidebarCard() {
           onChange={(e) => save(Number(e.target.value))}
         />
       </label>
-      <div className={FIELD_HELP}>
-        Longer lists collapse behind &ldquo;Show more&rdquo;. Applies per Delta agent and per project.
-      </div>
+      <div className={FIELD_HELP}>{t("settings.sidebar.peekHelp")}</div>
     </div>
   );
 }
@@ -914,6 +900,7 @@ function SidebarCard() {
 // -- Files (scratch location) — one card inside General (UX-021: a single option
 // doesn't earn its own tab) -----------------------------------------------------
 function FilesCard() {
+  const { t } = useI18n();
   const [settings, setSettings] = useState<ModelSettings | null>(null);
   const [scratchDraft, setScratchDraft] = useState("");
   const [scratchMsg, setScratchMsg] = useState<string | null>(null);
@@ -934,10 +921,10 @@ function FilesCard() {
     setScratchMsg(null);
     const res = await setScratchBase(scratchDraft.trim());
     if (res.ok) {
-      setScratchMsg("Saved. New conversations will use this location.");
+      setScratchMsg(t("settings.files.savedMsg"));
       refresh();
     } else {
-      setScratchMsg(res.error || "Could not use that location.");
+      setScratchMsg(res.error || t("settings.files.errorMsg"));
     }
   };
   const browseScratch = async () => {
@@ -949,7 +936,7 @@ function FilesCard() {
 
   return (
     <div className={CARD + " p-4 mb-4"}>
-      <div className={FIELD_LABEL}>Files</div>
+      <div className={FIELD_LABEL}>{t("settings.files.title")}</div>
         <div className="flex items-center gap-2 mt-2.5">
           <input
             className={INPUT}
@@ -962,18 +949,19 @@ function FilesCard() {
             onKeyDown={(e) => e.key === "Enter" && saveScratch()}
           />
           {desktop && (
-            <button className={BTN_BORDERED} onClick={browseScratch} title="Pick a folder">
-              Browse
+            <button
+              className="text-[12.5px] px-3 py-2 rounded-lg border border-accent bg-accentSoft text-accent shrink-0 hover:opacity-80"
+              onClick={browseScratch}
+              title={t("settings.files.pickFolderTitle")}
+            >
+              {t("settings.files.browse")}
             </button>
           )}
           <button className={BTN_ACCENT} onClick={saveScratch} disabled={!scratchDraft.trim()}>
-            Save
+            {t("common.save")}
           </button>
         </div>
-      <div className={FIELD_HELP}>
-        Each conversation gets its own folder under this location. Existing conversations keep their current
-        folder; you can grant access to more folders inside any conversation.
-      </div>
+      <div className={FIELD_HELP}>{t("settings.files.help")}</div>
       {scratchMsg && <div className="text-[12.5px] text-muted mt-2.5">{scratchMsg}</div>}
     </div>
   );

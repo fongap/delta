@@ -77,6 +77,11 @@ export const setKeepAwake = (enabled: boolean) => invoke<boolean>("set_keep_awak
 /** Begin native window dragging from a custom title/header region. */
 export const startWindowDrag = () => invoke<boolean>("start_window_drag");
 
+/** Make the OS window chrome follow the app theme (Windows dark title bar, etc.).
+ * The webview's data-theme only styles web content; without this the native title bar
+ * keeps following the OS theme even in Delta's dark mode. Inert in the browser build. */
+export const setNativeTheme = (dark: boolean) => invoke<boolean>("set_native_theme", { dark });
+
 // Local dictation is native-only. The browser build deliberately keeps this unavailable rather
 // than silently sending microphone audio to a server.
 export const getDictationStatus = () => invoke<DictationStatus>("get_dictation_status");

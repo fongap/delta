@@ -39,7 +39,9 @@ async function serveGmail(page, extra: Record<string, unknown>) {
 
 async function openConnectors(page) {
   await page.goto("/");
-  await page.getByTestId("account-row").click();
+  await page.getByTestId("account-row").click(); // triggers login
+  await expect(page.getByTestId("account-row")).toContainText("Rohit", { timeout: 10_000 });
+  await page.getByTestId("account-row").click(); // now signed in → opens menu
   await page.getByRole("button", { name: "Connectors", exact: true }).click();
 }
 

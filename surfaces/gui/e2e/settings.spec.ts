@@ -6,8 +6,7 @@ import { test, expect } from "./fixtures";
 test("Settings opens as a full page and navigates sections", async ({ page }) => {
   await page.goto("/");
 
-  await page.getByTestId("account-row").click();
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByTestId("sidebar-footer-settings").click();
 
   // Full-page: left sub-nav + the General section (no modal backdrop).
   await expect(page.getByRole("heading", { name: "General" })).toBeVisible();
@@ -30,8 +29,7 @@ test("Settings opens as a full page and navigates sections", async ({ page }) =>
 test("Settings: Personas tab returns behind the launch flag", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("ocw.flag.personas", "1"));
   await page.goto("/");
-  await page.getByTestId("account-row").click();
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByTestId("sidebar-footer-settings").click();
   await page.getByRole("button", { name: "Personas", exact: true }).click();
   await expect(page.getByText("Add personas")).toBeVisible();
 });
@@ -41,8 +39,7 @@ test("Settings: Personas tab returns behind the launch flag", async ({ page }) =
 // prefilled endpoint behind the disclosure; unconfigured providers preview their models.
 test("Models: provider gallery states; vendor form previews models", async ({ page }) => {
   await page.goto("/");
-  await page.getByTestId("account-row").click();
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByTestId("sidebar-footer-settings").click();
   await page.getByRole("button", { name: "Models", exact: true }).click();
 
   // Card states from the fixtures: openai configured+used, anthropic configured, zai not.
@@ -76,8 +73,7 @@ test("Models: provider gallery states; vendor form previews models", async ({ pa
 test("Models: Remove key reverts a configured provider", async ({ page }) => {
   await page.goto("/");
   page.on("dialog", (d) => d.accept());
-  await page.getByTestId("account-row").click();
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByTestId("sidebar-footer-settings").click();
   await page.getByRole("button", { name: "Models", exact: true }).click();
 
   await page.getByTestId("set-provider-anthropic").click();
@@ -92,8 +88,7 @@ test("Models: Remove key reverts a configured provider", async ({ page }) => {
 // the PDF fallback segmented control + attach thresholds, and edits POST through.
 test("Settings: Token savings card edits PDF fallback and thresholds", async ({ page }) => {
   await page.goto("/");
-  await page.getByTestId("account-row").click();
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByTestId("sidebar-footer-settings").click();
   await page.getByRole("button", { name: "Models", exact: true }).click();
 
   const card = page.getByTestId("token-savings-card");

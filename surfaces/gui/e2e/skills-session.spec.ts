@@ -17,8 +17,7 @@ test("skills-session: new skill offered in '/', disabled one absent", async ({ p
   await box.fill(""); // close the popup
 
   // Settings round-trip: create one skill, disable another.
-  await page.getByTestId("account-row").click();
-  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByTestId("sidebar-footer-settings").click();
   await page.getByRole("button", { name: "Skills", exact: true }).click();
   await page.getByRole("button", { name: /Add skill/ }).click();
   await page.getByText("Write it myself").click();

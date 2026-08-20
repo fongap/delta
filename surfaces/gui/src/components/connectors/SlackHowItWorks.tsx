@@ -243,7 +243,7 @@ function OwRail({ hot, hotSub, glow }: { hot?: string; hotSub?: string; glow?: b
   return (
     <div className="hiw-owrail">
       <div className="hiw-brand">Delta</div>
-      <div className="hiw-newbtn">＋ New session</div>
+      <div className="hiw-newbtn">＋ New task</div>
       <div className="hiw-ownav">⌕ Search</div>
       <div className="hiw-ownav">◷ Automations</div>
       <div className="hiw-sect">RECENT</div>
@@ -400,7 +400,7 @@ function SceneThread({ meFirst, meInitial }: { meFirst: string; meInitial: strin
       <OwWin>
         <div className="hiw-owrail">
           <div className="hiw-brand">Delta</div>
-          <div className="hiw-newbtn">＋ New session</div>
+          <div className="hiw-newbtn">＋ New task</div>
           <div className="hiw-ownav">⌕ Search</div>
           <div className="hiw-ownav">◷ Automations</div>
           <div className="hiw-sect">RECENT</div>
