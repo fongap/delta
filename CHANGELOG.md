@@ -27,6 +27,9 @@
   - 会话 scratch 目录默认根路径 `DEFAULT_SCRATCH_BASE` 由 `~/OpenWorker` 改为 `~/Delta`（`coworker/server/manager.py`），同步更新 docstring、设置测试断言与 e2e 夹具路径；按用户要求不做既有数据迁移。
   - 随后更新 `helpers.ts` 回退值与 `e2e/fixtures.ts` 中的 workspace/PRIMARY_ROOT 路径。
 
+- **自动更新指向 Delta 发布 & 替换 minisign 公钥**
+  - updater `endpoints` 由空数组改为 `https://github.com/fonga/delta/releases/latest/download/latest.json`，公钥替换为用户提供的 `3FC4BA4778974B1B`，停用旧的占位公钥。
+
 - **内部服务器进程 `openworker-server` 更名为 `delta-server`**
   - 服务器 sidecar 进程、二进制、入口点与配套脚本统一更名为 `delta-server`：`pyproject.toml [project.scripts]` 入口 `delta-server`、PyInstaller spec（`packaging/openworker-server.spec` → `packaging/delta-server.spec`，保留 git 历史）、`build_windows.ps1` / `build_dmg.sh` / `build_portable.ps1` 的进程终止与产物路径、`lib.rs` 的 sidecar 定位与日志文件名、`run.py` 的 `prog`、README / setup_dev_env live 命令。
   - 云端连通标识与数据兼容标识按要求保留不变：`X-OpenWorker-Token` 请求头、`openworker` WebSocket 子协议、`coworker:*` 事件名、`com.openworker.desktop` identifier、`coworker` 状态目录、`openworker` / `openworker-connectors` CLI 入口、`coworker` Python 包名 —— OpenWorker Cloud 连接不受影响。

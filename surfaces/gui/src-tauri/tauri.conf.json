@@ -45,8 +45,8 @@
   },
   "plugins": {
     "updater": {
-      "endpoints": [],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVCNzEzRjY5OTkzNUNBNjkKUldScHlqV1phVDl4VzBvTnFLLytzaDkzNVd3WWNuUm8yNE95WTBFNnBtcGF1RENxeTRuNVhQeloK",
+      "endpoints": ["https://github.com/fonga/delta/releases/latest/download/latest.json"],
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDNGQzRCQTQ3Nzg5NzRCMUIKUldRYlM1ZDRSN3JFUDI5cTdQVyt3c1ZNbnFkYnpCOEU2Njc5cUwrYzRXa1Rva1FmZEJobXhpWnAK",
       "windows": {
         "installMode": "passive"
       }
