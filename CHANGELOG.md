@@ -21,6 +21,13 @@
 
 ### 变更 (Changed)
 
+#### 2026-08-20 10:20
+
+- **内部服务器进程 `openworker-server` 更名为 `delta-server`**
+  - 服务器 sidecar 进程、二进制、入口点与配套脚本统一更名为 `delta-server`：`pyproject.toml [project.scripts]` 入口 `delta-server`、PyInstaller spec（`packaging/openworker-server.spec` → `packaging/delta-server.spec`，保留 git 历史）、`build_windows.ps1` / `build_dmg.sh` / `build_portable.ps1` 的进程终止与产物路径、`lib.rs` 的 sidecar 定位与日志文件名、`run.py` 的 `prog`、README / setup_dev_env live 命令。
+  - 云端连通标识与数据兼容标识按要求保留不变：`X-OpenWorker-Token` 请求头、`openworker` WebSocket 子协议、`coworker:*` 事件名、`com.openworker.desktop` identifier、`coworker` 状态目录、`openworker` / `openworker-connectors` CLI 入口、`coworker` Python 包名 —— OpenWorker Cloud 连接不受影响。
+  - 5 处 `e2e-live` 跳过提示同步为 “start delta-server”。
+
 #### 2026-08-20 06:47
 
 - **Voice Input 本地模型切换为多语言 Whisper Base**
@@ -82,7 +89,7 @@
   - 应用图标全面替换：以 `assets/logo` 为唯一来源重新生成 `src-tauri/icons/*`（含托盘 monochrome 模板图标）。
   - 打包与应用元数据：Release 工件与安装器稳定名（Windows setup/msi、macOS dmg/app.tar.gz）改用 Delta；`Info.plist`、Cargo.toml、`build_dmg.sh`、`make_update_manifest.py` 同步。
   - 自动更新：updater `endpoints` 置空——Delta 尚无自有更新源，不再指向 download.openworker.com。
-  - 内部标识按 §11/§12 保留：`com.openworker.desktop` identifier、`X-OpenWorker-Token`、`openworker-server` 进程名、状态目录等未改，保持数据兼容与上游同步。
+  - 内部标识按 §11/§12 保留：`com.openworker.desktop` identifier、`X-OpenWorker-Token`、状态目录等未改，保持数据兼容与上游同步（`openworker-server` 进程名已于 2026-08-20 更名为 `delta-server`，见下方「变更」条目）。
 
 #### 2026-08-19 01:22
 

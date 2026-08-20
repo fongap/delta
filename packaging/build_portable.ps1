@@ -12,7 +12,7 @@
         Delta.exe            <- root launcher (relay: resolves ROOT from its own location)
         App\
           Delta\Delta.exe    <- the real Tauri app (productName "Delta")
-          Delta\sidecar\...  <- PyInstaller onedir openworker-server (resources)
+          Delta\sidecar\...  <- PyInstaller onedir delta-server (resources)
           (DefaultData\      <- optional first-run data seed; emitted only if one exists)
         Data\                <- created and seeded on first launch by Delta.exe (COWORKER_STATE_DIR)
         Other\
@@ -84,24 +84,24 @@ if (-not (Test-Path $PyInst)) {
 
 $Triple = (& rustc -vV | Select-String '^host:').ToString().Split()[-1]
 
-# A running openworker-server.exe locks the output exe and makes PyInstaller's overwrite fail.
-$running = Get-Process -Name "openworker-server" -ErrorAction SilentlyContinue
+# A running delta-server.exe locks the output exe and makes PyInstaller's overwrite fail.
+$running = Get-Process -Name "delta-server" -ErrorAction SilentlyContinue
 if ($running) {
-    Write-Host "==> stopping $($running.Count) running openworker-server process(es) holding the output exe"
+    Write-Host "==> stopping $($running.Count) running delta-server process(es) holding the output exe"
     $running | Stop-Process -Force
     Start-Sleep -Seconds 1
 }
 
 # ---- 1. PyInstaller onedir server sidecar -------------------------------------
-Write-Host "==> [1/6] PyInstaller: bundling openworker-server ($Triple)" -ForegroundColor Cyan
+Write-Host "==> [1/6] PyInstaller: bundling delta-server ($Triple)" -ForegroundColor Cyan
 & $PyInst --noconfirm --clean `
     --distpath (Join-Path $Here "dist") --workpath (Join-Path $Here "build") `
-    (Join-Path $Here "openworker-server.spec")
+    (Join-Path $Here "delta-server.spec")
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed (exit $LASTEXITCODE)" }
 
 $BinDir = Join-Path $Gui "src-tauri\binaries"
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
-$SideSrc = Join-Path $Here "dist\openworker-server"
+$SideSrc = Join-Path $Here "dist\delta-server"
 $SideDst = Join-Path $BinDir "sidecar"
 if (Test-Path $SideDst) { Remove-Item -Recurse -Force $SideDst }
 Copy-Item -Recurse -Force $SideSrc $SideDst
