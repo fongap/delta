@@ -7,9 +7,15 @@ rust-version = "1.77"
 
 # The launcher is a tiny relay: it resolves the portable ROOT from its own location,
 # initializes Data on first run, sets the portable env (COWORKER_STATE_DIR etc.), and
-# spawns App\Delta\Delta.exe with full argument passthrough. It must stay dependency-free
+# spawns App\Delta\Delta.exe with full argument passthrough. It must stay runtime-dependency-free
 # so it builds fast and is immune to upstream dep churn.
 [dependencies]
+
+# winres is a *build*-time-only dependency (see build.rs): it links the Windows resource
+# compiler to embed icon.ico into the PE so Explorer shows the real Delta icon. It adds no
+# code to the shipped binary and does not touch the runtime dependency surface.
+[build-dependencies]
+winres = "0.1"
 
 [profile.release]
 opt-level = "s"

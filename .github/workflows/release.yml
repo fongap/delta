@@ -166,14 +166,7 @@ jobs:
           path: dist
           merge-multiple: true
 
-      - name: Compose the auto-update manifest (latest.json)
-        # Shipped apps poll releases/latest/download/latest.json (via the branded
-        # download.openworker.com redirect). Delta has no own update feed (endpoints are
-        # empty in tauri.conf.json), so this manifest is kept for a future Delta feed.
-        # Publishing this release IS pushing the
-        # update. The tag must match tauri.conf.json's version or installed apps would
-        # see a permanent phantom update; fail loudly on drift. Runs only when signed
-        # updater artifacts exist (i.e. the TAURI_SIGNING_PRIVATE_KEY secret is set).
+      - name: Validate tag matches version
         run: |
           TAG="${GITHUB_REF_NAME}"
           CONF_VERSION=$(python3 -c "import json; print(json.load(open('surfaces/gui/src-tauri/tauri.conf.json'))['version'])")
@@ -181,17 +174,38 @@ jobs:
             echo "::error::tag $TAG != tauri.conf.json version $CONF_VERSION — bump the config before tagging"
             exit 1
           fi
+          echo "tag $TAG matches config version $CONF_VERSION OK"
+
+      - name: Create draft release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "${{ github.ref_name }}" \
+            --title "${{ github.ref_name }}" \
+            --draft \
+            --generate-notes
+
+      - name: Compose the auto-update manifest (latest.json)
+        run: |
+          TAG="${GITHUB_REF_NAME}"
+          CONF_VERSION="${TAG#v}"
           if ls dist/*.sig >/dev/null 2>&1; then
             python3 packaging/make_update_manifest.py \
-              --version "${TAG#v}" --tag "$TAG" --repo "$GITHUB_REPOSITORY" \
+              --version "$CONF_VERSION" --tag "$TAG" --repo "$GITHUB_REPOSITORY" \
               --dist dist --out dist/latest.json \
-              --notes "Delta ${TAG#v}"
+              --notes "Delta $CONF_VERSION"
           else
             echo "::warning::no updater signatures in dist/ — release ships WITHOUT auto-update manifest"
           fi
 
-      - uses: softprops/action-gh-release@v2
-        with:
-          draft: true
-          files: dist/*
-          generate_release_notes: true
+      - name: Upload assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.ref_name }}" dist/*
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release edit "${{ github.ref_name }}" --draft=false

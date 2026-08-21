@@ -96,10 +96,21 @@ if ($running) {
 Write-Host "==> [1/6] PyInstaller: bundling delta-server ($Triple)" -ForegroundColor Cyan
 # Run via `python -m PyInstaller` — the console-script .exe launcher in the venv can fail
 # silently (exit 1, no output) on some installs; the module invocation is the reliable path.
-& $PyExe -m PyInstaller --noconfirm --clean `
-    --distpath (Join-Path $Here "dist") --workpath (Join-Path $Here "build") `
-    (Join-Path $Here "delta-server.spec")
-if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed (exit $LASTEXITCODE)" }
+# PyInstaller logs its progress through Python's logging module, which writes to stderr.
+# When native stderr is captured (pipe, CI, this script's host), PowerShell 5.1 rewrites each
+# line as an ErrorRecord; with the global $ErrorActionPreference="Stop" that would terminate
+# the build on PyInstaller's first INFO line. Scope the preference down for the call and gate
+# purely on the process exit code instead.
+$script:oldEap = $ErrorActionPreference
+$ErrorActionPreference = "Continue"
+try {
+    & $PyExe -m PyInstaller --noconfirm --clean `
+        --distpath (Join-Path $Here "dist") --workpath (Join-Path $Here "build") `
+        (Join-Path $Here "delta-server.spec")
+    $pyCode = $LASTEXITCODE
+}
+finally { $ErrorActionPreference = $script:oldEap }
+if ($pyCode -ne 0) { throw "PyInstaller failed (exit $pyCode)" }
 
 $BinDir = Join-Path $Gui "src-tauri\binaries"
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
@@ -135,8 +146,20 @@ if (-not $SkipAppBuild) {
     Write-Host "==> [3/6] tauri build --no-bundle" -ForegroundColor Cyan
     Push-Location $Gui
     try {
-        & npm run tauri build -- --no-bundle
-        if ($LASTEXITCODE -ne 0) { throw "tauri build failed (exit $LASTEXITCODE)" }
+        # Same stderr-as-ErrorRecord hazard as step 1: `npm run tauri` internally spawns
+        # node.exe (@tauri-apps/cli), and the CLI's informational lines ("Info Looking up
+        # installed tauri packages…") go to stderr. When the host captures stderr,
+        # PowerShell 5.1 wraps each line as an ErrorRecord; with the global
+        # $ErrorActionPreference="Stop" that terminates the build on the first info line.
+        # Scope the preference down for the call and gate purely on the exit code.
+        $script:oldEap3 = $ErrorActionPreference
+        $ErrorActionPreference = "Continue"
+        try {
+            & npm run tauri build -- --no-bundle
+            $npmCode = $LASTEXITCODE
+        }
+        finally { $ErrorActionPreference = $script:oldEap3 }
+        if ($npmCode -ne 0) { throw "tauri build failed (exit $npmCode)" }
     }
     finally { Pop-Location }
 } else {
@@ -248,14 +271,25 @@ Write-Host "==> [6/6] packaging ZIP + SHA-256" -ForegroundColor Cyan
 $ZipName = "$AppName-$Version-Windows-Portable.zip"
 $ZipPath = Join-Path $Out $ZipName
 if (Test-Path $ZipPath) { Remove-Item -Force $ZipPath }
-# tar.exe changes into $Portable and zips the tree. bsdtar stores UTF-8 names and handles
-# paths beyond MAX_PATH that Compress-Archive chokes on. Entry root is the tree (no parent).
-Push-Location $Portable
+
+# The ZIP must open with a single top-level "Delta/" folder (requirements: 解压即用、
+# 可整体移动). tar.exe stores every path literally, so zipping the tree from inside
+# staging out\ would start the entries at "./". Do a cheap final stage instead: move the
+# assembled tree to out\Delta, zip that — entries then begin "Delta/" — and drop a
+# first-run seed copy back to the portable-scan location (the launcher creates Data
+# itself, so the stray Data in the zipped tree is harmless and is what users see on
+# first extract before the launcher runs).
+Write-Host "    staging top-level $AppName/ in the archive"
+$Zipped = Join-Path $Out $AppName
+if (Test-Path $Zipped) { Remove-Item -Recurse -Force $Zipped }
+Move-Item -Force $Portable $Zipped
+Push-Location $Out
 try {
-    & tar -a -c -f $ZipPath .
+    & tar -a -c -f $ZipPath .\Delta
     if ($LASTEXITCODE -ne 0) { throw "tar zip failed (exit $LASTEXITCODE)" }
 }
 finally { Pop-Location }
+Copy-Item -Recurse -Force $Zipped $Portable
 
 $Hash = (Get-FileHash $ZipPath -Algorithm SHA256).Hash.ToLower()
 Set-Content -Path "$ZipPath.sha256" -Encoding ascii -Value "$Hash"

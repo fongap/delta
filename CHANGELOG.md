@@ -6,6 +6,32 @@
 
 ### 新增 (Added)
 
+#### 2026-08-22 07:10
+
+- **`build_portable.ps1` 步骤 3 的 PowerShell 5.1 stderr 陷阱修复**
+  - `npm run tauri build` 内部的 `@tauri-apps/cli` 将 info 行（"Info Looking up installed tauri packages…"）输出到 stderr；宿主捕获 stderr 时，PowerShell 5.1 把每行包装为 ErrorRecord，与全局 `$ErrorActionPreference="Stop"` 叠加会让 `--no-bundle` 在首条 info 行即终止构建（exit 1，实际是 `NativeCommandError` 误判）。已将错误偏好收敛到该调用局部、仅以退出码判定成败，与步骤 1 的 PyInstaller 修复同一模式。
+
+#### 2026-08-22 06:31
+
+- **便携版顶层目录与启动器图标**
+  - 便携版 ZIP 改为单一顶层 `Delta/` 目录（解压即用、可整体移动），归档内不再出现散落的 `./Delta.exe`/`./App` 条目。
+  - 根启动器 `Delta.exe` 通过 build-time `winres` 内嵌 Delta 图标（`icon.ico`），资源管理器/任务栏显示真实应用图标而非通用占位；winres 为纯构建期依赖，不改动启动器的运行时依赖面。
+  - `build_portable.ps1` 步骤 1 修复：PyInstaller 的进度日志经 stderr 输出、被宿主捕获时在 PowerShell 5.1 下被包装为 ErrorRecord，与全局 `$ErrorActionPreference="Stop"` 叠加会让 `--clean` 每次都把首个 INFO 行误判为失败；已将错误偏好收敛到该调用局部、仅以退出码判定成败（`--clean` 前保持 `$ErrorActionPreference="Stop"` 的全局行为不变）。
+
+### 修复 (Fixed)
+
+#### 2026-08-22 06:31
+
+- **前端构建阻塞：未使用的 `ProviderInfo` 类型导入**
+  - `ManageTabs.tsx` 中残留的 `type ProviderInfo` 导入在 23e35a7 重构后成为死代码，`tsc --noEmit`（进而 `npm run build` / `tauri build`）报 `TS6133` 直接失败；移除该导入后构建恢复通过。
+
+### 变更 (Changed)
+
+#### 2026-08-22 06:31
+
+- **辅助测试依赖补装（环境，非源码改动）**
+  - 为补齐 `[messaging]` 可选依赖（slack-bolt / aiohttp）与近端 runtests venv 中的 PyGithub 说明，本次验证过程中向测试 venv 补装了 `slack-bolt>=1.18`、`aiohttp>=3.9`（`pip install`），此前因缺失依赖挂掉的 Slack/GitHub 相关用例可真实运行；该改动仅涉及本地测试环境，不产生源码 diff。
+
 #### 2026-08-21 22:07
 
 - **自定义提供商表单加载与错误状态**

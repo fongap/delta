@@ -23,7 +23,6 @@ import {
   type Subscription,
   type McpServer,
   type ModelSettings,
-  type ProviderInfo,
 } from "../api";
 import { CloudSignInInline, CloudStatusPending } from "./connectors/CloudSignIn";
 import { ModelChecklist } from "./ModelChecklist";
