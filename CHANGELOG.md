@@ -6,6 +6,24 @@
 
 ### 新增 (Added)
 
+#### 2026-08-21 02:31
+
+- **模型下载代理回退（非持久化）**
+  - `stt/src/lib.rs` 语音模型下载改为直连优先；仅当直连在传输层失败（DNS/连接/超时，非 HTTP 错误）时，自动探测系统代理并重试：依次检查 `HTTPS_PROXY`/`ALL_PROXY`/`HTTP_PROXY` 环境变量，Windows 下再读取注册表 `HKCU\…\Internet Settings` 的 `ProxyEnable`/`ProxyServer`。探测到的代理仅用于本次下载，绝不写回配置或环境变量，避免临时性企业/VPN 代理被永久化。
+
+#### 2026-08-20 20:04
+
+- **自定义提供商端到端测试（custom-provider e2e）**
+  - 新增 `surfaces/gui/e2e/custom-provider.spec.ts`：走通「添加自定义提供商 → 输入别名 → 协议下拉默认 OpenAI 兼容 → 填 API Key → 拉取模型（`alias:模型ID` 前缀自动加入）→ 创建并保存 → 新卡显示 ✓ Connected」全流程，基于 hermetic 夹具（fixtures.ts 的 `/v1/protocols`、自定义别名创建、`/v1/providers/fetch` mock）无需 Python 后端即可回归。
+  - 修正 `providers.fetchOk` 英文文案复数占位（`"Fetched {n} model{n}"` → `"Fetched {n} model(s)"`），与代码库既有 `(s)` 复数约定一致。
+
+#### 2026-08-20 19:09
+
+- **模型提供商配置：自定义提供商作为一等模块**
+  - 设置 ▸ Models 与首次引导新增「添加自定义提供商」入口：别名输入 + 协议下拉（默认「OpenAI 兼容」，另含 OpenAI / Anthropic / Gemini / Ollama / Bedrock / Vertex 原生协议），创建即注册、可随时补全服务器地址与 API Key。
+  - 新增「拉取模型」：按所选协议只读拉取模型列表，命中后以 `别名:模型ID` 前缀自动加入模型列表（幂等，已存在则跳过）。
+  - 后端新增动态注册表 `CUSTOM_PROVIDERS`（alias → {protocol}）+ `get_descriptor(alias)` 按协议合成描述符，`alias:model` 正常路由并构建客户端；注册元数据持久化于 prefs，重启后仍可路由。
+
 #### 2026-08-20 08:14
 
 - **原生窗口标题栏跟随应用主题**
@@ -20,6 +38,23 @@
   - 便携版经多位置实测验证可整体重定位：`C:\DeltaPortable\`、`D:\Portable Apps\DeltaPortable\`、中文+空格+特殊字符路径 `G:\AI工具\深层 目录 & 测试(1)\子目录-嵌套_更多\Delta 工作助手(改名&测试)\` 下均正常启动；状态/密钥/日志/数据库全部落在 `<ROOT>\Data\`，未触碰 `%APPDATA%`，与开发/安装模式数据隔离。
 
 ### 变更 (Changed)
+
+#### 2026-08-21 02:31
+
+- **侧边栏底部图标即时提示 + 登录文案**
+  - 四个底部操作图标（收件箱/活动/登录/设置）由原生 `title`（webview 内约 500ms 滞后）改用即时 CSS 提示（`.tip`/`data-tip`）；登录图标未登录态文案 `nav.signInCloud` 由「登录 Delta Cloud」改为「登录 一键连接服务」（en: "Sign in for one-click connections"）。
+- **全局搜索入口移回左边栏**
+  - 搜索图标由顶栏移回左边栏品牌行，与「Delta」同一行（Delta 居左、搜索居右），点击直接打开命令面板 `SearchModal`；修复此前顶栏拖拽区（`beginWindowDrag`）吞掉 pointerdown 导致搜索图标点击无响应。顶栏 `TopbarSearch` 组件随之移除。
+- **空状态问候语居中**
+  - `.intro .greeting` 增加 `justify-content: center`，「我能帮您做点什么？」现居中对齐。
+- **设置二级菜单「语音输入」→「语音」**
+  - `settings.voice.title` zh 由「语音输入」改为「语音」，en 由 "Voice input" 改为 "Voice"。
+- **移除全部内置模型服务商，自定义服务商作为模型设置一级卡片**
+  - 「模型」设置不再展示任何内置服务商（openai/anthropic/gemini/bedrock/vertex/ollama 及各 OpenAI 兼容厂商），仅保留用户自定义服务商；自定义服务商配置（自定义名称 + 协议下拉 + 服务器地址 + API Key + 测试 + 拉取模型）作为「模型」项下的一级卡片直接可见，无需点击进入二级页面。后端路由/校验逻辑保持不变（已配置的内置服务商仍可路由），过滤仅在前端完成，未改动 `coworker/` 与 `api.ts`。同步 Onboarding 提供商步骤。
+- **桌面/启动器/托盘图标以 Delta VI 为唯一来源重新生成**
+  - `src-tauri/icons` 全套（icon.ico/icns、Square*Logo、StoreLogo、各尺寸 PNG）由 `assets/logo/delta-logo-512x512.png` 经 `tauri icon` 重新生成；托盘图标 `tray.rgba`/`tray.png` 由彩色 Delta VI（`delta-logo-32x32.png`）重新生成，替换此前的单色模板图，使托盘与桌面图标一致。
+- **标题栏与窗口间距**
+  - 左边栏品牌行底部内边距 `pb-2` → `pb-3`，缓解标题栏与下方内容间距过小、视觉割裂感。
 
 #### 2026-08-20 10:20
 
@@ -121,6 +156,11 @@
   - 修复 `AutomationQuickstart.tsx` 中未定义的 `line2` 工具类 → `line`。
 
 ### 修复 (Fixed)
+
+#### 2026-08-21 02:31
+
+- **空状态「选择文件夹 →」操作文案颜色不一致**
+  - `.task-card-act` 默认由 `opacity:0;color:var(--faint)`（仅 hover 显现）改为 `opacity:1;color:var(--accent)`，与「配置」（gated）操作文案颜色一致。
 
 #### 2026-08-20 06:29
 

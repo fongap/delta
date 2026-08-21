@@ -23,6 +23,7 @@ import { isProjectScoped, shortPersonaName } from "../personaScope";
 import { ConnectorIcon } from "../connectors/ConnectorIcon";
 import { Icon, type IconName } from "./Icon";
 import { PersonaGlyph, personaGlyph } from "./personaIcon";
+import { SearchModal } from "./SearchModal";
 import { baseName } from "../paths";
 import { showPersonas } from "../flags";
 import { useI18n } from "../i18n/I18nContext";
@@ -81,11 +82,11 @@ function SidebarFooterIcon({
   return (
     <button
       className={
-        "relative w-8 h-8 grid place-items-center rounded-lg text-muted transition-colors " +
+        "tip relative w-8 h-8 grid place-items-center rounded-lg text-muted transition-colors " +
         (active ? "bg-paper text-ink" : "hover:bg-paper")
       }
       data-testid={testid}
-      title={label}
+      data-tip={label}
       aria-label={label}
       aria-pressed={active}
       onClick={onClick}
@@ -226,6 +227,10 @@ const compactAge = (iso?: string | null): string => {
 export function Sidebar(props: Props) {
   const { t } = useI18n();
   const [appMenuOpen, setAppMenuOpen] = useState(false);
+  // A2 (revised): the global search icon lives in the sidebar brand row (right of the wordmark).
+  // Clicking opens the command-palette SearchModal directly — the topbar instance was both
+  // unresponsive (its parent drag surface swallowed the pointerdown) and the user wants it here.
+  const [searchOpen, setSearchOpen] = useState(false);
   // The Sign-in icon (§26): cloud sign-in status drives its label/tooltip and whether the
   // account menu shows identity + Sign out; refreshed on focus and whenever the menu opens
   // (sign-in completes out-of-band in the browser).
@@ -1032,7 +1037,7 @@ export function Sidebar(props: Props) {
           as the collapsed reveal button (see .nav-pin-btn / .nav-reveal-btn in styles.css), so
           hovering the reveal peeks the nav and the pin lands right under the cursor — no travel.
           data-tauri-drag-region drags the window; on desktop the row clears the traffic lights. */}
-      <div className="brand px-3.5 pt-2.5 pb-2 flex items-center gap-2" data-tauri-drag-region>
+      <div className="brand px-3.5 pt-2.5 pb-3 flex items-center gap-2" data-tauri-drag-region>
         {/* Collapse (dock) / pin the sidebar. ⌘B mirrors this. */}
         {props.onCollapse && (
           <button
@@ -1045,6 +1050,27 @@ export function Sidebar(props: Props) {
           </button>
         )}
         <div className="brand-wordmark text-[15px]">Delta</div>
+        {/* A2 (revised): search icon back in the sidebar, same row as the wordmark — Delta left,
+            search right. Clicking opens the command palette (SearchModal) directly. */}
+        <button
+          className="tip nav-search-btn w-7 h-7 grid place-items-center rounded-md text-faint hover:text-ink hover:bg-paper shrink-0 ml-auto"
+          data-tip={t("common.search", undefined, "Search")}
+          aria-label={t("common.search", undefined, "Search")}
+          onClick={() => setSearchOpen(true)}
+        >
+          <Icon name="search" size={16} />
+        </button>
+        {searchOpen && (
+          <SearchModal
+            sessions={props.sessions}
+            personas={personas ?? undefined}
+            onSelect={(id, ws, ag) => {
+              setSearchOpen(false);
+              props.onSelectSession(id, ws, ag);
+            }}
+            onClose={() => setSearchOpen(false)}
+          />
+        )}
       </div>
 
       {/* New session: split button — primary starts the last-used persona; ▾ picks a specific one. */}
@@ -1054,10 +1080,6 @@ export function Sidebar(props: Props) {
         onNew={props.onNewSession}
         onManage={props.onManagePersonas}
       />
-
-      {/* A1: search moved to the top toolbar (TopbarSearch). The sidebar no longer renders a
-          search entry — the topbar instance is reachable whether or not the sidebar is
-          collapsed, so the sidebar's own SearchModal instance is retired too. */}
 
       {/* Automations: a first-class nav row (UX-023) — the account menu keeps its entry.
           The badge is the cross-automation unseen-run total. */}
@@ -1225,11 +1247,11 @@ export function Sidebar(props: Props) {
               identity) stays in sync with sign-in state. */}
           <button
             className={
-              "relative w-8 h-8 grid place-items-center rounded-lg text-muted transition-colors " +
+              "tip relative w-8 h-8 grid place-items-center rounded-lg text-muted transition-colors " +
               (appMenuOpen && cloud?.signed_in ? "bg-paper text-ink" : "hover:bg-paper")
             }
             data-testid="account-row"
-            title={
+            data-tip={
               cloud?.signed_in
                 ? t("nav.accountWithEmail", { account: accountName }, `Account: ${accountName}`)
                 : t("nav.signInCloud", undefined, "Sign in to Delta Cloud")

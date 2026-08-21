@@ -103,3 +103,126 @@ def test_verify_unexpected_status(monkeypatch):
     res = verify_provider_key("anthropic", api_key="sk-ant-x")
     assert res["ok"] is False
     assert "500" in res["error"]
+
+
+# -- fetch_provider_models: same probe shape, but returns the parsed model id list --
+def _patch_get_json(monkeypatch, status=200, payload=None, capture=None, raise_exc=None):
+    def fake_get(url, **kwargs):
+        if capture is not None:
+            capture["url"] = url
+            capture.update(kwargs)
+        if raise_exc is not None:
+            raise raise_exc
+        return SimpleNamespace(
+            status_code=status,
+            json=lambda: payload or {"data": []},
+        )
+
+    monkeypatch.setattr("httpx.get", fake_get)
+
+
+def test_fetch_openai_compatible_uses_alias_endpoint(monkeypatch):
+    from coworker.providers import (
+        fetch_provider_models,
+        register_custom_provider,
+        unregister_custom_provider,
+    )
+
+    register_custom_provider("mygw", "openai-compatible")
+    try:
+        cap: dict = {}
+        _patch_get_json(
+            monkeypatch,
+            payload={"data": [{"id": "gpt-4o"}, {"id": "claude-sonnet-4-6"}]},
+            capture=cap,
+        )
+        res = fetch_provider_models(
+            "mygw", {"api_key": "sk-x", "base_url": "https://gw.example/v1"}, None
+        )
+        assert res["ok"] is True
+        assert res["models"] == ["gpt-4o", "claude-sonnet-4-6"]
+        assert cap["url"] == "https://gw.example/v1/models"
+        assert cap["headers"]["Authorization"] == "Bearer sk-x"
+    finally:
+        unregister_custom_provider("mygw")
+
+
+def test_fetch_custom_anthropic_protocol_headers(monkeypatch):
+    from coworker.providers import (
+        fetch_provider_models,
+        register_custom_provider,
+        unregister_custom_provider,
+    )
+
+    register_custom_provider("claude-gw", "anthropic")
+    try:
+        cap: dict = {}
+        _patch_get_json(
+            monkeypatch,
+            payload={"data": [{"id": "claude-fable-5"}]},
+            capture=cap,
+        )
+        res = fetch_provider_models("claude-gw", {"api_key": "sk-ant-x"}, None)
+        assert res["ok"] is True and res["models"] == ["claude-fable-5"]
+        assert cap["url"] == "https://api.anthropic.com/v1/models"
+        assert cap["headers"]["x-api-key"] == "sk-ant-x"
+        assert "anthropic-version" in cap["headers"]
+    finally:
+        unregister_custom_provider("claude-gw")
+
+
+def test_fetch_custom_ollama_is_keyless(monkeypatch):
+    from coworker.providers import (
+        fetch_provider_models,
+        register_custom_provider,
+        unregister_custom_provider,
+    )
+
+    register_custom_provider("local-llm", "ollama")
+    try:
+        cap: dict = {}
+        _patch_get_json(
+            monkeypatch,
+            payload={"data": [{"id": "qwen3-coder:30b"}]},
+            capture=cap,
+        )
+        res = fetch_provider_models("local-llm", {"base_url": "http://box:11434"}, None)
+        assert res["ok"] is True and res["models"] == ["qwen3-coder:30b"]
+        assert cap["url"] == "http://box:11434/v1/models"
+        assert "headers" not in cap  # keyless
+    finally:
+        unregister_custom_provider("local-llm")
+
+
+def test_fetch_bad_key_is_clean(monkeypatch):
+    from coworker.providers import (
+        fetch_provider_models,
+        register_custom_provider,
+        unregister_custom_provider,
+    )
+
+    register_custom_provider("mygw", "openai-compatible")
+    try:
+        _patch_get_json(monkeypatch, status=401)
+        res = fetch_provider_models(
+            "mygw", {"api_key": "sk-bad", "base_url": "https://gw.example/v1"}, None
+        )
+        assert res == {"ok": False, "error": "Invalid API key."}
+    finally:
+        unregister_custom_provider("mygw")
+
+
+def test_fetch_bedrock_is_unsupported(monkeypatch):
+    from coworker.providers import (
+        fetch_provider_models,
+        register_custom_provider,
+        unregister_custom_provider,
+    )
+
+    register_custom_provider("aws-gw", "bedrock")
+    try:
+        res = fetch_provider_models("aws-gw", {"region": "us-east-1"}, None)
+        assert res["ok"] is False
+        assert "doesn't expose a model list" in res["error"]
+    finally:
+        unregister_custom_provider("aws-gw")

@@ -35,6 +35,123 @@ pub const DEFAULT_MODEL_SHA256: &str =
     "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe";
 const WHISPER_SAMPLE_RATE: u32 = 16_000;
 
+/// Auto-detect a system HTTP(S) proxy for outbound model downloads, WITHOUT persisting it.
+/// Order: standard env vars (`HTTPS_PROXY`/`ALL_PROXY`/`HTTP_PROXY` and lower-case), then —
+/// on Windows — the per-user WinINET/IE proxy from the registry. Returns a proxy URL ready
+/// for `ureq::Proxy::new`, or `None`. The result is used for one download only and is never
+/// written back to config or env, so a transient corporate/VPN proxy doesn't become sticky.
+fn detect_system_proxy() -> Option<String> {
+    for var in [
+        "HTTPS_PROXY",
+        "https_proxy",
+        "ALL_PROXY",
+        "all_proxy",
+        "HTTP_PROXY",
+        "http_proxy",
+    ] {
+        if let Ok(v) = std::env::var(var) {
+            let v = v.trim();
+            if !v.is_empty() {
+                return Some(normalize_proxy_url(v));
+            }
+        }
+    }
+    #[cfg(target_os = "windows")]
+    {
+        if let Some(p) = windows_internet_proxy() {
+            return Some(normalize_proxy_url(&p));
+        }
+    }
+    None
+}
+
+/// Ensure the proxy URL carries a scheme (ureq requires one; a bare `host:port` is the form
+/// the Windows registry stores).
+fn normalize_proxy_url(raw: &str) -> String {
+    let raw = raw.trim();
+    if raw.starts_with("http://") || raw.starts_with("https://") {
+        raw.to_string()
+    } else {
+        format!("http://{raw}")
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn windows_internet_proxy() -> Option<String> {
+    use std::process::Command;
+    const KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings";
+    // ProxyEnable == 1 means a system proxy is configured (0 = direct access).
+    let enable = Command::new("reg")
+        .args(["query", KEY, "/v", "ProxyEnable"])
+        .output()
+        .ok()?;
+    if !String::from_utf8_lossy(&enable.stdout).contains("0x1") {
+        return None;
+    }
+    let server = Command::new("reg")
+        .args(["query", KEY, "/v", "ProxyServer"])
+        .output()
+        .ok()?;
+    let server_str = String::from_utf8_lossy(&server.stdout);
+    let line = server_str
+        .lines()
+        .find(|l| l.contains("ProxyServer"))?;
+    let value = line.rsplit("REG_SZ").next()?.trim();
+    let value = value.trim_matches(|c: char| c.is_whitespace() || c == '\0');
+    if value.is_empty() {
+        return None;
+    }
+    // Multi-scheme form: "http=host:80;https=host:80" — prefer the https= entry (the model
+    // download is HTTPS). A bare `host:port` falls through to the first segment.
+    let chosen = value
+        .split(';')
+        .find(|s| s.trim_start().starts_with("https="))
+        .map(|s| s.trim().trim_start_matches("https="))
+        .or_else(|| value.split(';').next().map(|s| s.trim()))
+        .filter(|s| !s.is_empty())?;
+    Some(chosen.to_string())
+}
+
+/// Fetch the model response: try a DIRECT connection first; only if the host is unreachable
+/// (a transport-level failure, not an HTTP error) retry through the auto-detected system
+/// proxy. An HTTP status error (404/403) is never retried via proxy — it's a server problem.
+fn fetch_model_response() -> Result<ureq::Response, String> {
+    let connect = std::time::Duration::from_secs(30);
+    let read = std::time::Duration::from_secs(30);
+    let direct = ureq::AgentBuilder::new()
+        .timeout_connect(connect)
+        .timeout_read(read)
+        .build();
+    match direct.get(DEFAULT_MODEL_URL).call() {
+        Ok(r) => Ok(r),
+        Err(ureq::Error::Transport(t)) => {
+            // Direct connection failed — retry through the system proxy if one is detected.
+            match detect_system_proxy() {
+                Some(proxy_url) => {
+                    let proxy = ureq::Proxy::new(&proxy_url)
+                        .map_err(|e| format!("Could not configure the system proxy: {e}"))?;
+                    let proxied = ureq::AgentBuilder::new()
+                        .timeout_connect(connect)
+                        .timeout_read(read)
+                        .proxy(proxy)
+                        .build();
+                    proxied
+                        .get(DEFAULT_MODEL_URL)
+                        .call()
+                        .map_err(|e| {
+                            format!(
+                                "Could not download the local voice model (tried direct, then the system proxy): {e}"
+                            )
+                        })
+                }
+                None => Err(format!("Could not download the local voice model: {t}")),
+            }
+        }
+        Err(other) => Err(format!("Could not download the local voice model: {other}")),
+    }
+}
+
+
 #[derive(Debug, Clone, Serialize)]
 pub struct DictationStatus {
     pub recording: bool,
@@ -165,14 +282,9 @@ impl Dictation {
             // Per-read timeout, not overall: a 142 MB transfer legitimately takes minutes, but
             // a stalled connection must surface as an error — the cancel flag is only observed
             // between reads, so an indefinitely blocked read would also make Cancel unresponsive.
-            let agent = ureq::AgentBuilder::new()
-                .timeout_connect(std::time::Duration::from_secs(30))
-                .timeout_read(std::time::Duration::from_secs(30))
-                .build();
-            let response = agent
-                .get(DEFAULT_MODEL_URL)
-                .call()
-                .map_err(|e| format!("Could not download the local voice model: {e}"))?;
+            // Direct first; if the host is unreachable, retry through the auto-detected system
+            // proxy (non-persistent — see fetch_model_response / detect_system_proxy).
+            let response = fetch_model_response()?;
             let mut input = response.into_reader();
             let mut output = fs::File::create(&partial)
                 .map_err(|e| format!("Could not save the local voice model: {e}"))?;

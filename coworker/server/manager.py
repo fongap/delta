@@ -76,8 +76,12 @@ from ..providers import (
     ProviderClient,
     ProviderRouter,
     descriptor_configured,
+    fetch_provider_models,
     get_descriptor,
+    is_custom_provider,
     provider_descriptors,
+    register_custom_provider,
+    unregister_custom_provider,
     verify_provider_key,
 )
 from ..secrets import SecretStore, state_dir
@@ -172,6 +176,14 @@ class SessionManager:
         self._prefs = self._load_prefs()
         if self._prefs.get("default_model"):
             self.model = self._prefs["default_model"]
+        # Re-hydrate user-registered custom providers (alias -> protocol) from prefs so
+        # `alias:model` routing survives a restart without re-registering from the GUI.
+        for alias, meta in (self._prefs.get("custom_providers") or {}).items():
+            try:
+                register_custom_provider(alias, meta["protocol"], meta)
+            except (ValueError, KeyError):
+                # A stale/legacy entry must not kill startup — skip only that alias.
+                continue
         # Seed the PDF-fallback module global from prefs so engines see the user's
         # choice from the first turn (set_pdf_settings keeps it in sync after).
         from ..pdf_support import set_fallback_mode
@@ -1497,6 +1509,8 @@ class SessionManager:
                 for f in d.fields
                 if not f.secret and profile.get(f.key)
             }
+            custom = is_custom_provider(d.name)
+            custom_meta = (self._prefs.get("custom_providers") or {}).get(d.name, {})
             out.append(
                 {
                     **d.to_dict(),
@@ -1510,6 +1524,13 @@ class SessionManager:
                     "last_used_at": (self._prefs.get("provider_last_used") or {}).get(
                         d.name
                     ),
+                    # Custom-config-first markers: the GUI uses these to tell a user-defined
+                    # alias apart from a built-in provider (edit/delete vs remove-key) and to
+                    # preselect the protocol dropdown when editing. `alias` is the name itself
+                    # for custom providers (kept distinct so the field is self-describing).
+                    "custom": custom,
+                    "protocol": custom_meta.get("protocol") if custom else None,
+                    "alias": d.name if custom else None,
                 }
             )
         return out
@@ -1596,10 +1617,18 @@ class SessionManager:
         )
 
     def set_provider(
-        self, name: str, fields: Optional[dict[str, Any]]
+        self,
+        name: str,
+        fields: Optional[dict[str, Any]],
+        require_complete: bool = True,
     ) -> dict[str, Any]:
         """Store a provider's config in its `provider:<name>` SecretStore profile and rebuild
-        its cached client. Merges provided fields into any existing profile."""
+        its cached client. Merges provided fields into any existing profile.
+
+        `require_complete=False` (used when first creating a custom provider) stores whatever
+        fields were given without rejecting a provider that isn't fully configured yet — the
+        alias is first-class and the key/endpoint can be filled in later.
+        """
         d = get_descriptor(name)
         if d is None:
             return {"ok": False, "error": f"unknown provider: {name}"}
@@ -1615,9 +1644,10 @@ class SessionManager:
                 profile[f.key] = val
             elif not f.required:
                 profile.pop(f.key, None)
-        missing = [f.label for f in d.fields if f.required and not profile.get(f.key)]
-        if missing:
-            return {"ok": False, "error": "missing: " + ", ".join(missing)}
+        if require_complete:
+            missing = [f.label for f in d.fields if f.required and not profile.get(f.key)]
+            if missing:
+                return {"ok": False, "error": "missing: " + ", ".join(missing)}
         # A (re)pasted key stamps its save date — Settings shows "key added <date>" so stale
         # keys are visible. Endpoint-only saves keep the original stamp.
         if isinstance(fields.get("api_key"), str) and fields["api_key"].strip():
@@ -1651,6 +1681,100 @@ class SessionManager:
         self.secrets.delete(f"provider:{name}")
         self._refresh_provider(name)
         return {"ok": True, "provider": name}
+
+    def is_custom_registered(self, alias: str) -> bool:
+        """True when `alias` is a user-registered custom provider (not a built-in)."""
+        return is_custom_provider(alias)
+
+    def create_custom_provider(
+        self, alias: str, protocol: str, fields: Optional[dict[str, Any]]
+    ) -> dict[str, Any]:
+        """Register a user-defined provider alias (custom-config-first model setup).
+
+        Persists `alias -> protocol` to prefs (so routing survives a restart), injects the
+        dynamic descriptor into the registry, then reuses `set_provider` to store the
+        credential/config profile in the SecretStore and rebuild the cached client.
+        """
+        alias = (alias or "").strip()
+        # An alias that already resolves to a descriptor (built-in or an existing custom
+        # provider) must not be silently shadowed — reject it for a clear error.
+        if get_descriptor(alias) is not None and not is_custom_provider(alias):
+            return {"ok": False, "error": f"provider already exists: {alias}"}
+        # Validate alias + protocol up front (register_custom_provider raises ValueError).
+        try:
+            register_custom_provider(alias, protocol)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
+        # Persist the registration so __init__ re-hydrates it after a restart.
+        custom = dict(self._prefs.get("custom_providers") or {})
+        custom[alias] = {"protocol": protocol}
+        self._prefs["custom_providers"] = custom
+        self._save_prefs()
+        # Store the actual config (key/endpoint) under provider:<alias> and rebuild the client.
+        # A custom provider is first-class the moment it's named — its key/endpoint can be
+        # filled in later, so don't reject a not-yet-complete profile here.
+        result = self.set_provider(alias, fields, require_complete=False)
+        if not result.get("ok"):
+            # Roll back the registration if set_provider rejected the fields so we don't
+            # leave a half-registered provider behind.
+            self.remove_custom_provider(alias)
+            return result
+        return {"ok": True, "provider": alias, "protocol": protocol,
+                "recommended_model": result.get("recommended_model")}
+
+    def remove_custom_provider(self, alias: str) -> dict[str, Any]:
+        """Delete a custom provider alias: unregister it, drop its SecretStore profile,
+        and drop the prefs entry so it doesn't come back on restart. Its `alias:*` models
+        leave the picker too — with the alias gone they'd otherwise route as OpenAI."""
+        if not is_custom_provider(alias):
+            return {"ok": False, "error": f"unknown provider: {alias}"}
+        unregister_custom_provider(alias)
+        self.secrets.delete(f"provider:{alias}")
+        custom = dict(self._prefs.get("custom_providers") or {})
+        custom.pop(alias, None)
+        self._prefs["custom_providers"] = custom
+        # Drop the alias's own models (and any hide-marks for them) so nothing routes
+        # through a provider that no longer exists.
+        prefix = alias + ":"
+        models = self._prefs.get("models") or []
+        self._prefs["models"] = [m for m in models if not m.startswith(prefix)]
+        hidden = self._prefs.get("hidden_models") or []
+        self._prefs["hidden_models"] = [m for m in hidden if not m.startswith(prefix)]
+        if not self._prefs["hidden_models"]:
+            self._prefs.pop("hidden_models", None)
+        self._save_prefs()
+        self._refresh_provider(alias)
+        return {"ok": True, "provider": alias}
+
+    def fetch_models(
+        self, alias: str, fields: Optional[dict[str, Any]], timeout: float = 10.0
+    ) -> dict[str, Any]:
+        """Fetch the model list for a custom provider alias, then auto-add each id by prefix
+        as `alias:{model_id}` (idempotent — already-present ids are skipped)."""
+        d = get_descriptor(alias)
+        if d is None:
+            return {"ok": False, "error": f"unknown provider: {alias}"}
+        # Probe with the supplied fields merged over any stored profile, so a never-saved
+        # form submission can still test before persisting.
+        profile = dict(self.secrets.get(f"provider:{alias}") or {})
+        merged: dict[str, Any] = {}
+        for f in d.fields:
+            val = (fields or {}).get(f.key) or profile.get(f.key) or ""
+            if isinstance(val, str):
+                val = val.strip()
+            if val:
+                merged[f.key] = val
+        result = fetch_provider_models(alias, merged, self.secrets, timeout)
+        if not result.get("ok"):
+            return result
+        added: list[str] = []
+        for mid in result.get("models", []):
+            model = f"{alias}:{mid}"
+            existing = self._prefs.get("models") or []
+            if model not in existing:
+                self.add_model(model)
+                added.append(model)
+        return {"ok": True, "alias": alias, "models": result.get("models", []), "added": added}
 
     def verify_provider(
         self, name: str, fields: Optional[dict[str, Any]]

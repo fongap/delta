@@ -54,7 +54,6 @@ import { InboxItemCard } from "./components/InboxItemCard";
 import { isTauri, platformOS, startWindowDrag } from "./tauri";
 import { Icon } from "./components/Icon";
 import { Sidebar } from "./components/Sidebar";
-import { TopbarSearch } from "./components/TopbarSearch";
 import { Composer } from "./components/Composer";
 import { ThinkingBlock, Transcript } from "./components/Transcript";
 import { Markdown } from "./components/Markdown";
@@ -1487,15 +1486,11 @@ export function App() {
               </span>
             )}
           </div>
-          {/* Right: global search (A1 — moved up from the sidebar so it survives collapse) +
-              artifacts + the one session-panel toggle. Model/mode/persona chrome is gone — the
-              facts live in the subtitle, the controls in the composer (§22). */}
+          {/* Right: artifacts + the one session-panel toggle. Global search moved back into the
+              sidebar brand row (A2 revised) — the topbar drag surface had swallowed its clicks.
+              Model/mode/persona chrome is gone — the facts live in the subtitle, the controls in
+              the composer (§22). */}
           <div className="main-topbar-side main-topbar-actions" onPointerDown={beginWindowDrag}>
-            <TopbarSearch
-              sessions={sessions}
-              personas={personas ?? undefined}
-              onSelect={selectSession}
-            />
             {agent === "cowork" && railHidden && artifactCount > 0 && (
               <button
                 className="topbar-artifacts-btn"

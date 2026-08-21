@@ -1385,6 +1385,24 @@ def create_app(manager: SessionManager) -> FastAPI:
         return manager.set_web_search(provider, (body or {}).get("api_key"))
 
     # -- model providers (OpenAI, Ollama, …) ------------------------------------
+    @app.get("/v1/protocols")
+    def protocols_get() -> list[dict[str, Any]]:
+        """Protocol definitions for the custom-provider form (no callable fields)."""
+        out: list[dict[str, Any]] = []
+        for pid, proto in PROTOCOLS.items():
+            out.append(
+                {
+                    "id": pid,
+                    "title": proto["title"],
+                    "needs_key": proto["needs_key"],
+                    "fields": [f.to_dict() for f in proto["fields"]],
+                    "recommended_model": proto.get("recommended_model"),
+                    "env_key": proto.get("env_key"),
+                    "blurb": proto.get("blurb", ""),
+                }
+            )
+        return out
+
     @app.get("/v1/providers")
     def providers_get() -> list[dict[str, Any]]:
         return manager.get_providers()
@@ -1394,10 +1412,33 @@ def create_app(manager: SessionManager) -> FastAPI:
         name = (body or {}).get("name", "")
         if not name:
             return {"ok": False, "error": "name required"}
+        # Custom-config-first: with `protocol` present this creates or updates a user-
+        # defined alias; otherwise it hits the built-in provider path.
+        if (body or {}).get("protocol"):
+            alias = name.strip()
+            if manager.is_custom_registered(alias):
+                return manager.set_provider(alias, (body or {}).get("fields"))
+            return manager.create_custom_provider(
+                alias, (body or {}).get("protocol"), (body or {}).get("fields")
+            )
         return manager.set_provider(name, (body or {}).get("fields"))
+
+    @app.post("/v1/providers/fetch")
+    async def providers_fetch(body: dict) -> dict[str, Any]:
+        # Live read-only model-list fetch (sync httpx) — run off the event loop.
+        name = (body or {}).get("name", "")
+        if not name:
+            return {"ok": False, "error": "name required"}
+        return await asyncio.to_thread(
+            manager.fetch_models, name, (body or {}).get("fields")
+        )
 
     @app.delete("/v1/providers/{name}")
     def providers_remove(name: str) -> dict[str, Any]:
+        # Custom aliases remove themselves (unregister + drop models); built-ins just forget
+        # their config (Settings ▸ Models "Remove key"). Both go through the right path.
+        if manager.is_custom_registered(name):
+            return manager.remove_custom_provider(name)
         return manager.remove_provider(name)
 
     @app.post("/v1/providers/verify")

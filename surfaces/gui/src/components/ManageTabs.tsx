@@ -29,7 +29,7 @@ import {
 } from "../api";
 import { CloudSignInInline, CloudStatusPending } from "./connectors/CloudSignIn";
 import { ModelChecklist } from "./ModelChecklist";
-import { ProviderCards, ProviderForm, useProviderSetup } from "../providers/ProviderSetup";
+import { CustomCreateForm, ProviderCards, ProviderForm, useProviderSetup } from "../providers/ProviderSetup";
 import { Toggle } from "./Toggle";
 import { useI18n } from "../i18n/I18nContext";
 
@@ -92,10 +92,22 @@ export function ModelsTab() {
   const info = ps.info;
   const knownNames = ps.providers.map((p) => p.name);
 
-  if (ps.sel === null) {
+  if (ps.sel === null && !ps.creating) {
     return (
       <div>
-        <ProviderCards ps={ps} tp="set" gridClass="grid grid-cols-2 xl:grid-cols-3 gap-2.5" lastUsed />
+        <div className="rounded-xl border border-line bg-panel p-4" data-testid="set-custom-card">
+          <div className="text-[15px] font-semibold">{t("providers.customProviderCard")}</div>
+          <p className="text-[12px] text-muted mt-0.5 mb-3 leading-relaxed">
+            {t("providers.customProviderCardSub")}
+          </p>
+          <CustomCreateForm ps={ps} tp="set" inline />
+        </div>
+        {ps.orderedCustom.length > 0 && (
+          <div className="mt-4">
+            <div className={SEC_H + " mb-1.5"}>{t("providers.yourProviders")}</div>
+            <ProviderCards ps={ps} tp="set" gridClass="grid grid-cols-2 xl:grid-cols-3 gap-2.5" lastUsed customOnly hideAdd />
+          </div>
+        )}
         <ComposerPickerCard settings={settings} providers={ps.providers} onChanged={refreshSettings} />
       </div>
     );
@@ -107,7 +119,7 @@ export function ModelsTab() {
         ps={ps}
         tp="set"
         footer={
-          ps.credentialed ? (
+          !ps.creating && ps.credentialed ? (
             <button
               className="text-[12.5px] text-danger/80 hover:text-danger hover:underline underline-offset-2"
               data-testid="set-remove-key"
@@ -129,7 +141,7 @@ export function ModelsTab() {
         </p>
       )}
 
-      {info?.configured ? (
+      {ps.sel && info?.configured ? (
         <div className="mt-6">
           <div className={SEC_H + " mb-1.5"}>{t("models.title")}</div>
           <p className="text-[12px] text-muted mb-2.5 leading-relaxed">
@@ -148,6 +160,7 @@ export function ModelsTab() {
       ) : (
         // Unconfigured providers still show their curated models as a read-only preview — what a
         // key unlocks is part of deciding to get one at all (owner ask, 2026-07-04).
+        ps.sel &&
         (info?.suggested_models?.length || 0) > 0 && (
           <div className="mt-6" data-testid="model-preview">
             <div className={SEC_H + " mb-1.5"}>{t("models.includedModels")}</div>

@@ -389,6 +389,182 @@ def test_set_provider_skips_recommended_when_not_pulled(tmp_path, monkeypatch):
     assert "ollama:qwen3-coder:30b" not in mgr.get_settings()["models"]
 
 
+# -- custom-provider registration / routing / persistence ------------------------
+def _with_custom(alias="mygw", protocol="openai-compatible"):
+    from coworker.providers.registry import (
+        register_custom_provider,
+        unregister_custom_provider,
+    )
+
+    register_custom_provider(alias, protocol)
+    return unregister_custom_provider
+
+
+def test_custom_descriptor_resolves_and_routes():
+    from coworker.providers import ProviderRouter, build_provider_client, get_descriptor
+    from coworker.providers.base import ProviderClient
+    from coworker.providers.openai_provider import OpenAIProvider
+    from coworker.providers.registry import unregister_custom_provider
+
+    cleanup = _with_custom()
+    try:
+        d = get_descriptor("mygw")
+        assert d is not None and d.title == "OpenAI compatible"
+        assert d.needs_key is True
+
+        # alias:model routes to the custom provider; the bare part strips the prefix
+        router = ProviderRouter(secrets=None)
+        assert router._provider_name("mygw:gpt-4o") == "mygw"
+        assert router._bare("mygw:gpt-4o") == "gpt-4o"
+
+        # the built client is an OpenAI-compatible client pointed at the custom endpoint
+        client = build_provider_client(
+            "mygw", {"api_key": "sk-x", "base_url": "https://gw.example/v1"}, None
+        )
+        assert isinstance(client, ProviderClient)
+        assert isinstance(client, OpenAIProvider)
+        assert client._base_url == "https://gw.example/v1"
+    finally:
+        cleanup("mygw")
+
+
+def test_custom_descriptor_protocol_fields():
+    from coworker.providers import get_descriptor
+    from coworker.providers.registry import unregister_custom_provider
+
+    cleanup = _with_custom(alias="local", protocol="ollama")
+    try:
+        d = get_descriptor("local")
+        assert d.needs_key is False  # keyless protocol reflects through
+        keys = {f.key for f in d.fields}
+        assert keys == {"base_url"}
+    finally:
+        cleanup("local")
+
+
+def test_custom_registration_validates():
+    import pytest
+
+    from coworker.providers.registry import (
+        _valid_alias,
+        register_custom_provider,
+        unregister_custom_provider,
+    )
+
+    assert not _valid_alias("") and not _valid_alias("has space") and not _valid_alias(".dot")
+    assert _valid_alias("my-api_2")
+
+    from coworker.providers import register_custom_provider as reg
+
+    reg("mygw", "openai-compatible")
+    try:
+        with pytest.raises(ValueError):
+            reg("mygw", "no-such-protocol")
+        with pytest.raises(ValueError):
+            reg("bad alias!", "openai-compatible")
+    finally:
+        unregister_custom_provider("mygw")
+
+
+def test_custom_provider_roundtrip(tmp_path, monkeypatch):
+    """create_custom_provider persists alias→protocol to prefs so `alias:model` still
+    routes after a fresh SessionManager (restart) re-hydrates the registry."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.server.manager import SessionManager
+
+    mgr = SessionManager(data_dir=tmp_path)
+    res = mgr.create_custom_provider(
+        "mygw", "openai-compatible", {"api_key": "sk-x", "base_url": "https://gw.example/v1"}
+    )
+    assert res["ok"] is True and res["provider"] == "mygw"
+    assert res["protocol"] == "openai-compatible"
+
+    provs = {p["name"]: p for p in mgr.get_providers()}
+    assert provs["mygw"]["configured"] is True
+    assert provs["mygw"]["needs_key"] is True
+
+    # model routing resolves through the alias
+    assert mgr.provider._provider_name("mygw:gpt-4o") == "mygw"
+
+    # a fresh manager re-hydrates from prefs — the alias still routes
+    mgr2 = SessionManager(data_dir=tmp_path)
+    assert mgr2.provider._provider_name("mygw:gpt-4o") == "mygw"
+    provs2 = {p["name"]: p for p in mgr2.get_providers()}
+    assert "mygw" in provs2
+
+
+def test_custom_provider_rejects_builtin_collision(tmp_path, monkeypatch):
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.server.manager import SessionManager
+
+    mgr = SessionManager(data_dir=tmp_path)
+    res = mgr.create_custom_provider("openai", "openai-compatible", {})
+    assert res["ok"] is False
+    assert "already exists" in res["error"]
+
+
+def test_custom_provider_rejects_bad_protocol(tmp_path, monkeypatch):
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.server.manager import SessionManager
+
+    mgr = SessionManager(data_dir=tmp_path)
+    res = mgr.create_custom_provider("mygw", "no-such", {})
+    assert res["ok"] is False
+
+
+def test_remove_custom_provider_drops_models(tmp_path, monkeypatch):
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.server.manager import SessionManager
+
+    mgr = SessionManager(data_dir=tmp_path)
+    mgr.create_custom_provider("mygw", "openai-compatible", {"base_url": "https://x/v1"})
+    mgr.add_model("mygw:gpt-4o")
+    assert "mygw:gpt-4o" in (mgr._prefs.get("models") or [])
+
+    res = mgr.remove_custom_provider("mygw")
+    assert res["ok"] is True
+    assert "mygw:gpt-4o" not in (mgr._prefs.get("models") or [])
+    # survives restart — nothing to re-hydrate
+    mgr2 = SessionManager(data_dir=tmp_path)
+    assert "mygw:gpt-4o" not in mgr2.get_settings()["models"]
+    assert "mygw" not in {p["name"] for p in mgr2.get_providers()}
+
+
+def test_fetch_models_auto_adds_by_prefix(tmp_path, monkeypatch):
+    """fetch_models probes the alias endpoint then auto-adds `alias:{id}` (idempotent)."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+
+    def fake_fetch(name, profile, secrets, timeout=10.0):
+        # only the probe function is faked — the add-to-picker logic stays real
+        models = ["gpt-4o", "embedding-3"] if name == "mygw" else []
+        return {"ok": True, "models": models}
+
+    from coworker.providers import fetch_provider_models
+    from coworker.server.manager import SessionManager
+
+    monkeypatch.setattr("coworker.server.manager.fetch_provider_models", fake_fetch)
+    mgr = SessionManager(data_dir=tmp_path)
+    mgr.create_custom_provider("mygw", "openai-compatible", {"base_url": "https://x/v1"})
+
+    res = mgr.fetch_models("mygw", {})
+    assert res["ok"] is True
+    assert res["models"] == ["gpt-4o", "embedding-3"]
+    assert res["added"] == ["mygw:gpt-4o", "mygw:embedding-3"]
+    assert "mygw:gpt-4o" in (mgr._prefs.get("models") or [])
+
+    # second fetch is idempotent — nothing re-added
+    res2 = mgr.fetch_models("mygw", {})
+    assert res2["added"] == []
+
+
+def test_fetch_models_rejects_unknown(tmp_path, monkeypatch):
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    from coworker.server.manager import SessionManager
+
+    mgr = SessionManager(data_dir=tmp_path)
+    assert mgr.fetch_models("nope", {})["ok"] is False
+
+
 def test_provider_builders(monkeypatch):
     import pytest
 

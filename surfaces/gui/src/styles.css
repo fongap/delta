@@ -13,6 +13,21 @@
   white-space: nowrap; /* the BETA chip rides the same line, never wraps under */
 }
 
+/* Instant hover tooltip — the native `title` attribute lags ~500ms+ in the webview, so footer
+   icon buttons surface their label through this CSS popover instead. Appears above the element
+   (the footer sits at the bottom of the sidebar). Kept light: no arrow, no shadow stack. */
+.tip { position: relative; }
+.tip::after {
+  content: attr(data-tip);
+  position: absolute; bottom: calc(100% + 6px); left: 50%; transform: translateX(-50%);
+  background: var(--ink); color: var(--paper);
+  font-size: 11px; line-height: 1.4; font-weight: 500;
+  padding: 4px 8px; border-radius: 6px; white-space: nowrap;
+  pointer-events: none; opacity: 0; transition: opacity 0.1s ease; z-index: 60;
+}
+.tip:hover::after { opacity: 1; }
+.tip.tip-below::after { bottom: auto; top: calc(100% + 6px); }
+
 :root {
   color-scheme: light;
   --paper: #f5f6f7;          /* cool light gray — reads "tool", not "writing app" */
@@ -745,7 +760,7 @@ button.btn.danger { color: var(--accent); }
 
 /* Cowork session start panel */
 .intro { max-width: 640px; margin: 0 auto; padding: 40px 20px 24px; }
-.intro .greeting { font-size: 26px; font-weight: 600; display: flex; align-items: center; gap: 10px; }
+.intro .greeting { font-size: 26px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 10px; }
 .intro .greeting .mark { color: var(--accent); }
 .intro-lede { color: var(--muted); font-size: 14px; line-height: 1.5; margin: 8px 0 0; }
 
@@ -787,8 +802,8 @@ button.btn.danger { color: var(--accent); }
 .task-dot + .task-dot { margin-left: -4px; }
 .task-dot.off { filter: grayscale(1); opacity: 0.7; }
 .task-card-act {
-  color: var(--faint); font-size: 12.5px; flex: none;
-  opacity: 0; transition: opacity 0.12s;
+  color: var(--accent); font-size: 12.5px; flex: none;
+  opacity: 1; transition: opacity 0.12s;
 }
 .task-card:hover .task-card-act { opacity: 1; color: var(--accent); }
 .task-card.gated .task-card-act { opacity: 1; color: var(--accent); }

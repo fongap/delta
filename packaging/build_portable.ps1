@@ -61,7 +61,7 @@ $Here      = Split-Path -Parent $MyInvocation.MyCommand.Path
 $Platform  = Split-Path -Parent $Here
 $Gui       = Join-Path $Platform "surfaces\gui"
 $Venv      = Join-Path $Platform ".venv"
-$PyInst    = Join-Path $Venv "Scripts\pyinstaller.exe"
+$PyExe     = Join-Path $Venv "Scripts\python.exe"
 
 # Version + app-name come from tauri.conf.json (single source of truth).
 $TauriCfg  = Join-Path $Gui "src-tauri\tauri.conf.json"
@@ -78,8 +78,8 @@ Require-Cmd rustc
 Require-Cmd cargo
 Require-Cmd npm
 Require-Cmd tar
-if (-not (Test-Path $PyInst)) {
-    throw "PyInstaller not found at $PyInst. Create the venv and install deps (see header)."
+if (-not (Test-Path $PyExe)) {
+    throw "Python interpreter not found at $PyExe. Create the venv and install deps (see header)."
 }
 
 $Triple = (& rustc -vV | Select-String '^host:').ToString().Split()[-1]
@@ -94,7 +94,9 @@ if ($running) {
 
 # ---- 1. PyInstaller onedir server sidecar -------------------------------------
 Write-Host "==> [1/6] PyInstaller: bundling delta-server ($Triple)" -ForegroundColor Cyan
-& $PyInst --noconfirm --clean `
+# Run via `python -m PyInstaller` — the console-script .exe launcher in the venv can fail
+# silently (exit 1, no output) on some installs; the module invocation is the reliable path.
+& $PyExe -m PyInstaller --noconfirm --clean `
     --distpath (Join-Path $Here "dist") --workpath (Join-Path $Here "build") `
     (Join-Path $Here "delta-server.spec")
 if ($LASTEXITCODE -ne 0) { throw "PyInstaller failed (exit $LASTEXITCODE)" }

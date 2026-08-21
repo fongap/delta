@@ -1551,10 +1551,30 @@ export interface ProviderInfo {
   blurb?: string; // one-line note under the title ("Uses X's OpenAI-compatible API…")
   key_set_at?: string | null; // ISO date the key was last (re)saved — absent for env-only config
   last_used_at?: number | null; // epoch secs the provider last served a completion
+  // custom-config-first markers (backend-emitted); null for built-in providers
+  custom?: boolean | null; // true for a user-defined alias
+  protocol?: string | null; // protocol_id of a custom provider (e.g. "openai-compatible")
+  alias?: string | null; // the alias name for a custom provider (=== name when custom)
+}
+
+export interface ProviderProtocol {
+  id: string; // protocol_id, e.g. "openai-compatible"
+  title: string; // dropdown label
+  needs_key: boolean;
+  fields: ProviderField[]; // the fields this protocol's form renders
+  recommended_model: string | null;
+  env_key?: string | null; // env var that can supply the key
+  blurb?: string;
 }
 
 export async function getProviders(): Promise<ProviderInfo[]> {
   const res = await fetch(`${httpBase()}/v1/providers`);
+  return res.json();
+}
+
+/** The 7 protocol definitions for the custom-provider form's protocol dropdown. */
+export async function getProtocols(): Promise<ProviderProtocol[]> {
+  const res = await fetch(`${httpBase()}/v1/protocols`);
   return res.json();
 }
 
@@ -1574,6 +1594,66 @@ export async function setProvider(
 export async function removeProvider(name: string): Promise<{ ok: boolean; error?: string }> {
   const res = await fetch(`${httpBase()}/v1/providers/${encodeURIComponent(name)}`, {
     method: "DELETE",
+  });
+  return res.json();
+}
+
+/**
+ * Create or update a user-defined provider alias. Pass `protocol` to create (or
+ * update) a custom provider; omit it to hit the built-in provider path.
+ */
+export async function createCustomProvider(
+  alias: string,
+  protocol: string,
+  fields: Record<string, string>,
+): Promise<{
+  ok: boolean;
+  error?: string;
+  provider?: string;
+  protocol?: string;
+  recommended_model?: string | null;
+}> {
+  const res = await fetch(`${httpBase()}/v1/providers`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name: alias, protocol, fields }),
+  });
+  return res.json();
+}
+
+/**
+ * Remove a custom provider alias entirely (unregister + drop its alias: models).
+ * Returning `{ok:false}` for a built-in name here is expected; use removeProvider
+ * for built-ins.
+ */
+export async function removeCustomProvider(
+  alias: string,
+): Promise<{ ok: boolean; error?: string }> {
+  const res = await fetch(`${httpBase()}/v1/providers/${encodeURIComponent(alias)}`, {
+    method: "DELETE",
+  });
+  return res.json();
+}
+
+/**
+ * Fetch a configured (or just-entered) custom provider's model list and auto-add
+ * each id as `alias:{id}` per "按前缀自动加入". Returns the bare ids plus what was
+ * newly added.
+ */
+export async function fetchModels(
+  name: string,
+  fields: Record<string, string>,
+): Promise<{
+  ok: boolean;
+  error?: string;
+  alias?: string;
+  models?: string[];
+  added?: string[];
+}> {
+  const res = await fetch(`${httpBase()}/v1/providers/fetch`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name, fields }),
   });
   return res.json();
 }

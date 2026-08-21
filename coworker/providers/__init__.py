@@ -12,14 +12,19 @@ from .gemini_provider import GeminiProvider
 from .openai_provider import OpenAIProvider, resolve_api_key
 from .openai_responses import OpenAIResponsesProvider
 from .registry import (
+    PROTOCOLS,
     ProviderDescriptor,
     ProviderField,
     build_provider_client,
     descriptor_configured,
     detect_provider,
+    fetch_provider_models,
     get_descriptor,
+    is_custom_provider,
     provider_descriptors,
     provider_names,
+    register_custom_provider,
+    unregister_custom_provider,
     verify_provider_key,
 )
 from .router import ProviderRouter
@@ -42,6 +47,7 @@ __all__ = [
     "ProviderRouter",
     "ProviderDescriptor",
     "ProviderField",
+    "PROTOCOLS",
     "provider_descriptors",
     "provider_names",
     "get_descriptor",
@@ -49,4 +55,8 @@ __all__ = [
     "descriptor_configured",
     "detect_provider",
     "verify_provider_key",
+    "register_custom_provider",
+    "unregister_custom_provider",
+    "is_custom_provider",
+    "fetch_provider_models",
 ]

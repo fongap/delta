@@ -1,11 +1,15 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import {
+  createCustomProvider,
+  fetchModels,
+  getProtocols,
   getProviders,
   removeProvider,
   setProvider,
   verifyProvider,
   type ProviderField as ProviderFieldT,
   type ProviderInfo,
+  type ProviderProtocol,
 } from "../api";
 import { openExternal } from "../tauri";
 import { useI18n } from "../i18n/I18nContext";
@@ -51,6 +55,8 @@ export function localizeVerifyMsg(msg: string | undefined, t: (k: string, v?: Re
   if (msg === "Reached the server, but no OpenAI-compatible /v1 API there.") return t("providers.noOpenAiApi");
   if ((m = msg.match(/^(.+) returned HTTP (\d+)\.$/))) return t("providers.httpError", { name: m[1], code: m[2] });
   if ((m = msg.match(/^unknown provider: (.+)$/))) return t("providers.unknownProvider", { name: m[1] });
+  if ((m = msg.match(/^provider already exists: (.+)$/))) return t("providers.providerExists", { name: m[1] });
+  if (msg === "Invalid provider alias.") return t("providers.invalidAlias");
   if (msg === "unreachable" || msg === "couldn't verify") return t("providers.unreachable");
   return msg;
 }
@@ -87,6 +93,8 @@ export function relTime(epoch?: number | null, t?: (key: string, vars?: Record<s
 export interface ProviderSetupState {
   providers: ProviderInfo[];
   ordered: ProviderInfo[];
+  customProviders: ProviderInfo[];
+  orderedCustom: ProviderInfo[];
   refreshProviders: () => Promise<void>;
   sel: string | null;
   info: ProviderInfo | undefined;
@@ -111,6 +119,33 @@ export interface ProviderSetupState {
   // owner-hit 2026-07-23: the budget silently never saved).
   saveField: (key: string) => Promise<void>;
   fieldSaved: string | null; // field key flashing "✓ Saved"
+
+  // -- custom-config-first (F1+F2) -------------------------------------------------
+  // The 7 protocol definitions (openai-compatible, openai, anthropic, gemini, ollama,
+  // bedrock, vertex) loaded from /v1/protocols; the create form's protocol dropdown reads
+  // these to render its dynamic field table.
+  protocols: ProviderProtocol[];
+  // True while the "Add custom provider" form is open (no alias saved yet). The gallery's
+  // surfaces render the create form in place of ProviderCards when this is set.
+  creating: boolean;
+  // The alias the user is typing for a not-yet-created custom provider.
+  alias: string;
+  setAlias: (v: string) => void;
+  // The selected protocol_id for the create form; defaults to "openai-compatible".
+  protoId: string;
+  setProtoId: (id: string) => void;
+  // The resolved protocol definition for `protoId` (undefined until /v1/protocols loads).
+  protoDef: ProviderProtocol | undefined;
+  // Open the create form (resets alias/protocol/fields). Closing returns to the gallery.
+  openNewCustom: () => void;
+  // Create & save: register the alias, persist its fields, then run a live verify. Stays
+  // on the form when verify fails — a custom provider is first-class the moment it's named,
+  // so a failing test is not a reason to discard it. Returns true on verify success.
+  runCustomCreate: () => Promise<boolean>;
+  // Fetch the provider's model list and auto-add each id as `alias:{id}` (按前缀自动加入).
+  fetchCustomModels: () => Promise<void>;
+  fetching: boolean;
+  fetchMsg: { state: "ok" | "error"; text: string } | null;
 }
 
 export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetupState {
@@ -132,12 +167,23 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
   const [fieldSaved, setFieldSaved] = useState<string | null>(null);
   const fieldSavedTimer = useRef<number | null>(null);
 
+  // -- custom-config-first (F1+F2) ------------------------------------------------
+  const [protocols, setProtocols] = useState<ProviderProtocol[]>([]);
+  const [creating, setCreating] = useState(false);
+  const [alias, setAlias] = useState("");
+  const [protoId, setProtoIdState] = useState("openai-compatible");
+  const [fetching, setFetching] = useState(false);
+  const [fetchMsg, setFetchMsg] = useState<{ state: "ok" | "error"; text: string } | null>(null);
+
   const refreshProviders = () =>
     getProviders()
       .then(setProviders)
       .catch(() => {});
   useEffect(() => {
     refreshProviders();
+    getProtocols()
+      .then(setProtocols)
+      .catch(() => {});
     return () => {
       if (backTimer.current) window.clearTimeout(backTimer.current);
     };
@@ -146,9 +192,54 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
   const info = providers.find((p) => p.name === sel);
   const credentialed = !!info?.configured && !!info?.needs_key;
 
+  // The protocol currently being authored in the create form (fields follow its def).
+  const protoDef = protocols.find((p) => p.id === protoId);
+
+  // Reset the create form to a fresh protocol's field defaults whenever the dropdown
+  // changes (so switching OpenAI-compatible → Anthropic doesn't carry stale fields over).
+  const setProtoId = (id: string) => {
+    setProtoIdState(id);
+    const def = protocols.find((p) => p.id === id);
+    const next: Record<string, string> = {};
+    for (const f of def?.fields || []) next[f.key] = f.default || "";
+    setFields(next);
+    setDirty(false);
+    setVerify({ state: "idle" });
+    setFetchMsg(null);
+  };
+
+  const resetCreateForm = () => {
+    setAlias("");
+    const def = protocols.find((p) => p.id === protoId);
+    const next: Record<string, string> = {};
+    for (const f of def?.fields || []) next[f.key] = f.default || "";
+    setFields(next);
+    setDirty(false);
+    setVerify({ state: "idle" });
+    setFetchMsg(null);
+  };
+
+  // Open the "add custom provider" form (the gallery's create path). Closes any open
+  // provider edit first so the two never share a live `sel`.
+  const openNewCustom = () => {
+    if (sel) setDrafts((d) => ({ ...d, [sel]: dirty ? fields : {} }));
+    setSel(null);
+    setCreating(true);
+    setAlias("");
+    setProtoIdState("openai-compatible");
+    const def = protocols.find((p) => p.id === "openai-compatible");
+    const next: Record<string, string> = {};
+    for (const f of def?.fields || []) next[f.key] = f.default || "";
+    setFields(next);
+    setDirty(false);
+    setVerify({ state: "idle" });
+    setFetchMsg(null);
+  };
+
   const openProvider = (name: string) => {
     const p = providers.find((x) => x.name === name);
     if (sel) setDrafts((d) => ({ ...d, [sel]: fields }));
+    setCreating(false);
     const draft = drafts[name];
     const next: Record<string, string> = {};
     for (const f of p?.fields || []) next[f.key] = draft?.[f.key] || p?.values?.[f.key] || f.default || "";
@@ -166,7 +257,8 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
     // (state-restore bug, owner catch 2026-07-19). A clean form clears any stale draft.
     if (sel) setDrafts((d) => ({ ...d, [sel]: dirty ? fields : {} }));
     setSel(null);
-    setVerify({ state: "idle" });
+    setCreating(false);
+    resetCreateForm();
   };
 
   // Test = verify AND save AND return (§39: a passing Test auto-saves and takes
@@ -193,9 +285,80 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
     backTimer.current = window.setTimeout(() => {
       setDrafts((d) => ({ ...d, [sel]: {} }));
       setSel(null);
-      setVerify({ state: "idle" });
+      resetCreateForm();
     }, 900);
     return true;
+  };
+
+  // Create & save for a brand-new custom alias. Ordering matters: verifyProvider needs
+  // get_descriptor(alias) to exist, so the alias MUST be registered (and its fields
+  // persisted) first, then verified live. A failing verify doesn't discard the alias —
+  // custom providers are first-class the moment they're named, so we land on its edit
+  // form with the entered values still in place and the error message shown.
+  const runCustomCreate = async (): Promise<boolean> => {
+    const aliasTrim = alias.trim();
+    if (!aliasTrim || !protoId || !protoDef) return false;
+    setVerify({ state: "testing" });
+    const create = await createCustomProvider(aliasTrim, protoId, fields)
+      .catch(() => ({ ok: false, error: "unreachable" }));
+    if (!create.ok) {
+      setVerify({ state: "error", msg: create.error || "couldn't verify" });
+      return false;
+    }
+    const res = await verifyProvider(aliasTrim, fields)
+      .catch(() => ({ ok: false, error: "unreachable" }));
+    await refreshProviders();
+    if (!res.ok) {
+      setVerify({ state: "error", msg: res.error || "couldn't verify" });
+      setCreating(false);
+      setSel(aliasTrim);
+      return false;
+    }
+    if (!protoDef.needs_key) setKeylessOk((s) => new Set(s).add(aliasTrim));
+    setVerify({ state: "ok" });
+    setDirty(false);
+    setCreating(false);
+    setSel(null);
+    resetCreateForm();
+    setDrafts((d) => ({ ...d, [aliasTrim]: {} }));
+    opts?.onSaved?.();
+    return true;
+  };
+
+  // Fetch a provider's model list and auto-add each id as `alias:{id}` (按前缀自动加入).
+  // Works from the edit form (sel set) or the create form (alias still being authored) —
+  // in create mode the alias is registered first since fetchModels resolves its descriptor.
+  const fetchCustomModels = async (): Promise<void> => {
+    const name = (sel ?? alias.trim()).trim();
+    if (!name) return;
+    setFetching(true);
+    setFetchMsg(null);
+    if (!sel && !providers.some((p) => p.name === name && p.custom)) {
+      const c = await createCustomProvider(name, protoId, fields)
+        .catch(() => ({ ok: false, error: "unreachable" }));
+      if (!c.ok) {
+        setFetching(false);
+        setFetchMsg({ state: "error", text: localizeVerifyMsg(c.error || "couldn't verify", t) });
+        return;
+      }
+    }
+    const res = await fetchModels(name, fields).catch(
+      (): { ok: false; error: string; added?: string[] } => ({ ok: false, error: "unreachable" }),
+    );
+    setFetching(false);
+    if (!res.ok) {
+      setFetchMsg({ state: "error", text: localizeVerifyMsg(res.error || "couldn't verify", t) });
+      return;
+    }
+    const n = res.added?.length ?? 0;
+    setFetchMsg({
+      state: "ok",
+      text: n > 0
+        ? t("providers.fetchOk", { n }, `Fetched ${n} model${n === 1 ? "" : "s"}`)
+        : t("providers.fetchOkNone", undefined, "Models already up to date"),
+    });
+    await refreshProviders();
+    opts?.onSaved?.();
   };
 
   // Blur-save for non-secret fields when the provider is already configured: extras like
@@ -231,7 +394,7 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
     await refreshProviders();
     opts?.onSaved?.();
     setSel(null);
-    setVerify({ state: "idle" });
+    resetCreateForm();
   };
 
   const statusFor = (p: ProviderInfo, o?: { lastUsed?: boolean }) => {
@@ -257,9 +420,13 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
     return <span className="block text-[11.5px] text-faint truncate">{t("providers.notSetUp", undefined, "Not set up")}</span>;
   };
 
+  const customProviders = providers.filter((p) => p.custom);
+
   return {
     providers,
     ordered: [...providers].sort((a, b) => providerRank(a.name) - providerRank(b.name)),
+    customProviders,
+    orderedCustom: [...customProviders].sort((a, b) => providerRank(a.name) - providerRank(b.name)),
     refreshProviders,
     sel,
     info,
@@ -293,26 +460,69 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
       if (backTimer.current) window.clearTimeout(backTimer.current);
     },
     statusFor,
+    // -- custom-config-first -------------------------------------------------------
+    protocols,
+    creating,
+    alias,
+    setAlias,
+    protoId,
+    setProtoId,
+    protoDef,
+    openNewCustom,
+    runCustomCreate,
+    fetchCustomModels,
+    fetching,
+    fetchMsg,
   };
 }
 
-/** The gallery: one card per provider, each wearing its own state. */
+/** The gallery: a card per configured/built-in provider, plus the entry point into the
+ * custom-config-first create form (alias + protocol). */
 export function ProviderCards({
   ps,
   tp,
   gridClass = "grid grid-cols-2 gap-2.5",
   lastUsed = false,
+  hideAdd = false,
+  customOnly = false,
 }: {
   ps: ProviderSetupState;
   tp: string; // testid prefix ("ob" onboarding, "set" settings)
   gridClass?: string;
   lastUsed?: boolean;
+  hideAdd?: boolean;
+  customOnly?: boolean;
 }) {
+  const { t } = useI18n();
   const card =
     "flex items-center gap-2.5 rounded-xl border border-line bg-panel px-3 py-2.5 text-left hover:border-lineStrong transition-colors";
+  const list = customOnly ? ps.orderedCustom : ps.ordered;
   return (
     <div className={gridClass}>
-      {ps.ordered.map((p) => (
+      {!hideAdd && (
+        <button
+          className={card + " border-dashed text-muted hover:text-ink"}
+          onClick={ps.openNewCustom}
+          data-testid={`${tp}-provider-add`}
+        >
+          <span
+            className="rounded-lg border border-line grid place-items-center shrink-0"
+            style={{ width: 32, height: 32, background: "#f6f7f8" }}
+          >
+            <span className="text-[16px] font-semibold text-muted">＋</span>
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-[13px] font-semibold leading-tight truncate">
+              {t("providers.addCustomProvider", undefined, "Add custom provider")}
+            </span>
+            <span className="block text-[11.5px] text-faint truncate">
+              {t("providers.customProviderHint", undefined, "Any OpenAI-compatible · or native protocol")}
+            </span>
+          </span>
+          <span className="text-faint text-[14px]">＋</span>
+        </button>
+      )}
+      {list.map((p) => (
         <button
           key={p.name}
           className={card}
@@ -366,6 +576,7 @@ export function ProviderForm({
   // the first field for keyless providers (Ollama's Detect).
   const requiredSecret = fieldsAll.find((x) => x.secret && x.required);
   const testKey = requiredSecret ? requiredSecret.key : fieldsAll[0]?.key;
+  if (ps.creating) return <CustomCreateForm ps={ps} tp={tp} />;
   if (!sel) return null;
 
   const fieldRow = (f: ProviderFieldT, testable: boolean) => (
@@ -592,6 +803,186 @@ export function ProviderForm({
         {ps.verify.state === "error" && <span className="text-warnInk">{localizeVerifyMsg(ps.verify.msg, t)}</span>}
       </div>
       {footer}
+    </div>
+  );
+}
+
+/**
+ * The custom-config-first create form (F1+F2): alias + protocol dropdown (default
+ * "OpenAI compatible") + the selected protocol's dynamic field table, then
+ * "Create & save" (register → verify) and "Fetch models" (auto-add `alias:{id}`).
+ * Rendered by ProviderForm when `ps.creating` is true; distinct from the built-in
+ * edit path because there is no `sel`/`info` to prefill from yet.
+ */
+export function CustomCreateForm({ ps, tp, inline = false }: { ps: ProviderSetupState; tp: string; inline?: boolean }) {
+  const { t } = useI18n();
+  const proto = ps.protoDef;
+  const label = "block text-[12px] text-muted mt-3 mb-1";
+  const input = "w-full px-3 py-2 rounded-lg border bg-panel text-[13.5px] outline-none focus:border-accent";
+  const fieldsAll = proto?.fields || [];
+  const choice = fieldsAll.find((f) => f.choices && f.choices.length);
+  const method = choice ? ps.fields[choice.key] || choice.default || "" : "";
+  const selected = choice?.choices?.find((c) => c.value === method);
+  const methodFields = choice
+    ? fieldsAll.filter(
+        (f) => f.show_when && Object.entries(f.show_when).every(([k, v]) => (ps.fields[k] || "") === v),
+      )
+    : [];
+  const createReady =
+    !!ps.alias.trim() &&
+    fieldsAll.every((f) => !f.secret || !f.required || (ps.fields[f.key] || "").trim());
+  const busy = ps.verify.state === "testing" || ps.fetching;
+
+  // A leaner row than the edit path's fieldRow: no inline Test button (that path needs a
+  // registered `sel`), no saved-pill (nothing is saved until Create & save).
+  const row = (f: ProviderFieldT) => (
+    <div key={f.key}>
+      <label className={label}>{f.label}</label>
+      <input
+        className={input + " border-line"}
+        type={f.secret ? "password" : "text"}
+        placeholder={f.placeholder}
+        value={ps.fields[f.key] || ""}
+        data-testid={`${tp}-field-${f.key}`}
+        onChange={(e) => ps.setFieldValue(f.key, e.target.value)}
+      />
+      {f.help && <p className="text-[11.5px] text-faint mt-1">{f.help}</p>}
+    </div>
+  );
+
+  return (
+    <div>
+      {!inline && (
+        <button className="text-[12.5px] text-muted hover:text-ink" onClick={ps.backToGallery} data-testid={`${tp}-back`}>
+          ‹ {t("providers.allProviders", undefined, "All providers")}
+        </button>
+      )}
+      {!inline && (
+        <div className="flex items-center gap-3 mt-3 mb-1">
+          <ProviderMark name={proto?.id || "custom"} title={proto?.title || "Custom"} size={36} />
+          <span className="min-w-0">
+            <span className="block text-[15px] font-semibold leading-tight">
+              {t("providers.addCustomProvider", undefined, "Add custom provider")}
+            </span>
+            {proto?.blurb && <span className="block text-[11.5px] text-faint">{proto.blurb}</span>}
+          </span>
+        </div>
+      )}
+
+      {/* The alias is the routing prefix — `alias:{model}` is how its models are named. */}
+      <div>
+        <label className={label}>{t("providers.alias", undefined, "Alias")}</label>
+        <input
+          className={input + " border-line"}
+          type="text"
+          placeholder={t("providers.aliasHint", undefined, "e.g. my-gateway")}
+          value={ps.alias}
+          data-testid={`${tp}-alias`}
+          onChange={(e) => ps.setAlias(e.target.value)}
+        />
+      </div>
+
+      <div>
+        <label className={label}>{t("providers.protocol", undefined, "Protocol")}</label>
+        <select
+          className={input + " border-line"}
+          value={ps.protoId}
+          data-testid={`${tp}-protocol`}
+          onChange={(e) => ps.setProtoId(e.target.value)}
+        >
+          {ps.protocols.map((p) => (
+            <option key={p.id} value={p.id}>
+              {t("providers.protocols." + p.id, undefined, p.title)}
+            </option>
+          ))}
+        </select>
+      </div>
+
+      {fieldsAll
+        .filter((f) => !f.show_when && !(f.choices && f.choices.length))
+        .map((f) => row(f))}
+
+      {/* Auth-method segmented control (bedrock/vertex protocols) — same control as the
+          edit path, but the panel's footer is the create action instead of Test & save. */}
+      {choice && (
+        <div>
+          <label className={label}>{choice.label}</label>
+          <div
+            className="inline-flex gap-0.5 rounded-[10px] border border-line bg-line/40 p-[3px]"
+            role="radiogroup"
+            aria-label={choice.label}
+          >
+            {(choice.choices || []).map((c) => {
+              const active = method === c.value;
+              return (
+                <button
+                  key={c.value}
+                  role="radio"
+                  aria-checked={active}
+                  className={
+                    "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[12.5px] whitespace-nowrap transition-colors " +
+                    (active
+                      ? "bg-panel text-ink font-medium shadow-sm ring-1 ring-line"
+                      : "text-muted hover:text-ink")
+                  }
+                  data-testid={`${tp}-choice-${choice.key}-${c.value}`}
+                  onClick={() => ps.setFieldValue(choice.key, c.value)}
+                >
+                  {c.label}
+                  {c.tag && (
+                    <span className="text-[9.5px] font-semibold uppercase tracking-wide text-accent bg-accentSoft rounded-full px-1.5 py-px">
+                      {c.tag}
+                    </span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+          <div className="mt-2.5 rounded-xl border border-line bg-paper/60 px-4 pb-3.5 pt-3">
+            {selected?.desc && <p className="text-[12px] text-muted">{selected.desc}</p>}
+            {methodFields.map((f) => row(f))}
+          </div>
+        </div>
+      )}
+
+      <div className="mt-3.5 flex items-center justify-between gap-3 border-t border-line pt-3">
+        <span className="text-[11.5px] text-faint">
+          {t("providers.checkThenSaves", undefined, "Runs one read-only check, then saves.")}
+        </span>
+        <div className="flex items-center gap-2">
+          <button
+            className="shrink-0 rounded-lg border border-line px-4 py-1.5 text-[13px] font-medium text-ink hover:border-lineStrong disabled:opacity-40"
+            onClick={() => void ps.fetchCustomModels()}
+            disabled={busy || !ps.alias.trim()}
+            data-testid={`${tp}-fetch`}
+          >
+            {ps.fetching ? "…" : t("providers.fetchModels", undefined, "Fetch models")}
+          </button>
+          <button
+            className="shrink-0 rounded-lg border border-accent bg-accent px-4 py-1.5 text-[13px] font-medium text-onAccent hover:brightness-105 disabled:opacity-40"
+            onClick={() => void ps.runCustomCreate()}
+            disabled={busy || !createReady}
+            data-testid={`${tp}-create-save`}
+          >
+            {ps.verify.state === "testing" ? "…" : <>✓ {t("providers.createAndSave", undefined, "Create & save")}</>}
+          </button>
+        </div>
+      </div>
+      <p className="text-[11.5px] text-faint mt-1">
+        {t("providers.prefixAutoNote", { alias: ps.alias.trim() || "alias" }, "Models are auto-added with the “{alias}:” prefix.")}
+      </p>
+
+      {ps.fetchMsg && (
+        <p
+          className={"mt-2 text-[12px] " + (ps.fetchMsg.state === "ok" ? "text-ok" : "text-warnInk")}
+          data-testid={`${tp}-fetch-msg`}
+        >
+          {ps.fetchMsg.text}
+        </p>
+      )}
+      <div className="mt-3 min-h-[19px] text-[12.5px]">
+        {ps.verify.state === "error" && <span className="text-warnInk">{localizeVerifyMsg(ps.verify.msg, t)}</span>}
+      </div>
     </div>
   );
 }

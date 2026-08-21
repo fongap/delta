@@ -18,7 +18,9 @@ MaaS endpoint), and `ollama` (local, OpenAI-compatible `/v1`).
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass, field
+from types import SimpleNamespace
 from typing import Any, Callable, Optional
 
 from .anthropic_provider import AnthropicProvider
@@ -30,6 +32,25 @@ from .openai_responses import OpenAIResponsesProvider
 from .vertex_provider import VertexProvider
 
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
+
+# Protocols a custom provider can be built against. Each entry reuses the
+# protocol-specific builder logic (so native endpoints/behaviour match the
+# built-in descriptors) but renders only the minimal field set a user can
+# fill in for an arbitrary alias. Key resolution stays inside each builder.
+PROTOCOL_OPENAI_COMPAT = "openai-compatible"  # default: a self-hosted gateway / Azure / etc.
+PROTOCOL_OPENAI_NATIVE = "openai-native"
+PROTOCOL_ANTHROPIC = "anthropic"
+PROTOCOL_GEMINI = "gemini"
+PROTOCOL_OLLAMA = "ollama"
+PROTOCOL_BEDROCK = "bedrock"
+PROTOCOL_VERTEX = "vertex"
+
+# Dynamic user-registered custom providers (alias -> {protocol, fields_meta}).
+# Bootstrapped from persistent prefs by SessionManager; consulted so arbitrary
+# user aliases route like any built-in provider.
+CUSTOM_PROVIDERS: dict[str, dict[str, Any]] = {}
+
+_ALIAS_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{1,62}$")
 
 
 @dataclass(frozen=True)
@@ -122,6 +143,24 @@ def _build_openai(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     if base_url:
         return OpenAIProvider(secrets=secrets, base_url=base_url)
     return OpenAIResponsesProvider(secrets=secrets)
+
+
+def _build_openai_native(profile: dict[str, Any], secrets: Any) -> ProviderClient:
+    # Stock OpenAI (no custom endpoint) — always the Responses API.
+    return OpenAIResponsesProvider(secrets=secrets)
+
+
+def _build_openai_compat(profile: dict[str, Any], secrets: Any) -> ProviderClient:
+    # Custom OpenAI-compatible endpoint. Key resolved from the alias's OWN profile (never the
+    # OpenAI env/SecretStore fallback), so a configured OpenAI key is never silently sent to a
+    # different endpoint. Missing key ⇒ fail fast with a clear error at first use.
+    base_url = ((profile or {}).get("base_url") or "").strip()
+    api_key = ((profile or {}).get("api_key") or "").strip()
+    if not base_url:
+        raise RuntimeError(
+            "No server address configured — add it in Settings ▸ Models."
+        )
+    return OpenAIProvider(api_key=api_key, base_url=base_url)
 
 
 def _build_anthropic(profile: dict[str, Any], secrets: Any) -> ProviderClient:
@@ -246,6 +285,121 @@ def _compat(
         env_key=env_key,
         blurb=f"Uses {vendor}'s OpenAI-compatible API — the endpoint is prefilled, just add your key.",
     )
+
+
+PROTOCOLS: dict[str, dict[str, Any]] = {
+    PROTOCOL_OPENAI_COMPAT: {
+        "title": "OpenAI compatible",
+        "needs_key": True,
+        "fields": [
+            ProviderField("api_key", "API key", secret=True, placeholder="sk-…"),
+            ProviderField(
+                "base_url", "Server address", secret=False, placeholder="https://…/v1",
+                help="Base URL of an OpenAI-compatible API. Include /v1 if your endpoint uses it.",
+            ),
+        ],
+        "build": _build_openai_compat,
+        "recommended_model": "gpt-4o",
+        "env_key": "OPENAI_API_KEY",
+    },
+    PROTOCOL_OPENAI_NATIVE: {
+        "title": "OpenAI",
+        "needs_key": True,
+        "fields": [
+            ProviderField("api_key", "OpenAI API key", secret=True, placeholder="sk-…"),
+        ],
+        "build": _build_openai_native,
+        "recommended_model": "gpt-5.6-sol",
+        "env_key": "OPENAI_API_KEY",
+    },
+    PROTOCOL_ANTHROPIC: {
+        "title": "Anthropic",
+        "needs_key": True,
+        "fields": [ProviderField("api_key", "Anthropic API key", secret=True, placeholder="sk-ant-…")],
+        "build": _build_anthropic,
+        "recommended_model": "claude-fable-5",
+        "env_key": "ANTHROPIC_API_KEY",
+    },
+    PROTOCOL_GEMINI: {
+        "title": "Gemini",
+        "needs_key": True,
+        "fields": [ProviderField("api_key", "Gemini API key", secret=True, placeholder="AIza…")],
+        "build": _build_gemini,
+        "recommended_model": "gemini-3.6-flash",
+        "env_key": "GEMINI_API_KEY",
+    },
+    PROTOCOL_OLLAMA: {
+        "title": "Ollama (local models)",
+        "needs_key": False,
+        "fields": [
+            ProviderField(
+                "base_url", "Ollama server URL", secret=False, placeholder=DEFAULT_OLLAMA_URL,
+                help="Where `ollama serve` is listening. The OpenAI-compatible /v1 path is added automatically.",
+            ),
+        ],
+        "build": _build_ollama,
+        "recommended_model": "qwen3-coder:30b",
+    },
+    PROTOCOL_BEDROCK: {
+        "title": "AWS Bedrock",
+        "needs_key": True,
+        "fields": [
+            ProviderField("region", "AWS region", secret=False, placeholder="us-east-1",
+                          help="The region your Bedrock model access is enabled in."),
+            ProviderField(
+                "auth_method", "Connect with", secret=False, required=False, default="api_key",
+                choices=(
+                    {"value": "api_key", "label": "Bedrock API key", "tag": "Easiest",
+                     "desc": "A single key generated on the Bedrock console — no AWS CLI or IAM setup needed."},
+                    {"value": "profile", "label": "AWS profile",
+                     "desc": "Uses a named profile from ~/.aws — works with `aws configure` and `aws sso login`."},
+                    {"value": "iam", "label": "IAM keys",
+                     "desc": "An IAM access key pair. For temporary STS credentials, include the session token."},
+                ),
+            ),
+            ProviderField("bedrock_api_key", "Bedrock API key", secret=True, required=False,
+                          placeholder="ABSK…", show_when={"auth_method": "api_key"}),
+            ProviderField("aws_profile", "AWS profile", secret=False, required=False, placeholder="default",
+                          show_when={"auth_method": "profile"},
+                          help="Leave blank to use your default AWS credentials (env vars or ~/.aws)."),
+            ProviderField("aws_access_key_id", "Access key ID", secret=False, required=False, placeholder="AKIA…",
+                          show_when={"auth_method": "iam"}),
+            ProviderField("aws_secret_access_key", "Secret access key", secret=True, required=False,
+                          show_when={"auth_method": "iam"}),
+            ProviderField("aws_session_token", "Session token (STS only, optional)", secret=True, required=False,
+                          show_when={"auth_method": "iam"}),
+        ],
+        "build": _build_bedrock,
+        "recommended_model": "claude/anthropic.claude-sonnet-4-6-v1:0",
+    },
+    PROTOCOL_VERTEX: {
+        "title": "Vertex AI (Google Cloud)",
+        "needs_key": True,
+        "fields": [
+            ProviderField("project", "GCP project ID", secret=False, placeholder="my-project-123"),
+            ProviderField("location", "Location", secret=False, placeholder="global",
+                          help="Use `global` for the newest Gemini and Claude models."),
+            ProviderField(
+                "auth_method", "Connect with", secret=False, required=False, default="adc",
+                choices=(
+                    {"value": "adc", "label": "Google Cloud login", "tag": "Recommended",
+                     "desc": "Uses your machine's Google Cloud identity (Application Default Credentials). Nothing to paste — sign in once in a terminal:",
+                     "command": "gcloud auth application-default login"},
+                    {"value": "service_account", "label": "Service account",
+                     "desc": "A service-account key — the usual path on shared or headless machines."},
+                    {"value": "api_key", "label": "API key",
+                     "desc": "A long-lived key from the Google Cloud console's API Keys page. Reaches Gemini models only."},
+                ),
+            ),
+            ProviderField("service_account_json", "Service-account JSON", secret=True, required=False,
+                          show_when={"auth_method": "service_account"}, help="Paste the JSON key, or a path to the file."),
+            ProviderField("vertex_api_key", "Vertex API key", secret=True, required=False, placeholder="AQ.…",
+                          show_when={"auth_method": "api_key"}),
+        ],
+        "build": _build_vertex,
+        "recommended_model": "gemini/gemini-3.6-flash",
+    },
+}
 
 
 DESCRIPTORS: list[ProviderDescriptor] = [
@@ -575,22 +729,83 @@ _BY_NAME = {d.name: d for d in DESCRIPTORS}
 
 
 def provider_descriptors() -> list[ProviderDescriptor]:
-    return list(DESCRIPTORS)
+    return list(DESCRIPTORS) + custom_provider_descriptors()
 
 
 def provider_names() -> list[str]:
-    return [d.name for d in DESCRIPTORS]
+    return [d.name for d in provider_descriptors()]
+
+
+def custom_provider_names() -> list[str]:
+    return list(CUSTOM_PROVIDERS.keys())
+
+
+def is_custom_provider(name: str) -> bool:
+    return name in CUSTOM_PROVIDERS
 
 
 def get_descriptor(name: str) -> Optional[ProviderDescriptor]:
-    return _BY_NAME.get(name)
+    if name in _BY_NAME:
+        return _BY_NAME[name]
+    return _custom_descriptor(name)
+
+
+def _custom_descriptor(name: str) -> Optional[ProviderDescriptor]:
+    meta = CUSTOM_PROVIDERS.get(name)
+    if not meta:
+        return None
+    proto = PROTOCOLS[meta["protocol"]]
+    return ProviderDescriptor(
+        name=name,
+        title=meta.get("title") or proto["title"],
+        needs_key=proto["needs_key"],
+        fields=list(proto["fields"]),
+        build=proto["build"],
+        recommended_model=proto["recommended_model"],
+        env_key=proto.get("env_key"),
+        blurb=proto["title"],
+    )
+
+
+def custom_provider_descriptors() -> list[ProviderDescriptor]:
+    out: list[ProviderDescriptor] = []
+    for name, meta in CUSTOM_PROVIDERS.items():
+        d = _custom_descriptor(name)
+        if d:
+            out.append(d)
+    return out
+
+
+def register_custom_provider(
+    alias: str, protocol: str, fields_meta: Optional[dict[str, Any]] = None
+) -> None:
+    """Register (or overwrite) a user-defined provider alias.
+
+    `fields_meta` is opaque metadata kept alongside the alias (currently unused by the
+    protocol builders but reserved for future per-alias UI state). Registration makes the
+    alias route like any built-in so `alias:model` resolves and persists across restart
+    once SessionManager re-hydrates it from prefs.
+    """
+    if protocol not in PROTOCOLS:
+        raise ValueError(f"Unknown protocol: {protocol}")
+    if not _valid_alias(alias):
+        raise ValueError("Invalid provider alias.")
+    CUSTOM_PROVIDERS[alias] = {"protocol": protocol, **(fields_meta or {})}
+
+
+def unregister_custom_provider(alias: str) -> None:
+    CUSTOM_PROVIDERS.pop(alias, None)
+
+
+def _valid_alias(alias: str) -> bool:
+    return bool(alias and _ALIAS_RE.match(alias))
 
 
 def build_provider_client(
     name: str, profile: dict[str, Any], secrets: Any
 ) -> ProviderClient:
     """Build a `ProviderClient` for `name` from its stored profile. Unknown → OpenAI default."""
-    descriptor = _BY_NAME.get(name) or _BY_NAME["openai"]
+    descriptor = get_descriptor(name) or _BY_NAME["openai"]
     return descriptor.build(profile or {}, secrets)
 
 
@@ -810,7 +1025,7 @@ def verify_provider_key(
     """
     import httpx
 
-    d = _BY_NAME.get(name) or _BY_NAME["openai"]
+    d = get_descriptor(name) or _BY_NAME["openai"]
     key = (api_key or "").strip()
     if name == "bedrock":
         return _verify_bedrock(fields or {}, timeout)
@@ -832,6 +1047,9 @@ def verify_provider_key(
         elif name == "ollama":
             base = _normalize_ollama_url(base_url)
             resp = httpx.get(base.rstrip("/") + "/models", timeout=timeout)
+        elif is_custom_provider(name):
+            # Custom alias — build the request as the endpoint its protocol dictates.
+            resp = _fetch_models_request(name, key, base_url, timeout)
         else:  # openai + any OpenAI-compatible endpoint (Azure, OpenRouter, vendors, vLLM…)
             default_base = next(
                 (f.default for f in d.fields if f.key == "base_url" and f.default), ""
@@ -864,3 +1082,102 @@ def verify_provider_key(
             "error": "Reached the server, but no OpenAI-compatible /v1 API there.",
         }
     return {"ok": False, "error": f"{d.title} returned HTTP {resp.status_code}."}
+
+
+def _fetch_models_request(
+    name: str, api_key: Optional[str], base_url: Optional[str], timeout: float = 10.0
+) -> Any:
+    """Build the read-only models-list request for a custom provider, honouring its protocol.
+
+    Used by both `verify_provider_key` and `fetch_provider_models` so a Test and a Fetch stay
+    wired identically. Raises nothing on network — callers translate exceptions into
+    {ok/error}. Bedrock/Vertex unsupported for fetching return a synthetic response the
+    caller will translate into a clear error.
+    """
+    import httpx
+
+    meta = CUSTOM_PROVIDERS.get(name)
+    if not meta:
+        raise RuntimeError(f"Unknown provider: {name}")
+    protocol = meta["protocol"]
+    key = (api_key or "").strip()
+
+    if protocol == PROTOCOL_OPENAI_COMPAT:
+        base = (base_url or "").strip().rstrip("/")
+        if not base:
+            raise RuntimeError("No server address configured.")
+        return httpx.get(
+            base + "/models",
+            headers={"Authorization": f"Bearer {key}"},
+            timeout=timeout,
+        )
+
+    if protocol == PROTOCOL_OPENAI_NATIVE:
+        return httpx.get(
+            "https://api.openai.com/v1/models",
+            headers={"Authorization": f"Bearer {key}"},
+            timeout=timeout,
+        )
+
+    if protocol == PROTOCOL_ANTHROPIC:
+        return httpx.get(
+            "https://api.anthropic.com/v1/models",
+            headers={"x-api-key": key, "anthropic-version": "2023-06-01"},
+            timeout=timeout,
+        )
+
+    if protocol == PROTOCOL_GEMINI:
+        return httpx.get(
+            "https://generativelanguage.googleapis.com/v1beta/models",
+            params={"key": key},
+            timeout=timeout,
+        )
+
+    if protocol == PROTOCOL_OLLAMA:
+        base = _normalize_ollama_url(base_url)
+        return httpx.get(base.rstrip("/") + "/models", timeout=timeout)
+
+    return _unsupported_fetch(protocol)
+
+
+def _unsupported_fetch(protocol: str) -> Any:
+    # Bedrock/Vertex have no open model list to enumerate; a synthetic response lets the
+    # shared caller translate this into the protocol-named error rather than a crash.
+    return SimpleNamespace(
+        status_code=0, json=lambda: {"data": []}, request=SimpleNamespace(url="")
+    )
+
+
+def fetch_provider_models(
+    name: str, profile: dict[str, Any], secrets: Any, timeout: float = 10.0
+) -> dict[str, Any]:
+    """Fetch the model id list for a provider alias. Read-only; returns {ok, models?}.
+
+    Reuses the same probe request shape as `verify_provider_key` so a passing Test implies a
+    passing Fetch. OpenAI-compatible/OpenAI/Anthropic/Gemini/Ollama return bare ids from the
+    `/models` response. Bedrock/Vertex are intentionally unsupported for fetching (their
+    model namespaces are curated server-side) and return a clear error.
+    """
+    title = get_descriptor(name).title if get_descriptor(name) else name
+    meta = CUSTOM_PROVIDERS.get(name) or {}
+    if meta.get("protocol") in (PROTOCOL_BEDROCK, PROTOCOL_VERTEX):
+        return {
+            "ok": False,
+            "error": f"{title} doesn't expose a model list to fetch — add its models manually.",
+        }
+    api_key = (profile.get("api_key") or "").strip()
+    base_url = (profile.get("base_url") or "").strip() or None
+    try:
+        resp = _fetch_models_request(name, api_key or None, base_url, timeout)
+    except Exception as exc:
+        return {"ok": False, "error": f"Couldn't reach {title} ({exc.__class__.__name__})."}
+    if resp.status_code < 300:
+        data = resp.json()
+        ids = [m["id"] for m in data.get("data", []) if isinstance(m, dict) and "id" in m]
+        return {"ok": True, "models": ids}
+    if resp.status_code in (401, 403):
+        return {"ok": False, "error": "Invalid API key."}
+    return {
+        "ok": False,
+        "error": f"{title} returned HTTP {resp.status_code}.",
+    }

@@ -9,7 +9,7 @@ import {
   type Connector,
 } from "../api";
 import { ConnectorBadge } from "../connectors/ConnectorIcon";
-import { ProviderCards, ProviderForm, useProviderSetup } from "../providers/ProviderSetup";
+import { CustomCreateForm, ProviderCards, ProviderForm, useProviderSetup } from "../providers/ProviderSetup";
 import { Spinner } from "./AutomationQuickstart";
 import { useI18n } from "../i18n/I18nContext";
 
@@ -47,7 +47,7 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
   const [skipConfirm, setSkipConfirm] = useState(false);
 
   const anyReady =
-    ps.providers.some((p) => p.configured && p.needs_key) || ps.keylessOk.size > 0;
+    ps.customProviders.some((p) => p.configured && p.needs_key) || ps.keylessOk.size > 0;
   // In the form with typed-but-untested input, Next verifies+saves first (tester
   // catch 2026-07-12: a manual Test-then-Continue two-step reads as a puzzle).
   const nextFromForm = !!ps.sel && ps.dirty && ps.secretFilled;
@@ -126,13 +126,24 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
               {t("onboarding.pickProvider")}
             </p>
 
-            {!ps.sel ? (
-              /* ---- the provider GALLERY ---- */
+            {!ps.sel && !ps.creating ? (
+              /* ---- the provider GALLERY: inline custom-provider create card + custom-only cards ---- */
               <div className="flex-1 min-h-0 overflow-y-auto pr-1" data-testid="ob-provider-gallery">
-                <ProviderCards ps={ps} tp="ob" />
+                <div className="rounded-xl border border-line bg-panel p-4" data-testid="ob-custom-card">
+                  <div className="text-[15px] font-semibold">{t("providers.customProviderCard")}</div>
+                  <p className="text-[12px] text-muted mt-0.5 mb-3 leading-relaxed">
+                    {t("providers.customProviderCardSub")}
+                  </p>
+                  <CustomCreateForm ps={ps} tp="ob" inline />
+                </div>
+                {ps.orderedCustom.length > 0 && (
+                  <div className="mt-4">
+                    <ProviderCards ps={ps} tp="ob" customOnly hideAdd />
+                  </div>
+                )}
               </div>
             ) : (
-              /* ---- one provider's key form, same box ---- */
+              /* ---- one provider's key form, or the new-custom-provider form, same box ---- */
               <div className="flex-1 min-h-0 overflow-y-auto pr-1">
                 <ProviderForm ps={ps} tp="ob" />
               </div>

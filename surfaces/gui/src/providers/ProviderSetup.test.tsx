@@ -47,6 +47,8 @@ function makePs(fields: Record<string, string>, setFieldValue = vi.fn()): Provid
   return {
     providers: [BEDROCK],
     ordered: [BEDROCK],
+    customProviders: [],
+    orderedCustom: [],
     refreshProviders: async () => {},
     sel: "bedrock",
     info: BEDROCK,
@@ -68,6 +70,18 @@ function makePs(fields: Record<string, string>, setFieldValue = vi.fn()): Provid
     statusFor: () => null,
     saveField: async () => {},
     fieldSaved: null,
+    protocols: [],
+    creating: false,
+    alias: "",
+    setAlias: () => {},
+    protoId: "openai-compatible",
+    setProtoId: () => {},
+    protoDef: undefined,
+    openNewCustom: () => {},
+    runCustomCreate: async () => false,
+    fetchCustomModels: async () => {},
+    fetching: false,
+    fetchMsg: null,
   };
 }
 

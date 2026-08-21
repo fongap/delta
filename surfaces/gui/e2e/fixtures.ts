@@ -1358,22 +1358,61 @@ export async function mockApi(page: import("@playwright/test").Page) {
         ],
       });
     }
-    // provider credential check (read-only) — an api_key containing "bad" fails, else ok.
+    // credential check (read-only) — an api_key containing "bad" fails, else ok.
     if (p.endsWith("/v1/providers/verify") && m === "POST") {
       const key = String(req.postDataJSON()?.fields?.api_key || "");
       return /bad/i.test(key)
         ? json({ ok: false, error: "Invalid API key." })
         : json({ ok: true });
     }
-    // save a provider key — flips `configured`, stamps key_set_at (backend set_provider parity).
+    // custom-provider protocol definitions (create form's protocol dropdown).
+    if (p.endsWith("/v1/protocols") && m === "GET") {
+      return json([
+        { id: "openai-compatible", title: "OpenAI compatible", needs_key: true, fields: [
+          { key: "api_key", label: "API key", secret: true, required: true, help: "", placeholder: "sk-…", default: null },
+          { key: "base_url", label: "Server address", secret: false, required: false, help: "Base URL of an OpenAI-compatible API. Include /v1 if your endpoint uses it.", placeholder: "https://…/v1", default: null },
+        ], recommended_model: "gpt-4o" },
+        { id: "openai", title: "OpenAI", needs_key: true, fields: [
+          { key: "api_key", label: "OpenAI API key", secret: true, required: true, help: "", placeholder: "sk-…", default: null },
+        ], recommended_model: "gpt-5.6-sol" },
+        { id: "anthropic", title: "Anthropic", needs_key: true, fields: [
+          { key: "api_key", label: "Anthropic API key", secret: true, required: true, help: "", placeholder: "sk-ant-…", default: null },
+        ], recommended_model: "claude-fable-5" },
+        { id: "gemini", title: "Gemini", needs_key: true, fields: [
+          { key: "api_key", label: "Gemini API key", secret: true, required: true, help: "", placeholder: "AIza…", default: null },
+        ], recommended_model: "gemini-2.5-pro" },
+        { id: "ollama", title: "Ollama (local models)", needs_key: false, fields: [
+          { key: "base_url", label: "Endpoint", secret: false, required: false, help: "", placeholder: "http://127.0.0.1:11434", default: "http://127.0.0.1:11434" },
+        ], recommended_model: "qwen3-coder:30b" },
+        { id: "bedrock", title: "Bedrock", needs_key: true, fields: [
+          { key: "region", label: "AWS region", secret: false, required: true, help: "", placeholder: "us-east-1", default: null },
+        ], recommended_model: null },
+        { id: "vertex", title: "Vertex", needs_key: true, fields: [
+          { key: "project", label: "GCP project id", secret: false, required: true, help: "", placeholder: "my-project", default: null },
+        ], recommended_model: null },
+      ]);
+    }
+    // save a provider key / create a custom alias — flips `configured`, stamps key_set_at
+    // (backend set_provider + create_custom_provider parity). A `protocol` body for an
+    // unknown name CREATES a new custom alias instead of returning `unknown provider`.
     if (p.endsWith("/v1/providers") && m === "POST") {
       const b = req.postDataJSON();
-      const prov = providers.find((x) => x.name === b.name);
+      let prov = providers.find((x) => x.name === b.name);
+      if (!prov && b.protocol) {
+        prov = {
+          name: b.name, title: b.name, needs_key: true, fields: [], configured: false,
+          values: {}, suggested_models: [], key_set_at: null, last_used_at: null,
+          custom: true, protocol: b.protocol, alias: b.name,
+        };
+        providers.push(prov);
+      }
       if (!prov) return json({ ok: false, error: `unknown provider: ${b.name}` });
       if (b.fields?.api_key) {
         prov.configured = true;
         prov.key_set_at = "2026-07-05";
       }
+      // Keyless (ollama) providers are "configured" without a key.
+      if (prov.needs_key === false) prov.configured = true;
       // Backend parity: non-secret fields merge into `values` (empty clears them).
       for (const [k, v] of Object.entries(b.fields || {})) {
         if (k === "api_key") continue;
@@ -1382,13 +1421,31 @@ export async function mockApi(page: import("@playwright/test").Page) {
       }
       return json({ ok: true, provider: b.name, recommended_model: null });
     }
-    // forget a provider's stored config (Settings ▸ Models "Remove key…").
+    // fetch a custom provider's model list and auto-add each as `alias:{id}` (backend
+    // fetch_models parity). A key containing "bad" fails; otherwise mirrors /verify.
+    if (p.endsWith("/v1/providers/fetch") && m === "POST") {
+      const b = req.postDataJSON();
+      const prov = providers.find((x) => x.name === b.name);
+      if (!prov) return json({ ok: false, error: `unknown provider: ${b.name}` });
+      if (String(b.fields?.api_key || "").includes("bad"))
+        return json({ ok: false, error: "Invalid API key." });
+      const ids = ["custom-7b", "custom-coder"];
+      const added = (ids as string[]).filter((id) => !(SETTINGS.models as string[]).includes(`${b.name}:${id}`));
+      added.forEach((id) => (SETTINGS.models as string[]).push(`${b.name}:${id}`));
+      return json({ ok: true, alias: b.name, models: ids, added });
+    }
+    // forget a provider's stored config / remove a custom alias (Settings ▸ Models).
     if (/\/v1\/providers\/[^/]+$/.test(p) && m === "DELETE") {
       const name = p.split("/").pop()!;
-      const prov = providers.find((x) => x.name === name);
-      if (!prov) return json({ ok: false, error: `unknown provider: ${name}` });
-      prov.configured = !prov.needs_key; // keyless (ollama) stays "configured"
-      prov.key_set_at = null;
+      const idx = providers.findIndex((x) => x.name === name);
+      if (idx === -1) return json({ ok: false, error: `unknown provider: ${name}` });
+      const prov = providers[idx];
+      if (!prov.custom) {
+        prov.configured = !prov.needs_key; // keyless (ollama) stays "configured"
+        prov.key_set_at = null;
+      } else {
+        providers.splice(idx, 1); // custom alias is fully removed (unregister + drop models)
+      }
       return json({ ok: true, provider: name });
     }
     if (p.endsWith("/v1/providers")) return json(providers);
