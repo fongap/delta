@@ -1,0 +1,25 @@
+name: Sync OpenWorker Upstream
+
+on:
+  schedule:
+    - cron: '0 22 * * *'   # 每日北京时间 06:00
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Delta
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Sync OpenWorker main
+        run: |
+          git remote add upstream https://github.com/andrewyng/openworker.git
+          git fetch upstream main
+          git push origin +refs/remotes/upstream/main:refs/heads/upstream-openworker
