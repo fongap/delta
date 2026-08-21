@@ -13,12 +13,10 @@ import {
   signoutMcp,
   getSettings,
   getSubscriptions,
-  removeModel,
   resolveUnauthorized,
   unsubscribeChannel,
   patchMcpServer,
   reloadMcp,
-  setDefaultModel,
   updateConnectorTools,
   type CloudStatus,
   type Connector,
@@ -76,8 +74,8 @@ const EXAMPLE = `{
 // -- Configure Models tab (UX-021: the shared provider gallery + key form) ----
 // Settings ▸ Models reuses onboarding §39's ProviderCards/ProviderForm so the two
 // surfaces can't drift. Settings-only extras: per-card "used Nh ago", a "Remove
-// key…" affordance, the global composer-picker card (gallery view), and the
-// per-provider ModelChecklist / read-only model preview (form view).
+// key…" affordance, and the per-provider ModelChecklist / read-only model preview
+// (form view). Model setup is unified at custom provider → fetch models → pick.
 export function ModelsTab() {
   const { t } = useI18n();
   const [settings, setSettings] = useState<ModelSettings | null>(null);
@@ -108,7 +106,6 @@ export function ModelsTab() {
             <ProviderCards ps={ps} tp="set" gridClass="grid grid-cols-2 xl:grid-cols-3 gap-2.5" lastUsed customOnly hideAdd />
           </div>
         )}
-        <ComposerPickerCard settings={settings} providers={ps.providers} onChanged={refreshSettings} />
       </div>
     );
   }
@@ -184,67 +181,6 @@ export function ModelsTab() {
           </div>
         )
       )}
-    </div>
-  );
-}
-
-// The gallery view's "In the composer's picker" card: every curated model across providers,
-// with its provider tag. Unticking removes it from the picker; adding happens from a
-// provider's card (the ModelChecklist there has the suggested list + free-type add).
-function ComposerPickerCard({
-  settings,
-  providers,
-  onChanged,
-}: {
-  settings: ModelSettings;
-  providers: ProviderInfo[];
-  onChanged: () => void;
-}) {
-  const { t } = useI18n();
-  const names = providers.map((p) => p.name);
-  const provOf = (id: string) => {
-    const i = id.indexOf(":");
-    return i > 0 && names.includes(id.slice(0, i)) ? id.slice(0, i) : "openai";
-  };
-  const tag = (id: string) => {
-    const p = providers.find((x) => x.name === provOf(id));
-    return (p?.title || provOf(id)).split(" (")[0];
-  };
-  return (
-    <div className="mt-6" data-testid="composer-picker">
-      <div className={SEC_H + " mb-1.5"}>{t("models.composerPicker")}</div>
-      <p className="text-[12px] text-muted mb-2.5 leading-relaxed">
-        {t("models.composerPickerSub")}
-      </p>
-      <div className="mlist">
-        {settings.models.map((id) => {
-          const isDefault = id === settings.model;
-          return (
-            <div className="mlist-row" key={id}>
-              <label className="mlist-main">
-                <input
-                  type="checkbox"
-                  checked
-                  disabled={isDefault}
-                  title={isDefault ? t("models.defaultModelTitle") : t("models.removeFromPicker")}
-                  onChange={() => removeModel(id).then((r) => r.ok && onChanged())}
-                />
-                <span className="mlist-name" title={id}>
-                  {settings.model_labels?.[id] || id}
-                </span>
-              </label>
-              <span className="text-[11px] text-faint mr-2 shrink-0">{tag(id)}</span>
-              {isDefault ? (
-                <span className="mlist-default">{t("models.defaultBadge")}</span>
-              ) : (
-                <button className="mlist-make" onClick={() => setDefaultModel(id).then(() => onChanged())}>
-                  {t("models.makeDefault")}
-                </button>
-              )}
-            </div>
-          );
-        })}
-      </div>
     </div>
   );
 }

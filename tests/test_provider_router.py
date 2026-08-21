@@ -638,9 +638,7 @@ def test_first_configured_provider_wins_default(tmp_path, monkeypatch):
     from coworker.server.manager import SessionManager
 
     mgr = SessionManager(data_dir=tmp_path)
-    assert (
-        mgr.model == "gpt-5.6-sol"
-    )  # fresh install: built-in default, openai unconfigured
+    assert mgr.model == ""  # fresh install: no preset vendor/model default
 
     # the first provider that gets a key takes over the default
     mgr.set_provider("anthropic", {"api_key": "sk-ant-x"})

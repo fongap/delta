@@ -170,7 +170,10 @@ export function App() {
   const [workspaceTrustRequest, setWorkspaceTrustRequest] =
     useState<WorkspaceCommandTrust | null>(null);
   const [agent, setAgent] = useState("cowork");
-  const [model, setModel] = useState("gpt-5.6-sol");
+  // No hardcoded vendor/model default — the active model rides on the server-provided health
+  // (`getHealth().then(h => setModel(h.model))`) and on Settings ▸ Models. An empty default
+  // keeps the composer's "No model connected" chip honest until one resolves.
+  const [model, setModel] = useState("");
   const [models, setModels] = useState<string[]>([]);
   const [modelLabels, setModelLabels] = useState<Record<string, string>>({});
   // {full model id → context window in tokens} from the curated matrix (verified only);

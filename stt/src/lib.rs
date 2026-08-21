@@ -237,7 +237,7 @@ impl Dictation {
             model_verified,
             test_passed: model_verified && self.ready_marker_path.is_file(),
             download_in_progress: self.download_in_progress.load(Ordering::SeqCst),
-            model_name: "Whisper Base (local)",
+            model_name: "Whisper Base (multilingual)",
             model_bytes: DEFAULT_MODEL_BYTES,
         }
     }

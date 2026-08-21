@@ -403,7 +403,7 @@ class GeminiProvider(ProviderClient):
         self,
         client: Any = None,
         *,
-        default_model: str = "gemini-2.5-flash",
+        default_model: str = "",
         api_key: Optional[str] = None,
         secrets: Any = None,
     ):

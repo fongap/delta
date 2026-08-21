@@ -6,6 +6,17 @@
 
 ### 新增 (Added)
 
+#### 2026-08-21 22:07
+
+- **自定义提供商表单加载与错误状态**
+  - `/v1/protocols` 异步拉取显式跟踪 loading / error：慢速或失败时显示真实状态（「正在加载协议…」「无法加载协议列表」），不再静默渲染空表单（此前会出现「无 API Key 输入框」「无默认协议」两个现象）。
+  - 协议下拉改用主题 token（`--ink`/`--panel`）+ 自定义箭头，修复深色模式下原生 `<select>` 黑底黑字不可读。
+
+#### 2026-08-21 17:22
+
+- **原生标题栏首帧即跟随主题（无浅色闪屏）**
+  - 新增 `NATIVE_THEME_SCRIPT` 初始化脚本（随 sidecar 端点注入的同一 `initialization_script` 通道，document-start 执行，早于 HTML 解析与首帧绘制）：镜像 `theme.ts` 的解析（localStorage `openwork-theme` + `prefers-color-scheme`，缺省/非法 = auto），调用既有 `set_native_theme` 命令，使 Windows 深色用户的原生标题栏自第一帧起即为深色，此前 SPA 的 `theme.ts` 要等 webview JS 加载后才下推，可能先闪一帧浅色。`window.__TAURI__` 在初始化脚本中已可用（`withGlobalTauri` 的 bundle 作为初始化脚本先于用户脚本注入）；`theme.ts` 加载后仍会重新应用，此脚本仅为首帧前的抢占式预热。
+
 #### 2026-08-21 02:31
 
 - **模型下载代理回退（非持久化）**
@@ -38,6 +49,13 @@
   - 便携版经多位置实测验证可整体重定位：`C:\DeltaPortable\`、`D:\Portable Apps\DeltaPortable\`、中文+空格+特殊字符路径 `G:\AI工具\深层 目录 & 测试(1)\子目录-嵌套_更多\Delta 工作助手(改名&测试)\` 下均正常启动；状态/密钥/日志/数据库全部落在 `<ROOT>\Data\`，未触碰 `%APPDATA%`，与开发/安装模式数据隔离。
 
 ### 变更 (Changed)
+
+#### 2026-08-21 22:07
+
+- **模型默认值全面移除（无预设供应商/模型）**
+  - `Config.model` 由 `"gpt-5.6-sol"` 改为 `""`，`build_engine` / `SessionManager` / TUI `CoworkerApp` 的默认模型参数同步置空；各 Provider 客户端 `default_model`（此前从未在生产读取）清空。Delta 不再内置任何厂商/模型，首次配置的提供商（或 Settings ▸ Models 中的显式选择）接管默认。
+  - 前端 `App.tsx` 的 model 初始值同步置空，由服务端 health 解析后接管；移除「编辑器选择器」卡片（`ComposerPickerCard`）及 `models.composerPicker*` / `models.removeFromPicker` i18n，废弃的 `removeModel` / `setDefaultModel` 导入停止使用。
+  - 同步测试断言：`test_config.py`、`test_model_errors.py`、`test_provider_router.py` 均改为无预设默认；`ProviderSetup.test.tsx` 补充自定义表单标题/新增 ProviderSetupState 字段。
 
 #### 2026-08-21 02:31
 

@@ -13,7 +13,7 @@ const READY = {
   model_verified: true,
   test_passed: true,
   download_in_progress: false,
-  model_name: "Whisper Base (local)",
+  model_name: "Whisper Base (multilingual)",
   model_bytes: 147951465,
   supported: true,
   device_summary: "macOS 15 · Apple Silicon",

@@ -120,7 +120,7 @@ class SessionManager:
         *,
         workspace: Optional[str | Path] = None,  # default/seed workspace (e.g. --cwd)
         data_dir: Optional[str | Path] = None,
-        model: str = "gpt-5.6-sol",
+        model: str = "",
         mode: Mode = Mode.INTERACTIVE,
         provider: Optional[ProviderClient] = None,
     ) -> None:
@@ -1664,9 +1664,10 @@ class SessionManager:
             # OpenAI models stay bare (the router's default); others carry their prefix.
             added = rec if name == "openai" else f"{name}:{rec}"
             self.add_model(added)
-        # First working provider wins the default: if the current default model belongs to a
-        # provider with no usable config (the fresh-install gpt-5.6-sol case), switch the default to
-        # this provider's model. A default that already works is never stolen.
+        # First working provider wins the default: on a fresh install there is no preset
+        # model default (Delta ships without a vendor/model preseed), so the first provider
+        # with a key and an available recommended model becomes the default. A default that
+        # already works is never stolen.
         if added and not self._provider_configured(self._model_provider(self.model)):
             self.set_default_model(added)
         return {"ok": True, "provider": name, "recommended_model": rec}

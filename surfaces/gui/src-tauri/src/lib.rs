@@ -170,6 +170,27 @@ fn start_keep_awake() -> Option<KeepAwakeGuard> {
 #[cfg(target_os = "windows")]
 extern "system" {
     fn SetThreadExecutionState(es_flags: u32) -> u32;
+    fn GetUserDefaultUILanguage() -> u16;
+}
+
+/// The tray has no i18n store of its own and is created before the webview (and its
+/// backend-stored locale preference) exists, so the OS UI language is the correct proxy
+/// for localizing tray labels — Chinese systems get 打开 Delta / 设置 / 退出, everything
+/// else keeps the English labels. (Windows: `GetUserDefaultUILanguage` LANGID, primary
+/// language 0x04 = Chinese. Other platforms: `LANG`/`LC_ALL` prefix.)
+fn tray_ui_is_chinese() -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        let langid = unsafe { GetUserDefaultUILanguage() };
+        langid & 0x03FF == 0x04
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::env::var("LANG")
+            .or_else(|_| std::env::var("LC_ALL"))
+            .map(|l| l.to_lowercase().starts_with("zh"))
+            .unwrap_or(false)
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -291,6 +312,27 @@ fn set_native_theme(window: tauri::WebviewWindow, dark: bool) -> bool {
         })
         .is_ok()
 }
+
+/// Pre-paint native theme (issue #8): the SPA's theme.ts only runs after the webview's JS has
+/// loaded — potentially after the first frame — which left a light Windows title-bar flash for
+/// dark users before setNativeTheme landed. This script runs at document-start (before the HTML
+/// is parsed or painted, via the same initialization_script channel as the sidecar endpoints)
+/// and mirrors theme.ts's resolution (localStorage pref + prefers-color-scheme, absent/invalid =
+/// auto) so the native window chrome matches from the very first frame. `window.__TAURI__` is
+/// available here: withGlobalTauri's bundle is injected as an initialization script ahead of user
+/// ones (see tauri/src/manager/webview.rs). Fire-and-forget — theme.ts re-applies after load,
+/// so this is only the pre-paint head start and needs no error handling.
+const NATIVE_THEME_SCRIPT: &str = r#"
+if (window.__TAURI__) {
+  (async () => {
+    try {
+      var t = localStorage.getItem("openwork-theme");
+      var dark = t === "dark" || (t !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
+      await window.__TAURI__.core.invoke("set_native_theme", { dark: dark });
+    } catch (e) {}
+  })();
+}
+"#;
 
 // -- local dictation ---------------------------------------------------------------------------
 // The actual microphone/model code lives in the Tauri-free `ocw-stt` crate. This shell owns the
@@ -756,7 +798,8 @@ pub fn run() {
                     // worked, DMGs didn't. main.tsx guards against drops outside the
                     // composer navigating the page.
                     .disable_drag_drop_handler()
-                    .initialization_script(&inject);
+                    .initialization_script(&inject)
+                    .initialization_script(NATIVE_THEME_SCRIPT);
             // Center on the primary monitor when we could query it (all positions/sizes are
             // logical pixels here); otherwise leave the OS default placement.
             if let Some(m) = work.as_ref() {
@@ -789,10 +832,16 @@ pub fn run() {
                 }
             });
 
-            // 3. System tray: Open / Settings / Quit.
-            let open_i = MenuItem::with_id(app, "open", "Open Delta", true, None::<&str>)?;
-            let settings_i = MenuItem::with_id(app, "settings", "Settings", true, None::<&str>)?;
-            let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
+            // 3. System tray: Open / Settings / Quit. Tray labels follow the OS UI language
+            // (Chinese systems get 打开 Delta / 设置 / 退出) so nothing English surfaces in a
+            // Chinese environment; the menu handles stay language-neutral.
+            let zh = tray_ui_is_chinese();
+            let open_label = if zh { "打开 Delta" } else { "Open Delta" };
+            let settings_label = if zh { "设置" } else { "Settings" };
+            let quit_label = if zh { "退出" } else { "Quit" };
+            let open_i = MenuItem::with_id(app, "open", open_label, true, None::<&str>)?;
+            let settings_i = MenuItem::with_id(app, "settings", settings_label, true, None::<&str>)?;
+            let quit_i = MenuItem::with_id(app, "quit", quit_label, true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open_i, &settings_i, &quit_i])?;
 
             // Full-color Delta brand icon (colored RGBA 32×32, downsampled from the same

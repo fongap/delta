@@ -29,7 +29,10 @@ DEFAULT_ALLOWED_COMMANDS: list[str] = []
 
 @dataclass
 class Config:
-    model: str = "gpt-5.6-sol"
+    # No built-in model default: Delta ships without a preset vendor/model. The first
+    # configured provider's recommended model (or an explicit user choice in Settings ▸
+    # Models) takes over once one exists.
+    model: str = ""
     mode: str = "interactive"
     max_iterations: int = 150
     allowed_commands: list[str] = field(

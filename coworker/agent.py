@@ -177,7 +177,7 @@ def build_engine(
     *,
     agent: Agent,
     workspace: Optional[str | Path] = None,
-    model: str = "gpt-5.6-sol",
+    model: str = "",
     mode: Mode = Mode.INTERACTIVE,
     approver: Optional[Approver] = None,
     provider: Optional[ProviderClient] = None,

@@ -39,7 +39,8 @@ export function setThemePref(pref: ThemePref) {
   window.dispatchEvent(new CustomEvent(PREF_EVENT));
 }
 
-/** Call once at startup: applies the stored pref and follows macOS appearance while in auto. */
+/** Call once at startup: applies the stored pref and follows the OS appearance (macOS and
+ * Windows live theme changes; WebView2 & WKWebView both fire matchMedia change) while in auto. */
 export function initTheme() {
   apply(getThemePref());
   media?.addEventListener("change", () => {

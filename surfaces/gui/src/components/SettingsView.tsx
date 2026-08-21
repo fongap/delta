@@ -324,7 +324,13 @@ function VoiceInputSection() {
             <div className="p-4 flex items-center gap-3">
               <div className="w-9 h-9 rounded-lg bg-accentSoft text-accent grid place-items-center font-semibold">W</div>
               <div className="min-w-0 flex-1">
-              <div className="text-[13.5px] font-medium">Whisper Base</div>
+              <div className="text-[13.5px] font-medium">
+                {status?.model_name?.includes("multilingual")
+                  ? t("settings.voice.whisperBaseMultilingual")
+                  : status?.model_name
+                    ? t("settings.voice.whisperBaseEn")
+                    : t("settings.voice.whisperBaseMultilingual")}
+              </div>
                 <div className="text-[12px] text-muted mt-0.5">
                   {status?.model_verified ? t("settings.voice.installedAndVerified", { size: formatBytes(status.model_bytes) }) : t("settings.voice.localVoiceModel", { size: formatBytes(status?.model_bytes || 147_951_465) })}
                 </div>

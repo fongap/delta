@@ -136,6 +136,13 @@ export interface ProviderSetupState {
   setProtoId: (id: string) => void;
   // The resolved protocol definition for `protoId` (undefined until /v1/protocols loads).
   protoDef: ProviderProtocol | undefined;
+  // Async state of the /v1/protocols fetch: loading / done / failed. The create form uses
+  // this so the API-key field + dropdown don't silently render empty when the fetch hasn't
+  // resolved (the "no API Key input box" + "no default protocol" symptom).
+  protocolsLoading: boolean;
+  protocolsErr: string | null;
+  // Localized version of protocolsErr, for rendering (null when protocolsErr is null).
+  protocolErrorMessage: string | null;
   // Open the create form (resets alias/protocol/fields). Closing returns to the gallery.
   openNewCustom: () => void;
   // Create & save: register the alias, persist its fields, then run a live verify. Stays
@@ -169,6 +176,26 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
 
   // -- custom-config-first (F1+F2) ------------------------------------------------
   const [protocols, setProtocols] = useState<ProviderProtocol[]>([]);
+  // Protocol list arrives async from the backend; the create form must not render its
+  // empty pre-fetch state (no API-key field, no dropdown options, "no default protocol").
+  // Track load explicitly so a slow/failed fetch shows a real status instead of a silent
+  // empty form (the .catch would otherwise swallow the error forever).
+  const [protocolsLoading, setProtocolsLoading] = useState(true);
+  const [protocolsErr, setProtocolsErr] = useState<string | null>(null);
+  const loadProtocols = () => {
+    setProtocolsLoading(true);
+    setProtocolsErr(null);
+    getProtocols()
+      .then((p) => {
+        setProtocols(p || []);
+        setProtocolsLoading(false);
+      })
+      .catch(() => {
+        setProtocols([]);
+        setProtocolsLoading(false);
+        setProtocolsErr("providers.protocolsLoadFailed");
+      });
+  };
   const [creating, setCreating] = useState(false);
   const [alias, setAlias] = useState("");
   const [protoId, setProtoIdState] = useState("openai-compatible");
@@ -181,9 +208,7 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
       .catch(() => {});
   useEffect(() => {
     refreshProviders();
-    getProtocols()
-      .then(setProtocols)
-      .catch(() => {});
+    loadProtocols();
     return () => {
       if (backTimer.current) window.clearTimeout(backTimer.current);
     };
@@ -422,6 +447,7 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
 
   const customProviders = providers.filter((p) => p.custom);
 
+  const protocolErrorMessage = protocolsErr ? t(protocolsErr, undefined, "Couldn't load protocols") : null;
   return {
     providers,
     ordered: [...providers].sort((a, b) => providerRank(a.name) - providerRank(b.name)),
@@ -473,6 +499,9 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
     fetchCustomModels,
     fetching,
     fetchMsg,
+    protocolsLoading,
+    protocolsErr,
+    protocolErrorMessage,
   };
 }
 
@@ -857,16 +886,40 @@ export function CustomCreateForm({ ps, tp, inline = false }: { ps: ProviderSetup
           ‹ {t("providers.allProviders", undefined, "All providers")}
         </button>
       )}
-      {!inline && (
-        <div className="flex items-center gap-3 mt-3 mb-1">
-          <ProviderMark name={proto?.id || "custom"} title={proto?.title || "Custom"} size={36} />
-          <span className="min-w-0">
-            <span className="block text-[15px] font-semibold leading-tight">
-              {t("providers.addCustomProvider", undefined, "Add custom provider")}
-            </span>
-            {proto?.blurb && <span className="block text-[11.5px] text-faint">{proto.blurb}</span>}
+      {/* The top of the form always carries the provider's live alias name so the
+          provider is identifiable while editing; falls back to the generic
+          "Add custom provider" title until an alias is typed. */}
+      <div className={"flex items-center gap-3 " + (inline ? "mb-1" : "mt-3 mb-1")}>
+        <ProviderMark name={proto?.id || "custom"} title={proto?.title || "Custom"} size={36} />
+        <span className="min-w-0">
+          <span
+            className="block text-[15px] font-semibold leading-tight truncate"
+            data-testid={`${tp}-custom-title`}
+          >
+            {ps.alias.trim() || t("providers.addCustomProvider", undefined, "Add custom provider")}
           </span>
+          {proto?.blurb && <span className="block text-[11.5px] text-faint truncate">{proto.blurb}</span>}
+        </span>
+      </div>
+
+      {/* While /v1/protocols hasn't resolved, show real status instead of silently rendering
+          an empty form (no API-key field, no protocol options → "no API Key input box" +
+          "no default protocol"). The .catch in useProviderSetup surfaces load failures here. */}
+      {ps.protocolsLoading && (
+        <div className="text-[13px] text-muted mt-4" data-testid={`${tp}-protocols-loading`}>
+          {t("providers.loadingProtocols", undefined, "Loading protocols…")}
         </div>
+      )}
+      {ps.protocolsErr && ps.protocolErrorMessage && (
+        <div
+          className="text-[13px] text-warnInk mt-4"
+          data-testid={`${tp}-protocols-error`}
+        >
+          {ps.protocolErrorMessage}
+        </div>
+      )}
+      {!ps.protocolsLoading && !ps.protocolsErr && !proto && !inline && (
+        <div className="text-[13px] text-muted mt-4">{t("providers.noProtocols", undefined, "No protocols available.")}</div>
       )}
 
       {/* The alias is the routing prefix — `alias:{model}` is how its models are named. */}
@@ -885,7 +938,7 @@ export function CustomCreateForm({ ps, tp, inline = false }: { ps: ProviderSetup
       <div>
         <label className={label}>{t("providers.protocol", undefined, "Protocol")}</label>
         <select
-          className={input + " border-line"}
+          className={input + " border-line form-select"}
           value={ps.protoId}
           data-testid={`${tp}-protocol`}
           onChange={(e) => ps.setProtoId(e.target.value)}

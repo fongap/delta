@@ -286,7 +286,7 @@ class OpenAIResponsesProvider(ProviderClient):
         self,
         client: Any = None,
         *,
-        default_model: str = "gpt-5.6-sol",
+        default_model: str = "",
         api_key: Optional[str] = None,
         secrets: Any = None,
     ):

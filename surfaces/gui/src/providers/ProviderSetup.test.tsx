@@ -2,7 +2,7 @@
 // only the selected method's fields render, and clicking a segment switches them.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { ProviderForm, type ProviderSetupState } from "./ProviderSetup";
+import { ProviderForm, CustomCreateForm, type ProviderSetupState } from "./ProviderSetup";
 import { I18nProvider } from "../i18n/I18nContext";
 import type { ProviderInfo } from "../api";
 
@@ -71,6 +71,9 @@ function makePs(fields: Record<string, string>, setFieldValue = vi.fn()): Provid
     saveField: async () => {},
     fieldSaved: null,
     protocols: [],
+    protocolsLoading: false,
+    protocolsErr: null,
+    protocolErrorMessage: null,
     creating: false,
     alias: "",
     setAlias: () => {},
@@ -110,5 +113,17 @@ describe("ProviderForm auth-method choice", () => {
     render(wrap(<ProviderForm ps={makePs({ auth_method: "iam" })} tp="t" />));
     expect(screen.getByTestId("t-field-aws_secret_access_key")).toBeTruthy();
     expect(screen.queryByTestId("t-field-bedrock_api_key")).toBeNull();
+  });
+});
+
+describe("CustomCreateForm header shows the alias", () => {
+  it("renders the generic title until an alias is typed", () => {
+    render(wrap(<CustomCreateForm ps={makePs({})} tp="t" inline />));
+    expect(screen.getByTestId("t-custom-title").textContent).toContain("Add custom provider");
+  });
+
+  it("renders the live alias name at the top when set", () => {
+    render(wrap(<CustomCreateForm ps={{ ...makePs({}), alias: "my-gateway" }} tp="t" inline />));
+    expect(screen.getByTestId("t-custom-title").textContent).toContain("my-gateway");
   });
 });
