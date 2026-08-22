@@ -580,6 +580,8 @@ export const zh: Record<TranslationKey, string> = {
   "providers.alias": "别名",
   "providers.aliasHint": "例如 my-gateway",
   "providers.protocol": "协议",
+  "providers.apiKey": "API Key",
+  "providers.baseUrl": "Base URL",
   "providers.protocols.openai-compatible": "OpenAI 兼容",
   "providers.protocols.openai": "OpenAI (原生)",
   "providers.protocols.anthropic": "Anthropic",

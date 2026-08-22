@@ -49,11 +49,11 @@ export function SelectMenu({
 
       {open && (
         <>
-          <div className="fixed inset-0 z-30" onClick={() => setOpen(false)} />
+          <div className="fixed inset-0 z-[190]" onClick={() => setOpen(false)} />
           <div
             role="listbox"
             aria-label={ariaLabel}
-            className="absolute z-40 left-0 right-0 mt-1 max-h-72 overflow-y-auto rounded-xl border border-line bg-panel shadow-xl p-1"
+            className="absolute z-[200] left-0 right-0 mt-1 max-h-72 overflow-y-auto rounded-xl border border-line bg-panel shadow-xl p-1"
           >
             {options.map((o, i) => {
               const sel = o.value === value;

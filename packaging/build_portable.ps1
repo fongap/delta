@@ -192,7 +192,6 @@ $Portable = Join-Path $Out "DeltaPortable"
 $AppDir   = Join-Path $Portable "App\Delta"
 if (Test-Path $Portable) { Remove-Item -Recurse -Force $Portable }
 New-Item -ItemType Directory -Force -Path (Join-Path $Portable "Data")    | Out-Null
-New-Item -ItemType Directory -Force -Path (Join-Path $Portable "AppInfo") | Out-Null
 New-Item -ItemType Directory -Force -Path $AppDir                          | Out-Null
 
 # App\ : real app exe + sidecar onedir (landing next to the exe, matching server_bin()).
@@ -236,9 +235,11 @@ Delta Portable — 绿色便携版（免安装）
   - 若文件夹被设为只读，程序会明确提示“便携版目录不可写”而不是静默失败。
 "@
 
-# AppInfo\appinfo.xml (PortableApps / relocatable conventions). Use System.Xml.XmlWriter
-# (System.Xml.Linq is not loaded by default on PowerShell 5.1 / Windows PowerShell).
-$AppInfoXml = Join-Path $Portable "AppInfo\appinfo.xml"
+# AppInfo moved into Other\ (no standalone AppInfo\ folder).
+# Use System.Xml.XmlWriter (System.Xml.Linq is not loaded by default on PowerShell 5.1).
+$AppInfoDir = Join-Path $Other "AppInfo"
+New-Item -ItemType Directory -Force -Path $AppInfoDir | Out-Null
+$AppInfoXml = Join-Path $AppInfoDir "appinfo.xml"
 $AppInfoWriter = [System.Xml.XmlWriter]::Create($AppInfoXml)
 try {
     $AppInfoWriter.WriteStartDocument()

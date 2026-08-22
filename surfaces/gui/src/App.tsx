@@ -1409,7 +1409,6 @@ export function App() {
         <IntegrationsView />
       ) : surface === "settings" ? (
         <SettingsView
-          key={settingsTab}
           initialTab={settingsTab}
           onOpenPersona={(id) => openPersona(id, "settings")}
           onCreateSkill={(description) => {

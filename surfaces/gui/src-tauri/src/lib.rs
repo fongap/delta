@@ -781,17 +781,22 @@ pub fn run() {
                 Some(m) => {
                     let area = m.work_area();
                     let sf = m.scale_factor();
-                    let w = area.size.width as f64 * 0.65 / sf;
-                    let h = area.size.height as f64 * 0.65 / sf;
+                    // 55% of work area (was 65%; reduced 15% per UX feedback)
+                    let w = area.size.width as f64 * 0.55 / sf;
+                    let h = area.size.height as f64 * 0.55 / sf;
                     LogicalSize::new(w, h)
                 }
-                None => LogicalSize::new(1360.0, 900.0),
+                None => LogicalSize::new(1156.0, 765.0),
             };
             let mut builder =
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                     .title("Delta")
                     .inner_size(init_size.width, init_size.height)
                     .min_inner_size(980.0, 640.0)
+                    // Center on screen — Tauri's built-in centering handles all platforms
+                    // and edge cases (multi-monitor, taskbar offsets) more reliably than
+                    // manual position math.
+                    .center()
                     // Let the WEBVIEW receive OS file drags: Tauri's own drag-drop handler
                     // otherwise intercepts them, so the composer's HTML5 onDrop (attach by
                     // dragging a file in) never fired in the desktop shell — browser dev
@@ -800,17 +805,6 @@ pub fn run() {
                     .disable_drag_drop_handler()
                     .initialization_script(&inject)
                     .initialization_script(NATIVE_THEME_SCRIPT);
-            // Center on the primary monitor when we could query it (all positions/sizes are
-            // logical pixels here); otherwise leave the OS default placement.
-            if let Some(m) = work.as_ref() {
-                let sf = m.scale_factor();
-                let area = m.work_area();
-                let x = m.position().x as f64 / sf
-                    + (area.size.width as f64 / sf - init_size.width) / 2.0;
-                let y = m.position().y as f64 / sf
-                    + (area.size.height as f64 / sf - init_size.height) / 2.0;
-                builder = builder.position(x, y);
-            }
             #[cfg(target_os = "macos")]
             {
                 builder = builder

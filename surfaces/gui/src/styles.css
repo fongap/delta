@@ -18,7 +18,8 @@
    (the footer sits at the bottom of the sidebar). Kept light: no arrow, no shadow stack.
    The surface follows the theme (--panel in light, lifted --panel-invert in dark via the same
    token swap the menus use), so a light theme never shows a near-black tooltip. Long labels
-   wrap instead of clipping: white-space: normal + a max-width (was `nowrap` with no cap). */
+   wrap instead of clipping: white-space: normal + a max-width (was `nowrap` with no cap).
+   z-index raised to 200 so tooltips escape any container stacking context clipping. */
 .tip { position: relative; }
 .tip::after {
   content: attr(data-tip);
@@ -28,7 +29,7 @@
   padding: 5px 9px; border-radius: 6px; white-space: normal;
   max-width: min(260px, 70vw); text-align: left;
   border: 1px solid var(--line-strong);
-  pointer-events: none; opacity: 0; transition: opacity 0.1s ease; z-index: 60;
+  pointer-events: none; opacity: 0; transition: opacity 0.1s ease; z-index: 200;
 }
 .tip:hover::after { opacity: 1; }
 .tip.tip-below::after { bottom: auto; top: calc(100% + 6px); }
@@ -214,7 +215,7 @@ body {
 .chan-input { min-width: 220px; }
 .sub-chip-wrap { position: relative; display: inline-flex; }
 .wschip.sub-chip.active { border-color: var(--accent); color: var(--accent); }
-.sub-pop { position: absolute; bottom: calc(100% + 8px); right: 0; width: 300px; z-index: 40; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.14); padding: 12px; }
+.sub-pop { position: absolute; bottom: calc(100% + 8px); right: 0; width: 300px; z-index: 200; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 12px; box-shadow: 0 10px 30px rgba(0, 0, 0, 0.14); padding: 12px; }
 .sub-pop-head { font-size: 11.5px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; color: var(--muted); margin-bottom: 8px; }
 .sub-pop-empty { font-size: 12.5px; padding: 2px 0 8px; }
 .sub-pop-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 4px 0; font-size: 13px; }
@@ -535,11 +536,11 @@ button.btn.danger { color: var(--accent); }
 .pill.chip { background: var(--paper); border: 1px solid var(--line); }
 .pill.chip:hover { border-color: var(--line-strong); background: var(--paper); }
 
-/* dropdown popover */
+/* dropdown popover — z-index raised to 200 to escape overflow:hidden parents */
 .dd { position: relative; }
-.dd-backdrop { position: fixed; inset: 0; z-index: 20; }
+.dd-backdrop { position: fixed; inset: 0; z-index: 190; }
 .dd-menu {
-  position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 21;
+  position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 200;
   min-width: 240px; background: var(--panel); border: 1px solid var(--line-strong);
   border-radius: 12px; padding: 6px; box-shadow: 0 12px 36px rgba(0,0,0,0.14);
 }
@@ -718,7 +719,7 @@ button.btn.danger { color: var(--accent); }
 .rootsbar { position: relative; display: inline-flex; }
 .rootsbar .wschip { max-width: none; }
 .roots-pop {
-  position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 30;
+  position: absolute; bottom: calc(100% + 8px); left: 0; z-index: 200;
   width: 420px; max-width: 70vw; padding: 8px;
   background: var(--panel); border: 1px solid var(--line-strong); border-radius: 12px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.18);
@@ -961,15 +962,20 @@ button.btn.sm { padding: 5px 13px; font-size: 12.5px; }
 /* The custom-provider protocol dropdown is a native <select> (form-styled inputs around it
    are Tailwind). A native control must be told the theme tokens explicitly — otherwise the
    webview renders black-on-dark option text in dark mode and the selected value reads
-   invisible/obscured. Same box styling as the text inputs, plus themed <option> popup. */
+   invisible/obscured. Same box styling as the text inputs, plus themed <option> popup.
+   color-scheme on the element tells WebView2/Chromium to render the native dropdown popup
+   (which the OS draws, not the browser) in the matching light/dark palette. */
 select.form-select {
   color: var(--ink); background-color: var(--panel);
   appearance: none; -webkit-appearance: none;
+  color-scheme: light dark;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23888888' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'/%3E%3C/svg%3E");
   background-repeat: no-repeat; background-position: right 11px center; background-size: 12px;
   cursor: pointer;
 }
 select.form-select option { color: var(--ink); background-color: var(--panel); }
+html[data-theme="dark"] select.form-select { color-scheme: dark; }
+html[data-theme="light"] select.form-select { color-scheme: light; }
 
 .sa-sub { font-size: 11px; letter-spacing: 0.04em; text-transform: uppercase; color: var(--faint); margin-top: 4px; }
 .dim { color: var(--faint); }

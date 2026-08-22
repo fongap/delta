@@ -955,6 +955,42 @@ export function CustomCreateForm({ ps, tp, inline = false }: { ps: ProviderSetup
         .filter((f) => !f.show_when && !(f.choices && f.choices.length))
         .map((f) => row(f))}
 
+      {/* Fallback API Key + Base URL: when the protocol's field definitions haven't
+          loaded yet (or the endpoint failed), still show the two most common fields
+          so the user can start typing. The default openai-compatible protocol always
+          needs an API key + base URL; rendering them as a fallback ensures the form
+          is never empty. Only shows when no secret field was already rendered above. */}
+      {fieldsAll.filter((f) => f.secret).length === 0 && !ps.protocolsLoading && (
+        <>
+          <div>
+            <label className={label}>
+              {t("providers.apiKey", undefined, "API Key")}
+            </label>
+            <input
+              className={input + " border-line"}
+              type="password"
+              placeholder="sk-…"
+              value={ps.fields["api_key"] || ""}
+              data-testid={`${tp}-field-api_key-fallback`}
+              onChange={(e) => ps.setFieldValue("api_key", e.target.value)}
+            />
+          </div>
+          <div>
+            <label className={label}>
+              {t("providers.baseUrl", undefined, "Base URL")}
+            </label>
+            <input
+              className={input + " border-line"}
+              type="text"
+              placeholder="https://api.openai.com/v1"
+              value={ps.fields["base_url"] || ""}
+              data-testid={`${tp}-field-base_url-fallback`}
+              onChange={(e) => ps.setFieldValue("base_url", e.target.value)}
+            />
+          </div>
+        </>
+      )}
+
       {/* Auth-method segmented control (bedrock/vertex protocols) — same control as the
           edit path, but the panel's footer is the create action instead of Test & save. */}
       {choice && (

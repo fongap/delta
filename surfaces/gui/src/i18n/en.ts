@@ -582,6 +582,8 @@ export const en = {
   "providers.alias": "Alias",
   "providers.aliasHint": "e.g. my-gateway",
   "providers.protocol": "Protocol",
+  "providers.apiKey": "API Key",
+  "providers.baseUrl": "Base URL",
   "providers.protocols.openai-compatible": "OpenAI compatible",
   "providers.protocols.openai": "OpenAI (native)",
   "providers.protocols.anthropic": "Anthropic",
