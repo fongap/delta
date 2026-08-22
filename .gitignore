@@ -7,16 +7,14 @@ build/
 dist/
 .coverage
 **/target/
+*.log
 
 # Build outputs (Windows installers / sidecar staging)
 surfaces/gui/src-tauri/binaries/
 surfaces/gui/src-tauri/target/release/bundle/
-packaging/out/          # DeltaPortable ZIP + staging
-packaging/build/        # PyInstaller work dirs for portable builds
+packaging/out/
+packaging/build/
 packaging/portable/target/
 
 # Local secrets (live-smoke BYO keys) — never committed
 .env
-"" 
-"# Rust build artifacts" 
-"**/target/" 

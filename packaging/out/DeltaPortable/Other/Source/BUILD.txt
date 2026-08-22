@@ -1,4 +1,0 @@
-﻿This is a Delta Windows Portable built from the Delta / OpenWorker source tree.
-
-Source:  https://github.com/openworker (see UPSTREAM.md / README.md in the repo)
-Build :  packaging\build_portable.ps1  (see packaging\build_windows.ps1 for toolchain prerequisites)
