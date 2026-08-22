@@ -788,7 +788,7 @@ pub fn run() {
                 }
                 None => LogicalSize::new(1156.0, 765.0),
             };
-            let mut builder =
+            let builder =
                 WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
                     .title("Delta")
                     .inner_size(init_size.width, init_size.height)
