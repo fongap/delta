@@ -33,6 +33,11 @@
 }
 .tip:hover::after { opacity: 1; }
 .tip.tip-below::after { bottom: auto; top: calc(100% + 6px); }
+/* Horizontal-left-aligned tooltip: grows rightward from the element's left edge instead
+   of centering over it — search icon at the sidebar's right edge was getting clipped. */
+.tip.tip-start::after { left: 0; transform: none; }
+/* Single-line (横排) tooltip: no wrapping, so short labels never stack vertically. */
+.tip.tip-nowrap::after { white-space: nowrap; max-width: none; }
 
 :root {
   color-scheme: light;

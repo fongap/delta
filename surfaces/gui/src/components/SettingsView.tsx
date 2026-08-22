@@ -98,6 +98,16 @@ export function SettingsView({
   const wanted = initialTab && (personas || initialTab !== "personas") ? initialTab : "appearance";
   const [tab, setTab] = useState<SetTab>(wanted);
 
+  // Deep-link sync: `initialTab` (settingsTab in App) can change while SettingsView is already
+  // mounted (e.g. the composer's mic calls openSettings("voice") from inside another settings
+  // tab). Without this, the inner tab would keep its old selection and the voice page would
+  // appear to open and immediately vanish. Kept as an effect (not keying the component) so the
+  // page never full-remounts — the window-flash fix.
+  useEffect(() => {
+    setTab(wanted);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [wanted]);
+
   return (
     <main className="flex-1 min-w-0 flex bg-paper">
       <nav className="page-subnav w-[208px] shrink-0 border-r border-line bg-panel/40 px-3 py-4">
@@ -282,6 +292,7 @@ function VoiceInputSection() {
   const progressTotal = progress?.total_bytes || status?.model_bytes || 1;
   const progressPercent = Math.min(100, Math.round(((progress?.downloaded_bytes || 0) / progressTotal) * 100));
   const ready = !!status?.supported && !!status?.model_verified && !!status?.test_passed;
+  const checking = phase === "transcribing"; // mic test: stopping + transcribing
 
   return (
     <section>
@@ -367,8 +378,8 @@ function VoiceInputSection() {
                 </div>
               </div>
               {ready && <span className="text-[11.5px] px-2 py-1 rounded-full bg-okSoft text-ok">● {t("settings.voice.ready")}</span>}
-              <button className={BTN_BORDERED} disabled={!status?.supported || !status?.model_verified || phase === "transcribing"} onClick={() => void toggleTest()}>
-                {status?.recording ? t("settings.voice.stopAndCheck") : phase === "transcribing" ? t("settings.voice.transcribing") : ready ? t("settings.voice.testAgain") : t("settings.voice.testMic")}
+              <button className={BTN_BORDERED} disabled={!status?.supported || !status?.model_verified || checking} onClick={() => void toggleTest()}>
+                {checking ? t("settings.voice.transcribing") : status?.recording ? t("settings.voice.stopAndCheck") : ready ? t("settings.voice.testAgain") : t("settings.voice.testMic")}
               </button>
             </div>
             {status?.recording && <div className="border-t border-line px-4 py-3 text-[12px] text-accent" role="status">● {t("settings.voice.listening")}</div>}

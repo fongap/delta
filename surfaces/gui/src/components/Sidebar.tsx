@@ -82,7 +82,7 @@ function SidebarFooterIcon({
   return (
     <button
       className={
-        "tip relative w-8 h-8 grid place-items-center rounded-lg text-muted transition-colors " +
+        "tip tip-nowrap relative w-8 h-8 grid place-items-center rounded-lg text-muted transition-colors " +
         (active ? "bg-paper text-ink" : "hover:bg-paper")
       }
       data-testid={testid}
@@ -1053,7 +1053,7 @@ export function Sidebar(props: Props) {
         {/* A2 (revised): search icon back in the sidebar, same row as the wordmark — Delta left,
             search right. Clicking opens the command palette (SearchModal) directly. */}
         <button
-          className="tip nav-search-btn w-7 h-7 grid place-items-center rounded-md text-faint hover:text-ink hover:bg-paper shrink-0 ml-auto"
+          className="tip tip-start tip-nowrap nav-search-btn w-7 h-7 grid place-items-center rounded-md text-faint hover:text-ink hover:bg-paper shrink-0 ml-auto"
           data-tip={t("common.search", undefined, "Search")}
           aria-label={t("common.search", undefined, "Search")}
           onClick={() => setSearchOpen(true)}
@@ -1247,7 +1247,7 @@ export function Sidebar(props: Props) {
               identity) stays in sync with sign-in state. */}
           <button
             className={
-              "tip relative w-8 h-8 grid place-items-center rounded-lg text-muted transition-colors " +
+              "tip tip-nowrap relative w-8 h-8 grid place-items-center rounded-lg text-muted transition-colors " +
               (appMenuOpen && cloud?.signed_in ? "bg-paper text-ink" : "hover:bg-paper")
             }
             data-testid="account-row"

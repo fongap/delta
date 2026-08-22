@@ -160,7 +160,7 @@ from ..attachments import (
 from ..engine import ApprovalOutcome
 from ..inbox import VIS_INBOX, VIS_INLINE, args_preview
 from ..permissions import Mode
-from ..providers import AssistantTurn
+from ..providers import AssistantTurn, PROTOCOLS
 from .manager import SessionManager
 
 
