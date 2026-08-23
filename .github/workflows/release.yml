@@ -54,10 +54,10 @@ jobs:
         shell: pwsh
         run: |
           $files = @(Get-ChildItem -LiteralPath .\releases -File)
-          $zip = @($files | Where-Object Name -Like 'Delta-*-Windows-Portable.zip')
-          $sum = @($files | Where-Object Name -Like 'Delta-*-Windows-Portable.zip.sha256')
+          $zip = @($files | Where-Object Name -Like 'Delta-Windows-Portable.zip')
+          $sum = @($files | Where-Object Name -Like 'Delta-Windows-Portable.zip.sha256')
           if ($files.Count -ne 2 -or $zip.Count -ne 1 -or $sum.Count -ne 1) {
-            throw "releases/ must contain exactly one versioned portable ZIP and its SHA256 file"
+            throw "releases/ must contain exactly one portable ZIP and its SHA256 file"
           }
           $expected = (Get-Content -LiteralPath $sum[0].FullName -Raw).Trim()
           $actual = (Get-FileHash -LiteralPath $zip[0].FullName -Algorithm SHA256).Hash.ToLower()
@@ -72,8 +72,8 @@ jobs:
         with:
           name: windows-portable
           path: |
-            releases/Delta-*-Windows-Portable.zip
-            releases/Delta-*-Windows-Portable.zip.sha256
+            releases/Delta-Windows-Portable.zip
+            releases/Delta-Windows-Portable.zip.sha256
           if-no-files-found: error
 
   release:
@@ -101,7 +101,7 @@ jobs:
             echo "::error::tag $TAG != tauri.conf.json version $CONF_VERSION"
             exit 1
           fi
-          ZIP="dist/Delta-${VERSION}-Windows-Portable.zip"
+          ZIP="dist/Delta-Windows-Portable.zip"
           SUM="${ZIP}.sha256"
           [ -f "$ZIP" ] && [ -f "$SUM" ] || {
             echo "::error::portable release assets are incomplete"

@@ -39,15 +39,12 @@ function BubbleMeta({
   ts,
   align,
   actions,
-  prefix,
 }: {
   text: string;
   ts?: number;
   align: "left" | "right";
   /** Extra inline actions (e.g. Edit) rendered after the time, before copy. */
   actions?: ReactNode;
-  /** Leading Provider/model text rendered before the time. */
-  prefix?: string;
 }) {
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
@@ -71,7 +68,6 @@ function BubbleMeta({
           (align === "right" ? "right-0" : "left-0")
         }
       >
-        {prefix && <span className="font-medium">{prefix} ·</span>}
         {when && (
           <span data-testid="bubble-ts" title={when.toLocaleString()}>
             {when.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
@@ -467,8 +463,6 @@ interface Props {
   onUndoMemory?: (id: number, previous?: string) => void;
   // opencode-style revert: truncate from this user message onward + prefill the composer.
   onEditMessage?: (index: number) => void;
-  // Hover-row prefix for user bubbles: Provider/model only (opencode-style meta).
-  userMetaPrefix?: string;
 }
 
 // The transcript index whose notice gets the Retry button: the tail error notice, looking
@@ -484,7 +478,7 @@ export function retryAnchor(items: Item[]): number {
   return -1;
 }
 
-export function Transcript({ items, running, streamingText, onRetry, onUndoMemory, onEditMessage, userMetaPrefix }: Props) {
+export function Transcript({ items, running, streamingText, onRetry, onUndoMemory, onEditMessage }: Props) {
   const { t } = useI18n();
   // §33 grouping: a turn = the maximal run of assistant/tool/resolved-approval items between
   // breakers (user, connector, notices, plan/dir requests…). Trailing assistant texts are the
@@ -562,8 +556,7 @@ export function Transcript({ items, running, streamingText, onRetry, onUndoMemor
                 <BubbleMeta
                   text={item.text}
                   ts={item.ts}
-                  align="left"
-                  prefix={userMetaPrefix}
+                  align="right"
                   actions={
                     onEditMessage && item.index !== undefined ? (
                       /* Edit = revert + prefill: the thread truncates back to before this
@@ -639,7 +632,12 @@ export function Transcript({ items, running, streamingText, onRetry, onUndoMemor
               );
             return (
               <div className="notice" key={bi}>
-                {item.text}
+                {item.modelSwitchModel
+                  ? t("transcript.modelSwitchedTo", { model: item.modelSwitchModel }, `Model switched to ${item.modelSwitchModel}`) +
+                    (item.modelSwitchImageWarning
+                      ? " — " + t("transcript.modelSwitchImageWarning", undefined, "earlier images can't be read by this model")
+                      : "")
+                  : item.text}
                 {item.retriable && !running && onRetry && block.i === retryAnchor(items) && (
                   <button className="btn ml-2" data-testid="notice-retry" onClick={onRetry}>
                     {t("transcript.retry", undefined, "Retry")}

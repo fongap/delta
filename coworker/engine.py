@@ -217,13 +217,15 @@ class TurnEngine:
             caps = self.provider.capabilities(model)
         except Exception:
             caps = None
+        image_warning = False
         if (
             caps is not None
             and not getattr(caps, "vision", False)
             and self._history_has_images()
         ):
             text += " — earlier images can't be read by this model"
-        self._append_notice("model_switch", text)
+            image_warning = True
+        self._append_notice("model_switch", text, model=model, image_warning=image_warning)
         return text
 
     def _history_has_images(self) -> bool:
@@ -245,13 +247,15 @@ class TurnEngine:
             return message.get("kind") == "error"
         return False
 
-    def _append_notice(self, kind: str, text: Optional[str] = None) -> None:
+    def _append_notice(self, kind: str, text: Optional[str] = None, **extra: Any) -> None:
         """Persist a turn-ending marker (error/interrupted) as a display-only `notice`
         message: it survives reload like the transcript does, but `_outbound_messages`
-        drops the role so no provider ever sees it."""
+        drops the role so no provider ever sees it. Extra fields (e.g. ``model`` for
+        ``model_switch``) let the frontend localize the display text."""
         notice: dict[str, Any] = {"role": "notice", "kind": kind, "ts": time.time()}
         if text:
             notice["text"] = text
+        notice.update(extra)
         self.messages.append(notice)
 
     async def retry(self) -> AsyncIterator[Event]:

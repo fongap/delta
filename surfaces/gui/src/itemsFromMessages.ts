@@ -76,7 +76,7 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
         m.kind === "interrupted"
           ? { kind: "notice", tone: "warn", text: "Interrupted." }
           : m.kind === "model_switch"
-            ? { kind: "notice", tone: "info", text: m.text || "Model switched" }
+            ? { kind: "notice", tone: "info", text: m.text || "Model switched", modelSwitchModel: m.model as string | undefined, modelSwitchImageWarning: !!m.image_warning }
             : m.kind === "compacted"
               ? // The subtle "compacted here" divider (OPE-27) — the transcript itself is intact.
                 { kind: "notice", tone: "info", text: m.text || "Context compacted" }

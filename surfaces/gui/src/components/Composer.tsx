@@ -183,8 +183,13 @@ export function Composer(props: Props) {
     if (!el) return;
     el.style.height = "auto";
     const max = parseFloat(getComputedStyle(el).lineHeight || "22") * 4;
+    // Floor at two visible lines (owner ask): 2×line-height + the textarea's vertical
+    // padding — an empty composer still shows a two-row-tall input area.
+    const style = getComputedStyle(el);
+    const padY = parseFloat(style.paddingTop || "0") + parseFloat(style.paddingBottom || "0");
+    const min = parseFloat(style.lineHeight || "22") * 2 + padY;
     const next = Math.min(el.scrollHeight, max);
-    el.style.height = `${Math.max(next, 24)}px`;
+    el.style.height = `${Math.max(next, min)}px`;
     el.style.overflowY = el.scrollHeight > max ? "auto" : "hidden";
   }, [text]);
 
@@ -792,7 +797,7 @@ function ReasoningMenu({
     }}>
       <button
         ref={trigger}
-        className="pill chip"
+        className="pill"
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
@@ -806,9 +811,7 @@ function ReasoningMenu({
         data-testid="reasoning-menu-trigger"
         onClick={() => setOpen((current) => !current)}
       >
-        <span className="pill-label">
-          {t("nav.reasoningDepth", undefined, "Reasoning depth")}: {label}
-        </span>
+        <span className="pill-label">{label}</span>
         <Icon name="chevronDown" size={13} className="caret" />
       </button>
       {open && !disabled && (

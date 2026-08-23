@@ -119,7 +119,7 @@ export type Item =
       questions?: GroupedQuestion[];
       resolved?: string;
     }
-  | { kind: "notice"; tone: "info" | "warn"; text: string; retriable?: boolean }
+  | { kind: "notice"; tone: "info" | "warn"; text: string; retriable?: boolean; modelSwitchModel?: string; modelSwitchImageWarning?: boolean }
   // MEMORY-SPEC §5.1: the save notice, inline in the conversation where the user is
   // already looking (a corner toast vanished before it could be read or undone —
   // owner-hit 2026-07-28). Stays put. `previous` is set when an existing memory was

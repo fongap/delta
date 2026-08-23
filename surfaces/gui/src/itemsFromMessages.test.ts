@@ -79,6 +79,8 @@ describe("itemsFromMessages model switch", () => {
       kind: "notice",
       tone: "info",
       text: "Model switched to Kimi K2.6 · Moonshot",
+      modelSwitchModel: undefined,
+      modelSwitchImageWarning: false,
     });
   });
 });

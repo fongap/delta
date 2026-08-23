@@ -499,7 +499,7 @@ button.btn.danger { color: var(--accent); }
    (Composer.tsx); only the textarea reset + drag-ring remain in CSS. */
 .composer textarea {
   width: 100%; border: none; outline: none; resize: none; font: inherit; font-size: 14.5px; line-height: 1.45;
-  background: transparent; color: var(--ink); min-height: 24px; max-height: 88px; overflow: hidden;
+  background: transparent; color: var(--ink); min-height: 62px; max-height: 88px; overflow: hidden;
 }
 .composer textarea::placeholder { color: var(--faint); }
 .voice-wave-line { flex: 1; min-width: 28px; border-top: 1px dashed var(--line-strong); }

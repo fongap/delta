@@ -29,9 +29,9 @@ describe("composer runtime controls", () => {
     const onReasoningEffortChange = vi.fn();
     renderComposer({ reasoningEffort: "low", onReasoningEffortChange });
     const trigger = screen.getByTestId("reasoning-menu-trigger");
-    expect(trigger.textContent).toContain("Low");
+    expect(trigger.textContent).toContain("Light");
     fireEvent.click(trigger);
-    fireEvent.click(screen.getByRole("menuitemradio", { name: /High/ }));
+    fireEvent.click(screen.getByRole("menuitemradio", { name: /Deep/ }));
     expect(onReasoningEffortChange).toHaveBeenCalledWith("high");
   });
 

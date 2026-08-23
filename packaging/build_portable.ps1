@@ -278,7 +278,7 @@ if ($LASTEXITCODE -ne 0) {
 
 # ---- 6. ZIP + SHA-256 (tar.exe: long paths, UTF-8, Chinese filenames) ------------
 Write-Host "==> [6/6] packaging ZIP + SHA-256" -ForegroundColor Cyan
-$ZipName = "$AppName-$Version-Windows-Portable.zip"
+$ZipName = "$AppName-Windows-Portable.zip"
 $ReleaseDir = Join-Path $Platform "releases"
 New-Item -ItemType Directory -Force -Path $ReleaseDir | Out-Null
 $ZipPath = Join-Path $ReleaseDir $ZipName

@@ -1609,7 +1609,6 @@ export function App() {
                     onRetry={retry}
                     onUndoMemory={(id, previous) => void undoMemorySave(id, previous)}
                     onEditMessage={(index) => void editMessage(index)}
-                    userMetaPrefix={modelLabels[model] || model}
                     // §33 ref #3: sub-threshold streamed text renders INSIDE the live turn
                     // group (header when collapsed, quiet line when expanded) — never as a
                     // floating paragraph.
