@@ -1,5 +1,4 @@
-/** Tailwind config — mirrors platform/ui-mocks/redesign.html so the app can use the mock's
- *  exact utility classes. Colors map to the CSS custom properties already defined in styles.css
+/** Tailwind config for the desktop UI. Colors map to the CSS custom properties in styles.css
  *  (so light/dark theming flows through one source of truth). */
 // Tokens are hex CSS vars (shared with styles.css), which Tailwind can't alpha-multiply for
 // `/NN` opacity utilities. Wrap each in color-mix so `bg-panel/70` etc. work, while bare

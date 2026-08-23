@@ -1,6 +1,4 @@
-# Delta's only current release artifact is the relocatable Windows portable ZIP.
-# MSI, NSIS, macOS DMG, and installer-updater assets are intentionally frozen: their
-# scripts/config remain in the repository, but this workflow never builds or uploads them.
+# Delta's release artifact is the relocatable Windows portable ZIP.
 # Tag pushes create a DRAFT GitHub Release for manual verification and publication.
 
 name: Portable Release

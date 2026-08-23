@@ -661,7 +661,7 @@ async fn install_update(
             .await
             .map_err(|e| e.to_string())?,
     }
-    // Windows never reaches here (the NSIS installer takes over and relaunches).
+    // Installer-based Windows builds never reach here because the installer relaunches.
     // macOS: the .app was swapped in place — restart into the new version. The tray
     // Exit path's sidecar kill runs via RunEvent, so no orphaned delta-server.
     app.restart();

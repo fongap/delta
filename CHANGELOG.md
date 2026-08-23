@@ -4,16 +4,7 @@
 
 ## [Unreleased]
 
-### 修复 (Fixed)
-
-#### 2026-08-24 06:38
-
-- **会话与模型设置体验五项**
-  - 人类消息 hover 元数据右对齐（末元素对齐气泡右缘），并移除 Provider/模型前缀，仅保留时间与编辑/复制操作。
-  - 设置 ▸ Models：「你的服务商」网格前置；「自定义服务商」卡片改为可折叠，已有服务商时默认收起。
-  - 思考深度触发器样式与模型选择一致（无边框透明、hover 显背景），档位文案更新为默认/轻量/深度/最大及对应描述；chip 仅显示档位名。
-  - 会话输入框空态高度提高至两行（约 62px），最大仍为四行。
-  - 模型切换提示本地化：后端 notice 增加结构化 `model`/`image_warning` 字段，前端按语言渲染「模型已切换为 {model}」；旧会话回退原文。
+## [0.2.0] - 2026-08-24
 
 ### 变更 (Changed)
 
@@ -21,18 +12,22 @@
 
 - **便携包名去除版本号**：产物统一为 `Delta-Windows-Portable.zip` + `.sha256`，构建脚本与 Release 工作流同步。
 
-## [0.2.0] - 2026-08-24
-
-### 变更 (Changed)
-
 #### 2026-08-24 02:54
 
 - **0.2.0 发布基线与 Windows 便携版唯一发布链路**
   - Python、npm、Tauri 与便携启动器版本统一为 `0.2.0`；已验证的 Python 运行时、测试和消息/Bedrock 可选依赖改为精确版本，`aisuite` 保留上游不可变 commit 以维持当前 Agent/runtime 修复集。
-  - 默认本地发布入口与 GitHub Actions 收敛为 Windows portable-only：最终仅生成 `releases/Delta-0.2.0-Windows-Portable.zip` 及其 `.sha256`，MSI、NSIS、DMG 与安装版 updater 脚本和配置保留但冻结，不再由当前发布工作流执行或上传。
+  - 默认本地发布入口与 GitHub Actions 收敛为 Windows portable-only：最终仅生成 `releases/Delta-Windows-Portable.zip` 及其 `.sha256`；旧 MSI、NSIS、DMG 与 updater 发布脚本、素材已移除。
   - 便携构建的中间目录移至 `packaging/build`/`packaging/dist`，最终 ZIP 严格只含单个 `Delta/` 顶层目录；launcher 每次从当前源码重建，避免复用旧版本资源。
   - 修复显式选择位于 Windows `AppData` 下的工作区时 ripgrep 系统目录排除规则误伤整个搜索根的问题；生成目录仍按原规则排除。
   - 发布验证通过：后端 `1197 passed, 3 skipped`，前端 `151 passed`、TypeScript 检查和生产构建通过；ZIP 校验和、绝对路径泄漏扫描、launcher/GUI/sidecar 启停与便携数据目录 smoke 均通过。
+
+### 移除 (Removed)
+
+#### 2026-08-24 07:06
+
+- **旧发布与设计资产清理**
+  - 移除已退出发布链路的 MSI/NSIS、macOS DMG 和 updater manifest 脚本及 DMG 素材。
+  - 移除旧 OpenCoworker UI 原型、未引用的说明图与重复尺寸 Logo；保留 README 与当前便携构建实际使用的源资产。
 
 ### 新增 (Added)
 
@@ -64,6 +59,15 @@
   - `build_portable.ps1` 步骤 1 修复：PyInstaller 的进度日志经 stderr 输出、被宿主捕获时在 PowerShell 5.1 下被包装为 ErrorRecord，与全局 `$ErrorActionPreference="Stop"` 叠加会让 `--clean` 每次都把首个 INFO 行误判为失败；已将错误偏好收敛到该调用局部、仅以退出码判定成败（`--clean` 前保持 `$ErrorActionPreference="Stop"` 的全局行为不变）。
 
 ### 修复 (Fixed)
+
+#### 2026-08-24 06:38
+
+- **会话与模型设置体验五项**
+  - 人类消息 hover 元数据右对齐（末元素对齐气泡右缘），并移除 Provider/模型前缀，仅保留时间与编辑/复制操作。
+  - 设置 ▸ Models：「你的服务商」网格前置；「自定义服务商」卡片改为可折叠，已有服务商时默认收起。
+  - 思考深度触发器样式与模型选择一致（无边框透明、hover 显背景），档位文案更新为默认/轻量/深度/最大及对应描述；chip 仅显示档位名。
+  - 会话输入框空态高度提高至两行（约 62px），最大仍为四行。
+  - 模型切换提示本地化：后端 notice 增加结构化 `model`/`image_warning` 字段，前端按语言渲染「模型已切换为 {model}」；旧会话回退原文。
 
 #### 2026-08-24 01:37
 

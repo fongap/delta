@@ -1,6 +1,6 @@
 // Shared style grammar for the Connectors surfaces (UX-DECISIONS §21): macOS
 // System-Settings-style grouped inset lists — quiet rows, hairline separators,
-// pill buttons, small status tags. Mirrors ui-mocks/connectors-redesign.html.
+// pill buttons and small status tags.
 
 /** Grouped inset list container; children separate with hairlines. */
 export const GRP = "rounded-xl2 border border-line bg-panel divide-y divide-line overflow-hidden";

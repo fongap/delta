@@ -28,7 +28,7 @@ dependencies = [
     "croniter==6.2.4",  # cron next-fire math for the automation scheduler
     # PDF attachments for models without native PDF support (pdf_support.py):
     # pypdf = pure-python text extraction; pypdfium2 = page rasterization (BSD pdfium,
-    # ships its own libpdfium — NOT PyMuPDF, whose AGPL license can't ride in the DMG).
+    # ships its own libpdfium — NOT PyMuPDF, whose AGPL license can't ride in a release package).
     "pypdf==6.16.1",
     "pypdfium2==5.13.0",
     # IANA tz database for zoneinfo. Windows ships no system tz db, so without this every

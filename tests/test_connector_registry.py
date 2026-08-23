@@ -19,7 +19,7 @@ from coworker.secrets import SecretStore
 
 _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 
-# Brand colors from the visual mock (ui-mocks/redesign.html). Fallback gray is #6b7280.
+# Connector brand colors. Fallback gray is #6b7280.
 _EXPECTED_BRAND = {
     "slack": "#611f69",
     "telegram": "#229ed9",

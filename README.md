@@ -44,15 +44,11 @@ Delta 将继续坚持本地优先，逐步完善：
 
 ### 便携版（推荐）
 
-从 [Releases](https://github.com/fongap/delta/releases) 下载 `Delta-{version}-Windows-Portable.zip`，解压到任意目录（支持中文/空格路径），运行 `Delta.exe` 即可：
+从 [Releases](https://github.com/fongap/delta/releases) 下载 `Delta-Windows-Portable.zip`，解压到任意目录（支持中文/空格路径），运行 `Delta.exe` 即可：
 
 - 所有数据（配置、密钥、日志、数据库）保存在 `Data/` 目录下，随文件夹整体迁移，不写入 `%APPDATA%`。
 - 首次启动自动创建 `Data/` 并引导连接模型服务商。
 - 便携版不内置 WebView2 运行时——需要系统已安装 [Microsoft Edge WebView2](https://developer.microsoft.com/microsoft-edge/webview2/)（Windows 10/11 通常自带）。
-
-### 安装版（暂不发布）
-
-当前正式发布仅提供 Windows 便携版。NSIS、MSI 与 macOS DMG 的构建脚本仍保留供后续恢复，但不会由默认本地发布入口或 Release CI 执行、上传。
 
 ### 本地开发
 
@@ -77,12 +73,6 @@ npm run tauri dev
 ```
 
 ## 项目状态
-
-> ⚠️ Delta 仍处于开发阶段，并非 OpenWorker 官方发行版。
-
-- 上游仓库：[`OpenWorker`](https://github.com/andrewyng/openworker)
-- 同步记录：[`UPSTREAM.md`](./UPSTREAM.md)
-- 开源许可：[`MIT License`](./LICENSE)
 
 > ⚠️ Delta 仍处于开发阶段，并非 OpenWorker 官方发行版。
 

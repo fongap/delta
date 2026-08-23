@@ -28,13 +28,13 @@
     4. `tauri build --no-bundle` -> the raw app Delta.exe + frontend (embedded).
     5. Assemble the relocatable tree above.
     6. Run the absolute-path leak scan (scan_portable_paths.ps1) -> fail the build on any leak.
-    7. Emit Delta-<version>-Windows-Portable.zip + .sha256 under <repo>\releases.
+    7. Emit Delta-Windows-Portable.zip + .sha256 under <repo>\releases.
 
-  Prerequisites (same as build_windows.ps1 — see its header):
+  Prerequisites:
     - Rust (rustup) with the x86_64-pc-windows-msvc target + MSVC C++ build tools (link.exe).
     - Node + npm (frontend build).
-    - A Python venv at platform\.venv with this package installed editable, plus pyinstaller
-      and tzdata (Windows tz database); `typer` also needed at build time (see build_windows.ps1).
+    - A Python venv at <repo>\.venv with this package installed editable, plus pyinstaller
+      and tzdata (Windows tz database); `typer` is also needed at build time.
         py -m venv .venv ; .\.venv\Scripts\pip install -e ".[bedrock]" pyinstaller tzdata typer
     - tar.exe (system bsdtar, present on Windows 10 1803+) for a long-path / Unicode-safe ZIP.
 
@@ -223,8 +223,8 @@ Copy-Item -Force (Join-Path $Platform "LICENSE") (Join-Path $Other "License\LICE
 Set-Content -Path (Join-Path $Other "Source\BUILD.txt") -Encoding utf8 -Value @"
 This is a Delta Windows Portable built from the Delta / OpenWorker source tree.
 
-Source:  https://github.com/openworker (see UPSTREAM.md / README.md in the repo)
-Build :  packaging\build_portable.ps1  (see packaging\build_windows.ps1 for toolchain prerequisites)
+Source:  https://github.com/fongap/delta (see UPSTREAM.md / README.md in the repo)
+Build :  packaging\build_portable.ps1
 "@
 Set-Content -Path (Join-Path $Other "Help\PORTABLE.txt") -Encoding utf8 -Value @"
 Delta Portable — 绿色便携版（免安装）
