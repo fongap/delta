@@ -369,6 +369,21 @@ class SkillStore:
             "files": [],
         }
 
+    def _staged_dir(self, token: str) -> Path:
+        """Resolve an upload token to its staging directory, rejecting anything that isn't a
+        token this store minted. The token comes straight from the REST body, so without this
+        check `confirm_upload` could move an arbitrary directory into a scope dir and
+        `discard_upload` could rmtree one (path traversal). Tokens are ``uuid4().hex``
+        (32 lowercase hex chars) AND the resolved path must stay inside the staging dir."""
+        token = str(token)
+        if not re.fullmatch(r"[0-9a-f]{32}", token):
+            raise ValueError("Unknown or expired upload.")
+        staged = (self._staging_dir / token).resolve()
+        staging_root = self._staging_dir.resolve()
+        if staged.parent != staging_root:
+            raise ValueError("Unknown or expired upload.")
+        return staged
+
     def confirm_upload(
         self,
         token: str,
@@ -376,7 +391,7 @@ class SkillStore:
         scope: str = GLOBAL_SCOPE,
         workspace: Optional[str | Path] = None,
     ) -> dict[str, Any]:
-        staged = self._staging_dir / str(token)
+        staged = self._staged_dir(token)
         if not (staged / "SKILL.md").is_file():
             raise ValueError("Unknown or expired upload.")
         skill = _parse_skill(staged / "SKILL.md")
@@ -399,7 +414,7 @@ class SkillStore:
         return {"name": name, "scope": scope, "path": str(folder)}
 
     def discard_upload(self, token: str) -> None:
-        staged = self._staging_dir / str(token)
+        staged = self._staged_dir(token)
         shutil.rmtree(staged, ignore_errors=True)
 
 

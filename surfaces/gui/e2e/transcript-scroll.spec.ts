@@ -73,6 +73,9 @@ test("bubbles carry hover copy + timestamp without layout shift", async ({ page 
   // Live items are stamped client-side, so both bubbles expose the affordance strip.
   const userBubble = page.locator(".bubble-user").last();
   await userBubble.hover();
+  const userMeta = userBubble.locator("..").locator(".font-medium");
+  await expect(userMeta).toHaveText("Claude Opus 4.8 · Anthropic ·");
+  await expect(userBubble.locator("..")).not.toContainText("OpenWorker ·");
   const meta = page.getByTestId("bubble-copy");
   await expect(meta.first()).toBeVisible();
   await expect(page.getByTestId("bubble-ts").first()).toBeVisible();

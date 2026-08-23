@@ -2,7 +2,7 @@
 // "Custom provider" card with the create form inline (alias + protocol dropdown +
 // fields + Fetch models + Create & save) — no "Add" button to click first. Fill →
 // Fetch models (auto-adds `alias:{id}`) → Create & save → the new provider's card
-// appears below with its ✓ Connected state.
+// appears below with alias as identity and protocol/status as secondary information.
 import { expect } from "@playwright/test";
 import { test } from "./fixtures";
 
@@ -23,8 +23,8 @@ test.describe("custom provider", () => {
     // 2. Type the alias.
     await page.getByTestId("set-alias").fill("myapi");
 
-    // 3. Fill the API key field (non-"bad" so verify/fetch succeed).
-    await page.getByTestId("set-field-api_key").fill("sk-myapi-realkey");
+    // 3. Fill a fixture-only mock key (never sent to a real service).
+    await page.getByTestId("set-field-api_key").fill("mock-provider-key");
 
     // 4. Fetch models → success message + models auto-added.
     await page.getByTestId("set-fetch").click();
@@ -32,6 +32,11 @@ test.describe("custom provider", () => {
 
     // 5. Create & save → the alias is registered, verified, and the card appears.
     await page.getByTestId("set-create-save").click();
-    await expect(page.getByTestId("set-provider-myapi")).toContainText("✓ Connected");
+    const card = page.getByTestId("set-provider-myapi");
+    await expect(card).toContainText("myapi");
+    await expect(card).toContainText("OpenAI compatible");
+    await expect(card).toContainText("Saved");
+    await expect(page.getByTestId("set-alias")).toHaveValue("");
+    await expect(page.getByTestId("fetched-models")).toHaveCount(0);
   });
 });

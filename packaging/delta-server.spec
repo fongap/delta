@@ -106,6 +106,12 @@ exe = EXE(
     [],
     exclude_binaries=True,
     name="delta-server",
+    # Embed version info so Windows Task Manager shows "Delta Server" (FileDescription)
+    # instead of the bare filename; the process groups visually under the Delta family.
+    version=os.path.join(PACKAGING, "delta-server-version.txt") if IS_WINDOWS else None,
+    # Same Delta logo as the app/launcher — the Python-icon default read as an unrelated
+    # process in Task Manager's process tree.
+    icon=os.path.join(PACKAGING, "portable", "launcher", "icon.ico") if IS_WINDOWS else None,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,

@@ -45,7 +45,9 @@ def test_settings_rest_roundtrip(tmp_path, monkeypatch):
         and before["source"] is None
         and before["provider"] == "openai"
     )
-    assert before["onboarded"] is False and before["model"] in before["models"]
+    # No default model chosen yet — the picker must not show a blank entry.
+    assert before["onboarded"] is False
+    assert before["model"] == "" and "" not in before["models"]
 
     set_resp = client.post(
         "/v1/settings/model-key", json={"api_key": "sk-secret-xyz"}

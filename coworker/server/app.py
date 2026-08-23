@@ -53,6 +53,17 @@ _WS_RATE_LIMIT_WINDOW_SECONDS = 10.0
 _MAX_MESSAGE_TEXT_CHARS = 200_000
 _MAX_ATTACHMENTS_BYTES = 15_000_000  # leaves JSON overhead below the 16 MiB frame cap
 
+# Additive UI/runtime negotiation fields returned by the authenticated health bootstrap.
+# Keep these deliberately small and behavior-based: the GUI may use them to degrade safely
+# without learning provider or agent implementation details.
+UI_PROTOCOL_VERSION = 1
+UI_RUNTIME_CAPABILITIES = (
+    "events.app-wide",
+    "provider.custom",
+    "session.message-revert",
+    "session.reasoning-effort",
+)
+
 
 def _json_value_size(value: Any) -> int:
     """Conservative UTF-8 size of parsed JSON without allocating another giant string."""
@@ -161,6 +172,7 @@ from ..engine import ApprovalOutcome
 from ..inbox import VIS_INBOX, VIS_INLINE, args_preview
 from ..permissions import Mode
 from ..providers import AssistantTurn, PROTOCOLS
+from .contracts import error_envelope
 from .manager import SessionManager
 
 
@@ -219,7 +231,11 @@ def create_app(manager: SessionManager) -> FastAPI:
         ):
             return await call_next(request)
         return JSONResponse(
-            {"error": "missing or invalid Delta sidecar token"},
+            error_envelope(
+                "auth.invalid_token",
+                "missing or invalid Delta sidecar token",
+                retriable=False,
+            ),
             status_code=401,
         )
 
@@ -241,6 +257,8 @@ def create_app(manager: SessionManager) -> FastAPI:
             "status": "ok",
             "default_workspace": manager.default_workspace,
             "model": manager.model,
+            "protocolVersion": UI_PROTOCOL_VERSION,
+            "capabilities": list(UI_RUNTIME_CAPABILITIES),
         }
 
     @app.get("/v1/agents")
@@ -655,6 +673,11 @@ def create_app(manager: SessionManager) -> FastAPI:
     def session_messages(session_id: str) -> dict[str, Any]:
         return {"messages": manager.session_messages(session_id)}
 
+    @app.post("/v1/sessions/{session_id}/revert")
+    async def session_revert(session_id: str, body: dict) -> dict[str, Any]:
+        # Async: a mid-turn revert interrupts the live engine and polls for wind-down.
+        return await manager.revert_session(session_id, int((body or {}).get("index", -1)))
+
     @app.patch("/v1/sessions/{session_id}")
     def session_patch(session_id: str, body: dict) -> dict[str, Any]:
         body = body or {}
@@ -664,6 +687,8 @@ def create_app(manager: SessionManager) -> FastAPI:
                 pinned=bool(body["pinned"]) if "pinned" in body else None,
                 archived=bool(body["archived"]) if "archived" in body else None,
             )
+        if "reasoning_effort" in body:
+            return manager.set_reasoning_effort(session_id, str(body["reasoning_effort"]))
         return manager.rename_session(session_id, str(body.get("title", "")))
 
     @app.delete("/v1/sessions/{session_id}")
@@ -1692,9 +1717,10 @@ def create_app(manager: SessionManager) -> FastAPI:
                     await _mirror(item)
                 else:
                     await ws.send_json(
-                        {
-                            "type": "question_requested",
-                            "data": {
+                        manager.session_event(
+                            session_id,
+                            "question_requested",
+                            {
                                 "question": item.title,
                                 "options": item.options,
                                 "allow_text": item.allow_text,
@@ -1702,7 +1728,7 @@ def create_app(manager: SessionManager) -> FastAPI:
                                 "header": item.header,
                                 "questions": item.questions,
                             },
-                        }
+                        )
                     )
             return answer_result(item.questions, await manager.inbox.wait(item.id))
 
@@ -1794,7 +1820,8 @@ def create_app(manager: SessionManager) -> FastAPI:
             manager.persist_session(session_id)
             await manager.broadcast_session(
                 session_id,
-                {"type": "model_changed", "data": {"model": model, "text": notice}},
+                "model_changed",
+                {"model": model, "text": notice},
             )
 
         def _resolve_pending(resolution: str) -> None:
@@ -1820,12 +1847,11 @@ def create_app(manager: SessionManager) -> FastAPI:
         )
         if engine is None:
             await ws.send_json(
-                {
-                    "type": "error",
-                    "data": {
-                        "error": "no valid workspace — choose a project folder first"
-                    },
-                }
+                manager.session_event(
+                    session_id,
+                    "error",
+                    {"error": "no valid workspace — choose a project folder first"},
+                )
             )
             await ws.close()
             return
@@ -1833,9 +1859,10 @@ def create_app(manager: SessionManager) -> FastAPI:
         # Retry/Trim — unattended runs auto-trim (the policy in engine._compact_now).
         engine.is_attended = lambda: _visibility() == VIS_INLINE
         await ws.send_json(
-            {
-                "type": "ready",
-                "data": {
+            manager.session_event(
+                session_id,
+                "ready",
+                {
                     "session_id": session_id,
                     "agent": getattr(engine, "agent_name", "code"),
                     "model": engine.model,
@@ -1849,7 +1876,7 @@ def create_app(manager: SessionManager) -> FastAPI:
                         str(getattr(engine, "audit_context", {}).get("workspace", ""))
                     ),
                 },
-            }
+            )
         )
 
         # Checkpoint events: persist mid-turn so a crash/quit can't eat the conversation.
@@ -1877,17 +1904,13 @@ def create_app(manager: SessionManager) -> FastAPI:
                 async for event in events:
                     # Broadcast to every socket viewing this session (this socket included — it's a
                     # registered client), so a second view of the same session stays in sync too.
-                    await manager.broadcast_session(
-                        session_id, {"type": event.type.value, "data": event.data}
-                    )
+                    await manager.broadcast_session(session_id, event.type.value, event.data)
                     if event.type.value in _CHECKPOINTS:
                         manager.save(session_id, engine)
             finally:
                 manager.mark_idle(session_id)
                 manager.save(session_id, engine)
-                await manager.broadcast_session(
-                    session_id, {"type": "turn_done", "data": {}}
-                )
+                await manager.broadcast_session(session_id, "turn_done", {})
 
         # This socket is now a live view of the session; background turns (channel delivery,
         # self-wake, durable resume) broadcast here too, not just locally driven run_turns.
@@ -1897,7 +1920,9 @@ def create_app(manager: SessionManager) -> FastAPI:
         async def reject_input(reason: str) -> None:
             # Input validation failures are not provider failures and must not offer "Retry"
             # or flush an in-progress assistant stream in the GUI.
-            await ws.send_json({"type": "input_rejected", "data": {"error": reason}})
+            await ws.send_json(
+                manager.session_event(session_id, "input_rejected", {"error": reason})
+            )
 
         async def claim_turn(*, retry: bool = False, content=None, display=None) -> None:
             if not manager.try_mark_running(session_id):
@@ -2026,6 +2051,7 @@ def create_app(manager: SessionManager) -> FastAPI:
                                     not isinstance(data, str)
                                     or not data.startswith("data:image/")
                                     or ";base64," not in data
+                                    or data.endswith(";base64,")
                                     or len(data) > MAX_IMAGE_CHARS
                                 ):
                                     reject = "Invalid or oversized image attachment."
@@ -2036,6 +2062,7 @@ def create_app(manager: SessionManager) -> FastAPI:
                                     or not data.startswith(
                                         "data:application/pdf;base64,"
                                     )
+                                    or data == "data:application/pdf;base64,"
                                     or len(data) > MAX_PDF_CHARS
                                 ):
                                     reject = "Invalid or oversized PDF attachment."
@@ -2043,6 +2070,7 @@ def create_app(manager: SessionManager) -> FastAPI:
                                 body = attachment.get("text")
                                 if (
                                     not isinstance(body, str)
+                                    or not body
                                     or len(body) > MAX_TEXT_CHARS
                                 ):
                                     reject = "Invalid or oversized text attachment."

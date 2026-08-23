@@ -65,19 +65,28 @@ def test_trusted_workspace_adds_its_command_allowances_only(tmp_path):
 
 
 def test_workspace_trust_is_canonical_and_user_owned(tmp_path):
+    import pytest
+
     from coworker.workspace_trust import WorkspaceTrustStore
 
     real = tmp_path / "real"
     real.mkdir()
     alias = tmp_path / "alias"
-    alias.symlink_to(real, target_is_directory=True)
+    try:
+        alias.symlink_to(real, target_is_directory=True)
+    except OSError as exc:
+        pytest.skip(f"symlink privilege required (canonicalization untestable): {exc}")
     store = WorkspaceTrustStore(tmp_path / "state" / "workspace_trust.json")
 
     canonical = store.set_trusted(alias, True)
     assert canonical == str(real.resolve())
     assert store.is_trusted(real)
     assert store.list() == [str(real.resolve())]
-    assert (store.path.stat().st_mode & 0o777) == 0o600
+    import os
+
+    if os.name == "posix":
+        # os.chmod(0o600) is a no-op on Windows (the icacls ACL is applied instead).
+        assert (store.path.stat().st_mode & 0o777) == 0o600
 
     store.set_trusted(real, False)
     assert not store.is_trusted(alias)

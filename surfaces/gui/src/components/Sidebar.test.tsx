@@ -57,6 +57,7 @@ const baseProps = {
   onDeleteSession: vi.fn(),
   onArchiveSession: vi.fn(),
   onTogglePin: vi.fn(),
+    onSetReasoningEffort: vi.fn(),
   onManage: vi.fn(),
   onOpenPersona: vi.fn(),
   onManagePersonas: vi.fn(),
@@ -91,7 +92,7 @@ describe("Sidebar group/filter control", () => {
 
     // Open the popover and choose "Group by → Persona".
     fireEvent.click(control);
-    fireEvent.click(await screen.findByText("Group by persona"));
+    fireEvent.click(await screen.findByText("By persona"));
 
     // POSTs the new layout pref.
     await waitFor(() => {

@@ -7,7 +7,7 @@ import { sendAppEvent, test } from "./fixtures";
 
 const RUN_STARTED = {
   type: "automation_run_started",
-  data: {
+  payload: {
     task_id: "task-1",
     task_title: "Daily AI News",
     session_id: "run-live-1",
@@ -37,7 +37,10 @@ test("the toast dismisses on ✕ and by itself after ~5s", async ({ page }) => {
   await page.getByTestId("toast-dismiss").click();
   await expect(page.getByTestId("automation-toast")).toHaveCount(0);
 
-  await sendAppEvent(page, { ...RUN_STARTED, data: { ...RUN_STARTED.data, task_title: "Weekly CRM digest" } });
+  await sendAppEvent(page, {
+    ...RUN_STARTED,
+    payload: { ...RUN_STARTED.payload, task_title: "Weekly CRM digest" },
+  });
   await expect(page.getByTestId("automation-toast")).toContainText("Weekly CRM digest");
   // auto-dismiss: gone within the 5s drain (+ slack for CI)
   await expect(page.getByTestId("automation-toast")).toHaveCount(0, { timeout: 7000 });

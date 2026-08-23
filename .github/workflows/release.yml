@@ -1,58 +1,18 @@
-# Desktop release builds — macOS (.dmg, arm64 + Intel) and Windows (.msi + NSIS .exe).
-#
-# CI calls the SAME scripts developers run locally (packaging/build_dmg.sh and
-# build_windows.ps1); this file only provisions the toolchain (Node, Rust, a Python venv at
-# .venv with PyInstaller) and publishes the results.
-#
-# Triggers:
-#   - tag push `v*`  → builds all targets and attaches them to a DRAFT GitHub Release
-#                      (review, then publish by hand).
-#   - manual run     → builds and uploads workflow artifacts only (no release).
-#
-# Each installer is uploaded twice: once with its versioned name (archive) and once with a
-# stable name (Delta-macos-arm64.dmg, …) so the website can link to
-#   github.com/<repo>/releases/latest/download/<stable-name>
-# and never need updating.
-#
-# macOS signing + notarization: Tauri's bundler handles both during `tauri build` when the
-# APPLE_* env vars are present (import cert → sign app + sidecar with hardened runtime →
-# notarize via notarytool → staple). Driven by repo secrets:
-#   APPLE_CERTIFICATE            base64 .p12 (Developer ID Application cert + key)
-#   APPLE_CERTIFICATE_PASSWORD   the .p12 export password
-#   APPLE_SIGNING_IDENTITY       e.g. "Developer ID Application: Name (TEAMID)"
-#   APPLE_API_KEY_CONTENT        base64 App Store Connect API .p8 (notarytool)
-#   APPLE_API_KEY                the API key id
-#   APPLE_API_ISSUER             the API issuer id
-# When the secrets are absent (forks, scratch runs) the build degrades to unsigned —
-# installable via `xattr -cr`. Windows remains unsigned (Authenticode is a later step).
+# Delta's only current release artifact is the relocatable Windows portable ZIP.
+# MSI, NSIS, macOS DMG, and installer-updater assets are intentionally frozen: their
+# scripts/config remain in the repository, but this workflow never builds or uploads them.
+# Tag pushes create a DRAFT GitHub Release for manual verification and publication.
 
-name: Release
+name: Portable Release
 
 on:
   push:
     tags: ["v*", "app-v*"]
   workflow_dispatch:
 
-defaults:
-  run:
-    shell: bash
-
 jobs:
-  build:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: macos-latest # Apple Silicon
-            slug: macos-arm64
-          # Intel macOS: macos-13 retired in Dec 2025; macos-15-intel replaced it and is
-          # the LAST x86_64 image Actions will offer (available until Aug 2027). Builds
-          # natively — the sidecar is a PyInstaller freeze, which cannot cross-compile.
-          - os: macos-15-intel
-            slug: macos-x64
-          - os: windows-latest
-            slug: windows
-    runs-on: ${{ matrix.os }}
+  build-portable:
+    runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -66,95 +26,59 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: surfaces/gui/src-tauri
+          workspaces: |
+            surfaces/gui/src-tauri
+            packaging/portable/launcher
 
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
 
-      - name: Set up the sidecar venv (.venv)
-        # The build scripts expect a venv at .venv with the package + PyInstaller.
-        # typer/tzdata are build-time-only (PyInstaller walks mcp.cli, which needs typer;
-        # tzdata ships zoneinfo for Windows). aisuite installs like any other dependency
-        # (git-pinned in pyproject.toml).
+      - name: Set up sidecar build environment
+        shell: pwsh
         run: |
           python -m venv .venv
-          if [ "$RUNNER_OS" = "Windows" ]; then VPY=.venv/Scripts/python; else VPY=.venv/bin/python; fi
-          "$VPY" -m pip install --upgrade pip
-          "$VPY" -m pip install -e ".[bedrock]" pyinstaller typer tzdata
-          "$VPY" -c "import aisuite, coworker"  # fail fast if either import breaks
+          .\.venv\Scripts\python.exe -m pip install --upgrade pip
+          .\.venv\Scripts\python.exe -m pip install -e ".[bedrock]" pyinstaller typer tzdata
+          .\.venv\Scripts\python.exe -c "import aisuite, coworker"
 
-      - name: npm ci
+      - name: Install frontend dependencies
         working-directory: surfaces/gui
         run: npm ci
 
-      - name: Build .dmg (macOS)
-        if: runner.os == 'macOS'
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-          APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
-          APPLE_API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
-          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
-          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
-          # Auto-update artifact signing (minisign, separate from Apple signing). Absent →
-          # the build script skips updater artifacts with a warning (fork/scratch runs).
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: |
-          # Unset empty APPLE_* vars so runs without secrets stay cleanly unsigned
-          # (Tauri treats a present-but-empty var as a config error).
-          for v in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_SIGNING_IDENTITY APPLE_API_KEY APPLE_API_ISSUER; do
-            [ -n "$(eval echo "\${$v:-}")" ] || unset "$v"
-          done
-          if [ -n "${APPLE_API_KEY_CONTENT:-}" ]; then
-            echo "$APPLE_API_KEY_CONTENT" | base64 -d > "$RUNNER_TEMP/AuthKey.p8"
-            export APPLE_API_KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
-          fi
-          unset APPLE_API_KEY_CONTENT
-          bash packaging/build_dmg.sh
-
-      - name: Build .msi + NSIS .exe (Windows)
-        if: runner.os == 'Windows'
+      - name: Build Windows portable release
         shell: pwsh
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: ./packaging/build_windows.ps1
+        run: .\packaging\build_portable.ps1
 
-      - name: Stage artifacts (versioned + stable names)
+      - name: Verify portable release assets
+        shell: pwsh
         run: |
-          mkdir -p out
-          BUNDLE=surfaces/gui/src-tauri/target/release/bundle
-          if [ "$RUNNER_OS" = "Windows" ]; then
-            cp "$BUNDLE"/nsis/*.exe out/
-            cp "$BUNDLE"/nsis/*.exe out/Delta-windows-setup.exe
-            cp "$BUNDLE"/msi/*.msi out/
-            cp "$BUNDLE"/msi/*.msi out/Delta-windows.msi
-            # Updater signature for the NSIS installer (present only when the updater key
-            # secret is configured). The .sig signs CONTENT, so the stable rename is safe.
-            SIG=$(ls "$BUNDLE"/nsis/*.exe.sig 2>/dev/null | head -1 || true)
-            [ -n "$SIG" ] && cp "$SIG" out/Delta-windows-setup.exe.sig
-          else
-            cp "$BUNDLE"/dmg/*.dmg out/
-            cp "$BUNDLE"/dmg/*.dmg out/Delta-${{ matrix.slug }}.dmg
-            # macOS updater artifact: the signed .app tarball the installed app swaps in.
-            if [ -f "$BUNDLE"/macos/Delta.app.tar.gz ]; then
-              cp "$BUNDLE"/macos/Delta.app.tar.gz out/Delta-${{ matrix.slug }}.app.tar.gz
-              cp "$BUNDLE"/macos/Delta.app.tar.gz.sig out/Delta-${{ matrix.slug }}.app.tar.gz.sig
-            fi
-          fi
-          ls -la out
+          $files = @(Get-ChildItem -LiteralPath .\releases -File)
+          $zip = @($files | Where-Object Name -Like 'Delta-*-Windows-Portable.zip')
+          $sum = @($files | Where-Object Name -Like 'Delta-*-Windows-Portable.zip.sha256')
+          if ($files.Count -ne 2 -or $zip.Count -ne 1 -or $sum.Count -ne 1) {
+            throw "releases/ must contain exactly one versioned portable ZIP and its SHA256 file"
+          }
+          $expected = (Get-Content -LiteralPath $sum[0].FullName -Raw).Trim()
+          $actual = (Get-FileHash -LiteralPath $zip[0].FullName -Algorithm SHA256).Hash.ToLower()
+          if ($expected -ne $actual) { throw "portable SHA256 mismatch" }
+          $entries = @(& tar -tf $zip[0].FullName)
+          if (-not $entries.Count -or @($entries | Where-Object { $_ -notlike 'Delta/*' }).Count) {
+            throw "portable ZIP must contain exactly one Delta/ top-level directory"
+          }
+          Write-Host "Verified $($zip[0].FullName)"
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.slug }}
-          path: out/*
+          name: windows-portable
+          path: |
+            releases/Delta-*-Windows-Portable.zip
+            releases/Delta-*-Windows-Portable.zip.sha256
           if-no-files-found: error
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/app-v')
+    needs: build-portable
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -163,18 +87,31 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
+          name: windows-portable
           path: dist
-          merge-multiple: true
 
-      - name: Validate tag matches version
+      - name: Validate tag and assets
+        shell: bash
         run: |
           TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#app-v}"
+          VERSION="${VERSION#v}"
           CONF_VERSION=$(python3 -c "import json; print(json.load(open('surfaces/gui/src-tauri/tauri.conf.json'))['version'])")
-          if [ "${TAG#v}" != "$CONF_VERSION" ]; then
-            echo "::error::tag $TAG != tauri.conf.json version $CONF_VERSION — bump the config before tagging"
+          if [ "$VERSION" != "$CONF_VERSION" ]; then
+            echo "::error::tag $TAG != tauri.conf.json version $CONF_VERSION"
             exit 1
           fi
-          echo "tag $TAG matches config version $CONF_VERSION OK"
+          ZIP="dist/Delta-${VERSION}-Windows-Portable.zip"
+          SUM="${ZIP}.sha256"
+          [ -f "$ZIP" ] && [ -f "$SUM" ] || {
+            echo "::error::portable release assets are incomplete"
+            exit 1
+          }
+          [ "$(find dist -maxdepth 1 -type f | wc -l)" -eq 2 ] || {
+            echo "::error::portable release must contain exactly two assets"
+            exit 1
+          }
+          echo "$(cat "$SUM")  $ZIP" | sha256sum --check --status
 
       - name: Create draft release
         env:
@@ -185,27 +122,7 @@ jobs:
             --draft \
             --generate-notes
 
-      - name: Compose the auto-update manifest (latest.json)
-        run: |
-          TAG="${GITHUB_REF_NAME}"
-          CONF_VERSION="${TAG#v}"
-          if ls dist/*.sig >/dev/null 2>&1; then
-            python3 packaging/make_update_manifest.py \
-              --version "$CONF_VERSION" --tag "$TAG" --repo "$GITHUB_REPOSITORY" \
-              --dist dist --out dist/latest.json \
-              --notes "Delta $CONF_VERSION"
-          else
-            echo "::warning::no updater signatures in dist/ — release ships WITHOUT auto-update manifest"
-          fi
-
-      - name: Upload assets
+      - name: Upload portable assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release upload "${{ github.ref_name }}" dist/*
-
-      - name: Publish release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release edit "${{ github.ref_name }}" --draft=false
+        run: gh release upload "${{ github.ref_name }}" dist/*

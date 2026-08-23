@@ -9,7 +9,7 @@
   renamed / carried to another drive or machine and keeps working:
 
       DeltaPortable\
-        Delta.exe            <- root launcher (relay: resolves ROOT from its own location)
+        Delta.exe            <- root bootstrapper (resolves ROOT, launches GUI, then exits)
         App\
           Delta\Delta.exe    <- the real Tauri app (productName "Delta")
           Delta\sidecar\...  <- PyInstaller onedir delta-server (resources)
@@ -28,7 +28,7 @@
     4. `tauri build --no-bundle` -> the raw app Delta.exe + frontend (embedded).
     5. Assemble the relocatable tree above.
     6. Run the absolute-path leak scan (scan_portable_paths.ps1) -> fail the build on any leak.
-    7. Emit Deltaportable-<version>-Windows.zip + .sha256.
+    7. Emit Delta-<version>-Windows-Portable.zip + .sha256 under <repo>\releases.
 
   Prerequisites (same as build_windows.ps1 — see its header):
     - Rust (rustup) with the x86_64-pc-windows-msvc target + MSVC C++ build tools (link.exe).
@@ -62,12 +62,13 @@ $Platform  = Split-Path -Parent $Here
 $Gui       = Join-Path $Platform "surfaces\gui"
 $Venv      = Join-Path $Platform ".venv"
 $PyExe     = Join-Path $Venv "Scripts\python.exe"
+$TauriCmd  = Join-Path $Gui "node_modules\.bin\tauri.cmd"
 
 # Version + app-name come from tauri.conf.json (single source of truth).
 $TauriCfg  = Join-Path $Gui "src-tauri\tauri.conf.json"
 $Cfg       = Get-Content $TauriCfg -Raw | ConvertFrom-Json
 $AppName   = $Cfg.productName                     # "Delta"
-$Version   = $Cfg.version                          # e.g. 0.1.7
+$Version   = $Cfg.version                          # e.g. 0.2.0
 
 function Require-Cmd($name) {
     if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
@@ -80,6 +81,9 @@ Require-Cmd npm
 Require-Cmd tar
 if (-not (Test-Path $PyExe)) {
     throw "Python interpreter not found at $PyExe. Create the venv and install deps (see header)."
+}
+if (-not (Test-Path $TauriCmd)) {
+    throw "Tauri CLI not found at $TauriCmd. Run npm install in $Gui first."
 }
 
 $Triple = (& rustc -vV | Select-String '^host:').ToString().Split()[-1]
@@ -122,21 +126,25 @@ Write-Host "    sidecar -> $SideDst"
 
 # ---- 2. Root launcher (Delta.exe) ---------------------------------------------
 Write-Host "==> [2/6] root launcher (Delta.exe)" -ForegroundColor Cyan
-if (-not $LauncherExe) {
+if ($LauncherExe) {
+    if (-not (Test-Path -LiteralPath $LauncherExe -PathType Leaf)) {
+        throw "provided launcher executable not found: $LauncherExe"
+    }
+} else {
     # Cargo puts the artifact under the crate's own target dir
     # (<here>\portable\launcher\target\release\...), NOT under <here>\portable\target —
     # there is no workspace Cargo.toml at packaging\portable, so no shared target-dir.
     $LauncherExe = Join-Path $Here "portable\launcher\target\release\delta-portable-launcher.exe"
-}
-if (-not (Test-Path $LauncherExe)) {
-    Write-Host "    launcher binary missing -> building with cargo"
+    # Always rebuild the default launcher: build.rs owns the icon and PE version metadata,
+    # so reusing an existing executable can silently ship the previous release's version.
+    Write-Host "    building launcher from the current source/version"
     Push-Location (Join-Path $Here "portable\launcher")
     try {
         & cargo build --release
         if ($LASTEXITCODE -ne 0) { throw "cargo build (launcher) failed (exit $LASTEXITCODE)" }
     }
     finally { Pop-Location }
-    if (-not (Test-Path $LauncherExe)) {
+    if (-not (Test-Path -LiteralPath $LauncherExe -PathType Leaf)) {
         throw "launcher build finished but no binary at $LauncherExe"
     }
 }
@@ -146,16 +154,16 @@ if (-not $SkipAppBuild) {
     Write-Host "==> [3/6] tauri build --no-bundle" -ForegroundColor Cyan
     Push-Location $Gui
     try {
-        # Same stderr-as-ErrorRecord hazard as step 1: `npm run tauri` internally spawns
-        # node.exe (@tauri-apps/cli), and the CLI's informational lines ("Info Looking up
-        # installed tauri packages…") go to stderr. When the host captures stderr,
+        # Same stderr-as-ErrorRecord hazard as step 1: Tauri's informational lines
+        # ("Info Looking up installed tauri packages…") go to stderr. When the host captures stderr,
         # PowerShell 5.1 wraps each line as an ErrorRecord; with the global
         # $ErrorActionPreference="Stop" that terminates the build on the first info line.
-        # Scope the preference down for the call and gate purely on the exit code.
+        # Call the checked-in CLI shim directly: npm 12 no longer forwards the historic
+        # `npm run tauri build -- --no-bundle` argument shape reliably. Gate on exit code.
         $script:oldEap3 = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
         try {
-            & npm run tauri build -- --no-bundle
+            & $TauriCmd build --no-bundle
             $npmCode = $LASTEXITCODE
         }
         finally { $ErrorActionPreference = $script:oldEap3 }
@@ -187,9 +195,10 @@ if (-not (Test-Path $AppExe)) {
 
 # ---- 4. Assemble relocatable tree ----------------------------------------------
 Write-Host "==> [4/6] assembling portable tree ($AppName $Version)" -ForegroundColor Cyan
-$Out      = Join-Path $Here "out"
-$Portable = Join-Path $Out "DeltaPortable"
+$StageRoot = Join-Path $Here "build\portable-staging"
+$Portable  = Join-Path $StageRoot "DeltaPortable"
 $AppDir   = Join-Path $Portable "App\Delta"
+if (Test-Path $StageRoot) { Remove-Item -Recurse -Force $StageRoot }
 if (Test-Path $Portable) { Remove-Item -Recurse -Force $Portable }
 New-Item -ItemType Directory -Force -Path (Join-Path $Portable "Data")    | Out-Null
 New-Item -ItemType Directory -Force -Path $AppDir                          | Out-Null
@@ -270,33 +279,34 @@ if ($LASTEXITCODE -ne 0) {
 # ---- 6. ZIP + SHA-256 (tar.exe: long paths, UTF-8, Chinese filenames) ------------
 Write-Host "==> [6/6] packaging ZIP + SHA-256" -ForegroundColor Cyan
 $ZipName = "$AppName-$Version-Windows-Portable.zip"
-$ZipPath = Join-Path $Out $ZipName
+$ReleaseDir = Join-Path $Platform "releases"
+New-Item -ItemType Directory -Force -Path $ReleaseDir | Out-Null
+$ZipPath = Join-Path $ReleaseDir $ZipName
 if (Test-Path $ZipPath) { Remove-Item -Force $ZipPath }
+if (Test-Path "$ZipPath.sha256") { Remove-Item -Force "$ZipPath.sha256" }
 
 # The ZIP must open with a single top-level "Delta/" folder (requirements: 解压即用、
 # 可整体移动). tar.exe stores every path literally, so zipping the tree from inside
-# staging out\ would start the entries at "./". Do a cheap final stage instead: move the
-# assembled tree to out\Delta, zip that — entries then begin "Delta/" — and drop a
-# first-run seed copy back to the portable-scan location (the launcher creates Data
-# itself, so the stray Data in the zipped tree is harmless and is what users see on
-# first extract before the launcher runs).
+# staging would start the entries at "./". Move the assembled tree to the explicit
+# packaging/build staging root as `Delta`, then zip that — entries begin `Delta/` while
+# the repository-root releases directory receives only the final ZIP and checksum.
 Write-Host "    staging top-level $AppName/ in the archive"
-$Zipped = Join-Path $Out $AppName
+$Zipped = Join-Path $StageRoot $AppName
 if (Test-Path $Zipped) { Remove-Item -Recurse -Force $Zipped }
 Move-Item -Force $Portable $Zipped
-Push-Location $Out
+Push-Location $StageRoot
 try {
-    & tar -a -c -f $ZipPath .\Delta
+    & tar -a -c -f $ZipPath Delta
     if ($LASTEXITCODE -ne 0) { throw "tar zip failed (exit $LASTEXITCODE)" }
 }
 finally { Pop-Location }
-Copy-Item -Recurse -Force $Zipped $Portable
 
 $Hash = (Get-FileHash $ZipPath -Algorithm SHA256).Hash.ToLower()
 Set-Content -Path "$ZipPath.sha256" -Encoding ascii -Value "$Hash"
 Write-Host ""
 Write-Host "Portable ZIP : $ZipPath" -ForegroundColor Green
+Write-Host "SHA-256 file: $ZipPath.sha256" -ForegroundColor Green
 Write-Host "SHA-256      : $Hash"
-Get-ChildItem -Path $Portable -Recurse -File |
+Get-ChildItem -Path $Zipped -Recurse -File |
     Measure-Object -Property Length -Sum |
     ForEach-Object { Write-Host ("Staged files   : {0} file(s), {1:N1} MB" -f $_.Count, ($_.Sum/1MB)) }

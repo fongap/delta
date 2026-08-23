@@ -42,7 +42,7 @@ def git_clone(
     """Shallow-clone a persona repo. Injectable so tests don't touch the network."""
     dest.parent.mkdir(parents=True, exist_ok=True)
     subprocess.run(
-        ["git", "clone", "--depth", "1", url, str(dest)],
+        ["git", "clone", "--depth", "1", "--", url, str(dest)],
         check=True,
         capture_output=True,
     )

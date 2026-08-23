@@ -92,6 +92,7 @@ from ..skills import (
     SkillStore,
     effective_skills,
 )
+from .contracts import runtime_event_v1
 
 _SCOPES = {s.value for s in Scope}
 
@@ -193,6 +194,8 @@ class SessionManager:
         # whoever drives the turn (foreground user_message, channel delivery, self-wake, resume).
         # Delivery itself is socket-independent — this only governs *live visibility*.
         self._session_clients: dict[str, set[Any]] = {}
+        self._session_event_sequences: dict[str, int] = {}
+        self._app_event_sequences: dict[str | None, int] = {}
         # App-wide event sockets (/ws/events): session-independent pushes — today the
         # automation-run-started toast (UX-026); badges could ride it later.
         self._event_clients: set[Any] = set()
@@ -466,6 +469,14 @@ class SessionManager:
             model=model,
             mode=mode,
             provider=self.provider,
+            # Per-session reasoning depth (Settings-free control on the session card):
+            # flows through model_settings into every provider call. "auto" sends nothing
+            # — the provider keeps its own default.
+            model_settings=(
+                {"reasoning_effort": record.reasoning_effort}
+                if record and record.reasoning_effort not in ("", "auto")
+                else None
+            ),
             # Memory off (§4.3) = stop LEARNING, not amnesia: saved facts still inject
             # and stay usable, only the write tools go. Read at build time; running
             # sessions finish under the mode they started with.
@@ -1916,7 +1927,9 @@ class SessionManager:
         user = user if isinstance(user, list) else []
         hidden = set(self._prefs.get("hidden_models") or [])
         models = [m for m in [*MATRIX, *user] if m not in hidden]
-        return list(dict.fromkeys([self.model, *models]))
+        # Drop falsy ids — an unset default (`self.model == ""`) must never surface as a
+        # blank selectable entry at the top of the picker.
+        return list(dict.fromkeys(m for m in [self.model, *models] if m))
 
     def add_model(self, model: str) -> dict[str, Any]:
         """Add a model id (e.g. `gpt-4o`, `ollama:qwen2.5-coder:32b`) to the picker.
@@ -1974,7 +1987,9 @@ class SessionManager:
             return self._provider_configured(provider)
 
         selectable = [m for m in self._curated_models() if _selectable(m)]
-        if self.model not in selectable:
+        # Keep the active default selectable even if culled above — but never insert a
+        # blank entry when no default has been chosen yet.
+        if self.model and self.model not in selectable:
             selectable.insert(0, self.model)
         from ..providers.matrix import model_context_windows, model_labels
 
@@ -2722,9 +2737,21 @@ class SessionManager:
     def unregister_event_client(self, send_cb: Any) -> None:
         self._event_clients.discard(send_cb)
 
-    async def broadcast_event(self, message: dict) -> None:
+    def session_event(
+        self, session_id: str, event_type: str, payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        sequence = self._session_event_sequences.get(session_id, 0) + 1
+        self._session_event_sequences[session_id] = sequence
+        return runtime_event_v1(event_type, session_id, sequence, payload)
+
+    async def broadcast_event(
+        self, event_type: str, session_id: str | None, payload: dict[str, Any]
+    ) -> None:
         """Fan an app-wide event out to every /ws/events socket. Best-effort: a dead
         socket is dropped, never fatal to the caller."""
+        sequence = self._app_event_sequences.get(session_id, 0) + 1
+        self._app_event_sequences[session_id] = sequence
+        message = runtime_event_v1(event_type, session_id, sequence, payload)
         for cb in list(self._event_clients):
             try:
                 await cb(message)
@@ -2741,9 +2768,12 @@ class SessionManager:
             if not clients:
                 self._session_clients.pop(session_id, None)
 
-    async def broadcast_session(self, session_id: str, message: dict) -> None:
+    async def broadcast_session(
+        self, session_id: str, event_type: str, payload: dict[str, Any]
+    ) -> None:
         """Fan a turn event out to every socket viewing this session. Best-effort: a dead socket
         is dropped, never fatal to the turn (delivery is socket-independent)."""
+        message = self.session_event(session_id, event_type, payload)
         for cb in list(self._session_clients.get(session_id, ())):
             try:
                 await cb(message)
@@ -3083,9 +3113,7 @@ class SessionManager:
             async for event in engine.run(message, source=source):
                 # Stream every event to any socket viewing this session, so a background turn
                 # (channel delivery, self-wake, durable resume) is seen live — not just on reselect.
-                await self.broadcast_session(
-                    session_id, {"type": event.type.value, "data": event.data}
-                )
+                await self.broadcast_session(session_id, event.type.value, event.data)
                 # A background turn has no user watching to read an inline error: a dead model or
                 # tool failure would otherwise vanish. Log it and park it in the dead-letter store.
                 if event.type.value == "error":
@@ -3100,12 +3128,10 @@ class SessionManager:
         ) as exc:  # an unexpected raise out of the turn must not be swallowed
             logger.warning("background turn crashed for %s: %s", session_id, exc)
             self.unrouted.record(session_id, "-", message, reason=str(exc))
-            await self.broadcast_session(
-                session_id, {"type": "error", "data": {"error": str(exc)}}
-            )
+            await self.broadcast_session(session_id, "error", {"error": str(exc)})
         finally:
             self.mark_idle(session_id)
-            await self.broadcast_session(session_id, {"type": "turn_done", "data": {}})
+            await self.broadcast_session(session_id, "turn_done", {})
 
     # -- channel subscriptions (inbound messaging) ------------------------------
     async def _dispatch_inbound(self, event) -> None:
@@ -3303,17 +3329,16 @@ class SessionManager:
         # top-right toast). Manual runs never come through here — the user is
         # already watching those live.
         await self.broadcast_event(
+            "automation_run_started",
+            run.session_id,
             {
-                "type": "automation_run_started",
-                "data": {
-                    "task_id": task.id,
-                    "task_title": task.title,
-                    "session_id": run.session_id,
-                    "workspace": task.workspace,
-                    "agent": task.agent,
-                    "trigger": trigger,
-                },
-            }
+                "task_id": task.id,
+                "task_title": task.title,
+                "session_id": run.session_id,
+                "workspace": task.workspace,
+                "agent": task.agent,
+                "trigger": trigger,
+            },
         )
         # Each run is a real, persisted conversation thread: it runs the instructions under its
         # own session id, then saves the transcript. The user can reopen that session and ask a
@@ -3358,14 +3383,12 @@ class SessionManager:
         # Notify any socket viewing this scheduled run's session (it's a durable session of its own).
         await self.broadcast_session(
             run.session_id,
+            "task_done",
             {
-                "type": "task_done",
-                "data": {
-                    "task": task.title,
-                    "id": task.id,
-                    "text": summary,
-                    "run_id": run.run_id,
-                },
+                "task": task.title,
+                "id": task.id,
+                "text": summary,
+                "run_id": run.run_id,
             },
         )
         if task.notify_target:
@@ -3572,6 +3595,12 @@ class SessionManager:
                     if getattr(engine, "compaction_state", None)
                     else {}
                 ),
+                reasoning_effort=(
+                    getattr(engine, "model_settings", {}).get(
+                        "reasoning_effort", "auto"
+                    )
+                    or "auto"
+                ),
             )
         )
 
@@ -3687,10 +3716,8 @@ class SessionManager:
                 # post-turn refresh pick the new title up regardless.
                 await self.broadcast_session(
                     session_id,
-                    {
-                        "type": "session_title",
-                        "data": {"session_id": session_id, "title": title[:60]},
-                    },
+                    "session_title",
+                    {"session_id": session_id, "title": title[:60]},
                 )
         except Exception:
             # A failed title must never surface as a session error — but it must
@@ -3876,10 +3903,72 @@ class SessionManager:
         ok = self.session_store.set_flags(session_id, pinned=pinned, archived=archived)
         return {"ok": ok, "session_id": session_id}
 
+    async def revert_session(self, session_id: str, index: int) -> dict[str, Any]:
+        """opencode-style revert: drop messages from `index` onward (the user message at
+        that index and everything after), keeping the prior context. Returns the original
+        user text so the GUI can prefill the composer for editing. Works MID-TURN too:
+        an in-flight turn is interrupted first (the rest of its reasoning would be wasted
+        tokens anyway — the model re-answers from the edited content), then truncated."""
+        if session_id.startswith("__"):
+            return {"ok": False, "error": "internal sessions cannot be reverted here"}
+        if self.is_running(session_id):
+            engine = self._engines.get(session_id)
+            if engine is None:
+                return {"ok": False, "error": "session is running"}
+            engine.request_interrupt()
+            deadline = time.monotonic() + 15
+            while self.is_running(session_id) and time.monotonic() < deadline:
+                await asyncio.sleep(0.1)
+            if self.is_running(session_id):
+                return {"ok": False, "error": "turn did not stop in time"}
+        dropped = self.session_store.revert(session_id, index)
+        if not dropped:
+            return {"ok": False, "error": "nothing to revert at that index"}
+        engine = self._engines.get(session_id)
+        if engine is not None:
+            engine.messages = engine.messages[:index]
+            self.save(session_id, engine)
+        # The FIRST dropped message IS the user message being edited — later entries in
+        # the dropped slice are the assistant's replies to it (scanning reversed() used
+        # to prefill the composer with the ANSWER instead of the question).
+        from ..attachments import content_to_text
+
+        user_text = content_to_text(
+            (dropped[0] or {}).get("content"), image_placeholder=""
+        ).strip()
+        return {"ok": True, "text": user_text}
+
+    def set_reasoning_effort(self, session_id: str, effort: str) -> dict[str, Any]:
+        """Persist the session's reasoning effort ("auto"/"low"/"high"/"max") and apply it
+        to the live engine if one exists. The next engine build re-reads it from the store."""
+        allowed = {"auto", "low", "high", "max"}
+        effort = (effort or "auto").strip().lower()
+        if effort not in allowed:
+            return {"ok": False, "error": f"effort must be one of {sorted(allowed)}"}
+        record = self.session_store.load(session_id)
+        engine = self._engines.get(session_id)
+        if record is None and engine is None:
+            return {"ok": False, "error": "unknown session"}
+        # A connected, never-sent session intentionally has no store row yet. Apply the
+        # selection to its live engine; the first turn checkpoint creates the row with it.
+        if record is not None:
+            record.reasoning_effort = effort
+            self.session_store.save(record)
+        if engine is not None:
+            # Apply to the live engine immediately: model_settings flows into every
+            # provider call (the next build re-reads it from the store).
+            if effort == "auto":
+                engine.model_settings.pop("reasoning_effort", None)
+            else:
+                engine.model_settings["reasoning_effort"] = effort
+        return {"ok": True, "reasoning_effort": effort}
+
     def delete_session(self, session_id: str) -> dict[str, Any]:
         if session_id.startswith("__"):
             return {"ok": False, "error": "internal sessions cannot be deleted here"}
         engine = self._engines.pop(session_id, None)
+        self._session_event_sequences.pop(session_id, None)
+        self._app_event_sequences.pop(session_id, None)
         if engine is not None:
             try:
                 # (was engine.interrupt() — a method that never existed; the AttributeError
@@ -3943,6 +4032,7 @@ class SessionManager:
                 "messages": r.message_count,
                 "pinned": r.pinned,
                 "archived": r.archived,
+                "reasoning_effort": getattr(r, "reasoning_effort", "auto"),
                 # §31: non-user origin ("slack") + display label — drives the sidebar's
                 # "From Slack" group and the row's platform icon.
                 "origin": r.origin,
@@ -4154,20 +4244,17 @@ class SessionManager:
             if loop is None or not loop.is_running():
                 return
             payload = {
-                "type": "memory_saved",
-                "data": {
-                    "id": item.id,
-                    "scope": item.scope.value,
-                    "summary": item.summary or "",
-                    "content": item.content,
-                    # Set when this was an EDIT of an existing memory: the surface says
-                    # "I've updated what I remember" and Undo restores this text.
-                    "previous": previous or "",
-                },
+                "id": item.id,
+                "scope": item.scope.value,
+                "summary": item.summary or "",
+                "content": item.content,
+                # Set when this was an EDIT of an existing memory: the surface says
+                # "I've updated what I remember" and Undo restores this text.
+                "previous": previous or "",
             }
             try:
                 asyncio.run_coroutine_threadsafe(
-                    self.broadcast_session(session_id, payload), loop
+                    self.broadcast_session(session_id, "memory_saved", payload), loop
                 )
             except RuntimeError:
                 pass

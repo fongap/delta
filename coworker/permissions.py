@@ -48,6 +48,13 @@ class Mode(str, Enum):
 # only in intent — PLAN additionally drives the agent toward a propose_plan approval.
 READ_ONLY_MODES = frozenset({Mode.DISCUSS, Mode.PLAN})
 
+# WRITE_LOCAL target arguments, in the spirit of connectors' TARGET_ARGS: which argument
+# names a tool's on-disk target for the writable-root scope check. The aisuite file toolkit
+# (write_file / replace_in_file) uses `path`; the aliases cover tool variants that name a
+# file directly (`file_path`, `file`, `filepath`) so a renamed argument can't bypass scoping.
+# Patch/diff tools carry their targets inside the patch text and stay approval-gated.
+_WRITE_PATH_ARGS = ("path", "file_path", "filepath", "file")
+
 
 @dataclass
 class Decision:
@@ -133,11 +140,13 @@ class PermissionEngine:
                 False, f"{self.mode.value} mode is read-only", needs_user=False
             )
 
-        # Path scoping for writes that name a path (all modes): must land in a writable root.
+        # Path scoping for writes that name a path (all modes): must land in a writable
+        # root. Check every target-shaped argument the call actually carries.
         if is_write:
-            path = arguments.get("path")
-            if path is not None and not self._under_writable_root(path):
-                return Decision(False, f"path is not in a writable directory: {path}")
+            for arg_name in _WRITE_PATH_ARGS:
+                path = arguments.get(arg_name)
+                if isinstance(path, str) and path and not self._under_writable_root(path):
+                    return Decision(False, f"path is not in a writable directory: {path}")
 
         # Non-consequential tools always run.
         if not consequential:

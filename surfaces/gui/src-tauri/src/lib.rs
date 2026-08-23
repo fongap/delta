@@ -36,11 +36,8 @@ struct ServerProcess(Mutex<Option<Child>>);
 /// releases the hold (kills `caffeinate` on macOS, clears the execution state on Windows).
 struct KeepAwake(Mutex<Option<KeepAwakeGuard>>);
 
-fn free_port() -> u16 {
-    std::net::TcpListener::bind("127.0.0.1:0")
-        .and_then(|l| l.local_addr())
-        .map(|a| a.port())
-        .unwrap_or(8765)
+fn free_port() -> std::io::Result<u16> {
+    Ok(std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?.port())
 }
 
 fn launch_token() -> String {
@@ -225,7 +222,15 @@ fn start_keep_awake() -> Option<KeepAwakeGuard> {
         unsafe { SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED) };
         while !stop_thread.load(Ordering::SeqCst) {
             unsafe { SetThreadExecutionState(ES_CONTINUOUS | ES_SYSTEM_REQUIRED) };
-            std::thread::sleep(std::time::Duration::from_secs(30));
+            // Re-assert roughly every 30s, but in short slices so Drop's join() completes
+            // within ~500ms of the stop flag being set (a single long sleep would freeze
+            // the UI for up to 30s when keep-awake is toggled off or the app quits).
+            for _ in 0..60 {
+                if stop_thread.load(Ordering::SeqCst) {
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
         }
         unsafe { SetThreadExecutionState(ES_CONTINUOUS) };
     });
@@ -311,6 +316,14 @@ fn set_native_theme(window: tauri::WebviewWindow, dark: bool) -> bool {
             Some(tauri::Theme::Light)
         })
         .is_ok()
+}
+
+/// Un-pin the window theme so it follows the OS appearance again (the "auto" choice).
+/// `set_theme(Some(..))` pins light/dark permanently; without this reset, switching back
+/// to auto kept the last manual theme and never tracked the system.
+#[tauri::command]
+fn follow_system_theme(window: tauri::WebviewWindow) -> bool {
+    window.set_theme(None).is_ok()
 }
 
 /// Pre-paint native theme (issue #8): the SPA's theme.ts only runs after the webview's JS has
@@ -412,8 +425,18 @@ fn voice_input_compatibility() -> (bool, String, Option<String>) {
         let (decoded, _, _) = encoding_rs::GBK.decode(bytes);
         decoded.into_owned()
     };
-    let version = Command::new("cmd")
-        .args(["/C", "ver"])
+    let mut ver = Command::new("cmd");
+    ver.args(["/C", "ver"]);
+    // A GUI process spawning cmd.exe briefly pops up a console window unless suppressed —
+    // this runs on every dictation-status poll (the Settings voice page mounts), and the
+    // visible blink was reported as "the screen flashes".
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        ver.creation_flags(CREATE_NO_WINDOW);
+    }
+    let version = ver
         .output()
         .ok()
         .map(|output| decode(&output.stdout).trim().to_owned())
@@ -553,8 +576,8 @@ fn show_main(app: &tauri::AppHandle) {
 // The GUI drives updates through these commands (same invoke bridge as everything
 // else — no global plugin JS): check, background pre-download, install. Update
 // artifacts are minisign-verified against the pubkey in tauri.conf.json before
-// anything is installed; the manifest lives at the endpoints configured there
-// (disabled for Delta — no own update feed; endpoints are empty in tauri.conf.json).
+// anything is installed; the manifest lives at the endpoint configured there
+// (the fongap/delta GitHub releases latest.json).
 
 #[derive(serde::Serialize)]
 struct UpdateInfo {
@@ -645,7 +668,15 @@ async fn install_update(
 }
 
 pub fn run() {
-    let port = free_port();
+    // No fixed-port fallback: if no free port can be allocated the shell cannot host the
+    // sidecar at all, so exit with a clear message instead of colliding on 8765.
+    let port = match free_port() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("[coworker] failed to allocate a local port for the sidecar server: {e}");
+            return;
+        }
+    };
     let api_token = launch_token();
     let http = format!("http://127.0.0.1:{port}");
     let ws = format!("ws://127.0.0.1:{port}");
@@ -665,6 +696,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_autostart::init(
             tauri_plugin_autostart::MacosLauncher::LaunchAgent,
             None,
@@ -677,6 +709,7 @@ pub fn run() {
             set_keep_awake,
             start_window_drag,
             set_native_theme,
+            follow_system_theme,
             get_dictation_status,
             start_dictation,
             stop_dictation,

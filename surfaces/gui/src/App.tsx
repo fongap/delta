@@ -20,6 +20,8 @@ import {
   resolveInboxItem,
   deleteSession,
   renameSession,
+  revertSession,
+  setReasoningEffort,
   runAutomation,
   setSessionFlags,
   setUnattended,
@@ -42,11 +44,10 @@ import type {
   WsEvent,
 } from "./types";
 import { isProjectScoped } from "./personaScope";
-import { I18nProvider } from "./i18n/I18nContext";
+import { I18nProvider, useI18n } from "./i18n/I18nContext";
 import { dictionaries, normalizeLocale } from "./i18n/dictionaries";
 import type { Locale } from "./i18n/types";
 import { en, type TranslationKey } from "./i18n/en";
-import { baseName } from "./paths";
 import { itemsFromMessages } from "./itemsFromMessages";
 import { addTurnUsage, emptyUsage, usageFromMessages } from "./usage";
 import { streamMode } from "./streamGate";
@@ -194,6 +195,7 @@ export function App() {
   // multi-second silent stall mid-turn.
   const [compacting, setCompacting] = useState(false);
   const [items, setItems] = useState<Item[]>([]);
+  const [composerNotice, setComposerNotice] = useState<string | null>(null);
   const [streaming, setStreamingState] = useState("");
   // Ref mirror of `streaming`: the WS handler closure is built once per socket and can't read
   // fresh state — the interrupted/error flush below needs the live buffer at event time.
@@ -212,6 +214,7 @@ export function App() {
   };
   const [todo, setTodo] = useState<TodoItem[]>([]);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
+  const [reasoningOverrides, setReasoningOverrides] = useState<Record<string, string>>({});
   const [projects, setProjects] = useState<RecentWorkspace[]>([]);
   const [sessionId, setSessionId] = useState<string>(newId());
   // Automation-run context (§ owner ask 2026-07-04): which task an open __run__ session belongs
@@ -588,7 +591,7 @@ export function App() {
     if (booting) return; // wait until boot/resume settles the session before connecting
     if (gatesWorkspace(agent) && !workspace) return; // Code needs a folder (gate handles it)
     const handleEvent = (ev: WsEvent) => {
-      const d = ev.data || {};
+      const d = ev.payload || {};
       // An interrupted/errored turn never emits assistant_message, so its streamed partial
       // would otherwise live only in the ephemeral buffer until the next turn_start wipes it
       // (owner-hit 2026-07-22). Promote it to a durable transcript item — the engine persists
@@ -788,14 +791,24 @@ export function App() {
           ]);
           break;
         case "input_rejected":
-          setItems((p) => [
-            ...p,
-            { kind: "notice", tone: "warn", text: d.error || "That message was rejected." },
-          ]);
+          if (/attachment/i.test(String(d.error || ""))) {
+            setComposerNotice(tr("composer.attachmentRejected"));
+          } else {
+            setItems((p) => [
+              ...p,
+              { kind: "notice", tone: "warn", text: d.error || "That message was rejected." },
+            ]);
+          }
           break;
         case "turn_done":
           setRunning(false);
           refreshSessions();
+          // Re-pull the persisted thread: optimistic local items (the just-sent user
+          // bubble, streamed texts) carry no raw-message index, so Edit/Retract would
+          // stay unavailable until a full reload. The server is authoritative now.
+          getSessionMessages(sessionId)
+            .then((ms) => setItems(itemsFromMessages(ms)))
+            .catch(() => {});
           // Catch-all artifact refresh: files created via shell or on a brand-new session (whose
           // record only exists after the first save) appear once the turn completes.
           setBrowserRefreshKey((k) => k + 1);
@@ -910,6 +923,7 @@ export function App() {
   }, [surface, sessionId, browserRefreshKey, markUnattended]);
 
   const send = (text: string, attachments?: Attachment[], skill?: string) => {
+    setComposerNotice(null);
     // Force-run shows exactly what the user typed: "/name rest". Must match the server's
     // `display` sidecar formula so the turn_start dedupe recognizes the local echo.
     const shown = skill ? `/${skill}${text ? ` ${text}` : ""}` : text;
@@ -999,7 +1013,7 @@ export function App() {
   useEffect(() => {
     const stop = connectEvents((msg) => {
       if (msg.type !== "automation_run_started") return;
-      const d = (msg.data ?? {}) as Record<string, string>;
+      const d = msg.payload as Record<string, string>;
       setRunToast({
         title: d.task_title || "Automation",
         sessionId: d.session_id || "",
@@ -1027,6 +1041,19 @@ export function App() {
     setItems((p) =>
       p.map((it) => (it.kind === "memory" && it.id === id ? { ...it, undone: true } : it)),
     );
+  };
+
+  // opencode-style revert: truncate the conversation from this user message onward,
+  // then prefill the composer with the original text for editing & re-send.
+  const editMessage = async (index: number) => {
+    if (!sessionId) return;
+    const r = await revertSession(sessionId, index).catch(
+      (): { ok: false; error: string; text?: string } => ({ ok: false, error: "unreachable" }),
+    );
+    if (!r.ok) return;
+    if (r.text) prefillComposer(r.text);
+    const messages = await getSessionMessages(sessionId);
+    setItems(itemsFromMessages(messages));
   };
 
   const openSessionFromInbox = (sid: string, ws: string, ag: string) => selectSession(sid, ws, ag);
@@ -1151,6 +1178,21 @@ export function App() {
     await setSessionFlags(id, { pinned });
     refreshSessions();
   };
+  const setSessionReasoning = async (id: string, effort: string) => {
+    const result = await setReasoningEffort(id, effort);
+    if (!result.ok) return;
+    const saved = result.reasoning_effort || effort;
+    setReasoningOverrides((current) => ({ ...current, [id]: saved }));
+    // PATCH is authoritative for the current source tree. Reflect it immediately instead
+    // of waiting for the poll; the later refresh verifies persistence from the server.
+    setSessions((current) => {
+      if (!current.some((session) => session.session_id === id)) return current;
+      return current.map((session) =>
+        session.session_id === id ? { ...session, reasoning_effort: saved } : session,
+      );
+    });
+    void refreshSessions();
+  };
   const toggleArchived = async (id: string, archived: boolean) => {
     await setSessionFlags(id, { archived });
     refreshSessions();
@@ -1204,19 +1246,6 @@ export function App() {
   const pendingDirReq = [...items].reverse().find((i) => i.kind === "dirreq" && !i.resolved);
   const pendingPlan = [...items].reverse().find((i) => i.kind === "planreq" && !i.resolved);
   const pendingQuestion = [...items].reverse().find((i) => i.kind === "question" && !i.resolved);
-  // Facts subtitle (§22): the session's FIXED facts, not controls — model (+ the
-  // workspace folder for project-scoped sessions). Renders only once the session has history;
-  // until then the model is still choosable in the composer, so there's no locked fact to state.
-  const hasHistory = items.length > 0;
-  // Curated labels read "Claude Opus 4.8 · Anthropic" — the provider suffix is dropdown context,
-  // noise in a facts line. Fall back to the raw id without its provider prefix.
-  const modelDisplay =
-    modelLabels[model]?.split(" · ")[0] ||
-    (model.includes(":") ? model.split(":").slice(1).join(":") : model);
-  // Persona name dropped for this release (owner ask 2026-07-22): personas are hidden,
-  // so "Coworker" read as noise. The model (+ project folder) are the real fixed facts.
-  const subtitleParts = [modelDisplay];
-  if (isProjectScoped(personaOf(agent)) && workspace) subtitleParts.push(baseName(workspace));
   const activeInfo = sessions.find((s) => s.session_id === sessionId);
   const activeTitle = activeInfo?.title || tr("nav.newSession");
 
@@ -1257,7 +1286,9 @@ export function App() {
           <Icon name="logo" size={38} />
         </div>
         <div className="boot-text">
-          {resumedExisting ? "Restoring your session…" : "Starting Delta…"}
+          {/* The splash renders before <I18nProvider>, so it resolves straight from the
+              locale dictionaries (same pattern as the `tr` shell helper above). */}
+          {resumedExisting ? tr("boot.restoring") : tr("boot.starting")}
         </div>
       </div>
     );
@@ -1378,6 +1409,7 @@ export function App() {
         onDeleteSession={deleteConversation}
         onArchiveSession={toggleArchived}
         onTogglePin={togglePinned}
+                    onSetReasoningEffort={setSessionReasoning}
         onManage={() => openSettings("appearance")}
         onOpenPersona={(id) => {
           openPersona(id, "session");
@@ -1470,9 +1502,8 @@ export function App() {
                 machinery retired with the drawer. "What can this touch" lives permanently on
                 the rail's Access section header; the panel toggle is the one entry. */}
           </div>
-          {/* Center: title + facts subtitle (§22, amended: the ⋯ menu removed — the nav row's
-              hover cluster owns pin/rename/archive/delete). The title stays: with the sidebar
-              collapsed it is the only session identifier, and it anchors the subtitle. */}
+          {/* Center: the session title only. With the sidebar collapsed it remains the sole
+              session identifier; model controls stay in the composer. */}
           <div className="main-title" onPointerDown={beginWindowDrag}>
             <span
               className={"main-title-text" + (activeInfo ? "" : " title-ghost")}
@@ -1480,18 +1511,10 @@ export function App() {
             >
               {activeTitle}
             </span>
-            {/* Plain facts, no affordance: the persona page it used to open is hidden for
-                this release (owner ask 2026-07-22). */}
-            {hasHistory && (
-              <span className="title-sub" data-testid="session-subtitle">
-                {subtitleParts.join(" · ")}
-              </span>
-            )}
           </div>
           {/* Right: artifacts + the one session-panel toggle. Global search moved back into the
               sidebar brand row (A2 revised) — the topbar drag surface had swallowed its clicks.
-              Model/mode/persona chrome is gone — the facts live in the subtitle, the controls in
-              the composer (§22). */}
+              Model/mode/persona controls stay in the composer (§22). */}
           <div className="main-topbar-side main-topbar-actions" onPointerDown={beginWindowDrag}>
             {agent === "cowork" && railHidden && artifactCount > 0 && (
               <button
@@ -1585,6 +1608,8 @@ export function App() {
                     running={running}
                     onRetry={retry}
                     onUndoMemory={(id, previous) => void undoMemorySave(id, previous)}
+                    onEditMessage={(index) => void editMessage(index)}
+                    userMetaPrefix={modelLabels[model] || model}
                     // §33 ref #3: sub-threshold streamed text renders INSIDE the live turn
                     // group (header when collapsed, quiet line when expanded) — never as a
                     // floating paragraph.
@@ -1600,7 +1625,9 @@ export function App() {
                   )}
                   {/* Compaction runs between provider turns (nothing streams during it), so
                       the transient takes over the waiting slot with a specific label. */}
-                  {running && compacting && <WaitingForAgent label="Compacting context…" />}
+                  {running && compacting && (
+        <WaitingForAgent label={tr("transcript.compacting")} />
+      )}
                   {running &&
                     !compacting &&
                     !reasoningStream &&
@@ -1649,6 +1676,14 @@ export function App() {
               onInterrupt={interrupt}
               onModeChange={changeMode}
               onModelChange={changeModel}
+              reasoningEffort={
+                reasoningOverrides[sessionId] ||
+                sessions.find((session) => session.session_id === sessionId)?.reasoning_effort ||
+                "auto"
+              }
+              onReasoningEffortChange={(effort) => void setSessionReasoning(sessionId, effort)}
+              externalNotice={composerNotice}
+              onExternalNoticeDismiss={() => setComposerNotice(null)}
               sessionId={sessionId}
               workspace={needsWorkspace(agent) ? workspace || "" : undefined}
               unattended={unattended}
@@ -1760,11 +1795,12 @@ function lastItemIsAssistant(items: Item[]): boolean {
 }
 
 function WaitingForAgent({ label }: { label?: string }) {
+  const { t } = useI18n();
   return (
     <div className="waiting-transcript">
       <div className="waiting-row" aria-live="polite">
         <span className="waiting-spinner" />
-        <span>{label || "Waiting for agent..."}</span>
+        <span>{label || t("transcript.waitingAgent", undefined, "Thinking…")}</span>
       </div>
     </div>
   );

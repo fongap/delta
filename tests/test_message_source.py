@@ -232,7 +232,7 @@ def test_turn_start_carries_source(tmp_path):
 
     starts = [e for e in events if e["type"] == "turn_start"]
     assert starts, events
-    source = starts[0]["data"]["source"]
+    source = starts[0]["payload"]["source"]
     assert source["connector"] == "slack"
     assert source["kind"] == "channel"
     assert source["channel_name"] == "#ocw-test"

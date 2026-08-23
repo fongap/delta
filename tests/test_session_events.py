@@ -57,7 +57,7 @@ def test_deliver_broadcasts_turn_events(tmp_path):
     types = _types(events)
     assert types[0] == "turn_start"
     assert (
-        events[0]["data"]["input"] == "hi"
+        events[0]["payload"]["input"] == "hi"
     )  # the inbound message surfaces as a user item
     assert "assistant_message" in types
     assert types[-1] == "turn_done"

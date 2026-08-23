@@ -37,3 +37,6 @@ class SessionRecord:
     # Auto-compaction state (OPE-27): CompactionState.as_dict(), {} when never compacted.
     # Persisted so a reloaded session keeps its compacted outbound view.
     compaction: dict[str, Any] = field(default_factory=dict)
+    # Reasoning effort level: "auto" | "low" | "high" | "max" — controls how hard the
+    # model thinks before answering. "auto" lets the provider decide (the default).
+    reasoning_effort: str = "auto"

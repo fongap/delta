@@ -3,14 +3,26 @@ import { test as base, expect, type Page } from "@playwright/test";
 // The app-wide /ws/events socket each page opened (UX-026 toast et al.) — specs
 // push server events through it via sendAppEvent below.
 const eventSockets = new WeakMap<Page, { send: (data: string) => void }>();
+const eventSequences = new WeakMap<Page, number>();
 
 /** Push an app-wide event exactly as the server would over /ws/events. Waits for
  * the GUI to have connected its socket first. */
-export async function sendAppEvent(page: Page, obj: unknown): Promise<void> {
+export async function sendAppEvent(
+  page: Page,
+  event: { type: string; payload: Record<string, unknown> },
+): Promise<void> {
   for (let i = 0; i < 50 && !eventSockets.get(page); i++) await page.waitForTimeout(100);
   const ws = eventSockets.get(page);
   if (!ws) throw new Error("the app never opened /ws/events");
-  ws.send(JSON.stringify(obj));
+  const sequence = (eventSequences.get(page) ?? 0) + 1;
+  eventSequences.set(page, sequence);
+  ws.send(JSON.stringify({
+    type: event.type,
+    version: 1,
+    sessionId: null,
+    sequence,
+    payload: event.payload,
+  }));
 }
 
 // Hermetic API mock. Every /v1 request the GUI makes is fulfilled from the fixtures below (shapes
@@ -20,7 +32,18 @@ export async function sendAppEvent(page: Page, obj: unknown): Promise<void> {
 // (sessions, personas, inbox, routing, channel subscriptions) are held in per-test in-memory state
 // so add/remove/toggle reflect through the real UI on re-fetch.
 
-const HEALTH = { status: "ok", default_workspace: null, model: "anthropic:claude-opus-4-8" };
+const HEALTH = {
+  status: "ok",
+  default_workspace: null,
+  model: "anthropic:claude-opus-4-8",
+  protocolVersion: 1,
+  capabilities: [
+    "events.app-wide",
+    "provider.custom",
+    "session.message-revert",
+    "session.reasoning-effort",
+  ],
+};
 
 const SETTINGS = {
   provider: "openai",
@@ -549,6 +572,9 @@ export async function mockApi(page: import("@playwright/test").Page) {
   // MCP servers (empty by default; the granola OAuth quick-add test populates it).
   const mcpServers: any[] = [];
   const automationRuns: any[] = AUTOMATION_RUNS.map((r) => ({ ...r }));
+  // Canonical per-session transcript returned after turn_done. The production client refreshes
+  // from GET /messages at that boundary, so the mock must persist what its fake agent emits.
+  const sessionMessages: Record<string, any[]> = {};
   // Per-session unattended flag — mutable so the composer's "Send to Inbox" toggle persists and
   // the app reads it back (which is what gates parking approvals to the Inbox vs an inline card).
   const unattended: Record<string, boolean> = {};
@@ -569,8 +595,8 @@ export async function mockApi(page: import("@playwright/test").Page) {
     telemetry_enabled: true,
   });
 
-  // The scripted fake agent behind the session WebSocket. Speaks the real event protocol
-  // ({type, data}), so the full send → stream → render loop and the approval round-trip run
+  // The scripted fake agent behind the session WebSocket. Speaks the strict v1 event protocol,
+  // so the full send → stream → render loop and the approval round-trip run
   // through the production code paths:
   //   · on connect: `ready`
   //   · user_message: turn_start (with input, exercising the foreground dedupe) → two
@@ -583,8 +609,36 @@ export async function mockApi(page: import("@playwright/test").Page) {
   });
 
   await page.routeWebSocket(/\/ws\/session\//, (ws) => {
-    const send = (type: string, data: Record<string, unknown> = {}) =>
-      ws.send(JSON.stringify({ type, data }));
+    const sessionId = decodeURIComponent(new URL(ws.url()).pathname.split("/").pop() || "");
+    const messages = (sessionMessages[sessionId] ??= []);
+    let sequence = 0;
+    const send = (type: string, payload: Record<string, unknown> = {}) => {
+      const ts = Date.now() / 1000;
+      if (type === "assistant_message") {
+        messages.push({
+          role: "assistant",
+          content: String(payload.text ?? ""),
+          ...(payload.reasoning ? { reasoning: payload.reasoning } : {}),
+          ...(payload.usage ? { usage: payload.usage } : {}),
+          ts,
+        });
+      } else if (type === "error") {
+        messages.push({ role: "notice", kind: "error", text: String(payload.error ?? "unknown"), ts });
+      } else if (type === "interrupted") {
+        messages.push({ role: "notice", kind: "interrupted", ts });
+      } else if (type === "compacted") {
+        messages.push({ role: "notice", kind: "compacted", text: String(payload.text ?? ""), ts });
+      } else if (type === "model_changed") {
+        messages.push({ role: "notice", kind: "model_switch", text: String(payload.text ?? ""), ts });
+      }
+      ws.send(JSON.stringify({
+        type,
+        version: 1,
+        sessionId,
+        sequence: ++sequence,
+        payload,
+      }));
+    };
     send("ready");
     let pendingTool = "run_shell"; // which proposal the next approval decision resolves
     let epicTimer: ReturnType<typeof setInterval> | null = null; // the slow stream, stoppable via interrupt
@@ -593,6 +647,12 @@ export async function mockApi(page: import("@playwright/test").Page) {
       const msg = JSON.parse(String(raw));
       if (msg.type === "user_message") {
         hadTurn = true;
+        messages.push({
+          role: "user",
+          content: msg.text,
+          ...(msg.skill ? { _display: `/${msg.skill}${msg.text ? ` ${msg.text}` : ""}` } : {}),
+          ts: Date.now() / 1000,
+        });
         // Force-run (SKILLS-SPEC §6): like the real server, TURN_START ships the user's
         // literal "/name …" line as `display` so the client dedupes on what the user sees.
         send("turn_start", {
@@ -827,7 +887,10 @@ export async function mockApi(page: import("@playwright/test").Page) {
       }
       return json({ roots });
     }
-    if (/\/v1\/sessions\/[^/]+\/messages$/.test(p)) return json({ messages: [] });
+    if (/\/v1\/sessions\/[^/]+\/messages$/.test(p)) {
+      const id = decodeURIComponent(p.split("/").slice(-2)[0]);
+      return json({ messages: sessionMessages[id] ?? [] });
+    }
     if (/\/v1\/sessions\/[^/]+\/unattended$/.test(p)) {
       const id = decodeURIComponent(p.split("/").slice(-2)[0]);
       if (m === "POST") {

@@ -290,9 +290,16 @@ def _compat(
 PROTOCOLS: dict[str, dict[str, Any]] = {
     PROTOCOL_OPENAI_COMPAT: {
         "title": "OpenAI compatible",
-        "needs_key": True,
+        # Key OPTIONAL: local servers (LM Studio, vLLM, llama.cpp, Ollama's OpenAI
+        # endpoint) typically run without auth; cloud endpoints just 401 on a wrong/absent
+        # key, which surfaces as the normal verify/fetch error.
+        "needs_key": False,
         "fields": [
-            ProviderField("api_key", "API key", secret=True, placeholder="sk-…"),
+            ProviderField(
+                "api_key", "API key (optional)", secret=True, required=False,
+                placeholder="sk-…",
+                help="Leave empty for local servers that don't need authentication.",
+            ),
             ProviderField(
                 "base_url", "Server address", secret=False, placeholder="https://…/v1",
                 help="Base URL of an OpenAI-compatible API. Include /v1 if your endpoint uses it.",
@@ -757,7 +764,10 @@ def _custom_descriptor(name: str) -> Optional[ProviderDescriptor]:
     proto = PROTOCOLS[meta["protocol"]]
     return ProviderDescriptor(
         name=name,
-        title=meta.get("title") or proto["title"],
+        # The alias is the provider's durable identity everywhere else: routing prefix,
+        # prefs key, and SecretStore key. Keep the protocol as supporting metadata instead
+        # of presenting two OpenAI-compatible aliases as the same provider.
+        title=name,
         needs_key=proto["needs_key"],
         fields=list(proto["fields"]),
         build=proto["build"],
@@ -1059,9 +1069,10 @@ def verify_provider_key(
                 or default_base.rstrip("/")
                 or "https://api.openai.com/v1"
             )
+            # Same keyless rule: omit the header rather than send a bare "Bearer ".
             resp = httpx.get(
                 base + "/models",
-                headers={"Authorization": f"Bearer {key}"},
+                headers={"Authorization": f"Bearer {key}"} if key else {},
                 timeout=timeout,
             )
     except Exception as exc:  # DNS/connection/timeout — never let it bubble to a 500
@@ -1106,9 +1117,13 @@ def _fetch_models_request(
         base = (base_url or "").strip().rstrip("/")
         if not base:
             raise RuntimeError("No server address configured.")
+        # No auth header at all when keyless — httpx rejects a bare "Bearer " value
+        # (LocalProtocolError), which used to make every keyless Test/Fetch fail even
+        # against a perfectly reachable local server.
+        headers = {"Authorization": f"Bearer {key}"} if key else {}
         return httpx.get(
             base + "/models",
-            headers={"Authorization": f"Bearer {key}"},
+            headers=headers,
             timeout=timeout,
         )
 

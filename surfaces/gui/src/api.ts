@@ -1,4 +1,11 @@
 import type { GroupedQuestion, QuestionOption, SessionInfo, WsEvent } from "./types";
+import {
+  RuntimeContractError,
+  type ArtifactDto,
+  type MessageDto,
+  type MessageSourceDto,
+  type RuntimeEventEnvelopeV1,
+} from "./runtime-contract";
 
 declare const __COWORKER_DEV_TOKEN__: string;
 
@@ -41,7 +48,152 @@ export interface Health {
   status: string;
   default_workspace: string | null;
   model: string;
+  protocolVersion: number;
+  capabilities: RuntimeCapability[];
 }
+
+export const UI_PROTOCOL_VERSION = 1;
+export const RUNTIME_CAPABILITIES = [
+  "events.app-wide",
+  "provider.custom",
+  "session.message-revert",
+  "session.reasoning-effort",
+] as const;
+export type RuntimeCapability = (typeof RUNTIME_CAPABILITIES)[number];
+
+const runtimeCapabilities = new Set<string>(RUNTIME_CAPABILITIES);
+const reportedContractDiagnostics = new Set<string>();
+
+function reportContractDiagnostic(key: string, message: string): void {
+  if (reportedContractDiagnostics.has(key)) return;
+  reportedContractDiagnostics.add(key);
+  console.warn(`[runtime-contract] ${message}`);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+type ParsedRuntimeEvent = RuntimeEventEnvelopeV1<Record<string, unknown>>;
+
+function parseRuntimeEvent(
+  raw: unknown,
+  knownTypes: ReadonlySet<string>,
+  stream: string,
+): ParsedRuntimeEvent | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(String(raw));
+  } catch {
+    reportContractDiagnostic(`${stream}:malformed`, `${stream} ignored a malformed event frame`);
+    return null;
+  }
+  if (!isRecord(parsed) || typeof parsed.type !== "string") {
+    reportContractDiagnostic(`${stream}:invalid`, `${stream} ignored an event without a string type`);
+    return null;
+  }
+  if (!knownTypes.has(parsed.type)) {
+    reportContractDiagnostic(
+      `${stream}:unknown:${parsed.type}`,
+      `${stream} ignored unknown event type "${parsed.type}"`,
+    );
+    return null;
+  }
+  if ("data" in parsed) {
+    reportContractDiagnostic(
+      `${stream}:forbidden:data`,
+      `${stream} rejected the forbidden data event field`,
+    );
+    return null;
+  }
+  if (
+    parsed.version !== 1 ||
+    (parsed.sessionId !== null && typeof parsed.sessionId !== "string") ||
+    typeof parsed.sequence !== "number" ||
+    !Number.isInteger(parsed.sequence) ||
+    parsed.sequence < 1 ||
+    !isRecord(parsed.payload)
+  ) {
+    reportContractDiagnostic(
+      `${stream}:invalid:v1`,
+      `${stream} ignored an invalid version 1 event envelope`,
+    );
+    return null;
+  }
+  return {
+    type: parsed.type,
+    payload: parsed.payload,
+    version: 1,
+    sessionId: parsed.sessionId,
+    sequence: parsed.sequence,
+  };
+}
+
+const EVENT_SEQUENCE_WINDOW = 256;
+
+class RuntimeEventSequenceGate {
+  private readonly states = new Map<string, { highest: number; seen: Set<number> }>();
+
+  constructor(private readonly stream: string) {}
+
+  accept(event: ParsedRuntimeEvent, resetOnReady = false): boolean {
+    const key = event.sessionId ?? "<none>";
+    let state = this.states.get(key);
+    if (!state || (resetOnReady && event.type === "ready" && event.sequence <= state.highest)) {
+      state = { highest: 0, seen: new Set<number>() };
+      this.states.set(key, state);
+    }
+    if (state.seen.has(event.sequence)) {
+      reportContractDiagnostic(
+        `${this.stream}:duplicate:${key}:${event.sequence}`,
+        `${this.stream} ignored duplicate sequence ${event.sequence} for ${key}`,
+      );
+      return false;
+    }
+    if (event.sequence < state.highest) {
+      reportContractDiagnostic(
+        `${this.stream}:out-of-order`,
+        `${this.stream} received out-of-order sequence ${event.sequence} after ${state.highest}`,
+      );
+    }
+    state.seen.add(event.sequence);
+    state.highest = Math.max(state.highest, event.sequence);
+    if (state.seen.size > EVENT_SEQUENCE_WINDOW * 2) {
+      const cutoff = state.highest - EVENT_SEQUENCE_WINDOW;
+      for (const sequence of state.seen) {
+        if (sequence < cutoff) state.seen.delete(sequence);
+      }
+    }
+    return true;
+  }
+}
+
+const SESSION_EVENT_TYPES = new Set<string>([
+  "ready",
+  "inbound",
+  "turn_start",
+  "assistant_delta",
+  "reasoning_delta",
+  "assistant_message",
+  "tool_proposed",
+  "permission_required",
+  "directory_requested",
+  "question_requested",
+  "plan_proposed",
+  "tool_started",
+  "tool_finished",
+  "iteration_end",
+  "turn_end",
+  "error",
+  "input_rejected",
+  "interrupted",
+  "model_changed",
+  "memory_saved",
+  "compacting",
+  "compacted",
+  "turn_done",
+]);
+const APP_EVENT_TYPES = new Set<string>(["automation_run_started"]);
 
 export interface RecentWorkspace {
   path: string;
@@ -59,7 +211,46 @@ export interface WorkspaceCommandTrust {
 
 export async function getHealth(): Promise<Health> {
   const res = await fetch(`${httpBase()}/v1/health`);
-  return res.json();
+  const raw: unknown = await res.json();
+  if (!isRecord(raw)) throw new RuntimeContractError("health response must be an object");
+  const body = raw;
+  if (
+    typeof body.status !== "string" ||
+    (body.default_workspace !== null && typeof body.default_workspace !== "string") ||
+    typeof body.model !== "string" ||
+    typeof body.protocolVersion !== "number" ||
+    !Number.isInteger(body.protocolVersion) ||
+    !Array.isArray(body.capabilities)
+  ) {
+    throw new RuntimeContractError("health response does not match the current runtime contract");
+  }
+  const protocolVersion = body.protocolVersion;
+  if (protocolVersion !== UI_PROTOCOL_VERSION) {
+    throw new RuntimeContractError(
+      `unsupported runtime protocolVersion ${protocolVersion}; expected ${UI_PROTOCOL_VERSION}`,
+    );
+  }
+  const advertised = body.capabilities.filter(
+    (value): value is string => typeof value === "string",
+  );
+  const capabilities: RuntimeCapability[] = [];
+  for (const capability of advertised) {
+    if (runtimeCapabilities.has(capability)) {
+      capabilities.push(capability as RuntimeCapability);
+    } else {
+      reportContractDiagnostic(
+        `capability:unknown:${capability}`,
+        `ignored unknown runtime capability "${capability}"`,
+      );
+    }
+  }
+  return {
+    status: body.status,
+    default_workspace: body.default_workspace,
+    model: body.model,
+    protocolVersion,
+    capabilities,
+  };
 }
 
 export async function getRecentWorkspaces(): Promise<RecentWorkspace[]> {
@@ -114,6 +305,30 @@ export async function setWorkspaceTrusted(
   return res.json();
 }
 
+export async function revertSession(
+  sessionId: string,
+  index: number,
+): Promise<{ ok: boolean; error?: string; text?: string }> {
+  const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/revert`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ index }),
+  });
+  return res.json();
+}
+
+export async function setReasoningEffort(
+  sessionId: string,
+  effort: string,
+): Promise<{ ok: boolean; error?: string; reasoning_effort?: string }> {
+  const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ reasoning_effort: effort }),
+  });
+  return res.json();
+}
+
 export async function getSessions(workspace?: string): Promise<SessionInfo[]> {
   const q = workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
   const res = await fetch(`${httpBase()}/v1/sessions${q}`);
@@ -122,30 +337,11 @@ export async function getSessions(workspace?: string): Promise<SessionInfo[]> {
 
 // A structured connector-delivered inbound message (§3.1). Attached to the user message it framed,
 // for display only — the model still sees the framed `content`; this drives the ConnectorMessageCard.
-export interface MessageSource {
-  connector: string; // platform id, e.g. "slack"
-  kind: "channel" | "dm";
-  channel_id: string; // e.g. "C0BD7KZ1AH5"
-  channel_name: string; // resolved; may equal the id (e.g. "#ocw-test")
-  sender_id: string;
-  sender_name: string; // resolved; may equal the id
-  ts: number; // epoch seconds
-  text: string; // the RAW message (what the card shows)
-}
+export type MessageSource = MessageSourceDto;
 
 // A transcript message from GET /v1/sessions/{id}/messages. Kept permissive (open shape) because
 // itemsFromMessages reads several role-specific fields; `source` is the optional connector sidecar.
-export interface ConversationMessage {
-  role: string;
-  content?: any;
-  tool_calls?: any[];
-  tool_call_id?: string;
-  source?: MessageSource;
-  // Token counts for the round-trip that produced an assistant message
-  // ({model, input, output, cache_read, cache_write}); absent on older servers.
-  usage?: import("./types").TurnUsage;
-  [key: string]: any;
-}
+export type ConversationMessage = MessageDto;
 
 export async function getSessionMessages(sessionId: string): Promise<ConversationMessage[]> {
   const res = await fetch(`${httpBase()}/v1/sessions/${sessionId}/messages`);
@@ -178,14 +374,7 @@ export async function deleteSession(sessionId: string): Promise<{ ok: boolean; e
   return res.json();
 }
 
-export interface ArtifactInfo {
-  path: string; // workspace-relative (the display/API identifier)
-  abs_path?: string; // absolute — what "Copy path" copies
-  name: string;
-  kind: "markdown" | "html" | "image" | "code" | "text" | string;
-  size: number;
-  modified_at: number;
-}
+export type ArtifactInfo = ArtifactDto;
 
 export interface ArtifactContent {
   ok: boolean;
@@ -1264,7 +1453,7 @@ export async function getInbox(sessionId?: string, state?: string): Promise<Inbo
   if (sessionId) q.set("session_id", sessionId);
   if (state) q.set("state", state);
   const res = await fetch(`${httpBase()}/v1/inbox?${q.toString()}`);
-  return (await res.json()).items;
+  return (await res.json()).items ?? [];
 }
 
 export async function resolveInboxItem(
@@ -1763,20 +1952,24 @@ export function announceAutomationsChanged() {
  * automation_run_started (the UX-026 toast). Quietly reconnects while the app is
  * open; the returned cleanup stops it for good. */
 export function connectEvents(
-  onEvent: (msg: { type: string; data?: Record<string, unknown> }) => void
+  onEvent: (msg: {
+    type: string;
+    version: 1;
+    sessionId: string | null;
+    sequence: number;
+    payload: Record<string, unknown>;
+  }) => void
 ): () => void {
   let ws: WebSocket | null = null;
   let timer: number | null = null;
   let closed = false;
+  const sequenceGate = new RuntimeEventSequenceGate("app events");
   const open = () => {
     if (closed) return;
     ws = openWebSocket(`${wsBase()}/ws/events`);
     ws.onmessage = (e) => {
-      try {
-        onEvent(JSON.parse(e.data));
-      } catch {
-        /* malformed frame — ignore */
-      }
+      const event = parseRuntimeEvent(e.data, APP_EVENT_TYPES, "app events");
+      if (event && sequenceGate.accept(event)) onEvent(event);
     };
     ws.onclose = () => {
       if (!closed) timer = window.setTimeout(open, 5000);
@@ -2116,33 +2309,75 @@ export type Handlers = {
 };
 
 export class Session {
-  private ws: WebSocket;
+  private ws: WebSocket | null = null;
+  private reconnectTimer: number | null = null;
+  private stopped = false;
+  private readonly sequenceGate = new RuntimeEventSequenceGate("session events");
   // Payloads sent before the socket finished opening, replayed on `onopen`. Belt-and-suspenders
   // against the first message being dropped if the user sends in the connect window.
   private outbox: object[] = [];
 
-  constructor(sessionId: string, workspace: string, agent: string, handlers: Handlers) {
+  private readonly url: string;
+
+  constructor(
+    private readonly sessionId: string,
+    workspace: string,
+    agent: string,
+    private readonly handlers: Handlers,
+  ) {
     const q = `?workspace=${encodeURIComponent(workspace)}&agent=${encodeURIComponent(agent)}`;
-    this.ws = openWebSocket(`${wsBase()}/ws/session/${sessionId}${q}`);
-    this.ws.onmessage = (e) => handlers.onEvent(JSON.parse(e.data));
-    this.ws.onopen = () => {
-      this.flush();
-      handlers.onOpen?.();
+    this.url = `${wsBase()}/ws/session/${sessionId}${q}`;
+    this.connect();
+  }
+
+  private connect() {
+    if (this.stopped) return;
+    const socket = openWebSocket(this.url);
+    this.ws = socket;
+    socket.onmessage = (e) => {
+      if (this.ws !== socket || this.stopped) return;
+      const event = parseRuntimeEvent(e.data, SESSION_EVENT_TYPES, "session events");
+      if (event?.sessionId === null) {
+        reportContractDiagnostic(
+          "session events:null-session",
+          "session events rejected an envelope with a null sessionId",
+        );
+      } else if (event && event.sessionId !== this.sessionId) {
+        reportContractDiagnostic(
+          `session events:mismatched-session:${event?.sessionId}`,
+          `session events rejected an envelope for session ${event?.sessionId}`,
+        );
+      } else if (event && this.sequenceGate.accept(event, true)) {
+        this.handlers.onEvent(event as WsEvent);
+      }
     };
-    this.ws.onclose = () => handlers.onClose?.();
+    socket.onopen = () => {
+      if (this.ws !== socket || this.stopped) return;
+      this.flush();
+      this.handlers.onOpen?.();
+    };
+    socket.onclose = () => {
+      if (this.ws !== socket || this.stopped) return;
+      this.handlers.onClose?.();
+      this.reconnectTimer = window.setTimeout(() => {
+        this.reconnectTimer = null;
+        this.connect();
+      }, 5000);
+    };
   }
 
   private flush() {
-    if (this.ws.readyState !== WebSocket.OPEN) return;
+    const socket = this.ws;
+    if (socket?.readyState !== WebSocket.OPEN) return;
     const pending = this.outbox;
     this.outbox = [];
-    for (const p of pending) this.ws.send(JSON.stringify(p));
+    for (const p of pending) socket.send(JSON.stringify(p));
   }
 
   private send(payload: object) {
-    if (this.ws.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(payload));
-    // Still connecting: queue and flush on open rather than silently dropping.
-    else if (this.ws.readyState === WebSocket.CONNECTING) this.outbox.push(payload);
+    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(payload));
+    // Queue while connecting or waiting to reconnect; already-sent commands are never replayed.
+    else if (!this.stopped) this.outbox.push(payload);
   }
 
   /** `model` = the composer's CURRENT selection, carried on every message so the turn uses
@@ -2204,12 +2439,19 @@ export class Session {
   }
 
   close() {
+    this.stopped = true;
+    if (this.reconnectTimer !== null) {
+      window.clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     // Detach before closing: this socket's async `close` event may land AFTER the
     // successor session's `open` (observed when switching into an automation-run
     // session), and a torn-down socket must not clobber the new one's connected state.
-    this.ws.onopen = null;
-    this.ws.onmessage = null;
-    this.ws.onclose = null;
-    this.ws.close();
+    if (this.ws) {
+      this.ws.onopen = null;
+      this.ws.onmessage = null;
+      this.ws.onclose = null;
+      this.ws.close();
+    }
   }
 }

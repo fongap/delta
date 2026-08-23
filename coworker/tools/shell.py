@@ -31,6 +31,7 @@ import threading
 import time
 import uuid
 from abc import ABC, abstractmethod
+from collections import deque
 from pathlib import Path
 from typing import Any, Optional
 
@@ -50,6 +51,13 @@ _NONINTERACTIVE_ENV = {
     "PYTHONUNBUFFERED": "1",
     "PIP_NO_INPUT": "1",
 }
+
+# A background task keeps at most this many output lines (the oldest are dropped, and the
+# drop is reported) so a chatty process can't grow memory without bound.
+_BG_MAX_LINES = 10_000
+# Exited, fully-read task entries are recycled beyond this many, so a long session of
+# fire-and-forget commands doesn't accumulate _BackgroundTask entries forever.
+_MAX_FINISHED_BG_TASKS = 32
 
 
 class Executor(ABC):
@@ -99,7 +107,12 @@ class _BackgroundTask:
             **spawn_kwargs,
         )
         self._lock = threading.Lock()
-        self._lines: list[str] = []
+        # Bounded buffer with absolute indexing: `_base` is the absolute index of
+        # `_lines[0]`, so a reader's cursor keeps its meaning even when the deque is
+        # full and old lines fall off the front.
+        self._lines: deque[str] = deque(maxlen=_BG_MAX_LINES)
+        self._base = 0  # absolute index of the deque's first element
+        self.head_dropped = False  # a read skipped lines that already fell off
         self._cursor = 0
         self._reader = threading.Thread(target=self._read_loop, daemon=True)
         self._reader.start()
@@ -108,13 +121,24 @@ class _BackgroundTask:
         assert self.proc.stdout is not None
         for line in self.proc.stdout:
             with self._lock:
+                if len(self._lines) == self._lines.maxlen:
+                    self._base += 1
                 self._lines.append(line)
 
-    def read_new(self) -> str:
+    def read_new(self) -> tuple[str, bool]:
+        """Output appended since the last read. Returns ``(text, head_dropped)`` —
+        ``head_dropped`` is True when unread lines fell off the bounded buffer's front."""
         with self._lock:
-            new = "".join(self._lines[self._cursor :])
-            self._cursor = len(self._lines)
-        return new
+            start = max(self._cursor - self._base, 0)
+            head_dropped = self._cursor < self._base
+            new = "".join(list(self._lines)[start:])
+            self._cursor = self._base + len(self._lines)
+        return new, head_dropped
+
+    def read_done(self) -> bool:
+        """True when the reader cursor has consumed everything produced so far."""
+        with self._lock:
+            return self._cursor >= self._base + len(self._lines)
 
     def kill(self) -> None:
         if self.proc.poll() is not None:
@@ -151,6 +175,11 @@ class LocalExecutor(Executor):
         self._is_windows = _IS_WINDOWS
         self._bg_tasks: dict[str, _BackgroundTask] = {}
         self._bg_counter = 0
+        # Serializes shared mutable state that callers may hit from several threads
+        # (the engine, interrupt_now from the UI, background polling): the bg-task id
+        # counter/registry and the shell's stdin stream (a command + its trailer must be
+        # written as one unit or two concurrent runs interleave and desync the marker).
+        self._io_lock = threading.Lock()
         # Set by interrupt_now() (user Stop) — run()'s read loop treats it like an
         # early deadline, so the in-flight foreground command dies within one tick.
         self._abort = threading.Event()
@@ -205,8 +234,9 @@ class LocalExecutor(Executor):
 
         if self._is_windows and self._proc.stdin is not None:
             # Silence the REPL prompt so it never pollutes captured command output.
-            self._proc.stdin.write("function prompt { '' }\n")
-            self._proc.stdin.flush()
+            with self._io_lock:
+                self._proc.stdin.write("function prompt { '' }\n")
+                self._proc.stdin.flush()
 
     def _read_loop(self) -> None:
         try:
@@ -228,10 +258,12 @@ class LocalExecutor(Executor):
 
         timeout = timeout or self.default_timeout
         self._abort.clear()
-        # Run the command, then emit a marker line with exit code + cwd.
-        self._proc.stdin.write(command + "\n")
-        self._proc.stdin.write(self._trailer())
-        self._proc.stdin.flush()
+        # Run the command, then emit a marker line with exit code + cwd. Written (and
+        # flushed) under the I/O lock as ONE unit: interleaved command/trailer writes
+        # from concurrent run() calls would desync the marker stream.
+        with self._io_lock:
+            self._proc.stdin.write(command + "\n" + self._trailer())
+            self._proc.stdin.flush()
 
         deadline = time.monotonic() + timeout
         interrupted = False
@@ -304,14 +336,30 @@ class LocalExecutor(Executor):
         self._abort.set()
 
     # -- background tasks ---------------------------------------------------------
+    def _sweep_bg_tasks(self) -> None:
+        """Recycle entries for tasks that exited and whose output was fully read, keeping
+        only the newest `_MAX_FINISHED_BG_TASKS` of them (running tasks always stay)."""
+        with self._io_lock:
+            finished = [
+                tid
+                for tid, t in self._bg_tasks.items()
+                if t.proc.poll() is not None and t.read_done()
+            ]
+            excess = len(finished) - _MAX_FINISHED_BG_TASKS
+            if excess > 0:  # finished list is in creation order → drop the oldest
+                for tid in finished[:excess]:
+                    del self._bg_tasks[tid]
+
     def run_background(self, command: str) -> dict[str, Any]:
-        self._bg_counter += 1
-        task_id = f"bg-{self._bg_counter}"
-        try:
-            task = _BackgroundTask(task_id, command, self.cwd, self._env)
-        except OSError as exc:
-            return {"error": f"failed to start background task: {exc}"}
-        self._bg_tasks[task_id] = task
+        self._sweep_bg_tasks()
+        with self._io_lock:
+            self._bg_counter += 1
+            task_id = f"bg-{self._bg_counter}"
+            try:
+                task = _BackgroundTask(task_id, command, self.cwd, self._env)
+            except OSError as exc:
+                return {"error": f"failed to start background task: {exc}"}
+            self._bg_tasks[task_id] = task
         return {
             "task_id": task_id,
             "command": command,
@@ -320,24 +368,31 @@ class LocalExecutor(Executor):
         }
 
     def background_output(self, task_id: str) -> dict[str, Any]:
-        task = self._bg_tasks.get(task_id)
+        with self._io_lock:
+            task = self._bg_tasks.get(task_id)
         if task is None:
             return {"error": f"unknown task: {task_id}"}
-        output = task.read_new()
+        output, head_dropped = task.read_new()
         truncated = len(output) > self.max_output_chars
         if truncated:
             output = output[-self.max_output_chars :]
         exit_code = task.proc.poll()
-        return {
+        result = {
             "task_id": task_id,
             "status": "running" if exit_code is None else "exited",
             "exit_code": exit_code,
             "output": output,
-            "truncated": truncated,
+            "truncated": truncated or head_dropped,
         }
+        if head_dropped:
+            result["note"] = (
+                "some earlier unread output was dropped (buffer limit reached)"
+            )
+        return result
 
     def background_kill(self, task_id: str) -> dict[str, Any]:
-        task = self._bg_tasks.get(task_id)
+        with self._io_lock:
+            task = self._bg_tasks.get(task_id)
         if task is None:
             return {"error": f"unknown task: {task_id}"}
         task.kill()

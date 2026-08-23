@@ -181,6 +181,7 @@ interface Props {
   onDeleteSession: (id: string) => void;
   onArchiveSession: (id: string, archived: boolean) => void;
   onTogglePin: (id: string, pinned: boolean) => void;
+  onSetReasoningEffort: (id: string, effort: string) => void;
   onManage: () => void;
   // Grouped-nav gear + New-session menu's "Manage personas…" entry points (§7).
   onOpenPersona: (id: string) => void;
@@ -530,6 +531,29 @@ export function Sidebar(props: Props) {
                 s.archived ? t("common.unarchive", undefined, "Unarchive") : t("common.archive", undefined, "Archive"),
                 () => props.onArchiveSession(s.session_id, !s.archived),
               )}
+              <div className="h-px bg-line my-1 mx-2" />
+              <div className="px-2.5 pt-1.5 pb-1 text-[10.5px] uppercase tracking-wide text-faint">
+                {t("nav.reasoningDepth", undefined, "Reasoning depth")}
+              </div>
+              {(["auto", "low", "high", "max"] as const).map((lvl) => (
+                <button
+                  key={lvl}
+                  className="w-full flex items-center gap-2 px-2.5 py-1 text-[12.5px] text-left hover:bg-paper"
+                  role="menuitemradio"
+                  aria-checked={(s.reasoning_effort || "auto") === lvl}
+                  onClick={() => {
+                    closeRowMenu();
+                    props.onSetReasoningEffort(s.session_id, lvl);
+                  }}
+                >
+                  <span className="w-3.5 shrink-0 text-accent">
+                    {(s.reasoning_effort || "auto") === lvl ? "✓" : ""}
+                  </span>
+                  <span className="flex-1">
+                    {t(`nav.reasoning.${lvl}`, undefined, lvl === "auto" ? "Default" : lvl)}
+                  </span>
+                </button>
+              ))}
               <div className="h-px bg-line my-1 mx-2" />
               {confirmDelId === s.session_id ? (
                 <button
@@ -1053,7 +1077,7 @@ export function Sidebar(props: Props) {
         {/* A2 (revised): search icon back in the sidebar, same row as the wordmark — Delta left,
             search right. Clicking opens the command palette (SearchModal) directly. */}
         <button
-          className="tip tip-start tip-nowrap nav-search-btn w-7 h-7 grid place-items-center rounded-md text-faint hover:text-ink hover:bg-paper shrink-0 ml-auto"
+          className="tip tip-below tip-start tip-nowrap nav-search-btn w-7 h-7 grid place-items-center rounded-md text-faint hover:text-ink hover:bg-paper shrink-0 ml-auto"
           data-tip={t("common.search", undefined, "Search")}
           aria-label={t("common.search", undefined, "Search")}
           onClick={() => setSearchOpen(true)}

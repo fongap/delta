@@ -1,4 +1,4 @@
-// Thin bridge to the Tauri desktop shell. In the browser these are inert (isTauri() === false),
+﻿// Thin bridge to the Tauri desktop shell. In the browser these are inert (isTauri() === false),
 // so the SPA stays a single codebase. We use the injected `window.__TAURI__` global (the shell
 // sets `withGlobalTauri`) instead of the @tauri-apps npm packages, so the browser build needs
 // no Tauri dependencies.
@@ -81,6 +81,8 @@ export const startWindowDrag = () => invoke<boolean>("start_window_drag");
  * The webview's data-theme only styles web content; without this the native title bar
  * keeps following the OS theme even in Delta's dark mode. Inert in the browser build. */
 export const setNativeTheme = (dark: boolean) => invoke<boolean>("set_native_theme", { dark });
+  /** Auto theme: un-pin the native window theme so it follows the OS again. */
+  export const followSystemTheme = () => invoke<boolean>("follow_system_theme");
 
 // Local dictation is native-only. The browser build deliberately keeps this unavailable rather
 // than silently sending microphone audio to a server.
@@ -131,8 +133,7 @@ export const clearPendingUpdate = () => invokeStrict<void>("clear_pending_update
 export const installUpdate = () => invokeStrict<void>("install_update");
 
 /** Best-effort open a URL in the user's browser. Uses the Tauri opener plugin if present, else
- * `window.open`. The caller should also render the raw URL so it stays copyable if both no-op
- * (the desktop webview has no opener plugin wired yet). */
+ * `window.open`. The caller should also render the raw URL so it stays copyable if both no-op. */
 export function openExternal(url: string): void {
   const opener = (globalThis as any).__TAURI__?.opener;
   if (opener?.openUrl) {

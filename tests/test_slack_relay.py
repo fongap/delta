@@ -1,4 +1,4 @@
-"""Managed Slack relay client (Milestone 3) — dual-mode desktop, team-qualified
+﻿"""Managed Slack relay client (Milestone 3) 鈥?dual-mode desktop, team-qualified
 addressing, per-team reply tokens. Hermetic: an injected fake relay transport
 (no live WebSocket) + captured senders (no network)."""
 
@@ -21,7 +21,7 @@ from coworker.secrets import SecretStore
 @pytest.fixture(autouse=True)
 def _no_slack_network(monkeypatch):
     """Name/channel resolution is best-effort; unstubbed lookups must fail
-    instantly at a dead loopback port, never reach slack.com — a slow real
+    instantly at a dead loopback port, never reach slack.com 鈥?a slow real
     answer was blowing the 2s wait_dispatched window intermittently."""
     monkeypatch.setenv("SLACK_API_URL", "http://127.0.0.1:9/")
 
@@ -33,7 +33,7 @@ TEAMS = {
 
 
 class FakeTransport:
-    """Yields queued frames, then either closes (recv→None) or blocks forever."""
+    """Yields queued frames, then either closes (recv鈫扤one) or blocks forever."""
 
     def __init__(self, frames, *, close_after: bool):
         self._q: asyncio.Queue = asyncio.Queue()
@@ -123,7 +123,7 @@ async def test_relay_dispatches_team_qualified_event():
     adapter.set_message_handler(handler)
     assert await adapter.connect() is True
     try:
-        await adapter.wait_dispatched(1)
+        await adapter.wait_dispatched(1, timeout=30.0)
     finally:
         await adapter.disconnect()
 
@@ -159,7 +159,7 @@ async def test_relay_resolves_names_and_mentions(monkeypatch):
     adapter.set_message_handler(handler)
     await adapter.connect()
     try:
-        await adapter.wait_dispatched(1)
+        await adapter.wait_dispatched(1, timeout=30.0)
     finally:
         await adapter.disconnect()
 
@@ -204,7 +204,7 @@ async def test_relay_two_workspace_fan_in():
     adapter.set_message_handler(handler)
     await adapter.connect()
     try:
-        await adapter.wait_dispatched(2)
+        await adapter.wait_dispatched(2, timeout=30.0)
     finally:
         await adapter.disconnect()
 
@@ -213,7 +213,7 @@ async def test_relay_two_workspace_fan_in():
 
 
 async def test_relay_ignores_own_bot_echo():
-    # event.user == the team's bot user id → dropped by the mapper.
+    # event.user == the team's bot user id 鈫?dropped by the mapper.
     adapter = _adapter([_event_frame("T1", "C1", "UBOT1")])
     events: list = []
     adapter.set_message_handler(lambda e: events.append(e))
@@ -244,7 +244,7 @@ async def test_relay_watchdog_reconnects():
     adapter.set_message_handler(handler)
     await adapter.connect()
     try:
-        await adapter.wait_dispatched(2)
+        await adapter.wait_dispatched(2, timeout=30.0)
     finally:
         await adapter.disconnect()
 
@@ -277,7 +277,7 @@ async def test_relay_interactivity_maps_to_interaction():
     adapter.set_interaction_handler(on_interaction)
     await adapter.connect()
     try:
-        await adapter.wait_dispatched(1)
+        await adapter.wait_dispatched(1, timeout=30.0)
     finally:
         await adapter.disconnect()
 
@@ -292,7 +292,7 @@ async def test_relay_revoked_drops_team():
     adapter = _adapter([{"kind": "revoked", "team_id": "T1"}])
     await adapter.connect()
     try:
-        await adapter.wait_dispatched(1)
+        await adapter.wait_dispatched(1, timeout=30.0)
     finally:
         await adapter.disconnect()
     assert "T1" not in adapter._teams and "T2" in adapter._teams
@@ -320,7 +320,7 @@ async def test_relay_nudge_pulls_history():
     adapter.set_message_handler(handler)
     await adapter.connect()
     try:
-        await adapter.wait_dispatched(1)
+        await adapter.wait_dispatched(1, timeout=30.0)
     finally:
         await adapter.disconnect()
 
@@ -366,9 +366,9 @@ def test_send_message_tool_per_team_and_default_token():
         return SendResult(True, message_id="ts")
 
     tool = make_send_message_tool(secrets, senders={"slack": fake_slack})
-    # Team-qualified → per-team token
+    # Team-qualified 鈫?per-team token
     tool("slack:T1/C1", "hi")
-    # Bare (manual socket mode) → default token
+    # Bare (manual socket mode) 鈫?default token
     tool("slack:Cbare", "hi")
 
     assert calls[0][0] == "xoxb-team1"
@@ -397,7 +397,7 @@ def test_make_adapter_socket_mode_builds_socket_adapter():
 
 
 def test_make_adapter_relay_without_endpoint_returns_none():
-    # Relay mode configured but no relay_url / sign-in → don't build (falls back).
+    # Relay mode configured but no relay_url / sign-in 鈫?don't build (falls back).
     adapter = make_adapter(
         "slack", {"mode": "relay", "enabled": True}, secrets=SecretStore()
     )

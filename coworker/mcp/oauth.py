@@ -186,17 +186,22 @@ async def _wait_for_callback() -> tuple[str, Optional[str]]:
     global _pending, _expected_state
     if _pending is not None and not _pending.done():
         _pending.cancel()  # a stale flow lost its browser tab; the new one wins
-    _pending = asyncio.get_running_loop().create_future()
+    pending = asyncio.get_running_loop().create_future()
+    _pending = pending
     try:
-        return await asyncio.wait_for(_pending, timeout=FLOW_TIMEOUT_SECONDS)
+        return await asyncio.wait_for(pending, timeout=FLOW_TIMEOUT_SECONDS)
     except asyncio.TimeoutError:
         raise RuntimeError(
             "sign-in timed out — the browser window was not completed in "
             f"{FLOW_TIMEOUT_SECONDS // 60} minutes"
         )
     finally:
-        _pending = None
-        _expected_state = None  # don't let this flow's state gate the next one
+        # Only clean up if the globals are still OURS: a newer flow B may already have
+        # replaced them, and blindly clearing here would kill B's live sign-in.
+        # (On success/stray-callback paths deliver_callback already cleared _pending.)
+        if _pending is pending:
+            _pending = None
+            _expected_state = None
 
 
 def build_auth(

@@ -1,14 +1,14 @@
 [package]
 name = "delta-portable-launcher"
-version = "0.1.0"
+version = "0.2.0"
 description = "Delta Windows Portable root launcher (Delta.exe)"
 edition = "2021"
 rust-version = "1.77"
 
-# The launcher is a tiny relay: it resolves the portable ROOT from its own location,
+# The launcher is a tiny bootstrapper: it resolves the portable ROOT from its own location,
 # initializes Data on first run, sets the portable env (COWORKER_STATE_DIR etc.), and
-# spawns App\Delta\Delta.exe with full argument passthrough. It must stay runtime-dependency-free
-# so it builds fast and is immune to upstream dep churn.
+# spawns App\Delta\Delta.exe with full argument passthrough, then exits. It must stay
+# runtime-dependency-free so it builds fast and is immune to upstream dep churn.
 [dependencies]
 
 # winres is a *build*-time-only dependency (see build.rs): it links the Windows resource

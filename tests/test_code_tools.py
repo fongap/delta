@@ -57,8 +57,13 @@ def test_ripgrep_uses_the_same_ignored_dirs_as_the_python_fallback(tmp_path, mon
 
     assert commands
     user_glob = commands[0].index("*.py")
+    base_parts = {part.casefold() for part in tmp_path.resolve().parts}
     for ignored in search._IGNORE_DIRS:
-        assert commands[0].index(f"!**/{ignored}/**") > user_glob
+        exclusion = f"!**/{ignored}/**"
+        if ignored in search.OS_DATA_DIRS and ignored.casefold() in base_parts:
+            assert exclusion not in commands[0]
+        else:
+            assert commands[0].index(exclusion) > user_glob
 
 
 def test_grep_rejects_path_escape(tmp_path):

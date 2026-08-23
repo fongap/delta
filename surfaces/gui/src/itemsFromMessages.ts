@@ -24,7 +24,8 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
       if (hidden > 0) hiddenCounts[m.tool_call_id] = hidden;
     }
   }
-  for (const m of messages || []) {
+  for (let msgIndex = 0; msgIndex < (messages || []).length; msgIndex++) {
+    const m = (messages || [])[msgIndex];
     if (m.role === "user") {
       // Connector message → structured card; the framed `content` stays for the model, but display
       // renders from the source sidecar.
@@ -38,6 +39,7 @@ export function itemsFromMessages(messages: ConversationMessage[]): Item[] {
       if (typeof m._display === "string" && m._display) user.text = m._display;
       // `ts` (unix seconds) is the server's canonical-message stamp; older sessions have none.
       if (typeof m.ts === "number") user.ts = m.ts;
+      user.index = msgIndex;
       if (user.text || user.attachments?.length) items.push(user);
     } else if (m.role === "assistant") {
       if (m.content || m.reasoning)

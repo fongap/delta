@@ -16,7 +16,7 @@ from .base import Agent, AgentContext
 COWORK_CAPABILITIES = ["files", "search", "shell", "todo"]
 
 COWORK_INSTRUCTIONS = (
-    "You are a Cowork agent — a capable knowledge-work coworker spun up to solve one problem "
+    "You are a Delta agent — a capable knowledge-work coworker spun up to solve one problem "
     "and produce a concrete deliverable (a memo, analysis, plan, dataset, or small script). "
     "Work inside the session's workspace: read and write files there, run shell commands (the "
     "session is persistent), search the web when you need facts, and load skills from the "
@@ -46,7 +46,7 @@ def cowork_tool_factory(context: AgentContext) -> list:
 def cowork_agent() -> Agent:
     return Agent(
         name="cowork",
-        title="Cowork",
+        title="Delta",
         system_prompt=COWORK_INSTRUCTIONS,
         needs_workspace=True,
         tool_factory=cowork_tool_factory,

@@ -375,6 +375,7 @@ def test_unseen_runs_counted_and_cleared_by_mark_seen(tmp_path, monkeypatch):
     manager = SessionManager(data_dir=tmp_path / "data")
     t = manager.task_store.save(_task())
     manager.task_store.add_run(TaskRun(task_id=t.id, status="ok"))
+    time.sleep(0.01)  # distinct started_at: Windows clock granularity otherwise ties them
     manager.task_store.add_run(TaskRun(task_id=t.id, status="error"))
 
     row = manager.list_automations()["tasks"][0]
@@ -427,8 +428,11 @@ async def test_scheduled_run_broadcasts_run_started_event(tmp_path, monkeypatch)
     run = await manager._run_scheduled_task(task, trigger="schedule")
 
     (event,) = [m for m in heard if m["type"] == "automation_run_started"]
-    assert event["data"]["task_id"] == task.id
-    assert event["data"]["task_title"] == task.title
-    assert event["data"]["session_id"] == run.session_id
-    assert event["data"]["trigger"] == "schedule"
+    assert event["version"] == 1
+    assert event["sessionId"] == run.session_id
+    assert "data" not in event
+    assert event["payload"]["task_id"] == task.id
+    assert event["payload"]["task_title"] == task.title
+    assert event["payload"]["session_id"] == run.session_id
+    assert event["payload"]["trigger"] == "schedule"
     assert dead not in manager._event_clients  # dropped, not fatal

@@ -44,6 +44,59 @@ def _client(tmp_path, turns):
 # -- REST -----------------------------------------------------------------------
 
 
+def test_health_advertises_ui_runtime_contract(tmp_path):
+    body = _client(tmp_path, []).get("/v1/health").json()
+    assert body["protocolVersion"] == 1
+    assert body["capabilities"] == [
+        "events.app-wide",
+        "provider.custom",
+        "session.message-revert",
+        "session.reasoning-effort",
+    ]
+
+
+def test_reasoning_effort_survives_turn_save_disconnect_and_reload(tmp_path, monkeypatch):
+    """PATCH on a fresh connected session applies to the first request and every later save."""
+    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+
+    class RecordingProvider(ScriptedProvider):
+        def __init__(self):
+            super().__init__([_text("done")])
+            self.settings = []
+
+        def complete(self, *, model, messages, tools=None, **settings):
+            self.settings.append(settings)
+            return super().complete(model=model, messages=messages, tools=tools, **settings)
+
+    provider = RecordingProvider()
+    data_dir = tmp_path / "data"
+    manager = SessionManager(workspace=tmp_path, data_dir=data_dir, provider=provider)
+    client = TestClient(create_app(manager))
+
+    with client.websocket_connect("/ws/session/reasoning-persist") as ws:
+        assert ws.receive_json()["type"] == "ready"
+        patched = client.patch(
+            "/v1/sessions/reasoning-persist",
+            json={"reasoning_effort": "low"},
+        ).json()
+        assert patched == {"ok": True, "reasoning_effort": "low"}
+        ws.send_json({"type": "user_message", "text": "hello"})
+        assert "turn_done" in _drain(ws)
+
+    record = manager.session_store.load("reasoning-persist")
+    assert record is not None and record.reasoning_effort == "low"
+    assert provider.settings[0]["reasoning_effort"] == "low"
+
+    reloaded = SessionManager(
+        workspace=tmp_path,
+        data_dir=data_dir,
+        provider=ScriptedProvider([]),
+    )
+    listed = {row["session_id"]: row for row in reloaded.list_sessions()}
+    assert listed["reasoning-persist"]["reasoning_effort"] == "low"
+    assert reloaded.get_engine("reasoning-persist").model_settings["reasoning_effort"] == "low"
+
+
 def test_chat_completions_openai_shape(tmp_path):
     client = _client(tmp_path, [_text("hello world")])
     resp = client.post(
@@ -333,6 +386,11 @@ def _drain(ws, on_permission=None):
     types = []
     while True:
         event = ws.receive_json()
+        assert event["version"] == 1
+        assert isinstance(event["sessionId"], str)
+        assert isinstance(event["sequence"], int)
+        assert isinstance(event["payload"], dict)
+        assert "data" not in event
         types.append(event["type"])
         if event["type"] == "permission_required" and on_permission:
             ws.send_json({"type": "approval", "decision": on_permission})
@@ -350,11 +408,35 @@ def test_ws_simple_turn(tmp_path):
         assert "turn_end" in types
 
 
+def test_ws_events_use_strict_v1_envelope(tmp_path):
+    from coworker.server.contracts import EventEnvelopeV1
+
+    client = _client(tmp_path, [_text("contract reply")])
+    with client.websocket_connect("/ws/session/contract-s1") as ws:
+        ready = EventEnvelopeV1.model_validate(ws.receive_json())
+        assert ready.type == "ready" and ready.sequence == 1
+        ws.send_json({"type": "user_message", "text": "hello"})
+        assistant = None
+        while True:
+            event = ws.receive_json()
+            if event["type"] == "assistant_message":
+                assistant = event
+            if event["type"] == "turn_done":
+                break
+
+    validated = EventEnvelopeV1.model_validate(assistant)
+    assert validated.version == 1
+    assert validated.sessionId == "contract-s1"
+    assert validated.sequence > ready.sequence
+    assert validated.payload["text"] == "contract reply"
+    assert "data" not in assistant
+
+
 def test_ws_rejects_oversized_message(tmp_path):
     from coworker.server import app as app_mod
     from coworker.attachments import MAX_ATTACHMENTS
 
-    client = _client(tmp_path, [_text("should not run")])
+    client = _client(tmp_path, [_text("eight accepted"), _text("normal")])
     with client.websocket_connect("/ws/session/big") as ws:
         assert ws.receive_json()["type"] == "ready"
 
@@ -364,7 +446,7 @@ def test_ws_rejects_oversized_message(tmp_path):
         )
         evt = ws.receive_json()
         assert evt["type"] == "input_rejected"
-        assert "too long" in evt["data"]["error"].lower()
+        assert "too long" in evt["payload"]["error"].lower()
 
         # The ingress cap is the same cap the attachment builder enforces.
         assert app_mod._MAX_ATTACHMENTS == MAX_ATTACHMENTS
@@ -377,7 +459,41 @@ def test_ws_rejects_oversized_message(tmp_path):
         )
         evt = ws.receive_json()
         assert evt["type"] == "input_rejected"
-        assert "attachment" in evt["data"]["error"].lower()
+        assert "attachment" in evt["payload"]["error"].lower()
+
+        # Exactly eight valid attachments pass the authoritative ingress check.
+        ws.send_json(
+            {
+                "type": "user_message",
+                "text": "eight",
+                "attachments": [
+                    {"kind": "text", "name": f"{i}.txt", "text": "ok"}
+                    for i in range(app_mod._MAX_ATTACHMENTS)
+                ],
+            }
+        )
+        assert "turn_done" in _drain(ws)
+
+        # Aggregate encoded payload is capped independently of each valid item.
+        ws.send_json(
+            {
+                "type": "user_message",
+                "text": "too large",
+                "attachments": [
+                    {
+                        "kind": "image",
+                        "name": f"{i}.png",
+                        "data_url": "data:image/png;base64," + "A" * 7_600_000,
+                    }
+                    for i in range(2)
+                ],
+            }
+        )
+        evt = ws.receive_json()
+        while evt["type"] != "input_rejected":
+            evt = ws.receive_json()
+        assert evt["type"] == "input_rejected"
+        assert "15 mb" in evt["payload"]["error"].lower()
 
         # A normal message still works afterwards (the socket wasn't torn down).
         ws.send_json({"type": "user_message", "text": "hello"})
@@ -397,6 +513,25 @@ def test_ws_rejects_malformed_payloads_without_killing_socket(tmp_path):
                 "type": "user_message",
                 "text": "x",
                 "attachments": [{"kind": "image", "data_url": "https://example.com/x"}],
+            },
+            {
+                "type": "user_message",
+                "text": "x",
+                "attachments": [
+                    {"kind": "image", "name": "empty.png", "data_url": "data:image/png;base64,"}
+                ],
+            },
+            {
+                "type": "user_message",
+                "text": "x",
+                "attachments": [
+                    {"kind": "pdf", "name": "empty.pdf", "data_url": "data:application/pdf;base64,"}
+                ],
+            },
+            {
+                "type": "user_message",
+                "text": "x",
+                "attachments": [{"kind": "text", "name": "empty.txt", "text": ""}],
             },
             {"type": "set_model", "model": {"unexpected": True}},
             {"type": "unknown"},
@@ -504,7 +639,10 @@ def test_standalone_server_token_file_is_user_only(tmp_path, monkeypatch):
         assert path == tmp_path / "coworker-state" / "sidecar-9876.token"
         assert path.read_text().strip() == os.environ["COWORKER_API_TOKEN"]
         assert len(path.read_text().strip()) == 64
-        assert (path.stat().st_mode & 0o777) == 0o600
+        if os.name == "posix":
+            # os.chmod(0o600) is a no-op on Windows (the token file gets an icacls
+            # user-only ACL instead, which st_mode does not reflect).
+            assert (path.stat().st_mode & 0o777) == 0o600
     finally:
         path.unlink(missing_ok=True)
         os.environ.pop("COWORKER_API_TOKEN", None)
@@ -588,7 +726,14 @@ def test_sidecar_token_gates_rest_and_websockets(tmp_path, monkeypatch):
     client = TestClient(create_app(manager))
 
     assert client.get("/v1/health").json() == {"status": "ok"}
-    assert client.get("/v1/sessions").status_code == 401
+    denied_rest = client.get("/v1/sessions")
+    assert denied_rest.status_code == 401
+    assert denied_rest.json() == {
+        "code": "auth.invalid_token",
+        "message": "missing or invalid Delta sidecar token",
+        "details": {},
+        "retriable": False,
+    }
     assert client.get(
         "/v1/sessions", headers={"X-OpenWorker-Token": "wrong"}
     ).status_code == 401
@@ -718,7 +863,7 @@ def test_workspace_command_trust_controls_live_engine(tmp_path):
         f"/ws/session/trust?workspace={quote(str(proj))}"
     ) as ws:
         ready = ws.receive_json()
-        policy = ready["data"]["command_trust"]
+        policy = ready["payload"]["command_trust"]
         assert policy["required"] is True
         assert policy["requested_commands"] == ["pytest"]
 
@@ -752,6 +897,25 @@ def test_workspace_command_trust_controls_live_engine(tmp_path):
         )
         assert not after.allowed and after.needs_user
 
+    # Windows: the live engine's persistent shell REPL holds its cwd inside `proj`,
+    # which locks the directory against rename until the child dies. Kill the shell
+    # processes this test process spawned before renaming.
+    import os
+    import subprocess
+
+    if os.name == "nt":
+        subprocess.run(
+            [
+                "powershell",
+                "-NoProfile",
+                "-Command",
+                "Get-CimInstance Win32_Process -Filter \"Name='powershell.exe'\" | "
+                f"Where-Object ParentProcessId -eq {os.getpid()} | "
+                "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }",
+            ],
+            capture_output=True,
+            timeout=60,
+        )
     manager.workspace_trust.set_trusted(proj, True)
     proj.rename(tmp_path / "moved-project")
     assert client.post(
@@ -840,7 +1004,7 @@ def test_ws_requires_workspace_when_no_default(tmp_path):
     with client.websocket_connect("/ws/session/nofolder") as ws:
         first = ws.receive_json()
         assert first["type"] == "error"
-        assert "workspace" in first["data"]["error"]
+        assert "workspace" in first["payload"]["error"]
 
 
 def test_ws_with_workspace_query(tmp_path):
@@ -857,7 +1021,7 @@ def test_ws_with_workspace_query(tmp_path):
     with client.websocket_connect(f"/ws/session/s?workspace={quote(str(proj))}") as ws:
         ready = ws.receive_json()
         assert ready["type"] == "ready"
-        assert ready["data"]["workspace"] == str(proj.resolve())
+        assert ready["payload"]["workspace"] == str(proj.resolve())
         ws.send_json({"type": "user_message", "text": "hello"})
         assert "turn_end" in _drain(ws)
 
@@ -872,8 +1036,8 @@ def test_ws_chat_agent_needs_no_workspace(tmp_path):
     with client.websocket_connect("/ws/session/chat1?agent=chat") as ws:
         ready = ws.receive_json()
         assert ready["type"] == "ready"
-        assert ready["data"]["agent"] == "chat"
-        assert ready["data"]["workspace"] is None
+        assert ready["payload"]["agent"] == "chat"
+        assert ready["payload"]["workspace"] is None
         ws.send_json({"type": "user_message", "text": "hello"})
         assert "turn_end" in _drain(ws)
 
@@ -932,8 +1096,8 @@ def test_ws_first_message_binds_then_midsession_switch_persists_notice(tmp_path)
         ws.send_json({"type": "set_model", "model": "kimi:kimi-k2.6"})
         changed = ws.receive_json()
         assert changed["type"] == "model_changed"
-        assert changed["data"]["model"] == "kimi:kimi-k2.6"
-        assert "Kimi" in changed["data"]["text"]
+        assert changed["payload"]["model"] == "kimi:kimi-k2.6"
+        assert "Kimi" in changed["payload"]["text"]
         ws.send_json({"type": "user_message", "text": "switched now"})
         _drain(ws)
     mgr = client.app.state.manager

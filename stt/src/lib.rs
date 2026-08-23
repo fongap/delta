@@ -80,16 +80,21 @@ fn normalize_proxy_url(raw: &str) -> String {
 fn windows_internet_proxy() -> Option<String> {
     use std::process::Command;
     const KEY: &str = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings";
+    // GUI processes spawning console tools (reg.exe) pop a visible console window
+    // unless suppressed.
+    fn quiet(command: &mut Command) -> &mut Command {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+        command.creation_flags(CREATE_NO_WINDOW)
+    }
     // ProxyEnable == 1 means a system proxy is configured (0 = direct access).
-    let enable = Command::new("reg")
-        .args(["query", KEY, "/v", "ProxyEnable"])
+    let enable = quiet(&mut Command::new("reg").args(["query", KEY, "/v", "ProxyEnable"]))
         .output()
         .ok()?;
     if !String::from_utf8_lossy(&enable.stdout).contains("0x1") {
         return None;
     }
-    let server = Command::new("reg")
-        .args(["query", KEY, "/v", "ProxyServer"])
+    let server = quiet(&mut Command::new("reg").args(["query", KEY, "/v", "ProxyServer"]))
         .output()
         .ok()?;
     let server_str = String::from_utf8_lossy(&server.stdout);
@@ -571,9 +576,15 @@ fn capture_worker(
 
 fn start_recording() -> Result<Recording, String> {
     let host = cpal::default_host();
-    let device = host
-        .default_input_device()
-        .ok_or_else(|| "No microphone is available. Check your Mac sound settings.".to_owned())?;
+    let device = host.default_input_device().ok_or_else(|| {
+        if cfg!(target_os = "macos") {
+            "No microphone is available. Check your Mac sound settings.".to_owned()
+        } else if cfg!(target_os = "windows") {
+            "No microphone is available. Check your Windows sound settings.".to_owned()
+        } else {
+            "No microphone is available. Check your system's sound settings.".to_owned()
+        }
+    })?;
     let supported = device
         .default_input_config()
         .map_err(|e| format!("Could not open the microphone: {e}"))?;

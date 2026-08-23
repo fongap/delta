@@ -172,6 +172,10 @@ async def test_ui_refresh_cross_cutting_e2e(fake_slack, tmp_path, monkeypatch):
         )["ok"]
         mgr.inbox_routing.set_session_override(SID, "ops-incidents")
         mgr.unattended.set(SID, True)
+        # A manual rename marks the session `renamed`, so the fire-and-forget auto-title
+        # call (FB-010) that mark_idle kicks off never runs — its provider use would
+        # otherwise land asynchronously inside the muted-window assertions below.
+        mgr.session_store.rename(SID, "ops incident bridge")
 
         # pre-build the engine + pre-allow the reply tool so the reply (step 3) doesn't itself ask.
         engine = mgr.get_engine(SID)
@@ -228,7 +232,7 @@ async def test_ui_refresh_cross_cutting_e2e(fake_slack, tmp_path, monkeypatch):
         # (Step 2) the live turn_start carried the same resolved source (card shows live).
         starts = [e for e in ws_events if e.get("type") == "turn_start"]
         assert starts, ws_events
-        live_src = starts[0]["data"]["source"]
+        live_src = starts[0]["payload"]["source"]
         assert live_src["channel_name"] == CHANNEL_NAME
         assert live_src["sender_name"] == SENDER_DISPLAY
         assert live_src["text"] == ALERT

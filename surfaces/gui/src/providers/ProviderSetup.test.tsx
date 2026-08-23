@@ -1,8 +1,8 @@
 // Auth-method segmented choice + show_when field visibility (Bedrock's "Connect with"):
 // only the selected method's fields render, and clicking a segment switches them.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { ProviderForm, CustomCreateForm, type ProviderSetupState } from "./ProviderSetup";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { ProviderCards, ProviderForm, CustomCreateForm, useProviderSetup, type ProviderSetupState } from "./ProviderSetup";
 import { I18nProvider } from "../i18n/I18nContext";
 import type { ProviderInfo } from "../api";
 
@@ -11,7 +11,10 @@ vi.mock("../tauri", () => ({ openExternal: vi.fn() }));
 // ProviderForm calls useI18n() — wrap every render in the provider (Sidebar.test.tsx pattern).
 const wrap = (ui: React.ReactElement) => <I18nProvider locale="en-US">{ui}</I18nProvider>;
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.unstubAllGlobals();
+});
 
 const BEDROCK: ProviderInfo = {
   name: "bedrock",
@@ -66,6 +69,7 @@ function makePs(fields: Record<string, string>, setFieldValue = vi.fn()): Provid
     backToGallery: () => {},
     runTestAndSave: async () => true,
     removeKey: async () => {},
+    removeCustom: async () => {},
     cancelBackTimer: () => {},
     statusFor: () => null,
     saveField: async () => {},
@@ -85,6 +89,8 @@ function makePs(fields: Record<string, string>, setFieldValue = vi.fn()): Provid
     fetchCustomModels: async () => {},
     fetching: false,
     fetchMsg: null,
+    fetchedModels: [],
+    pickFetchedDefault: async () => {},
   };
 }
 
@@ -125,5 +131,92 @@ describe("CustomCreateForm header shows the alias", () => {
   it("renders the live alias name at the top when set", () => {
     render(wrap(<CustomCreateForm ps={{ ...makePs({}), alias: "my-gateway" }} tp="t" inline />));
     expect(screen.getByTestId("t-custom-title").textContent).toContain("my-gateway");
+  });
+});
+
+describe("custom provider identity", () => {
+  it("uses the alias as the card title and the protocol as secondary information", () => {
+    const custom: ProviderInfo = {
+      ...BEDROCK,
+      name: "fong",
+      alias: "fong",
+      title: "fong",
+      custom: true,
+      protocol: "openai-compatible",
+      blurb: "OpenAI compatible",
+      configured: true,
+    };
+    const ps = {
+      ...makePs({}),
+      providers: [custom],
+      ordered: [custom],
+      customProviders: [custom],
+      orderedCustom: [custom],
+      info: custom,
+      sel: null,
+    };
+    render(wrap(<ProviderCards ps={ps} tp="t" customOnly hideAdd />));
+    const card = screen.getByTestId("t-provider-fong");
+    expect(card.textContent).toContain("fong");
+    expect(card.textContent).toContain("OpenAI compatible");
+    expect(card.textContent).not.toContain("AWS Bedrock");
+  });
+
+  it("clears fetched models and status after create succeeds", async () => {
+    let savedProvider: ProviderInfo | null = null;
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      const json = (value: unknown) => ({ json: async () => value });
+      if (url.endsWith("/v1/protocols")) {
+        return json([{
+          id: "openai-compatible",
+          title: "OpenAI compatible",
+          needs_key: false,
+          recommended_model: null,
+          fields: [
+            { key: "api_key", label: "API key (optional)", secret: true, required: false, help: "", placeholder: "sk-…" },
+            { key: "base_url", label: "Server address", secret: false, required: true, help: "", placeholder: "https://…/v1" },
+          ],
+        }]);
+      }
+      if (url.endsWith("/v1/providers/fetch")) {
+        return json({ ok: true, models: ["code-max", "code-mini"], added: ["code-max", "code-mini"] });
+      }
+      if (url.endsWith("/v1/providers/verify")) return json({ ok: true });
+      if (url.endsWith("/v1/providers") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body));
+        savedProvider = {
+          ...BEDROCK,
+          name: body.name,
+          alias: body.name,
+          title: body.name,
+          custom: true,
+          protocol: body.protocol,
+          blurb: "OpenAI compatible",
+          needs_key: false,
+          configured: true,
+          fields: [],
+        };
+        return json({ ok: true, provider: body.name, protocol: body.protocol });
+      }
+      if (url.endsWith("/v1/providers")) return json(savedProvider ? [savedProvider] : []);
+      throw new Error(`unexpected request: ${url}`);
+    }));
+
+    function Harness() {
+      const ps = useProviderSetup();
+      return <CustomCreateForm ps={ps} tp="set" inline />;
+    }
+    render(wrap(<Harness />));
+    const alias = await screen.findByTestId("set-alias");
+    fireEvent.change(alias, { target: { value: "fong" } });
+    fireEvent.click(screen.getByTestId("set-fetch"));
+    await screen.findByTestId("fetched-models");
+    expect(screen.getByText("code-max")).toBeTruthy();
+
+    fireEvent.click(screen.getByTestId("set-create-save"));
+    await waitFor(() => expect((screen.getByTestId("set-alias") as HTMLInputElement).value).toBe(""));
+    expect(screen.queryByTestId("fetched-models")).toBeNull();
+    expect(screen.queryByTestId("set-fetch-msg")).toBeNull();
   });
 });

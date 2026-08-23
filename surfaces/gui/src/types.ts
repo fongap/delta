@@ -25,12 +25,14 @@ export type EventType =
 
 export interface WsEvent {
   type: EventType;
-  data: any;
+  version: 1;
+  sessionId: string;
+  sequence: number;
+  payload: any;
 }
 
-// Re-exported for transcript items below. Lives in api.ts (the REST/WS contract source of truth);
-// type-only import, so there's no runtime cycle with api.ts's `import type { ... } from "./types"`.
-import type { MessageSource } from "./api";
+import type { MessageSourceDto } from "./runtime-contract";
+export type { SessionDto as SessionInfo } from "./runtime-contract";
 
 // "always_task" persists to the owning automation's task record (standing scoped
 // approval, UX-DECISIONS §25) — offered only on automation-run approval cards, in-app.
@@ -60,30 +62,6 @@ export interface SessionUsage {
   context: number;
 }
 
-export interface SessionInfo {
-  session_id: string;
-  title?: string;
-  workspace: string;
-  agent: string;
-  model: string;
-  mode: string;
-  updated_at: string | null;
-  messages: number;
-  pinned?: boolean;
-  archived?: boolean;
-  // Inbox items awaiting this session (the amber attention count that bubbles up the sidebar).
-  attention?: number;
-  // working = in-flight turn; sleeping = a self-wake is pending; idle = neither. A count-less dot.
-  liveness?: "working" | "sleeping" | "idle";
-  // Channels this session listens to (inbound subscriptions).
-  subscriptions?: string[];
-  // §31: set when the session was spawned by a platform mention rather than the user —
-  // machine key ("slack") + display label ("#general · T0ABCD"). Drives the sidebar's
-  // "From Slack" group and the row's platform icon.
-  origin?: string;
-  origin_label?: string;
-}
-
 // Attachments (images, PDFs, text files) sent with a user message.
 export interface Attachment {
   kind: "image" | "text" | "pdf";
@@ -97,11 +75,11 @@ export interface Attachment {
 // `ts` = unix seconds (the server's canonical-message stamp; live items stamp locally).
 // Optional: sessions saved before the server stamped timestamps have none.
 export type Item =
-  | { kind: "user"; text: string; attachments?: Attachment[]; ts?: number }
+  | { kind: "user"; text: string; attachments?: Attachment[]; ts?: number; index?: number }
   // A connector-delivered inbound message (Slack/Salesforce/…), rendered as a structured card
   // (ConnectorMessageCard) instead of a plain user bubble. Generalizes to any connector via the
   // registry — no per-connector special-casing.
-  | { kind: "connector"; source: MessageSource }
+  | { kind: "connector"; source: MessageSourceDto }
   | { kind: "assistant"; text: string; ts?: number; reasoning?: string }
   // `hidden` = results the user's privacy filters removed before the agent saw them
   // (from the tool message's `_display` sidecar; the agent-visible content has no trace).

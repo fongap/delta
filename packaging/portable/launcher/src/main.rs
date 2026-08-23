@@ -3,7 +3,8 @@
 //! Ships as `<ROOT>\Delta.exe`. On launch it resolves the portable ROOT from its own
 //! location (`current_exe().parent()` — never CWD, never a hardcoded drive), validates the
 //! real app, initializes `Data` on first run, sets the portable-mode environment, and
-//! spawns `<ROOT>\App\Delta\Delta.exe` with the caller's arguments passed through intact.
+//! spawns `<ROOT>\App\Delta\Delta.exe` with the caller's arguments passed through intact,
+//! then exits. The GUI owns single-instance handling and the sidecar lifecycle.
 //!
 //! Everything in the whole portable is derived from ROOT at runtime, so the folder can be
 //! copied / moved / renamed / carried to another drive or machine and keeps working — no
@@ -53,7 +54,10 @@ fn run() -> Result<(), String> {
         // Best-effort WebView2 profile redirect. wry may pin its own data folder (in which
         // case this is ignored and WebView2 stays in its default location — reported as a
         // known limitation); when honored, the browser profile moves with the portable.
-        .env("WEBVIEW2_USER_DATA_FOLDER", data_dir.join("runtime").join("webview2"))
+        .env(
+            "WEBVIEW2_USER_DATA_FOLDER",
+            data_dir.join("runtime").join("webview2"),
+        )
         // Anchor the child's CWD at ROOT so no logic depends on where the user launched from.
         .current_dir(&root)
         // Pass every argument through unchanged (Unicode-safe on Windows).
@@ -65,15 +69,12 @@ fn run() -> Result<(), String> {
     #[cfg(windows)]
     cmd.creation_flags(CREATE_NO_WINDOW);
 
-    let mut child = cmd
-        .spawn()
+    cmd.spawn()
         .map_err(|e| format!("无法启动主程序：\n{}\n\n{e}", app_exe.display()))?;
-
-    // Relay: stay alive while the app runs, propagate its exit code when it closes.
-    let status = child
-        .wait()
-        .map_err(|e| format!("等待主程序退出时出错：{e}"))?;
-    std::process::exit(status.code().unwrap_or(1));
+    // Bootstrap only: the child inherits the complete environment and current directory at
+    // spawn time. Staying resident adds no cleanup or signalling guarantee — the Tauri GUI
+    // owns its sidecar and single-instance lifecycle — so return as soon as launch succeeds.
+    Ok(())
 }
 
 /// ROOT is always the launcher's own parent directory — location-independent by construction.
@@ -146,7 +147,12 @@ fn copy_tree_missing(src: &Path, dst: &Path) -> Result<(), String> {
 #[cfg(windows)]
 #[link(name = "user32")]
 extern "system" {
-    fn MessageBoxW(hwnd: *const std::ffi::c_void, text: *const u16, caption: *const u16, kind: u32) -> i32;
+    fn MessageBoxW(
+        hwnd: *const std::ffi::c_void,
+        text: *const u16,
+        caption: *const u16,
+        kind: u32,
+    ) -> i32;
 }
 
 #[cfg(windows)]
@@ -158,7 +164,12 @@ fn show_error(caption: &str, message: &str) {
     text.push(0);
     cap.push(0);
     unsafe {
-        MessageBoxW(std::ptr::null(), text.as_ptr(), cap.as_ptr(), MB_OK_ICONERROR);
+        MessageBoxW(
+            std::ptr::null(),
+            text.as_ptr(),
+            cap.as_ptr(),
+            MB_OK_ICONERROR,
+        );
     }
 }
 

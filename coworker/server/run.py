@@ -95,6 +95,9 @@ def _watch_parent_windows(parent: int) -> None:
     def watch() -> None:
         if kernel32.WaitForSingleObject(handle, INFINITE) == WAIT_OBJECT_0:
             os._exit(0)
+        # Not parent-death (WAIT_FAILED on a stale handle, etc.) — release the handle
+        # and let the daemon thread end; os._exit reclaims it on the death path anyway.
+        kernel32.CloseHandle(handle)
 
     threading.Thread(target=watch, daemon=True).start()
 

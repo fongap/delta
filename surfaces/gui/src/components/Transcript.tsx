@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ApprovalDecision, Item } from "../types";
 import { shortArgs } from "./ApprovalCard";
 import { humanizeAsk, humanizeTool, type HumanLine } from "../humanize";
@@ -34,7 +34,21 @@ function ClampedUserText({ text }: { text: string }) {
 // Lives in a ZERO-HEIGHT strip under the bubble (absolute, inside the transcript's 20px gap)
 // so revealing it on group-hover never shifts the layout. `ts` is unix seconds — canonical
 // messages carry it, pre-stamp history doesn't, so the time simply omits itself when absent.
-function BubbleMeta({ text, ts, align }: { text: string; ts?: number; align: "left" | "right" }) {
+function BubbleMeta({
+  text,
+  ts,
+  align,
+  actions,
+  prefix,
+}: {
+  text: string;
+  ts?: number;
+  align: "left" | "right";
+  /** Extra inline actions (e.g. Edit) rendered after the time, before copy. */
+  actions?: ReactNode;
+  /** Leading Provider/model text rendered before the time. */
+  prefix?: string;
+}) {
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
   const when = typeof ts === "number" ? new Date(ts * 1000) : null;
@@ -57,6 +71,13 @@ function BubbleMeta({ text, ts, align }: { text: string; ts?: number; align: "le
           (align === "right" ? "right-0" : "left-0")
         }
       >
+        {prefix && <span className="font-medium">{prefix} ·</span>}
+        {when && (
+          <span data-testid="bubble-ts" title={when.toLocaleString()}>
+            {when.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
+          </span>
+        )}
+        {actions}
         <button
           className="flex items-center cursor-pointer hover:text-muted"
           data-testid="bubble-copy"
@@ -65,11 +86,6 @@ function BubbleMeta({ text, ts, align }: { text: string; ts?: number; align: "le
         >
           {copied ? t("transcript.copied", undefined, "Copied") : <Icon name="copy" size={11} />}
         </button>
-        {when && (
-          <span data-testid="bubble-ts" title={when.toLocaleString()}>
-            {when.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
-          </span>
-        )}
       </div>
     </div>
   );
@@ -78,6 +94,104 @@ function BubbleMeta({ text, ts, align }: { text: string; ts?: number; align: "le
 // Reasoning-model thinking text (model-layer roadmap item 4): a quiet disclosure —
 // collapsed by default, the trace one click away. `live` = still streaming (pulsing label);
 // App renders that variant above the transcript, this one rides a finalized assistant item.
+/** Error/warn notice with view-then-collapse behavior: born expanded so the error is
+    readable immediately, auto-collapses to a one-line summary after a few idle seconds
+    (a long raw API dump used to sit in the transcript forever), and re-expands on click.
+    Hovering pauses the collapse — actively reading it counts as "not yet viewed". */
+function CollapsibleNotice({
+  text,
+  providerError,
+  showRetry,
+  retrying,
+  onRetry,
+}: {
+  text: string;
+  providerError?: boolean;
+  showRetry?: boolean;
+  retrying?: boolean;
+  onRetry?: () => void;
+}) {
+  const { t } = useI18n();
+  const [expanded, setExpanded] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const hoverRef = useRef(false);
+  // Auto-collapse once the user has had a chance to read it (and isn't mid-read).
+  useEffect(() => {
+    if (!expanded) return;
+    const timer = setTimeout(() => {
+      if (!hoverRef.current) setExpanded(false);
+    }, 6000);
+    return () => clearTimeout(timer);
+  }, [expanded]);
+  const firstLine = text.split("\n", 1)[0] || text;
+  const summary = providerError
+    ? t(
+        "errors.provider.temporarilyUnavailable",
+        undefined,
+        "Provider temporarily unavailable. You can retry.",
+      )
+    : firstLine;
+  const hasDetails = providerError || text.includes("\n") || text.length > 140;
+  return (
+    <div
+      className={"notice warn" + (expanded ? " expanded" : "")}
+      onMouseEnter={() => {
+        hoverRef.current = true;
+      }}
+      onMouseLeave={() => {
+        hoverRef.current = false;
+      }}
+    >
+      <span>{summary}</span>
+      {retrying && (
+        <span className="text-muted ml-2" data-testid="notice-retrying">
+          {t("transcript.retrying", undefined, "Retrying…")}
+        </span>
+      )}
+      {hasDetails && (
+        <button
+          type="button"
+          className="text-faint ml-1 hover:text-ink"
+          onClick={() => setExpanded((current) => !current)}
+        >
+          {expanded
+            ? t("transcript.errorHide", undefined, "Hide details")
+            : t("transcript.errorShow", undefined, "Show details")}
+        </button>
+      )}
+      {expanded && hasDetails && (
+        <div className="mt-2 rounded-md border border-line bg-paper/70 p-2 text-left text-[11.5px] font-mono whitespace-pre-wrap break-all">
+          <div>{text}</div>
+          <button
+            type="button"
+            className="mt-1.5 font-sans text-faint hover:text-ink"
+            onClick={() => {
+              void navigator.clipboard?.writeText(text);
+              setCopied(true);
+            }}
+          >
+            {copied
+              ? t("transcript.copied", undefined, "Copied")
+              : t("transcript.copyDetails", undefined, "Copy details")}
+          </button>
+        </div>
+      )}
+      {showRetry && (
+        <button
+          className="btn ml-2"
+          data-testid="notice-retry"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRetry?.();
+          }}
+        >
+          {t("transcript.retry", undefined, "Retry")}
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function ThinkingBlock({ text, live }: { text: string; live?: boolean }) {
   const { t } = useI18n();
   const [open, setOpen] = useState(false);
@@ -351,6 +465,10 @@ interface Props {
   // MEMORY-SPEC §5.1: undo a just-announced write. `previous` (set when the write was
   // an edit) is the text to restore; without it the memory is deleted.
   onUndoMemory?: (id: number, previous?: string) => void;
+  // opencode-style revert: truncate from this user message onward + prefill the composer.
+  onEditMessage?: (index: number) => void;
+  // Hover-row prefix for user bubbles: Provider/model only (opencode-style meta).
+  userMetaPrefix?: string;
 }
 
 // The transcript index whose notice gets the Retry button: the tail error notice, looking
@@ -366,7 +484,7 @@ export function retryAnchor(items: Item[]): number {
   return -1;
 }
 
-export function Transcript({ items, running, streamingText, onRetry, onUndoMemory }: Props) {
+export function Transcript({ items, running, streamingText, onRetry, onUndoMemory, onEditMessage, userMetaPrefix }: Props) {
   const { t } = useI18n();
   // §33 grouping: a turn = the maximal run of assistant/tool/resolved-approval items between
   // breakers (user, connector, notices, plan/dir requests…). Trailing assistant texts are the
@@ -441,7 +559,26 @@ export function Transcript({ items, running, streamingText, onRetry, onUndoMemor
                   )}
                   <ClampedUserText text={item.text} />
                 </div>
-                <BubbleMeta text={item.text} ts={item.ts} align="right" />
+                <BubbleMeta
+                  text={item.text}
+                  ts={item.ts}
+                  align="left"
+                  prefix={userMetaPrefix}
+                  actions={
+                    onEditMessage && item.index !== undefined ? (
+                      /* Edit = revert + prefill: the thread truncates back to before this
+                          message and the original text returns to the composer; re-send
+                          produces a fresh answer to the edited content. */
+                      <button
+                        className="flex items-center cursor-pointer hover:text-muted"
+                        title={t("transcript.editMessage", undefined, "Edit")}
+                        onClick={() => onEditMessage(item.index!)}
+                      >
+                        <Icon name="pencil" size={11} />
+                      </button>
+                    ) : undefined
+                  }
+                />
               </div>
             );
           case "assistant":
@@ -454,7 +591,8 @@ export function Transcript({ items, running, streamingText, onRetry, onUndoMemor
               );
             return (
               <div className="group bubble-assistant" key={bi}>
-                <div className="who">{t("transcript.whoAssistant", undefined, "assistant")}</div>
+                {/* No "assistant" speaker label — mainstream chat UIs distinguish by
+                    alignment alone, and the label read as a stray "智能体" tag. */}
                 {item.reasoning && <ThinkingBlock text={item.reasoning} />}
                 <Markdown text={item.text} />
                 <BubbleMeta text={item.text} ts={item.ts} align="left" />
@@ -486,8 +624,21 @@ export function Transcript({ items, running, streamingText, onRetry, onUndoMemor
               </div>
             );
           case "notice":
+            // Errors/warnings get the view-then-collapse treatment (a raw API dump used
+            // to sit expanded in the transcript forever); info notices stay as-is.
+            if (item.tone === "warn")
+              return (
+                <CollapsibleNotice
+                  key={bi}
+                  text={item.text}
+                  providerError={!!item.retriable}
+                  showRetry={item.retriable && !running && !!onRetry && block.i === retryAnchor(items)}
+                  retrying={item.retriable && running && block.i === retryAnchor(items)}
+                  onRetry={onRetry}
+                />
+              );
             return (
-              <div className={"notice " + (item.tone === "warn" ? "warn" : "")} key={bi}>
+              <div className="notice" key={bi}>
                 {item.text}
                 {item.retriable && !running && onRetry && block.i === retryAnchor(items) && (
                   <button className="btn ml-2" data-testid="notice-retry" onClick={onRetry}>

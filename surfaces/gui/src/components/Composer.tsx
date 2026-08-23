@@ -1,6 +1,13 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import type { Attachment, SessionUsage } from "../types";
-import { isPdfFile, readFile } from "../attach";
+import {
+  TEXT_FILE_ACCEPT,
+  isPdfFile,
+  mergeAttachments,
+  readFile,
+  validateAttachmentSet,
+  type AttachmentReject,
+} from "../attach";
 import { getSettings, inspectPdf, sessionSkills, type SessionSkillRow } from "../api";
 import { formatTokens, totalTokens } from "../usage";
 import { Dropdown, type Option } from "./Dropdown";
@@ -37,17 +44,6 @@ const PERMISSION_OPTIONS: { value: string; label: string; desc: string }[] = [
 // Drop the provider prefix for display (anthropic:claude-opus-4-8 → claude-opus-4-8); full id on hover.
 const shortModel = (m: string) => (m.includes(":") ? m.split(":").slice(1).join(":") : m);
 
-// Identify an attachment by name + payload size so duplicates (e.g. the same file picked twice,
-// or a prefill applied twice) collapse to one chip.
-const attKey = (a: Attachment) =>
-  a.kind === "text"
-    ? `t:${a.name}:${a.text?.length ?? 0}`
-    : `${a.kind[0]}:${a.name}:${a.data_url?.length ?? 0}`;
-const mergeAttachments = (cur: Attachment[], add: Attachment[]): Attachment[] => {
-  const seen = new Set(cur.map(attKey));
-  return [...cur, ...add.filter((a) => !seen.has(attKey(a)))].slice(0, 8);
-};
-
 interface Props {
   mode: string;
   model: string;
@@ -70,6 +66,10 @@ interface Props {
   onInterrupt: () => void;
   onModeChange: (mode: string) => void;
   onModelChange: (model: string) => void;
+  // Session default applied to the next message. The sidebar menu mirrors this value;
+  // the composer is the discoverable primary control before the first send.
+  reasoningEffort?: string;
+  onReasoningEffortChange?: (effort: string) => void;
   // When set (Code/Cowork), the Mode menu is shown. The folder/roots + branch controls left the
   // composer for the Session settings drawer (§22) — folder access is standing session config.
   workspace?: string;
@@ -93,6 +93,8 @@ interface Props {
   contextWindow?: number;
   // Settings toggle (default off): true shows the fill bar instead of the session total.
   contextBar?: boolean;
+  externalNotice?: string | null;
+  onExternalNoticeDismiss?: () => void;
 }
 
 export function Composer(props: Props) {
@@ -157,6 +159,25 @@ export function Composer(props: Props) {
     noticeTimer.current = window.setTimeout(() => setAttachNotice(null), 8000);
   };
 
+  const attachmentRejectText = (rejected: AttachmentReject): string => {
+    const sizeMb = rejected.maxBytes ? (rejected.maxBytes / 1024 / 1024).toFixed(1) : "";
+    const reason =
+      rejected.code === "unsupported"
+        ? t("composer.attachmentUnsupported", undefined, "Unsupported format")
+        : rejected.code === "file_too_large"
+          ? t("composer.attachmentTooLarge", { maxMb: sizeMb }, `File is over the ${sizeMb} MB limit`)
+          : rejected.code === "read_failed"
+            ? t("composer.attachmentReadFailed", undefined, "Could not read the file")
+            : rejected.code === "too_many"
+              ? t("composer.attachmentTooMany", undefined, "Only 8 attachments are allowed")
+              : rejected.code === "total_too_large"
+                ? t("composer.attachmentTotalTooLarge", undefined, "Attachments exceed the 15 MB message limit")
+                : rejected.code === "duplicate"
+                  ? t("composer.attachmentDuplicate", undefined, "Already attached")
+                  : t("composer.attachmentInvalid", undefined, "The file cannot be sent");
+    return `${rejected.name || t("composer.attachmentUnnamed", undefined, "Unnamed file")}: ${reason}`;
+  };
+
   useLayoutEffect(() => {
     const el = textareaRef.current;
     if (!el) return;
@@ -187,7 +208,9 @@ export function Composer(props: Props) {
     if (!p || p.nonce === appliedNonce.current) return;
     appliedNonce.current = p.nonce;
     setText(p.text);
-    if (p.attachments?.length) setAttachments((cur) => mergeAttachments(cur, p.attachments!));
+    if (p.attachments?.length) {
+      setAttachments((cur) => mergeAttachments(cur, p.attachments!).attachments);
+    }
     textareaRef.current?.focus();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [props.prefill?.nonce]);
@@ -261,6 +284,7 @@ export function Composer(props: Props) {
   // The rationale is token cost: a big PDF re-rides every turn of the conversation.
   const addFiles = async (files: FileList | File[]) => {
     const list = Array.from(files);
+    const notices: string[] = [];
     let maxPages = 20;
     let maxMb = 10;
     if (list.some(isPdfFile)) {
@@ -275,7 +299,7 @@ export function Composer(props: Props) {
     const accepted: File[] = [];
     for (const file of list) {
       if (isPdfFile(file) && file.size > maxMb * 1024 * 1024) {
-        showAttachNotice(
+        notices.push(
           t(
             "composer.pdfSizeSkipped",
             {
@@ -290,13 +314,18 @@ export function Composer(props: Props) {
       }
       accepted.push(file);
     }
-    const read = (await Promise.all(accepted.map(readFile))).filter(Boolean) as Attachment[];
+    const read = await Promise.all(accepted.map(readFile));
     const next: Attachment[] = [];
-    for (const a of read) {
+    for (const result of read) {
+      if (!result.ok) {
+        notices.push(attachmentRejectText(result));
+        continue;
+      }
+      const a = result.attachment;
       if (a.kind === "pdf" && a.data_url) {
         const info = await inspectPdf(a.data_url).catch(() => null);
         if (info?.ok && (info.pages ?? 0) > maxPages) {
-          showAttachNotice(
+          notices.push(
             t(
               "composer.pdfPagesSkipped",
               { name: a.name, pages: info.pages ?? 0, maxPages },
@@ -306,7 +335,7 @@ export function Composer(props: Props) {
           continue;
         }
         if (info && !info.ok) {
-          showAttachNotice(
+          notices.push(
             t(
               "composer.pdfReadFailed",
               { name: a.name, error: info.error || "" },
@@ -318,7 +347,12 @@ export function Composer(props: Props) {
       }
       next.push(a);
     }
-    if (next.length) setAttachments((a) => mergeAttachments(a, next));
+    if (next.length) {
+      const merged = mergeAttachments(attachments, next);
+      setAttachments(merged.attachments);
+      notices.push(...merged.rejected.map(attachmentRejectText));
+    }
+    if (notices.length) showAttachNotice(notices.join("; "));
   };
 
   // The "+" menu offers typed shortcuts; each just narrows the OS picker's filter.
@@ -349,6 +383,11 @@ export function Composer(props: Props) {
     // No model connected: keep the draft (don't drop it) and send the user to setup instead.
     if (needsModel) {
       props.onConnectModel?.();
+      return;
+    }
+    const invalidAttachments = validateAttachmentSet(attachments);
+    if (invalidAttachments) {
+      showAttachNotice(attachmentRejectText(invalidAttachments));
       return;
     }
     props.onSend(t, attachments, skill);
@@ -388,13 +427,13 @@ export function Composer(props: Props) {
   };
 
   const onPaste = (e: React.ClipboardEvent) => {
-    const imgs = Array.from(e.clipboardData.items)
-      .filter((it) => it.kind === "file" && it.type.startsWith("image/"))
+    const files = Array.from(e.clipboardData.items)
+      .filter((it) => it.kind === "file")
       .map((it) => it.getAsFile())
       .filter(Boolean) as File[];
-    if (imgs.length) {
+    if (files.length) {
       e.preventDefault();
-      addFiles(imgs);
+      void addFiles(files);
     }
   };
 
@@ -460,16 +499,19 @@ export function Composer(props: Props) {
         </div>
       )}
 
-      {/* Rejected-attachment notice (PDF over the user's Token-savings thresholds). */}
-      {attachNotice && (
+      {/* Picker/drop/paste/backend attachment failures share one visible notice area. */}
+      {(props.externalNotice || attachNotice) && (
         <div
           data-testid="attach-notice"
           className="max-w-3xl mx-auto mb-1.5 flex items-center gap-2 rounded-lg border border-warnInk/30 bg-warnSoft px-3 py-1.5 text-[12.5px] text-warnInk"
         >
-          <span className="flex-1">{attachNotice}</span>
+          <span className="flex-1">{props.externalNotice || attachNotice}</span>
           <button
             className="shrink-0 opacity-60 hover:opacity-100"
-            onClick={() => setAttachNotice(null)}
+            onClick={() => {
+              setAttachNotice(null);
+              props.onExternalNoticeDismiss?.();
+            }}
             title={t("composer.dismiss", undefined, "Dismiss")}
           >
             ✕
@@ -564,9 +606,16 @@ export function Composer(props: Props) {
                   {attachItem("file", t("composer.attachPdf", undefined, "PDF"), () => pickFiles("application/pdf,.pdf"))}
                   {attachItem(
                     "fileCode",
-                    t("composer.attachOther", undefined, "Other files"),
-                    () => pickFiles("text/*,.md,.csv,.json,.yaml,.yml,.log,.py,.ts,.tsx,.js,.rs,.go,.toml"),
+                    t("composer.attachTextCode", undefined, "Text and code"),
+                    () => pickFiles(TEXT_FILE_ACCEPT),
                   )}
+                  <div className="px-3 pt-1.5 pb-0.5 text-[10.5px] leading-snug text-faint">
+                    {t(
+                      "composer.attachmentKinds",
+                      undefined,
+                      "Supports images, PDFs, text, and code. Office files, archives, and other binary files are not supported.",
+                    )}
+                  </div>
                 </div>
               </>
             )}
@@ -649,6 +698,14 @@ export function Composer(props: Props) {
             </button>
           ))}
 
+          {!dictation?.recording && props.onReasoningEffortChange && (
+            <ReasoningMenu
+              value={props.reasoningEffort || "auto"}
+              disabled={props.running}
+              onChange={props.onReasoningEffortChange}
+            />
+          )}
+
           {/* mic — immediately before send (owner call, DMG #28 walkthrough) */}
           {isTauri() && (
             <button
@@ -703,6 +760,85 @@ export function Composer(props: Props) {
       <span className="sr-only" role="status" aria-live="polite">
         {dictation?.recording ? t("composer.listening", { time: recordingTime }, `Listening, ${recordingTime}`) : dictationBusy || ""}
       </span>
+    </div>
+  );
+}
+
+const REASONING_LEVELS = ["auto", "low", "high", "max"] as const;
+
+function ReasoningMenu({
+  value,
+  disabled,
+  onChange,
+}: {
+  value: string;
+  disabled: boolean;
+  onChange: (value: string) => void;
+}) {
+  const { t } = useI18n();
+  const [open, setOpen] = useState(false);
+  const trigger = useRef<HTMLButtonElement | null>(null);
+  const label = t(`nav.reasoning.${value}`, undefined, value);
+  const close = () => {
+    setOpen(false);
+    window.requestAnimationFrame(() => trigger.current?.focus());
+  };
+  return (
+    <div className="dd" onKeyDown={(event) => {
+      if (event.key === "Escape" && open) {
+        event.preventDefault();
+        close();
+      }
+    }}>
+      <button
+        ref={trigger}
+        className="pill chip"
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label={t("composer.reasoningAria", { level: label }, `Reasoning depth: ${label}`)}
+        title={
+          disabled
+            ? t("composer.reasoningRunning", undefined, "Available after the current task finishes")
+            : t("composer.reasoningNext", undefined, "Applies to the next message")
+        }
+        disabled={disabled}
+        data-testid="reasoning-menu-trigger"
+        onClick={() => setOpen((current) => !current)}
+      >
+        <span className="pill-label">
+          {t("nav.reasoningDepth", undefined, "Reasoning depth")}: {label}
+        </span>
+        <Icon name="chevronDown" size={13} className="caret" />
+      </button>
+      {open && !disabled && (
+        <>
+          <div className="dd-backdrop" onClick={close} />
+          <div className="dd-menu right" role="menu">
+            {REASONING_LEVELS.map((level) => (
+              <button
+                type="button"
+                role="menuitemradio"
+                aria-checked={value === level}
+                className={"dd-item w-full text-left" + (value === level ? " sel" : "")}
+                key={level}
+                onClick={() => {
+                  onChange(level);
+                  close();
+                }}
+              >
+                <span className="dd-label">
+                  {t(`nav.reasoning.${level}`, undefined, level)}
+                  {value === level && <span className="chk">✓</span>}
+                </span>
+                <span className="dd-desc">
+                  {t(`composer.reasoning.${level}Desc`, undefined, level === "auto" ? "Use the model default" : "Adjust the speed and depth tradeoff")}
+                </span>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }

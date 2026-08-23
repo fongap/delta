@@ -9,12 +9,12 @@ dist/
 **/target/
 *.log
 
-# Build outputs (Windows installers / sidecar staging)
+# Build outputs (packaging staging and local release artifacts)
 surfaces/gui/src-tauri/binaries/
 surfaces/gui/src-tauri/target/release/bundle/
-packaging/out/
 packaging/build/
 packaging/portable/target/
+releases/
 
 # Local secrets (live-smoke BYO keys) — never committed
 .env

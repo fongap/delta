@@ -33,6 +33,20 @@ export function SearchModal({
     inputRef.current?.focus();
   }, []);
 
+  // Escape must work regardless of where focus sits: the container-level onKeyDown only
+  // fires while focus stays inside this subtree, so one click on a non-focusable spot of
+  // the modal (header padding, list background) drops focus to <body> and Esc went dead.
+  useEffect(() => {
+    const onWinKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", onWinKey);
+    return () => window.removeEventListener("keydown", onWinKey);
+  }, [onClose]);
+
   const personaOf = (id: string) => personas?.find((p) => p.id === id);
   // Right-side tag: the project folder for project-scoped personas, else the short persona name.
   const tagFor = (s: SessionInfo) =>
@@ -66,8 +80,7 @@ export function SearchModal({
 
   const onKey = (e: React.KeyboardEvent) => {
     if (e.key === "Escape") {
-      e.preventDefault();
-      onClose();
+      return; // handled by the window-level listener above (focus-independent)
     } else if (e.key === "ArrowDown") {
       e.preventDefault();
       setActive((i) => Math.min(i + 1, ordered.length - 1));

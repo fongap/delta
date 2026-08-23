@@ -329,8 +329,9 @@ def test_manager_curated_models(tmp_path, monkeypatch):
     monkeypatch.setattr(SessionManager, "_ollama_alive", lambda self: True)
 
     mgr = SessionManager(data_dir=tmp_path)
-    # no provider keys → nothing but the always-selectable default
-    assert mgr.get_settings()["models"] == [mgr.model]
+    # no provider keys — nothing selectable yet: no default model has been chosen, and
+    # blank defaults never surface as a picker entry
+    assert mgr.get_settings()["models"] == []
 
     # a provider key unlocks exactly that provider's matrix models
     mgr.set_provider("anthropic", {"api_key": "sk-ant-test"})
@@ -409,8 +410,10 @@ def test_custom_descriptor_resolves_and_routes():
     cleanup = _with_custom()
     try:
         d = get_descriptor("mygw")
-        assert d is not None and d.title == "OpenAI compatible"
-        assert d.needs_key is True
+        assert d is not None and d.title == "mygw"
+        assert d.blurb == "OpenAI compatible"
+        # Key OPTIONAL: local OpenAI-compatible servers often run without auth.
+        assert d.needs_key is False
 
         # alias:model routes to the custom provider; the bare part strips the prefix
         router = ProviderRouter(secrets=None)
@@ -440,6 +443,21 @@ def test_custom_descriptor_protocol_fields():
         assert keys == {"base_url"}
     finally:
         cleanup("local")
+
+
+def test_custom_aliases_with_same_protocol_keep_distinct_titles():
+    from coworker.providers import get_descriptor
+    from coworker.providers.registry import register_custom_provider, unregister_custom_provider
+
+    register_custom_provider("fong", "openai-compatible")
+    register_custom_provider("local-gateway", "openai-compatible")
+    try:
+        assert get_descriptor("fong").title == "fong"
+        assert get_descriptor("local-gateway").title == "local-gateway"
+        assert get_descriptor("fong").blurb == get_descriptor("local-gateway").blurb
+    finally:
+        unregister_custom_provider("fong")
+        unregister_custom_provider("local-gateway")
 
 
 def test_custom_registration_validates():
@@ -481,7 +499,9 @@ def test_custom_provider_roundtrip(tmp_path, monkeypatch):
 
     provs = {p["name"]: p for p in mgr.get_providers()}
     assert provs["mygw"]["configured"] is True
-    assert provs["mygw"]["needs_key"] is True
+    assert provs["mygw"]["needs_key"] is False
+    assert provs["mygw"]["title"] == "mygw"
+    assert provs["mygw"]["protocol"] == "openai-compatible"
 
     # model routing resolves through the alias
     assert mgr.provider._provider_name("mygw:gpt-4o") == "mygw"
@@ -490,7 +510,8 @@ def test_custom_provider_roundtrip(tmp_path, monkeypatch):
     mgr2 = SessionManager(data_dir=tmp_path)
     assert mgr2.provider._provider_name("mygw:gpt-4o") == "mygw"
     provs2 = {p["name"]: p for p in mgr2.get_providers()}
-    assert "mygw" in provs2
+    assert provs2["mygw"]["title"] == "mygw"
+    assert provs2["mygw"]["protocol"] == "openai-compatible"
 
 
 def test_custom_provider_rejects_builtin_collision(tmp_path, monkeypatch):

@@ -96,6 +96,7 @@ class ConversationStore:
             "ALTER TABLE sessions ADD COLUMN renamed INTEGER DEFAULT 0",
             "ALTER TABLE sessions ADD COLUMN grants TEXT",
             "ALTER TABLE sessions ADD COLUMN compaction TEXT",
+            "ALTER TABLE sessions ADD COLUMN reasoning_effort TEXT DEFAULT 'auto'",
         ):
             try:
                 self._conn.execute(ddl)
@@ -130,6 +131,34 @@ class ConversationStore:
         with open(self._file(sid), "a", encoding="utf-8") as f:
             for m in messages:
                 f.write(json.dumps(m) + "\n")
+
+    def revert(self, sid: str, index: int) -> list[dict]:
+        """Drop messages from `index` onward (the user message at `index` and everything
+        after), keeping [0, index). Returns the dropped slice so the caller can prefill the
+        composer with the original user text. The JSONL is append-only for normal turns;
+        revert is the one explicit rewrite (a user action), under the store lock."""
+        with self._lock:
+            path = self._file(sid)
+            if not path.exists():
+                return []
+            messages = [
+                json.loads(line)
+                for line in path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
+            if index <= 0 or index >= len(messages):
+                return []
+            dropped = messages[index:]
+            path.write_text(
+                "".join(json.dumps(m) + "\n" for m in messages[:index]),
+                encoding="utf-8",
+            )
+            self._conn.execute(
+                "UPDATE sessions SET n_msgs = MAX(0, n_msgs - ?) WHERE session_id = ?",
+                (len(dropped), sid),
+            )
+            self._conn.commit()
+            return dropped
 
     def _backfill_counts(self) -> None:
         """One-time per session: move any inline blob into a .jsonl and persist
@@ -192,13 +221,14 @@ class ConversationStore:
             title = record.title or title_from(record.messages)
             self._conn.execute(
                 """
-                INSERT INTO sessions (session_id, workspace, model, mode, title, agent, n_msgs, messages, extra_roots, grants, compaction, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, CURRENT_TIMESTAMP)
+                INSERT INTO sessions (session_id, workspace, model, mode, title, agent, n_msgs, messages, extra_roots, grants, compaction, reasoning_effort, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(session_id) DO UPDATE SET
                     workspace = excluded.workspace, model = excluded.model, mode = excluded.mode,
                     title = COALESCE(sessions.title, excluded.title), agent = excluded.agent,
                     n_msgs = excluded.n_msgs, messages = NULL, extra_roots = excluded.extra_roots,
                     grants = excluded.grants, compaction = excluded.compaction,
+                    reasoning_effort = excluded.reasoning_effort,
                     updated_at = CURRENT_TIMESTAMP
                 """,
                 (
@@ -212,6 +242,7 @@ class ConversationStore:
                     json.dumps(record.extra_roots or []),
                     json.dumps(record.grants or {}),
                     json.dumps(record.compaction or {}),
+                    record.reasoning_effort,
                 ),
             )
             self._conn.commit()
@@ -252,6 +283,10 @@ class ConversationStore:
             archived=bool(row["archived"]),
             origin=row["origin"],
             origin_label=row["origin_label"],
+            reasoning_effort=(
+                row["reasoning_effort"] if "reasoning_effort" in row.keys() else "auto"
+            )
+            or "auto",
         )
 
     def set_extra_roots(self, session_id: str, extra_roots: list[dict]) -> None:
@@ -290,6 +325,12 @@ class ConversationStore:
                 archived=bool(r["archived"]),
                 origin=r["origin"],
                 origin_label=r["origin_label"],
+                reasoning_effort=(
+                    r["reasoning_effort"]
+                    if "reasoning_effort" in r.keys()
+                    else "auto"
+                )
+                or "auto",
             )
             for r in rows
         ]

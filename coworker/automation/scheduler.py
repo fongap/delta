@@ -108,6 +108,8 @@ class Scheduler:
         if fresh is not None:
             fresh.run_count += 1
             fresh.last_run = run.started_at if run else None
-            fresh.last_status = run.status if run else "error"
+            # A runner may legitimately return None ("nothing to do") — that is not an
+            # error, so record it distinctly instead of the indistinguishable "error".
+            fresh.last_status = run.status if run else "skipped"
             self.store.save(fresh)
         return run

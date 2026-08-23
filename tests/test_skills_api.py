@@ -313,8 +313,8 @@ def test_ws_force_run_frames_the_turn(tmp_path):
     assert 'load_skill("greet")' in str(framed)
     assert "hello" in str(framed)
     start = next(e for e in events if e["type"] == "turn_start")
-    assert start["data"]["display"] == "/greet hello"  # what the transcript shows
-    assert "load_skill" in str(start["data"]["input"])  # what the model saw
+    assert start["payload"]["display"] == "/greet hello"  # what the transcript shows
+    assert "load_skill" in str(start["payload"]["input"])  # what the model saw
     stored = client.get("/v1/sessions/s1/messages").json()["messages"]
     user = next(m for m in stored if m["role"] == "user")
     assert user["_display"] == "/greet hello"
@@ -331,7 +331,7 @@ def test_ws_force_run_unknown_and_muted_error_without_killing_socket(tmp_path):
         ws.send_json({"type": "user_message", "text": "x", "skill": "ghost"})
         evt = ws.receive_json()
         assert evt["type"] == "input_rejected"
-        assert "not available" in evt["data"]["error"]
+        assert "not available" in evt["payload"]["error"]
         # muted skill → same rejection (§4.6 #15: no silent auto-unmute)
         ws.send_json({"type": "user_message", "text": "x", "skill": "greet"})
         evt = ws.receive_json()

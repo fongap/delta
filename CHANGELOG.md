@@ -4,7 +4,35 @@
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-24
+
+### 变更 (Changed)
+
+#### 2026-08-24 02:54
+
+- **0.2.0 发布基线与 Windows 便携版唯一发布链路**
+  - Python、npm、Tauri 与便携启动器版本统一为 `0.2.0`；已验证的 Python 运行时、测试和消息/Bedrock 可选依赖改为精确版本，`aisuite` 保留上游不可变 commit 以维持当前 Agent/runtime 修复集。
+  - 默认本地发布入口与 GitHub Actions 收敛为 Windows portable-only：最终仅生成 `releases/Delta-0.2.0-Windows-Portable.zip` 及其 `.sha256`，MSI、NSIS、DMG 与安装版 updater 脚本和配置保留但冻结，不再由当前发布工作流执行或上传。
+  - 便携构建的中间目录移至 `packaging/build`/`packaging/dist`，最终 ZIP 严格只含单个 `Delta/` 顶层目录；launcher 每次从当前源码重建，避免复用旧版本资源。
+  - 修复显式选择位于 Windows `AppData` 下的工作区时 ripgrep 系统目录排除规则误伤整个搜索根的问题；生成目录仍按原规则排除。
+  - 发布验证通过：后端 `1197 passed, 3 skipped`，前端 `151 passed`、TypeScript 检查和生产构建通过；ZIP 校验和、绝对路径泄漏扫描、launcher/GUI/sidecar 启停与便携数据目录 smoke 均通过。
+
 ### 新增 (Added)
+
+#### 2026-08-23 23:06
+
+- **UI Runtime Contract 第二批（UI-005、UI-006、UI-008、UI-015、UI-016）**
+  - 建立后端 Pydantic 与前端维护型契约层，明确 session/message/approval/artifact/model 五类核心 DTO 的必需字段、默认值和 additive-fields 规则。
+  - 当前全部 session/app-wide WebSocket 出站事件原子切换为唯一 v1 包络 `type/version/sessionId/sequence/payload`；协议与事件版本均固定为 1，无会话 app-wide 事件使用 `sessionId: null`，前端只解析此格式。
+  - sidecar token `401` 原子切换为唯一 `code/message/details/retriable` HTTP 错误包络；业务 2xx `{ok:false,...}` 响应不纳入本阶段。
+  - 增加后端 schema/事件端到端测试及前端默认值、额外字段、禁用字段 fixture 测试；当前源码 build 与 PyInstaller sidecar 启动 smoke 通过，未迁移其余 REST 业务响应或 Provider 管理接口。
+
+#### 2026-08-23 22:11
+
+- **UI Runtime Contract 第一批（UI-001～UI-004、UI-007）**
+  - 完成 GUI REST、WebSocket/SSE 边界盘点与 UI 领域边界 ADR；保持 Delta 本地实现、Provider 扩展和桌面运行方式不变。
+  - `/v1/health` 增加必需的 `protocolVersion` 与 `capabilities`；GUI 要求当前 protocol v1，未知 capability、额外字段及未知/畸形事件产生去重诊断并被忽略。
+  - 增加后端协商字段测试和前端严格 bootstrap/事件降级测试，不拆仓、不移动组件、不改变用户可见流程。
 
 #### 2026-08-22 07:10
 
@@ -19,6 +47,111 @@
   - `build_portable.ps1` 步骤 1 修复：PyInstaller 的进度日志经 stderr 输出、被宿主捕获时在 PowerShell 5.1 下被包装为 ErrorRecord，与全局 `$ErrorActionPreference="Stop"` 叠加会让 `--clean` 每次都把首个 INFO 行误判为失败；已将错误偏好收敛到该调用局部、仅以退出码判定成败（`--clean` 前保持 `$ErrorActionPreference="Stop"` 的全局行为不变）。
 
 ### 修复 (Fixed)
+
+#### 2026-08-24 01:37
+
+- **会话推理、自定义服务商、附件与重试体验修复**
+  - 修复 `reasoning_effort` 在引擎保存、WebSocket 断开及会话列表重载后回退为 `auto`；Composer 模型选择器旁新增会话级「思考深度」入口，PATCH 成功后立即同步本地状态，下一条消息按当前档位发送。
+  - 自定义服务商以 alias 作为注册表、卡片和详情页主标题，协议降为辅助信息；统一创建/编辑表单中文文案，alias 明确只读，创建成功或切换表单时清空已拉取模型与状态，并支持删除后重建。
+  - picker、拖拽和粘贴统一使用同一附件策略：仅接受图片、PDF、文本/代码，明确报告不支持、超限、超过 8 个、总 payload 超限、重复、空内容及读取失败；前后端入口上限和数据 URL 校验对齐，发送前再次校验，附件拒绝不再写入模型 transcript。
+  - Provider 可重试错误改为本地化摘要，原始基础设施详情默认折叠且可复制；重试中显示当前尝试状态，普通警告保持原文，不被误标为服务商故障。
+  - 新增 reasoning 持久化、Provider alias/重置、附件契约、错误重试与布局回归；相关后端 90 项、前端 151 项测试、生产构建和 7 项 Playwright 用例通过。
+
+#### 2026-08-24 00:27
+
+- **聊天布局回归、标题/消息元数据精简与 portable launcher 生命周期修复**
+  - 修复 Grid 第二列 auto min-size 与主内容 Flex 收缩链路：主聊天区、Transcript、思考过程和 Markdown 内容可正确收缩，普通长中英文/URL 不再撑到侧栏下方；主滚动区禁止横向滚动，代码块和宽表格仍仅在自身横向滚动。
+  - 会话顶部仅保留标题，移除模型副标题及整行占位；用户消息元数据移除固定 Delta/persona 前缀，从实际 Provider/模型开始，时间与编辑/复制操作保持不变。
+  - Playwright health、session/app-wide WebSocket 与消息持久化 fixtures 同步为当前唯一严格 v1 Runtime Contract，移除测试侧遗留的 `{type,data}` 线格式，并新增左右栏组合、展开思考、长正文/URL/代码/表格布局回归。
+  - Windows portable 根 `Delta.exe` 经职责审计后改为 bootstrapper：完成目录/数据校验、环境与参数注入并成功启动 Tauri GUI 后立即退出；单实例、更新和 `Delta Server` 生命周期继续由 GUI 管理，不再为转发 GUI 退出码常驻第三个进程。
+  - Delta 0.1.7 portable 完整重建、绝对路径泄漏扫描与真实进程 smoke 通过：重复启动仅保留一个 GUI，测试 GUI 退出后 sidecar 无孤儿；ZIP 内 launcher 与新 release build 哈希一致。
+
+#### 2026-08-23 23:31
+
+- **UI Runtime Contract 防回归与便携版打包（UI-017、UI-019）**
+  - session WebSocket 在意外断开后自动重连；session/app-wide 流按 `sessionId + sequence` 抑制重复事件，未见过的乱序事件仍被交付，避免遗漏最终消息和 `turn_done` 等终态。
+  - CI 新增显式后端 schema 与前端 contract fixture 步骤，契约破坏会在完整测试前快速阻断。
+  - `build_portable.ps1` 改为直接调用仓库本地 Tauri CLI，修复 Node 24/npm 12 下 `--no-bundle` 被 npm 错误解析的问题；Delta 0.1.7 portable ZIP、路径泄漏扫描、SHA-256 与真实 launcher/sidecar 启动 smoke 均通过。
+
+### 新增 (Added)
+
+#### 2026-08-23 21:23
+
+- **会话级思考深度控制（真正生效）**
+  - 会话卡片 ⋮ 菜单新增「思考深度」组：默认/低/高/最大，按会话持久化（SQLite `reasoning_effort` 列 + 迁移）。
+  - 生效链路：`get_engine` 构建时注入 `model_settings.reasoning_effort` → 透传至 provider 调用（OpenAI/兼容协议）；"默认"不下发任何值，由供应商自行决定。运行中的会话通过 `set_reasoning_effort` 即时改写活引擎的 model_settings，无需重建。
+  - `PATCH /v1/sessions/{id}` 支持 `reasoning_effort`；会话列表携带该字段驱动菜单勾选态。
+  - 测试稳定性：automation unseen 测试两条相邻 TaskRun 补 10ms 间隔（Windows 时钟粒度导致时间戳并列、"最新"判定歧义）。
+
+### 修复 (Fixed)
+
+#### 2026-08-23 13:36
+
+- **进程命名收尾 + 冗余清理**
+  - sidecar 图标嵌入 Delta logo（PyInstaller spec `icon=`，此前为 Python 默认图标）。
+  - 清理冗余/旧文件：解除跟踪并删除 4 个误提交的构建日志（build_portable.log 等，补入 gitignore 覆盖）；删除 `.pytest_cache`、18 处 `__pycache__`（含旧仓库路径的陈旧缓存）、`coworker.egg-info`、`packaging/dist|build` 中间产物、Playwright test-results（约释放 195MB）。
+
+#### 2026-08-23 09:54
+
+- **已发送消息可编辑/撤回（opencode 式）**
+  - 用户消息气泡 hover 显示「编辑」按钮：点击后截断该消息及之后的所有历史，原文本回填到输入框供编辑重发；运行中禁用。
+  - 后端新增 `ConversationStore.revert`（JSONL 重写 + 计数同步）、`SessionManager.revert_session`（含内存引擎 messages 截断）、`POST /v1/sessions/{id}/revert` 端点。
+  - 前端 `itemsFromMessages` 为用户消息附加原始消息索引，Transcript 透出 `onEditMessage`，App.tsx 调 revert API + 回填 + 刷新。
+- **进程角色显示名（Task Manager）**
+  - `delta-server.exe`（PyInstaller sidecar）：补版本资源 `FileDescription="Delta Server"`（新建 `delta-server-version.txt`，spec 引用），从裸文件名改为 "Delta Server"。
+  - `Delta.exe`（便携版根启动器）：`build.rs` winres 补 `FileDescription="Delta"`，从 "delta-portable-launcher" 改为 "Delta"。
+  - Tauri 主程序 `Delta.exe` 已通过 `productName="Delta"` 正确显示。
+  - GUI 保持 "Delta"，后台保持可诊断的 "Delta Server"；FileDescription 仅提供进程角色显示名，不承诺或操控 Task Manager 的启发式进程树分组。
+
+#### 2026-08-23 08:43
+
+- **聊天窗口三处**
+  - 错误通知自动折叠：警告类通知（如模型停用的 410 API 报错原文）出生时展开可立即查阅，6 秒无交互后自动折叠为一行摘要（悬停暂停折叠），点击随时再展开，Retry 按钮始终可见——此前原始报错全文永久平铺在会话里。
+  - 助手气泡上方的"智能体"说话人标签移除（主流聊天 UI 仅靠对齐区分角色）。
+  - "Waiting for agent..." 等待文案本地化：中文「正在思考…」、英文 "Thinking…"；压缩上下文提示同步走词条。
+
+#### 2026-08-23 07:11
+
+- **UI 反馈五项**
+  - 启动画面未汉化：boot splash 文案（"Starting Delta…"/"Restoring your session…"）原为硬编码英文且渲染在 I18nProvider 之外；新增 `boot.*` 词条并改走 locale 字典解析，随系统/设置语言显示。
+  - 品牌残留：默认人格注册名仍为 "OpenWorker"（`personas/registry.py`），系统提示词自称 "You are a Cowork agent"（`agents/cowork.py`）；统一改为 Delta。
+  - 自定义服务商：OpenAI 兼容协议的 API key 改为可选（本地 LM Studio/vLLM/llama.cpp 等无需鉴权），保存后的编辑页新增「拉取模型」入口（此前仅创建表单有）。
+  - 设置图标换成主流齿轮造型（lucide "settings"，齿圈+中轴），替换旧手绘八齿路径。
+  - 主题「自动」不跟随系统：手动选浅色/深色会永久钉死窗口主题；新增 `follow_system_theme` 命令（`set_theme(None)` 解除钉定），切回自动时恢复系统跟随。
+
+#### 2026-08-23 05:54
+
+- **UI 三处反馈问题**
+  - 侧栏搜索图标 hover 提示被标题栏遮挡：tooltip 由向上弹出改为向下弹出（`tip-below`）。
+  - 搜索弹窗按 Esc 无法关闭：Esc 处理从容器 `onKeyDown`（依赖焦点在弹窗子树内）改为 window 级监听，点击弹窗内非交互区域导致焦点落到 body 后也能关闭。
+  - 点击设置「语音」标签屏幕一闪：Windows 分支的 `voice_input_compatibility()` 每次状态轮询都无窗口标志地生成 `cmd.exe`，控制台窗口短暂闪现；补上 `CREATE_NO_WINDOW`。同类的 `stt` 代理探测（两次 `reg query`）一并修复。
+
+#### 2026-08-23 00:30
+
+- **全仓审计修复（24 个文件，后端测试 10 failed → 0 failed）**
+  - **安全**
+    - skills 上传 token 路径穿越：`skills/store.py` 校验 token 形如 `uuid4().hex` 且 resolve 后必须位于 staging 目录内，堵住 `confirm_upload`/`discard_upload` 被恶意 token 操纵 move/rmtree 任意目录的通道。
+    - Webview CSP 从 `null` 收紧为最小化策略（`tauri.conf.json`），覆盖 Tauri v2 IPC、本地 sidecar 端口与 data:/blob: 图片。
+    - `permissions.py` 写路径作用域检查从字面量 `"path"` 扩展到全部目标形参（`file_path`/`filepath`/`file`），防改名绕过可写根约束。
+  - **Windows 正确性**
+    - `tools/search.py` grep 结果解析改为正则匹配，修复 Windows 盘符路径（`C:\...`）下 ripgrep 输出解析全错。
+    - `src-tauri/lib.rs` KeepAwakeGuard 的 30 秒长 sleep 拆为 500ms 短轮询，关闭"保持唤醒"/退出应用不再冻结 UI 最长 30 秒。
+    - `workspace_trust.py` 改用 `secrets.write_private_text`（icacls ACL），替代 Windows 上的空操作 `chmod 0o600`。
+    - `stt/src/lib.rs` 麦克风缺失错误文案按平台区分，Windows 用户不再看到 "Check your Mac sound settings"。
+    - `free_port()` 删除静默回落固定端口 8765，bind 失败显式报错。
+  - **健壮性**
+    - `mcp/oauth.py` OAuth 单槽全局状态竞态：超时清理只在 pending 仍是自己时执行，不再杀死用户随后发起的登录流程。
+    - `tools/shell.py` 后台任务输出缓冲改有界 deque（绝对索引保持 cursor 语义、丢弃即报告）、已结束任务条目回收、共享状态与 stdin 写入加锁。
+    - `api.ts` `getInbox` 补 `?? []` 兜底；Session WebSocket 对畸形帧包 try/catch（对齐 connectEvents）。
+  - **构建 / CI / 桌面集成**
+    - `release.yml` 版本校验兼容 `app-v*` 标签（触发器接受但校验必拒导致三平台构建跑完才失败）；同步修复 release job 条件与 latest.json 版本剥离。
+    - 注册 `tauri-plugin-opener`（Cargo.toml + builder + capabilities），修复桌面壳内外部链接可能静默失效；修正 lib.rs 中与 updater 实际配置相反的注释。
+    - `server/run.py` watchdog 在非父死亡路径释放 `OpenProcess` 句柄；`personas/loading.py` git clone 加 `--` 分隔符；`automation/scheduler.py` 区分 runner 返回 None 与真实 error（记为 `skipped`）。
+  - **测试修复（含根因）**
+    - `test_send_target_resolution` 断言更新为 `@Delta`（6dfab88 改名遗漏）。
+    - `test_ui_refresh_e2e` 预先 rename 会话以跳过 fire-and-forget 自动标题调用（FB-010），消除其异步 provider 调用撞进静音窗口断言的竞态。
+    - relay/github 测试放宽 `wait_dispatched` 超时至 30s——本机对 `127.0.0.1:9` 的连接拒绝耗时 ~2.6s（防火墙拦截），每个事件 2–3 次名称解析远超原 2s 窗口。
+    - Windows 环境性失败处理：symlink 无权限时 skip、POSIX-only 的 chmod 位断言、rename 前清理引擎派生的常驻 shell 子进程。
 
 #### 2026-08-22 06:31
 

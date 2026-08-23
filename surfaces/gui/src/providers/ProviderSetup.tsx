@@ -4,7 +4,9 @@ import {
   fetchModels,
   getProtocols,
   getProviders,
+  removeCustomProvider as deleteCustomProvider,
   removeProvider,
+  setDefaultModel,
   setProvider,
   verifyProvider,
   type ProviderField as ProviderFieldT,
@@ -61,6 +63,43 @@ export function localizeVerifyMsg(msg: string | undefined, t: (k: string, v?: Re
   return msg;
 }
 
+type Translate = (key: string, vars?: Record<string, string | number>, fallback?: string) => string;
+const FIELD_KEYS: Record<string, string> = {
+  base_url: "serverAddress",
+  region: "awsRegion",
+  auth_method: "authMethod",
+  bedrock_api_key: "bedrockApiKey",
+  aws_profile: "awsProfile",
+  aws_access_key_id: "accessKeyId",
+  aws_secret_access_key: "secretAccessKey",
+  project: "gcpProject",
+  location: "location",
+  service_account_json: "serviceAccountJson",
+  vertex_api_key: "vertexApiKey",
+};
+const fieldLabel = (field: ProviderFieldT, t: Translate) => {
+  if (field.key === "api_key") {
+    return t(
+      field.required ? "providers.fields.apiKey" : "providers.fields.apiKeyOptional",
+      undefined,
+      field.label,
+    );
+  }
+  const key = FIELD_KEYS[field.key];
+  return key ? t(`providers.fields.${key}`, undefined, field.label) : field.label;
+};
+const fieldHelp = (field: ProviderFieldT, t: Translate) => {
+  if (field.key === "api_key" && field.help) {
+    return t("providers.fields.apiKeyHelp", undefined, field.help);
+  }
+  const key = FIELD_KEYS[field.key];
+  return field.help && key ? t(`providers.fields.${key}Help`, undefined, field.help) : field.help;
+};
+const choiceLabel = (value: string, fallback: string, t: Translate) =>
+  t(`providers.auth.${value}`, undefined, fallback);
+const choiceDesc = (value: string, fallback: string, t: Translate) =>
+  t(`providers.auth.${value}Desc`, undefined, fallback);
+
 /** Brand chip: always a light plate so multicolor marks read on any theme. */
 export function ProviderMark({ name, title, size = 32 }: { name: string; title: string; size?: number }) {
   const url = PROVIDER_LOGOS[name];
@@ -112,6 +151,7 @@ export interface ProviderSetupState {
   backToGallery: () => void;
   runTestAndSave: () => Promise<boolean>;
   removeKey: () => Promise<void>;
+  removeCustom: () => Promise<void>;
   cancelBackTimer: () => void;
   statusFor: (p: ProviderInfo, opts?: { lastUsed?: boolean }) => ReactNode;
   // Blur-save for non-secret fields on an already-configured provider (the Test button is
@@ -153,6 +193,8 @@ export interface ProviderSetupState {
   fetchCustomModels: () => Promise<void>;
   fetching: boolean;
   fetchMsg: { state: "ok" | "error"; text: string } | null;
+  fetchedModels: string[];
+  pickFetchedDefault: (bareId: string) => Promise<void>;
 }
 
 export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetupState {
@@ -200,6 +242,7 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
   const [alias, setAlias] = useState("");
   const [protoId, setProtoIdState] = useState("openai-compatible");
   const [fetching, setFetching] = useState(false);
+  const [fetchedModels, setFetchedModels] = useState<string[]>([]);
   const [fetchMsg, setFetchMsg] = useState<{ state: "ok" | "error"; text: string } | null>(null);
 
   const refreshProviders = () =>
@@ -230,6 +273,7 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
     setFields(next);
     setDirty(false);
     setVerify({ state: "idle" });
+    setFetchedModels([]);
     setFetchMsg(null);
   };
 
@@ -241,6 +285,7 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
     setFields(next);
     setDirty(false);
     setVerify({ state: "idle" });
+    setFetchedModels([]);
     setFetchMsg(null);
   };
 
@@ -258,6 +303,7 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
     setFields(next);
     setDirty(false);
     setVerify({ state: "idle" });
+    setFetchedModels([]);
     setFetchMsg(null);
   };
 
@@ -272,6 +318,8 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
     setFields(next);
     setDirty(!!draft && Object.values(draft).some(Boolean));
     setVerify({ state: "idle" });
+    setFetchedModels([]);
+    setFetchMsg(null);
     setShowEndpoint(false);
   };
 
@@ -368,13 +416,18 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
       }
     }
     const res = await fetchModels(name, fields).catch(
-      (): { ok: false; error: string; added?: string[] } => ({ ok: false, error: "unreachable" }),
+      (): { ok: false; error: string; added?: string[]; models?: string[] } => ({
+        ok: false,
+        error: "unreachable",
+      }),
     );
     setFetching(false);
     if (!res.ok) {
+      setFetchedModels([]);
       setFetchMsg({ state: "error", text: localizeVerifyMsg(res.error || "couldn't verify", t) });
       return;
     }
+    setFetchedModels(res.models ?? []);
     const n = res.added?.length ?? 0;
     setFetchMsg({
       state: "ok",
@@ -384,6 +437,29 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
     });
     await refreshProviders();
     opts?.onSaved?.();
+  };
+
+  // One-click default from the fetched list: the chip id is bare; the pool entry carries
+  // the alias prefix ("alias:model").
+  const pickFetchedDefault = async (bareId: string): Promise<void> => {
+    const name = (sel ?? alias.trim()).trim();
+    if (!name) return;
+    const r = await setDefaultModel(`${name}:${bareId}`).catch(() => ({
+      ok: false,
+      error: "unreachable",
+    }));
+    setFetchMsg(
+      r.ok
+        ? {
+            state: "ok",
+            text: t(
+              "providers.defaultSet",
+              { m: `${name}:${bareId}` },
+              `Default model set to ${name}:${bareId}`,
+            ),
+          }
+        : { state: "error", text: localizeVerifyMsg(r.error || "couldn't save", t) },
+    );
   };
 
   // Blur-save for non-secret fields when the provider is already configured: extras like
@@ -422,7 +498,28 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
     resetCreateForm();
   };
 
+  const removeCustom = async () => {
+    if (!sel || !info?.custom) return;
+    const removed = await deleteCustomProvider(sel).catch(() => ({ ok: false }));
+    if (!removed.ok) return;
+    setDrafts((current) => ({ ...current, [sel]: {} }));
+    setSel(null);
+    resetCreateForm();
+    await refreshProviders();
+    opts?.onSaved?.();
+  };
+
   const statusFor = (p: ProviderInfo, o?: { lastUsed?: boolean }) => {
+    if (p.custom) {
+      const verifiedDraft = p.name === alias.trim() && fetchedModels.length > 0;
+      return (
+        <span className={"block text-[11.5px] font-medium truncate " + (verifiedDraft ? "text-accent" : "text-ok")}>
+          {verifiedDraft
+            ? t("providers.verifiedPendingSave", undefined, "Verified · save to finish")
+            : `✓ ${t("providers.saved", undefined, "Saved")}`}
+        </span>
+      );
+    }
     if (p.configured && p.needs_key) {
       const used = o?.lastUsed ? relTime(p.last_used_at, t) : null;
       return (
@@ -480,6 +577,7 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
     backToGallery,
     runTestAndSave,
     removeKey,
+    removeCustom,
     saveField,
     fieldSaved,
     cancelBackTimer: () => {
@@ -499,6 +597,8 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
     fetchCustomModels,
     fetching,
     fetchMsg,
+    fetchedModels,
+    pickFetchedDefault,
     protocolsLoading,
     protocolsErr,
     protocolErrorMessage,
@@ -560,8 +660,22 @@ export function ProviderCards({
         >
           <ProviderMark name={p.name} title={p.title} />
           <span className="min-w-0 flex-1">
-            <span className="block text-[13px] font-semibold leading-tight truncate">{p.title}</span>
-            {ps.statusFor(p, { lastUsed })}
+            <span className="block text-[13px] font-semibold leading-tight truncate">
+              {p.custom ? p.alias || p.name : p.title}
+            </span>
+            {p.custom ? (
+              <span className="block text-[11.5px] text-faint truncate">
+                {t(`providers.protocols.${p.protocol}`, undefined, p.blurb || p.protocol || "")}
+                {" · "}
+                {p.name === ps.alias.trim() && ps.fetchedModels.length
+                  ? t("providers.verifiedPendingSave", undefined, "Verified · save to finish")
+                  : p.configured
+                    ? t("providers.saved", undefined, "Saved")
+                    : t("providers.pendingSave", undefined, "Not saved")}
+              </span>
+            ) : (
+              ps.statusFor(p, { lastUsed })
+            )}
           </span>
           <span className="text-faint text-[14px]">›</span>
         </button>
@@ -610,7 +724,7 @@ export function ProviderForm({
 
   const fieldRow = (f: ProviderFieldT, testable: boolean) => (
     <div key={f.key}>
-      <label className={label}>{f.label}</label>
+      <label className={label}>{info?.custom ? fieldLabel(f, t) : f.label}</label>
       <div className="flex gap-2">
         <div className="relative flex-1 min-w-0">
           <input
@@ -648,14 +762,17 @@ export function ProviderForm({
           <button
             className="px-4 rounded-lg border border-line text-[13px] font-medium text-ink hover:border-lineStrong shrink-0 disabled:opacity-40"
             onClick={() => ps.runTestAndSave()}
-            disabled={ps.verify.state === "testing" || (!ps.secretFilled && !ps.credentialed)}
+            disabled={
+              ps.verify.state === "testing" ||
+              (info?.needs_key && !ps.secretFilled && !ps.credentialed)
+            }
             data-testid={`${tp}-test`}
           >
             {ps.verify.state === "testing" ? "…" : info?.needs_key ? t("common.test", undefined, "Test") : t("providers.detect", undefined, "Detect")}
           </button>
         )}
       </div>
-      {f.help && <p className="text-[11.5px] text-faint mt-1">{f.help}</p>}
+      {f.help && <p className="text-[11.5px] text-faint mt-1">{info?.custom ? fieldHelp(f, t) : f.help}</p>}
     </div>
   );
 
@@ -667,11 +784,27 @@ export function ProviderForm({
       <div className="flex items-center gap-3 mt-3 mb-1">
         <ProviderMark name={info?.name || ""} title={info?.title || ""} size={36} />
         <span className="min-w-0">
-          <span className="block text-[15px] font-semibold leading-tight">{info?.title}</span>
+          <span className="block text-[15px] font-semibold leading-tight">
+            {info?.custom ? info.alias || info.name : info?.title}
+          </span>
+          {info?.custom && (
+            <span className="block text-[11.5px] text-faint truncate">
+              {t(`providers.protocols.${info.protocol}`, undefined, info.blurb || info.protocol || "")}
+            </span>
+          )}
           {info ? ps.statusFor(info) : null}
         </span>
       </div>
-      {info?.blurb && (
+      {info?.custom && (
+        <p className="text-[11.5px] text-faint mt-1">
+          {t(
+            "providers.aliasReadOnly",
+            undefined,
+            "The alias is the model routing prefix and cannot be renamed. Delete and recreate this provider to change it.",
+          )}
+        </p>
+      )}
+      {info?.blurb && !info.custom && (
         <p className="text-[11.5px] text-faint mt-1">
           {t("providers." + info.name + ".blurb", undefined, info.blurb)}
         </p>
@@ -691,11 +824,11 @@ export function ProviderForm({
           method's description, fields, and its own Test & save footer. */}
       {choice && (
         <div>
-          <label className={label}>{choice.label}</label>
+          <label className={label}>{info?.custom ? fieldLabel(choice, t) : choice.label}</label>
           <div
             className="inline-flex gap-0.5 rounded-[10px] border border-line bg-line/40 p-[3px]"
             role="radiogroup"
-            aria-label={choice.label}
+            aria-label={info?.custom ? fieldLabel(choice, t) : choice.label}
           >
             {(choice.choices || []).map((c) => {
               const active = method === c.value;
@@ -713,10 +846,10 @@ export function ProviderForm({
                   data-testid={`${tp}-choice-${choice.key}-${c.value}`}
                   onClick={() => ps.setFieldValue(choice.key, c.value)}
                 >
-                  {c.label}
+                  {info?.custom ? choiceLabel(c.value, c.label, t) : c.label}
                   {c.tag && (
                     <span className="text-[9.5px] font-semibold uppercase tracking-wide text-accent bg-accentSoft rounded-full px-1.5 py-px">
-                      {c.tag}
+                      {t(`providers.auth.${c.value}Tag`, undefined, c.tag)}
                     </span>
                   )}
                 </button>
@@ -725,7 +858,7 @@ export function ProviderForm({
           </div>
 
           <div className="mt-2.5 rounded-xl border border-line bg-paper/60 px-4 pb-3.5 pt-3">
-            {selected?.desc && <p className="text-[12px] text-muted">{selected.desc}</p>}
+            {selected?.desc && <p className="text-[12px] text-muted">{info?.custom ? choiceDesc(selected.value, selected.desc, t) : selected.desc}</p>}
             {selected?.command && (
               <button
                 className="mt-2.5 inline-flex items-center gap-2 rounded-lg border border-line bg-panel px-2.5 py-1.5 text-[12px] font-mono text-ink hover:border-lineStrong"
@@ -759,6 +892,45 @@ export function ProviderForm({
         </div>
       )}
 
+      {/* Saved custom providers: pull the live model list from this server (the create
+          form has its own Fetch; the edit view used to offer no way to re-fetch). */}
+      {info?.custom && (
+        <div className="mt-4 rounded-xl border border-line bg-paper/60 px-4 py-3 flex items-center gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px] font-medium">
+              {t("providers.fetchModels", undefined, "Fetch models")}
+            </div>
+            <div className="text-[11.5px] text-faint mt-0.5">
+              {t(
+                "providers.fetchModelsSub",
+                undefined,
+                "Pull the model list from this server, then pick a default.",
+              )}
+            </div>
+            {ps.fetchMsg && (
+              <div
+                className={
+                  "mt-1.5 text-[12px] " +
+                  (ps.fetchMsg.state === "ok" ? "text-ok" : "text-warnInk")
+                }
+                data-testid={`${tp}-fetch-msg`}
+              >
+                {ps.fetchMsg.text}
+              </div>
+            )}
+            <FetchedModelChips ps={ps} />
+          </div>
+          <button
+            className="shrink-0 rounded-lg border border-line px-4 py-1.5 text-[13px] font-medium text-ink hover:border-lineStrong disabled:opacity-40"
+            onClick={() => void ps.fetchCustomModels()}
+            disabled={ps.fetching}
+            data-testid={`${tp}-fetch`}
+          >
+            {ps.fetching ? "…" : t("providers.fetchModels", undefined, "Fetch models")}
+          </button>
+        </div>
+      )}
+
       {info?.needs_key && KEY_HELP[sel] && (
         <p className="text-[11.5px] text-faint mt-2">
           {t("providers.noKeyYet", undefined, "No key yet? ")}
@@ -771,7 +943,9 @@ export function ProviderForm({
           {t("providers.takesAboutAMinute", undefined, "— takes about a minute.")}
         </p>
       )}
-      {info && !info.needs_key && (
+      {/* Ollama-specific hint ONLY for the ollama protocol — a keyless openai-compatible
+          custom provider (LM Studio/vLLM…) must not see "Install Ollama" copy. */}
+      {info && !info.needs_key && (info as { protocol?: string }).protocol === "ollama" && (
         <p className="text-[11.5px] text-faint mt-2">
           {t("providers.noApiKeyNeeded", undefined, "No API key needed — Ollama runs models on this computer. ")}
           <button
@@ -843,6 +1017,31 @@ export function ProviderForm({
  * Rendered by ProviderForm when `ps.creating` is true; distinct from the built-in
  * edit path because there is no `sel`/`info` to prefill from yet.
  */
+/** The fetched model list as clickable chips — click sets that model as the default.
+    Shown after a successful Fetch in both the create and the edit form. */
+export function FetchedModelChips({ ps }: { ps: ProviderSetupState }) {
+  const { t } = useI18n();
+  if (!ps.fetchedModels.length) return null;
+  return (
+    <div className="mt-2.5" data-testid="fetched-models">
+      <div className="text-[11.5px] text-faint mb-1.5">
+        {t("providers.fetchedList", { n: ps.fetchedModels.length }, `${ps.fetchedModels.length} available — click one to make it the default:`)}
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {ps.fetchedModels.map((m) => (
+          <button
+            key={m}
+            className="px-2 py-1 rounded-md border border-line bg-panel text-[12px] font-mono text-ink hover:border-accent hover:text-accent text-left"
+            onClick={() => void ps.pickFetchedDefault(m)}
+          >
+            {m}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function CustomCreateForm({ ps, tp, inline = false }: { ps: ProviderSetupState; tp: string; inline?: boolean }) {
   const { t } = useI18n();
   const proto = ps.protoDef;
@@ -866,7 +1065,7 @@ export function CustomCreateForm({ ps, tp, inline = false }: { ps: ProviderSetup
   // registered `sel`), no saved-pill (nothing is saved until Create & save).
   const row = (f: ProviderFieldT) => (
     <div key={f.key}>
-      <label className={label}>{f.label}</label>
+      <label className={label}>{fieldLabel(f, t)}</label>
       <input
         className={input + " border-line"}
         type={f.secret ? "password" : "text"}
@@ -875,7 +1074,7 @@ export function CustomCreateForm({ ps, tp, inline = false }: { ps: ProviderSetup
         data-testid={`${tp}-field-${f.key}`}
         onChange={(e) => ps.setFieldValue(f.key, e.target.value)}
       />
-      {f.help && <p className="text-[11.5px] text-faint mt-1">{f.help}</p>}
+      {f.help && <p className="text-[11.5px] text-faint mt-1">{fieldHelp(f, t)}</p>}
     </div>
   );
 
@@ -898,7 +1097,7 @@ export function CustomCreateForm({ ps, tp, inline = false }: { ps: ProviderSetup
           >
             {ps.alias.trim() || t("providers.addCustomProvider", undefined, "Add custom provider")}
           </span>
-          {proto?.blurb && <span className="block text-[11.5px] text-faint truncate">{proto.blurb}</span>}
+          {proto && <span className="block text-[11.5px] text-faint truncate">{t(`providers.protocols.${proto.id}`, undefined, proto.title)}</span>}
         </span>
       </div>
 
@@ -995,11 +1194,11 @@ export function CustomCreateForm({ ps, tp, inline = false }: { ps: ProviderSetup
           edit path, but the panel's footer is the create action instead of Test & save. */}
       {choice && (
         <div>
-          <label className={label}>{choice.label}</label>
+          <label className={label}>{fieldLabel(choice, t)}</label>
           <div
             className="inline-flex gap-0.5 rounded-[10px] border border-line bg-line/40 p-[3px]"
             role="radiogroup"
-            aria-label={choice.label}
+            aria-label={fieldLabel(choice, t)}
           >
             {(choice.choices || []).map((c) => {
               const active = method === c.value;
@@ -1017,10 +1216,10 @@ export function CustomCreateForm({ ps, tp, inline = false }: { ps: ProviderSetup
                   data-testid={`${tp}-choice-${choice.key}-${c.value}`}
                   onClick={() => ps.setFieldValue(choice.key, c.value)}
                 >
-                  {c.label}
+                  {choiceLabel(c.value, c.label, t)}
                   {c.tag && (
                     <span className="text-[9.5px] font-semibold uppercase tracking-wide text-accent bg-accentSoft rounded-full px-1.5 py-px">
-                      {c.tag}
+                      {t(`providers.auth.${c.value}Tag`, undefined, c.tag)}
                     </span>
                   )}
                 </button>
@@ -1028,7 +1227,7 @@ export function CustomCreateForm({ ps, tp, inline = false }: { ps: ProviderSetup
             })}
           </div>
           <div className="mt-2.5 rounded-xl border border-line bg-paper/60 px-4 pb-3.5 pt-3">
-            {selected?.desc && <p className="text-[12px] text-muted">{selected.desc}</p>}
+            {selected?.desc && <p className="text-[12px] text-muted">{choiceDesc(selected.value, selected.desc, t)}</p>}
             {methodFields.map((f) => row(f))}
           </div>
         </div>
@@ -1069,6 +1268,7 @@ export function CustomCreateForm({ ps, tp, inline = false }: { ps: ProviderSetup
           {ps.fetchMsg.text}
         </p>
       )}
+      <FetchedModelChips ps={ps} />
       <div className="mt-3 min-h-[19px] text-[12.5px]">
         {ps.verify.state === "error" && <span className="text-warnInk">{localizeVerifyMsg(ps.verify.msg, t)}</span>}
       </div>

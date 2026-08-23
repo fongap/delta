@@ -113,7 +113,14 @@ def search_tools(workspace: str) -> list:
             # Do not rely solely on a workspace's .gitignore: the Python fallback
             # always omits these generated/dependency directories too. Exclusions come
             # last because ripgrep resolves conflicting globs with the later one winning.
+            # An absolute Windows search root under AppData would otherwise match our own
+            # `!**/AppData/**` exclusion and suppress the entire workspace (pytest tmp dirs
+            # expose this reliably). App-data names are traversal guards, not a ban on a
+            # workspace the user explicitly selected inside one of those directories.
+            base_parts = {part.casefold() for part in base.parts}
             for ignored in sorted(_IGNORE_DIRS):
+                if ignored in OS_DATA_DIRS and ignored.casefold() in base_parts:
+                    continue
                 cmd += ["--glob", f"!**/{ignored}/**"]
             cmd.append(str(base))
             try:
@@ -149,9 +156,11 @@ def _rel(path: str, root: Path) -> str:
 def _parse_rg(stdout: str, root: Path, n: int) -> dict[str, Any]:
     matches: list[dict[str, Any]] = []
     for line in stdout.splitlines():
-        parts = line.split(":", 2)
-        if len(parts) == 3:
-            f, ln, txt = parts
+        # `path:line:text` — split(":") breaks Windows absolute paths ("C:\..." has a
+        # colon after the drive letter), so anchor on the LAST numeric line field.
+        m = re.match(r"^(.+?):(\d+):(.*)$", line)
+        if m:
+            f, ln, txt = m.group(1), m.group(2), m.group(3)
             matches.append(
                 {
                     "file": _rel(f, root),

@@ -115,7 +115,17 @@ export function ModelsTab() {
         ps={ps}
         tp="set"
         footer={
-          !ps.creating && ps.credentialed ? (
+          !ps.creating && info?.custom ? (
+            <button
+              className="text-[12.5px] text-danger/80 hover:text-danger hover:underline underline-offset-2"
+              data-testid="set-remove-custom"
+              onClick={() => {
+                if (window.confirm(t("providers.removeCustomConfirm", { name: info.alias || info.name }))) void ps.removeCustom();
+              }}
+            >
+              {t("providers.removeCustom")}
+            </button>
+          ) : !ps.creating && ps.credentialed ? (
             <button
               className="text-[12.5px] text-danger/80 hover:text-danger hover:underline underline-offset-2"
               data-testid="set-remove-key"

@@ -1,7 +1,6 @@
-// Session-screen cleanup (§22): the contextual top-left cluster ([sidebar][+][search], rendered
-// ONLY while the sidebar is collapsed), the centered facts subtitle (persona · model — fixed
-// facts replacing the locked-model pill and the topbar About-persona button), and the model
-// picker's fresh-session-only placement.
+// Session-screen cleanup (§22): the contextual top-left cluster ([sidebar][+], rendered
+// ONLY while the sidebar is collapsed), the title-only topbar, and the model picker in the
+// composer.
 import { expect } from "@playwright/test";
 import { test } from "./fixtures";
 
@@ -12,20 +11,14 @@ test("top-left cluster renders only while the sidebar is collapsed", async ({ pa
   await expect(page.locator(".sidebar")).toBeVisible();
   await expect(page.getByTestId("topbar-cluster")).toHaveCount(0);
 
-  // Collapse → the cluster appears with all three actions; the floating reveal button does NOT
+  // Collapse → the cluster appears with both actions; the floating reveal button does NOT
   // double up on the session surface (the cluster's sidebar button replaces it).
   await page.keyboard.press("Meta+b");
   const cluster = page.getByTestId("topbar-cluster");
   await expect(cluster).toBeVisible();
   await expect(cluster.getByRole("button", { name: "Show sidebar" })).toBeVisible();
   await expect(cluster.getByRole("button", { name: "New task" })).toBeVisible();
-  await expect(cluster.getByRole("button", { name: "Search" })).toBeVisible();
   await expect(page.locator(".nav-reveal-btn")).toHaveCount(0);
-
-  // The cluster's search opens the command-palette overlay.
-  await cluster.getByRole("button", { name: "Search" }).click();
-  await expect(page.getByPlaceholder("Search chats")).toBeVisible();
-  await page.keyboard.press("Escape");
 
   // The cluster's sidebar button docks the nav back — and the cluster leaves with it.
   await cluster.getByRole("button", { name: "Show sidebar" }).click();
@@ -33,31 +26,28 @@ test("top-left cluster renders only while the sidebar is collapsed", async ({ pa
   await expect(page.getByTestId("topbar-cluster")).toHaveCount(0);
 });
 
-test("facts subtitle: absent on a fresh session, model-only after the first turn, inert", async ({
+test("session topbar keeps only the title while the model picker remains available", async ({
   page,
 }) => {
   await page.goto("/");
 
-  // Fresh-ish (boot-resumed, no rendered history): no subtitle, no old About-persona button —
-  // and the model is a live PICKER in the composer (fresh sessions choose; nothing is locked yet).
+  // No subtitle or old About-persona button; the model remains a live picker in the composer.
   await expect(page.getByTestId("session-subtitle")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "About this persona" })).toHaveCount(0);
   await expect(page.locator(".dd").filter({ hasText: "Claude Opus 4.8" })).toBeVisible();
 
-  // First turn → the facts move up to the subtitle; the picker STAYS in the composer
-  // (§17 rev 2026-07-22: mid-session model switching shipped, so it remains actionable).
+  // A completed turn must not add a second title row or reserve subtitle space.
   const box = page.getByPlaceholder(/Ask Delta/);
   await box.fill("hello");
   await page.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText(/Echo: hello/)).toBeVisible();
 
-  // Model only — no persona name (owner ask 2026-07-22: personas are hidden this release),
-  // and the subtitle is a plain fact line, not a button to the persona page.
-  const sub = page.getByTestId("session-subtitle");
-  await expect(sub).toHaveText("Claude Opus 4.8");
+  await expect(page.getByTestId("session-subtitle")).toHaveCount(0);
   await expect(page.locator(".dd").filter({ hasText: "Claude Opus 4.8" })).toBeVisible();
-  await sub.click();
-  await expect(page.getByRole("button", { name: "Back", exact: true })).toHaveCount(0);
+  const title = page.locator(".main-title-text");
+  await expect(title).toHaveText("Draft the launch note");
+  await expect(title).toHaveCSS("text-overflow", "ellipsis");
+  await expect(page.locator(".main-title").locator(":scope > *")).toHaveCount(1);
 });
 
 test("composer is three controls (+ attach · Mode · send); folder and branch chips are gone", async ({
