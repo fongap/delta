@@ -1,7 +1,7 @@
 // Auth-method segmented choice + show_when field visibility (Bedrock's "Connect with"):
 // only the selected method's fields render, and clicking a segment switches them.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { ProviderCards, ProviderForm, CustomCreateForm, useProviderSetup, type ProviderSetupState } from "./ProviderSetup";
 import { I18nProvider } from "../i18n/I18nContext";
 import type { ProviderInfo } from "../api";
