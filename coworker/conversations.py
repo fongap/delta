@@ -68,6 +68,10 @@ class ConversationStore:
         self.db_path = self.base / "coworker.db"
 
         self._lock = threading.RLock()
+        # Cached on-disk line count per session, so the attach-only JSONL isn't re-read in
+        # full on every save (the checkpoint path runs on the event loop; _count was O(history)
+        # and grew per turn). In sync because every write to a .jsonl goes through this class.
+        self._known: dict[str, int] = {}
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
         self._conn.executescript("""
@@ -120,17 +124,29 @@ class ConversationStore:
         ]
 
     def _count(self, sid: str) -> int:
+        """On-disk line count for `sid`, using the cache when it is warm.
+
+        The JSONL is append-only and only ever written by this class (append / revert / the
+        rare rewrite), so the cached count stays accurate without a full file read.
+        """
+        known = self._known.get(sid)
+        if known is not None:
+            return known
         path = self._file(sid)
         if not path.exists():
+            self._known[sid] = 0
             return 0
-        return sum(
+        n = sum(
             1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
         )
+        self._known[sid] = n
+        return n
 
     def _append(self, sid: str, messages: list[dict]) -> None:
         with open(self._file(sid), "a", encoding="utf-8") as f:
             for m in messages:
                 f.write(json.dumps(m) + "\n")
+        self._known[sid] = self._known.get(sid, 0) + len(messages)
 
     def revert(self, sid: str, index: int) -> list[dict]:
         """Drop messages from `index` onward (the user message at `index` and everything
@@ -153,6 +169,7 @@ class ConversationStore:
                 "".join(json.dumps(m) + "\n" for m in messages[:index]),
                 encoding="utf-8",
             )
+            self._known[sid] = index
             self._conn.execute(
                 "UPDATE sessions SET n_msgs = MAX(0, n_msgs - ?) WHERE session_id = ?",
                 (len(dropped), sid),
@@ -217,6 +234,7 @@ class ConversationStore:
                 with open(self._file(sid), "w", encoding="utf-8") as f:
                     for m in record.messages:
                         f.write(json.dumps(m) + "\n")
+                self._known[sid] = len(record.messages)
 
             title = record.title or title_from(record.messages)
             self._conn.execute(

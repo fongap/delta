@@ -10,13 +10,14 @@ owns the wake records + the due/complete logic; the scheduler tick consumes ``du
 
 from __future__ import annotations
 
-import json
 import threading
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Optional
+
+from ._jsonstate import load_json_state, save_json_state
 
 KIND_TIMER = "timer"
 KIND_COMPLETION = "completion"
@@ -50,20 +51,15 @@ class WakeStore:
         self._lock = threading.Lock()
         self._wakes: dict[str, Wake] = {}
         if self.path and self.path.is_file():
-            for raw in json.loads(self.path.read_text(encoding="utf-8")).get(
-                "wakes", []
-            ):
+            data = load_json_state(self.path, {}) or {}
+            for raw in data.get("wakes", []):
                 w = Wake(**raw)
                 self._wakes[w.id] = w
 
     def _save(self) -> None:
         if not self.path:
             return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps({"wakes": [asdict(w) for w in self._wakes.values()]}, indent=2),
-            encoding="utf-8",
-        )
+        save_json_state(self.path, {"wakes": [asdict(w) for w in self._wakes.values()]})
 
     def add_timer(self, session_id: str, fire_at: datetime, *, note: str = "") -> Wake:
         w = Wake(

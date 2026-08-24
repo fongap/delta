@@ -22,10 +22,11 @@ Both stores are tiny JSON files mirroring ``SubscriptionStore`` (optional path, 
 
 from __future__ import annotations
 
-import json
 import threading
 from pathlib import Path
 from typing import Optional
+
+from ._jsonstate import load_json_state, save_json_state
 
 
 class PersonaConnectionStore:
@@ -39,7 +40,7 @@ class PersonaConnectionStore:
 
     def _load(self) -> None:
         if self.path and self.path.is_file():
-            data = json.loads(self.path.read_text(encoding="utf-8"))
+            data = load_json_state(self.path, {}) or {}
             self._rows = {
                 pid: {str(c): bool(v) for c, v in (row or {}).items()}
                 for pid, row in data.get("personas", {}).items()
@@ -48,11 +49,7 @@ class PersonaConnectionStore:
     def _save(self) -> None:
         if not self.path:
             return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps({"personas": self._rows}, indent=2),
-            encoding="utf-8",
-        )
+        save_json_state(self.path, {"personas": self._rows})
 
     # -- queries ----------------------------------------------------------------
     def get(self, persona_id: str) -> dict[str, bool]:
@@ -112,7 +109,7 @@ class SessionConnectionStore:
 
     def _load(self) -> None:
         if self.path and self.path.is_file():
-            data = json.loads(self.path.read_text(encoding="utf-8"))
+            data = load_json_state(self.path, {}) or {}
             self._rows = {
                 sid: {str(c): bool(v) for c, v in (row or {}).items()}
                 for sid, row in data.get("sessions", {}).items()
@@ -121,11 +118,7 @@ class SessionConnectionStore:
     def _save(self) -> None:
         if not self.path:
             return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps({"sessions": self._rows}, indent=2),
-            encoding="utf-8",
-        )
+        save_json_state(self.path, {"sessions": self._rows})
 
     # -- queries ----------------------------------------------------------------
     def get(self, session_id: str) -> dict[str, bool]:

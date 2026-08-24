@@ -3969,6 +3969,7 @@ class SessionManager:
         engine = self._engines.pop(session_id, None)
         self._session_event_sequences.pop(session_id, None)
         self._app_event_sequences.pop(session_id, None)
+        self._autotitle_attempts.pop(session_id, None)
         if engine is not None:
             try:
                 # (was engine.interrupt() — a method that never existed; the AttributeError

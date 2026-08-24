@@ -503,7 +503,10 @@ class _WebSocketsTransport:
     async def open(self) -> None:
         import websockets  # lazy: optional extra
 
-        token = self._token_provider()
+        # Token refresh does a blocking httpx round-trip (OAuth refresh) that can take up
+        # to its timeout; run it off the event loop so a slow/unreachable cloud never
+        # freezes the server (the reconnect path calls this inside the loop).
+        token = await asyncio.to_thread(self._token_provider)
         self._ws = await websockets.connect(
             self._url, additional_headers={"Authorization": f"Bearer {token}"}
         )

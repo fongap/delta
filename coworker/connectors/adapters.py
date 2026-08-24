@@ -132,7 +132,11 @@ class TelegramAdapter(BasePlatformAdapter):
     async def send(
         self, chat_id: str, text: str, *, thread_id: Optional[str] = None
     ) -> SendResult:
-        return _send_telegram(self.token, chat_id, text, thread_id)
+        # The stateless senders use blocking httpx; offload so an outbound from the event
+        # loop (e.g. mirror_inbox_item / _on_interaction, which await this directly) never
+        # blocks the server loop on the Telegram round-trip (same hazard the Slack adapter
+        # already guards with asyncio.to_thread).
+        return await asyncio.to_thread(_send_telegram, self.token, chat_id, text, thread_id)
 
 
 class SlackAdapter(BasePlatformAdapter):

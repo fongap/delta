@@ -4,6 +4,42 @@
 
 ## [Unreleased]
 
+### 移除 (Removed)
+
+#### 2026-08-24 20:03
+
+- **废弃 MSVC 便携构建辅助脚本**
+  - 移除 `packaging/_build_portable_msvc.cmd`：该脚本硬编码了本机旧仓库路径（`D:\900 AIWork\910 GitHub\delta\packaging`）与个人 Python 目录，仓库内零引用，且已被 `packaging/build_portable.ps1` 完全取代。
+
+### 修复 (Fixed)
+
+#### 2026-08-24 20:29
+
+- **事件循环阻塞修复（稳定/修复）**
+  - 修复 managed relay 重连路径上的一次性阻塞：token 刷新（OAuth refresh）是同步 httpx 请求（最长 15s）且在异步 `open()` 内直接调用，若云不可达会让整个服务端（所有 WS 会话、广播、调度）在每次重连周期冻结长达 15s。现将 token 获取改为 `asyncio.to_thread` 下放，与 `github_installation_token` 的既有做法一致。
+  - 修复 Telegram 出站同样的事件循环阻塞：`TelegramAdapter.send` 直接调用同步 `_send_telegram`（`httpx`，30s 超时），慢/不可达的 api.telegram.org 会冻结整个服务端。现改为 `asyncio.to_thread` 下放（Slack 适配器此前已做同样处理，Telegram 被遗漏）。
+- **本地状态 JSON 存储的原子写与容错加载**
+  - 新增 `coworker/_jsonstate.py`（`load_json_state` / `save_json_state`）：临时文件 + `os.replace` 原子写入；加载对损坏/截断文件不再抛 `JSONDecodeError`，而是回退到空状态并将损坏文件保留为 `.corrupt-<ts>` 以便恢复。
+  - 应用到全部本地状态存储（`inbox`、`mentions`、`unrouted`、`unattended`、`connections`（persona/session 两层）、`inbox_routing`、`selfwake`），避免一次崩溃留下截断 JSON 导致下次启动 sidecar 直接失败、桌面应用打不开。
+- **会话持久化的性能与稳定性**
+  - `ConversationStore` 增加每会话的 JSONL 行数缓存：追加型 `.jsonl` 只在需要时全量读一遍，之后的每次 save（含每个 turn 检查点）不再 O(历史长度) 重读整文件，长会话下广播/检查点延迟不再随对话增长。
+- **MCP 连接取消的孤儿泄漏**
+  - `MCPManager.ensure` 在等待连接建立时若调用方被取消，先前会在连接建立后因未注册而让 `_serve` 永久驻留在 `shutdown.wait()`，遗留一个无人管理的活动连接；现改为取消时同时取消 `_serve` 任务，让 `AsyncExitStack` 正常拆掉底层传输。
+- **无界增长的小泄漏**
+  - `InboxStore` 每 resolve 一项后移除其 `asyncio.Event` 等待器（原先只 set 不删，逐条泄漏）；会话删除时清理 `_autotitle_attempts` 计数（原先只增不减）。
+
+#### 2026-08-24 19:44
+
+- **侧边栏行菜单与 e2e 测试同步**
+  - 修复侧边栏每行 ⋮ 菜单的真实产品缺陷：菜单高度硬编码 `MENU_H=150`，但自“推理深度”子区(标签 + 4 档)加入后菜单实际高约 300px。靠近窗口底部的行翻转菜单时，`top = r.top - 150` 把 Delete 等底部项渲染到视口外，导致无法点击。现将高度常量修正为 `300` 并在向上翻转时对齐菜单底部到锚点行上沿，避免末项落到屏幕外。
+  - 同步更新 9 个 e2e 规格以匹配当前 UI：侧边栏 footer 的 Inbox 现在唯一存在于 footer 图标（非导航行）、账户菜单二次点击的幂等处理、Slack 连接器“Sign-in needed”状态通过强制状态测试、加工作区弹窗的已登录流程、转录消息元信息的当前结构、以及“Send approvals to Inbox”切换的 i18n 文案。
+
+#### 2026-08-24 15:22
+
+- **自动化调度器重复执行**
+  - 修复调度循环的竞态：一个 run 尚未完成保存（next_run 仍是旧值）时，后续 tick 读到过期的到期快照并在 overlap 守卫释放后再次 spawn，导致同一任务在同一次触发窗口内被执行两次（生产中表现为自动化重复发消息/重复执行）。
+  - 现在 `_tick` 在派生前同步预占 overlap 守卫（检查与添加之间无 await），过期快照会被正确跳过；手动触发路径 `run_task` 的跳过语义保持不变。已用复现脚本（修复前约 2/15 失败率，修复后 200 次迭代全部通过）及完整测试套件验证。
+
 ## [0.2.0] - 2026-08-24
 
 ### 变更 (Changed)

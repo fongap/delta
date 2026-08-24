@@ -22,6 +22,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+from ._jsonstate import load_json_state, save_json_state
+
 KIND_APPROVAL = "approval"
 KIND_QUESTION = "question"
 KIND_NOTIFICATION = "notification"
@@ -106,7 +108,7 @@ class InboxStore:
     # -- persistence ------------------------------------------------------------
     def _load(self) -> None:
         if self.path and self.path.is_file():
-            data = json.loads(self.path.read_text(encoding="utf-8"))
+            data = load_json_state(self.path, {}) or {}
             for raw in data.get("items", []):
                 item = InboxItem(**raw)
                 self._items[item.id] = item
@@ -114,10 +116,8 @@ class InboxStore:
     def _save(self) -> None:
         if not self.path:
             return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps({"items": [asdict(i) for i in self._items.values()]}, indent=2),
-            encoding="utf-8",
+        save_json_state(
+            self.path, {"items": [asdict(i) for i in self._items.values()]}
         )
 
     # -- adding -----------------------------------------------------------------
@@ -319,7 +319,7 @@ class InboxStore:
             item.resolution = resolution
             item.resolved_at = _now()
             self._save()
-        waiter = self._waiters.get(item_id)
+        waiter = self._waiters.pop(item_id, None)
         if waiter is not None:
             waiter.set()
         return True

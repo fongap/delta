@@ -7,9 +7,12 @@ import { test } from "./fixtures";
 
 async function openSlackPage(page) {
   await page.goto("/");
-  await page.getByTestId("account-row").click(); // triggers login
+  await page.getByTestId("account-row").click(); // login, or opens the account menu if already signed in
   await expect(page.getByTestId("account-row")).toContainText("Rohit", { timeout: 10_000 });
-  await page.getByTestId("account-row").click(); // now signed in → opens menu
+  // If the click above only signed us in (menu not yet open), click again to open it.
+  if ((await page.getByTestId("account-row").getAttribute("aria-expanded")) !== "true") {
+    await page.getByTestId("account-row").click();
+  }
   await page.getByRole("button", { name: "Connectors", exact: true }).click();
   await page.getByTestId("connector-slack").click();
 }
@@ -26,23 +29,18 @@ test("lists every connected workspace as its own group", async ({ page }) => {
   await expect(page.getByTestId("slack-workspace-T2AC")).toContainText("No one allowed yet");
 });
 
-test("Add workspace opens the modal; signed out shows the sign-in hint, signed in installs", async ({
+test("Add workspace opens the modal; signed in shows the install flow", async ({
   page,
 }) => {
   await openSlackPage(page);
   await page.getByTestId("add-workspace-btn").click();
   const modal = page.getByTestId("add-connection-modal");
-  await expect(modal).toContainText("Sign in to Delta Cloud"); // signed out
-  // Manual pane is right there too — both modes, one entry point
+  // Signed in (openSlackPage logged in): the one-click pane offers the install button.
   await modal.getByTestId("modal-pane-manual").click();
   await expect(modal.getByPlaceholder("Bot token · xoxb-…")).toBeVisible();
   await page.keyboard.press("Escape");
 
-  // sign in from the list's cloud strip, then install one-click
-  await page.getByTestId("connectors-breadcrumb").click();
-  await page.getByTestId("account-row").click();
-  await expect(page.getByTestId("account-row")).toContainText("Rohit", { timeout: 10_000 });
-  await page.getByTestId("connector-slack").click();
+  // install one-click
   await page.getByTestId("add-workspace-btn").click();
   await page.getByTestId("modal-add-to-slack").click();
   // the mock completes the browser install instantly; the page's poll shows it

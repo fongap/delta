@@ -11,12 +11,13 @@ visibility/debugging surface, not a queue — entries are read in the GUI, not r
 
 from __future__ import annotations
 
-import json
 import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional
+
+from ._jsonstate import load_json_state, save_json_state
 
 
 @dataclass
@@ -38,17 +39,13 @@ class UnroutedStore:
 
     def _load(self) -> None:
         if self.path and self.path.is_file():
-            data = json.loads(self.path.read_text(encoding="utf-8"))
+            data = load_json_state(self.path, {}) or {}
             self._items = [UnroutedItem(**raw) for raw in data.get("items", [])]
 
     def _save(self) -> None:
         if not self.path:
             return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps({"items": [asdict(i) for i in self._items]}, indent=2),
-            encoding="utf-8",
-        )
+        save_json_state(self.path, {"items": [asdict(i) for i in self._items]})
 
     def record(self, source: str, sender: str, text: str, reason: str) -> UnroutedItem:
         item = UnroutedItem(

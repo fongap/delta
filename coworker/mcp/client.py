@@ -54,10 +54,24 @@ class MCPManager:
             if existing is not None:
                 return existing
             ready: asyncio.Future = asyncio.get_running_loop().create_future()
-            self._tasks[server.name] = asyncio.create_task(
+            task = asyncio.create_task(
                 self._serve(server, ready, interactive=interactive)
             )
-            conn = await ready  # propagates connection errors
+            self._tasks[server.name] = task
+            try:
+                conn = await ready  # propagates connection errors
+            except BaseException:
+                # If the waiter is cancelled (e.g. the session-open WS handler is torn
+                # down mid-connect), the _serve task would otherwise park forever on
+                # shutdown.wait() with a live, untracked connection. Cancel it so its
+                # AsyncExitStack tears the transport down (finally also clears the
+                # _tasks/_conns bookkeeping).
+                task.cancel()
+                try:
+                    await task
+                except (asyncio.CancelledError, Exception):
+                    pass
+                raise
             self._conns[server.name] = conn
             return conn
 

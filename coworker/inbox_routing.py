@@ -11,12 +11,13 @@ module stays testable without touching Slack/Telegram.
 
 from __future__ import annotations
 
-import json
 import re
 import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Callable, Optional
+
+from ._jsonstate import load_json_state, save_json_state
 
 DEFAULT_INBOX = "default"
 # Embeds the item id in a delivered message. Emitted as [ow:…] since the bot's rebrand
@@ -48,7 +49,7 @@ class InboxRouting:
 
     def _load(self) -> None:
         if self.path and self.path.is_file():
-            data = json.loads(self.path.read_text(encoding="utf-8"))
+            data = load_json_state(self.path, {}) or {}
             for raw in data.get("bindings", []):
                 b = InboxBinding(**raw)
                 self._bindings[b.name] = b
@@ -58,17 +59,13 @@ class InboxRouting:
     def _save(self) -> None:
         if not self.path:
             return
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps(
-                {
-                    "bindings": [asdict(b) for b in self._bindings.values()],
-                    "persona_default": self._persona_default,
-                    "session_override": self._session_override,
-                },
-                indent=2,
-            ),
-            encoding="utf-8",
+        save_json_state(
+            self.path,
+            {
+                "bindings": [asdict(b) for b in self._bindings.values()],
+                "persona_default": self._persona_default,
+                "session_override": self._session_override,
+            },
         )
 
     # -- config -----------------------------------------------------------------

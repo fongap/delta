@@ -282,11 +282,20 @@ export function Sidebar(props: Props) {
   const openRowMenu = (id: string, anchor: HTMLElement) => {
     const r = anchor.getBoundingClientRect();
     const MENU_W = 160; // w-40
-    const MENU_H = 150; // ~4 items + divider; only used to flip upward near the window bottom
+    // The menu now carries Rename · Pin · Archive · the Reasoning-depth section (label +
+    // 4 levels) · Delete — ~11 rows. A stale constant (150) flipped it up near the window
+    // bottom with the last item still off-screen, so use the menu's real height (~300px).
+    const MENU_H = 300;
     setConfirmDelId(null);
     setRowMenu({
       id,
-      top: r.bottom + 4 + MENU_H > window.innerHeight ? r.top - MENU_H : r.bottom + 4,
+      // Flip upward only when the menu genuinely won't fit below the anchor. When flipped,
+      // align the menu's BOTTOM to the anchor top so the last (Delete) item never lands
+      // off-screen: bottom = top + MENU_H = anchor top.
+      top:
+        r.bottom + 4 + MENU_H > window.innerHeight
+          ? Math.max(8, r.top - MENU_H)
+          : r.bottom + 4,
       left: Math.max(8, r.right - MENU_W),
       anchor,
     });

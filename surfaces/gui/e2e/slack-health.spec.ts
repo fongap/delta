@@ -8,9 +8,12 @@ import { test } from "./fixtures";
 
 async function openConnectors(page) {
   await page.goto("/");
-  await page.getByTestId("account-row").click(); // triggers login
+  await page.getByTestId("account-row").click(); // login, or opens the account menu if already signed in
   await expect(page.getByTestId("account-row")).toContainText("Rohit", { timeout: 10_000 });
-  await page.getByTestId("account-row").click(); // now signed in → opens menu
+  // If the click above only signed us in (menu not yet open), click again to open it.
+  if ((await page.getByTestId("account-row").getAttribute("aria-expanded")) !== "true") {
+    await page.getByTestId("account-row").click();
+  }
   await page.getByRole("button", { name: "Connectors", exact: true }).click();
 }
 
@@ -36,6 +39,9 @@ function forceStatus(page, overrides: any) {
 }
 
 test("signed out: chip and status line say Sign-in needed", async ({ page }) => {
+  // openConnectors signs the fixture account in; force the Slack status's sign-in
+  // layer to signed-out so the honest "Sign-in needed" chip renders.
+  await forceStatus(page, { signed_in: false });
   await openConnectors(page);
   await expect(page.getByTestId("connector-slack")).toContainText("Sign-in needed");
   await page.getByTestId("connector-slack").click();

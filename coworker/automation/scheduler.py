@@ -77,9 +77,18 @@ class Scheduler:
         for task in self.store.due():
             # Spawn, don't await: a run can suspend on a parked approval (standing
             # scoped approvals, §25) and one blocked automation must never stall the
-            # scheduler loop, other due tasks, or self-wake resumption. Overlap is
-            # still guarded inside run_task via _running_ids.
-            spawned = asyncio.create_task(self.run_task(task, trigger=trigger))
+            # scheduler loop, other due tasks, or self-wake resumption.
+            #
+            # Claim the overlap guard HERE, synchronously before spawning. A tick can
+            # read a stale due row while the task's previous run is still finishing
+            # (its next_run save lands after this snapshot); claiming before the spawn
+            # makes that duplicate skip instead of racing past the released guard and
+            # executing twice. The claim is released by _run_claimed's finally.
+            if task.id in self._running_ids:
+                logger.info("skipping %s — previous run still going", task.id)
+                continue
+            self._running_ids.add(task.id)
+            spawned = asyncio.create_task(self._run_claimed(task, trigger=trigger))
             self._spawned.add(spawned)
             spawned.add_done_callback(self._spawned.discard)
         if self.extra_tick is not None:
@@ -88,11 +97,24 @@ class Scheduler:
             except Exception:
                 logger.exception("scheduler extra_tick (wake resume) failed")
 
+    async def _run_claimed(self, task: ScheduledTask, *, trigger: str) -> Optional[TaskRun]:
+        """Execute a task whose overlap guard was already claimed by _tick."""
+        try:
+            return await self._execute(task, trigger=trigger)
+        finally:
+            self._running_ids.discard(task.id)
+
     async def run_task(self, task: ScheduledTask, *, trigger: str) -> Optional[TaskRun]:
         if task.id in self._running_ids:  # skip-on-overlap
             logger.info("skipping %s — previous run still going", task.id)
             return None
         self._running_ids.add(task.id)
+        try:
+            return await self._execute(task, trigger=trigger)
+        finally:
+            self._running_ids.discard(task.id)
+
+    async def _execute(self, task: ScheduledTask, *, trigger: str) -> Optional[TaskRun]:
         try:
             run = await self.runner(task, trigger)
         except Exception as exc:
@@ -101,8 +123,6 @@ class Scheduler:
                 task_id=task.id, status="error", error=str(exc), trigger=trigger
             )
             self.store.add_run(run)
-        finally:
-            self._running_ids.discard(task.id)
         # advance the task (run_count/last_run) → save recomputes next_run.
         fresh = self.store.get(task.id)
         if fresh is not None:

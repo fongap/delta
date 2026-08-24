@@ -13,8 +13,9 @@ test("the bottom is four uniform footer icons — the old rows are gone", async 
   await expect(page.getByTestId("account-row")).toBeVisible();
   await expect(page.getByTestId("sidebar-footer-settings")).toBeVisible();
   await expect(page.getByRole("button", { name: /Settings & more/i })).toHaveCount(0);
-  // No standalone sidebar Inbox row outside the footer.
-  await expect(page.locator(".sidebar").getByRole("button", { name: "Inbox", exact: true })).toHaveCount(0);
+  // The ONLY "Inbox" button in the sidebar is the footer icon — no standalone nav row.
+  await expect(page.locator(".sidebar").getByRole("button", { name: "Inbox", exact: true })).toHaveCount(1);
+  await expect(page.locator(".sidebar").getByRole("button", { name: "Inbox", exact: true })).toHaveAttribute("data-testid", "sidebar-footer-inbox");
 });
 
 test("pending items: the inbox badge clicks straight to Inbox — no menu", async ({
