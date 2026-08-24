@@ -203,7 +203,7 @@ jobs:
             echo "::error::portable release must contain exactly two assets"
             exit 1
           }
-          echo "$(cat "$SUM")  $ZIP" | sha256sum --check --status
+          echo "$(tr -d '\r' < "$SUM")  $ZIP" | sha256sum --check --status
 
           if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
             git fetch origin "refs/tags/$TAG:refs/tags/$TAG"
@@ -253,7 +253,7 @@ jobs:
             --pattern 'Delta-Windows-Portable.zip' \
             --pattern 'Delta-Windows-Portable.zip.sha256'
           cd verified-download
-          echo "$(cat Delta-Windows-Portable.zip.sha256)  Delta-Windows-Portable.zip" \
+          echo "$(tr -d '\r' < Delta-Windows-Portable.zip.sha256)  Delta-Windows-Portable.zip" \
             | sha256sum --check --status
 
       - name: Publish release
