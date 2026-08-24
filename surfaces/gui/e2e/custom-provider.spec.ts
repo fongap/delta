@@ -30,13 +30,11 @@ test.describe("custom provider", () => {
     await page.getByTestId("set-fetch").click();
     await expect(page.getByTestId("set-fetch-msg")).toContainText("Fetched 2 model(s)");
 
-    // 5. Create & save → the alias is registered, verified, and the card appears.
-    await page.getByTestId("set-create-save").click();
+    // 5. Fetch itself registers the alias and stores the key (backend parity), so creation
+    // is complete: the draft form closes and the gallery card shows the saved state —
+    // no dead "Create & save" step after the fact.
     const card = page.getByTestId("set-provider-myapi");
     await expect(card).toContainText("myapi");
-    await expect(card).toContainText("OpenAI compatible");
     await expect(card).toContainText("Saved");
-    await expect(page.getByTestId("set-alias")).toHaveValue("");
-    await expect(page.getByTestId("fetched-models")).toHaveCount(0);
   });
 });

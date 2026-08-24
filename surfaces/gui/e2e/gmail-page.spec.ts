@@ -75,7 +75,10 @@ test("Never show agents: sender + label chips round-trip", async ({ page }) => {
 
   // chips survive a reload (persisted through the PATCH route, re-read on load)
   await page.reload();
-  await openConnectors(page);
+  // Still signed in after reload (mock cloud state is module-scoped), so the row
+  // opens the account menu directly — no login step.
+  await page.getByTestId("account-row").click();
+  await page.getByRole("button", { name: "Connectors", exact: true }).click();
   await page.getByTestId("connector-gmail").click();
   await expect(page.getByTestId("gmail-filter-senders")).toContainText("ceo@corp.com");
   // remove round-trips too

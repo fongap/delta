@@ -429,6 +429,12 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
     }
     setFetchedModels(res.models ?? []);
     const n = res.added?.length ?? 0;
+    // Create mode: Fetch already registered the alias AND stored its key (the registration
+    // POST carries the fields), so creation is complete here. Collapse the draft — leaving
+    // it open dead-ends on a disabled Create & save while the card claims "save to finish"
+    // (owner catch: no exit from the post-Fetch state). Keep the confirmation message.
+    const wasCreate = !sel;
+    if (wasCreate) resetCreateForm();
     setFetchMsg({
       state: "ok",
       text: n > 0

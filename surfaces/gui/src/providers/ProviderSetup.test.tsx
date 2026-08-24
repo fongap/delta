@@ -211,12 +211,13 @@ describe("custom provider identity", () => {
     const alias = await screen.findByTestId("set-alias");
     fireEvent.change(alias, { target: { value: "fong" } });
     fireEvent.click(screen.getByTestId("set-fetch"));
-    await screen.findByTestId("fetched-models");
-    expect(screen.getByText("code-max")).toBeTruthy();
-
-    fireEvent.click(screen.getByTestId("set-create-save"));
-    await waitFor(() => expect((screen.getByTestId("set-alias") as HTMLInputElement).value).toBe(""));
+    // Create mode: Fetch registers the alias (key included) and completes creation —
+    // the draft resets immediately and no dead Create & save step remains.
+    await screen.findByText(/Fetched 2 model/);
+    expect((screen.getByTestId("set-alias") as HTMLInputElement).value).toBe("");
     expect(screen.queryByTestId("fetched-models")).toBeNull();
-    expect(screen.queryByTestId("set-fetch-msg")).toBeNull();
+    // The stale Create & save affordance is gone from the completed draft's flow:
+    // the fresh (cleared) form renders it disabled until a new alias is typed.
+    expect((screen.getByTestId("set-create-save") as HTMLButtonElement).disabled).toBe(true);
   });
 });

@@ -30,15 +30,15 @@ test("the account row is always visible and signs in directly when clicked", asy
   ).toBeVisible();
 });
 
-test("signed-out one-click pane signs in inline, then connects", async ({ page }) => {
+test("fresh user: sign-in from the account row, then the connector connects one-click", async ({ page }) => {
   await openConnectors(page);
-  // Fresh user path: Available → Connect → the pane must offer sign-in itself.
+  // §26 nav: reaching Connectors means the fresh user already signed in via the
+  // account row (the old signed-out inline sign-in pane inside the modal is only
+  // reachable if cloud state flips while the modal is open — not a UI path anymore).
   await page
     .getByTestId("connector-gmail")
     .getByRole("button", { name: "Connect", exact: true })
     .click();
-  await page.getByTestId("inline-cloud-sign-in").click();
-  // The mock signs in instantly; the section's poll re-renders the pane armed.
   await expect(
     page.getByRole("button", { name: /Connect Gmail with one click/i }),
   ).toBeVisible({ timeout: 10_000 });

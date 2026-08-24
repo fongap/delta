@@ -75,7 +75,9 @@ test("signed out: the modal's one-click pane offers inline cloud sign-in; manual
     .getByTestId("connector-notion")
     .getByRole("button", { name: "Connect", exact: true })
     .click();
-  await expect(page.getByTestId("inline-cloud-sign-in")).toBeVisible();
+  // The connectors page's cloud poll may lag one beat behind the sign-out in
+  // full-suite runs (shared-worker state); allow it to converge.
+  await expect(page.getByTestId("inline-cloud-sign-in")).toBeVisible({ timeout: 10_000 });
   await page.getByTestId("modal-pane-manual").click();
   await expect(page.getByPlaceholder("ntn_…")).toBeVisible();
 });

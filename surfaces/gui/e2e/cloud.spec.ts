@@ -18,31 +18,23 @@ async function signIn(page) {
   await expect(page.getByTestId("account-row")).toContainText("Rohit", { timeout: 10_000 });
 }
 
-test("signed out: the account row is the sign-in home; managed connector still connects manually", async ({
+test("signed out: the account row is the sign-in home; signed in it opens the account menu", async ({
   page,
 }) => {
   await page.goto("/");
   const row = page.getByTestId("account-row");
   await expect(row).toContainText("Not signed in");
 
-  // When signed out, clicking the account-row triggers login directly (no menu). After
-  // the mock flips, the row carries the account name.
+  // Signed out → clicking triggers login directly (no menu).
   await row.click();
   await expect(row).toContainText("Rohit", { timeout: 10_000 });
 
-  // Now signed in → clicking the row opens the account menu, which lists Connectors.
+  // Signed in → clicking opens the account menu (identity + Connectors + Sign out).
   await row.click();
   const menu = page.getByTestId("account-menu");
   await expect(menu).toContainText("rohit@openworker.com");
-  await menu.getByRole("button", { name: "Connectors", exact: true }).click();
-
-  // The managed-capable connector's add-modal shows the hint + manual fields, no
-  // one-click button while signed out.
-  await page.getByTestId("connector-gmail").getByRole("button", { name: "Connect" }).click();
-  const modal = page.getByTestId("add-connection-modal");
-  await expect(modal.getByTestId("managed-connect")).toContainText("Sign in to Delta Cloud");
-  await expect(modal.locator("input[type=password]")).toBeVisible(); // manual field rendered
-  await expect(modal.getByRole("button", { name: /one click/i })).toHaveCount(0);
+  // The manual-vs-one-click connector invariant lives on the connector pages
+  // (see github/hubspot specs): one-click requires the signed-in state this flow creates.
 });
 
 test("signed in: account row shows the name; one-click appears; sign out from the menu", async ({

@@ -625,6 +625,13 @@ export async function mockApi(page: import("@playwright/test").Page) {
       } else if (type === "error") {
         messages.push({ role: "notice", kind: "error", text: String(payload.error ?? "unknown"), ts });
       } else if (type === "interrupted") {
+        // Engine parity: the real engine persists the streamed partial server-side before
+        // ending the turn, so the turn_done re-pull still contains it. Without this, the
+        // client's flushed partial would be wiped by the authoritative reload.
+        if (epicPartial) {
+          messages.push({ role: "assistant", content: epicPartial, ts });
+          epicPartial = "";
+        }
         messages.push({ role: "notice", kind: "interrupted", ts });
       } else if (type === "compacted") {
         messages.push({ role: "notice", kind: "compacted", text: String(payload.text ?? ""), ts });
@@ -642,6 +649,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
     send("ready");
     let pendingTool = "run_shell"; // which proposal the next approval decision resolves
     let epicTimer: ReturnType<typeof setInterval> | null = null; // the slow stream, stoppable via interrupt
+    let epicPartial = ""; // deltas accumulated so far — persisted on interrupt (engine parity)
     let hadTurn = false; // a user_message landed — set_model is now a mid-session switch
     ws.onMessage((raw) => {
       const msg = JSON.parse(String(raw));
@@ -780,6 +788,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
           const line = "The epic scrolls ever onward, line upon line upon line. ";
           epicTimer = setInterval(() => {
             ticks += 1;
+            epicPartial += line.repeat(3) + "\n\n";
             send("assistant_delta", { text: line.repeat(3) + "\n\n" });
             if (ticks >= 40) {
               clearInterval(epicTimer!);
