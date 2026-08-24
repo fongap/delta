@@ -6,7 +6,7 @@
 <!-- ![GitHub forks](https://img.shields.io/github/forks/fongap/delta?style=flat-square&color=blue)-->
 <!-- ![GitHub issues](https://img.shields.io/github/issues/fongap/delta?style=flat-square&color=orange)-->
 <!-- ![GitHub pull requests](https://img.shields.io/github/issues-pr/fongap/delta?style=flat-square&color=green)-->
-![GitHub release](https://img.shields.io/github/v/release/fongap/delta?style=flat-square&color=blue)
+![GitHub tag](https://img.shields.io/github/v/tag/fongap/delta?style=flat-square&color=blue)
 ![GitHub last commit](https://img.shields.io/github/last-commit/fongap/delta?style=flat-square&color=orange)
 ![GitHub license](https://img.shields.io/github/license/fongap/delta?style=flat-square&color=green)
 
