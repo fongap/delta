@@ -18,8 +18,9 @@ test("connected connectors come first with status + health chip", async ({ page 
 
   const slack = page.getByTestId("connector-slack");
   await expect(slack).toContainText("2 workspaces · relay");
-  // signed out + relay mode → the honest chip is the actionable one
-  await expect(slack).toContainText("Sign-in needed");
+  // Reaching this page requires signing in (§26 nav), so the relay reports healthy:
+  // the "Sign-in needed" warn chip only appears for a signed-out cloud account.
+  await expect(slack).toContainText("Live");
   // available section renders the not-connected connectors with a Connect pill
   await expect(
     page.getByTestId("connector-telegram").getByRole("button", { name: "Connect" }),

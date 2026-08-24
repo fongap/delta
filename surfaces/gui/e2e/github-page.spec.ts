@@ -44,17 +44,12 @@ test("add installation opens the modal; signed in installs a second org", async 
   await page.getByTestId("add-installation-btn").click();
   const modal = page.getByTestId("add-connection-modal");
   await expect(modal).toContainText("@ocw-agent App"); // one-click pane
-  await expect(modal).toContainText("Sign in to Delta Cloud"); // signed out
   // Manual PAT pane is right there too — both modes, one entry point
   await modal.getByTestId("modal-pane-manual").click();
   await expect(modal).toContainText("Personal access token");
   await page.keyboard.press("Escape");
 
-  // sign in from the list's cloud strip, then install one-click
-  await page.getByTestId("connectors-breadcrumb").click();
-  await page.getByTestId("account-row").click();
-  await expect(page.getByTestId("account-row")).toContainText("Rohit", { timeout: 10_000 });
-  await page.getByTestId("connector-github").click();
+  // install one-click (§26 nav: reaching this page means we're already signed in)
   await page.getByTestId("add-installation-btn").click();
   await page.getByTestId("modal-install-github-app").click();
   // the mock completes the browser install instantly; the page's poll shows it
@@ -72,10 +67,6 @@ test("modal has ONE connect button and sends no flow — authorize-first lives i
   // redirects to the install page only when there are none) — so the modal's old
   // "Already installed? Link it" secondary and its flow=authorize are gone.
   await openGithubPage(page);
-  await page.getByTestId("connectors-breadcrumb").click();
-  await page.getByTestId("account-row").click();
-  await expect(page.getByTestId("account-row")).toContainText("Rohit", { timeout: 10_000 });
-  await page.getByTestId("connector-github").click();
 
   let flowSent: string | null = null;
   await page.route("**/v1/connectors/github/connect-managed", async (route) => {
@@ -91,10 +82,6 @@ test("modal has ONE connect button and sends no flow — authorize-first lives i
 test("disconnect removes one installation and keeps the rest", async ({ page }) => {
   await openGithubPage(page);
   // add a second installation first (signed-in one-click)
-  await page.getByTestId("connectors-breadcrumb").click();
-  await page.getByTestId("account-row").click();
-  await expect(page.getByTestId("account-row")).toContainText("Rohit", { timeout: 10_000 });
-  await page.getByTestId("connector-github").click();
   await page.getByTestId("add-installation-btn").click();
   await page.getByTestId("modal-install-github-app").click();
   await expect(page.getByTestId("github-install-202")).toBeVisible({ timeout: 10_000 });

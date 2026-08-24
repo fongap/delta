@@ -24,8 +24,9 @@ test("list row status + navigation to the Slack page", async ({ page }) => {
   await expect(row).toContainText("2 workspaces · relay");
   await row.click();
   await expect(page.getByTestId("slack-workspaces")).toBeVisible();
-  // signed out (fixture default) → the status line leads with the actionable layer
-  await expect(page.getByTestId("slack-mode-badge")).toContainText("Sign-in needed");
+  // Signed in (the nav requires it) → the relay badge reports the live state;
+  // "sign-in paused" only shows for a signed-out cloud account.
+  await expect(page.getByTestId("slack-mode-badge")).toContainText("Live");
 });
 
 test("parked sender files under ITS workspace; Allow & deliver adds to that allow-list only", async ({
