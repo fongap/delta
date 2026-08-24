@@ -12,8 +12,8 @@ fn main() {
         res.set_icon("icon.ico");
         res.set("FileDescription", "Delta");
         res.set("ProductName", "Delta");
-        res.set("FileVersion", "0.2.0");
-        res.set("ProductVersion", "0.2.0");
+        res.set("FileVersion", env!("CARGO_PKG_VERSION"));
+        res.set("ProductVersion", env!("CARGO_PKG_VERSION"));
         res.compile()
             .expect("winres: failed to embed Delta icon (is rc.exe / Windows SDK available?)");
     }

@@ -1,16 +1,108 @@
 # Delta's release artifact is the relocatable Windows portable ZIP.
-# Tag pushes create a DRAFT GitHub Release for manual verification and publication.
+# A manual run from main reads the repository version, creates the matching tag,
+# verifies the uploaded assets, and publishes the GitHub Release automatically.
 
 name: Portable Release
 
 on:
-  push:
-    tags: ["v*", "app-v*"]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: portable-release
+  cancel-in-progress: false
+
 jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Validate release source and version
+        id: release
+        shell: bash
+        run: |
+          if [ "$GITHUB_REF" != "refs/heads/main" ]; then
+            echo "::error::releases must be dispatched from main (got $GITHUB_REF)"
+            exit 1
+          fi
+
+          python3 <<'PY'
+          import json
+          import os
+          import re
+          import tomllib
+          from pathlib import Path
+
+          def json_version(path: str) -> str:
+              return json.loads(Path(path).read_text(encoding="utf-8"))["version"]
+
+          def toml_version(path: str) -> str:
+              return tomllib.loads(Path(path).read_text(encoding="utf-8"))["package"]["version"]
+
+          def cargo_lock_version(path: str, package: str) -> str:
+              packages = tomllib.loads(Path(path).read_text(encoding="utf-8"))["package"]
+              matches = [item["version"] for item in packages if item["name"] == package]
+              if len(matches) != 1:
+                  raise SystemExit(f"expected exactly one {package!r} package in {path}")
+              return matches[0]
+
+          package_lock = json.loads(Path("surfaces/gui/package-lock.json").read_text(encoding="utf-8"))
+          server_version_text = Path("packaging/delta-server-version.txt").read_text(encoding="utf-8")
+          server_version_match = re.search(r"StringStruct\('ProductVersion', '([^']+)'\)", server_version_text)
+          if server_version_match is None:
+              raise SystemExit("packaging/delta-server-version.txt has no ProductVersion")
+
+          versions = {
+              "pyproject.toml": tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"],
+              "surfaces/gui/package.json": json_version("surfaces/gui/package.json"),
+              "surfaces/gui/package-lock.json": package_lock["version"],
+              "surfaces/gui/package-lock.json packages root": package_lock["packages"][""]["version"],
+              "surfaces/gui/src-tauri/tauri.conf.json": json_version("surfaces/gui/src-tauri/tauri.conf.json"),
+              "surfaces/gui/src-tauri/Cargo.toml": toml_version("surfaces/gui/src-tauri/Cargo.toml"),
+              "surfaces/gui/src-tauri/Cargo.lock": cargo_lock_version("surfaces/gui/src-tauri/Cargo.lock", "openworker-desktop"),
+              "packaging/portable/launcher/Cargo.toml": toml_version("packaging/portable/launcher/Cargo.toml"),
+              "packaging/portable/launcher/Cargo.lock": cargo_lock_version("packaging/portable/launcher/Cargo.lock", "delta-portable-launcher"),
+              "packaging/delta-server-version.txt": server_version_match.group(1),
+          }
+          unique = set(versions.values())
+          if len(unique) != 1:
+              details = ", ".join(f"{path}={version}" for path, version in versions.items())
+              raise SystemExit(f"release versions are inconsistent: {details}")
+
+          version = unique.pop()
+          if not re.fullmatch(r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)", version):
+              raise SystemExit(f"release version must be stable SemVer X.Y.Z, got {version!r}")
+          version_tuple = tuple(int(part) for part in version.split(".")) + (0,)
+          tuple_text = ", ".join(str(part) for part in version_tuple)
+          for field in ("filevers", "prodvers"):
+              if f"{field}=({tuple_text})" not in server_version_text:
+                  raise SystemExit(f"packaging/delta-server-version.txt {field} does not match {version}")
+
+          changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
+          if "## [Unreleased]" not in changelog:
+              raise SystemExit("CHANGELOG.md must keep an [Unreleased] section")
+          if not re.search(rf"^## \[{re.escape(version)}\] - \d{{4}}-\d{{2}}-\d{{2}}$", changelog, re.MULTILINE):
+              raise SystemExit(f"CHANGELOG.md has no release section for {version}")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+              output.write(f"version={version}\n")
+              output.write(f"tag=v{version}\n")
+          PY
+
   build-portable:
+    needs: prepare
     runs-on: windows-latest
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
 
@@ -68,37 +160,39 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: windows-portable
+          name: windows-portable-${{ needs.prepare.outputs.tag }}
           path: |
             releases/Delta-Windows-Portable.zip
             releases/Delta-Windows-Portable.zip.sha256
           if-no-files-found: error
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v') || startsWith(github.ref, 'refs/tags/app-v')
-    needs: build-portable
+    needs: [prepare, build-portable]
     runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - uses: actions/download-artifact@v4
         with:
-          name: windows-portable
+          name: windows-portable-${{ needs.prepare.outputs.tag }}
           path: dist
 
-      - name: Validate tag and assets
+      - name: Validate commit and assets
         shell: bash
+        env:
+          TAG: ${{ needs.prepare.outputs.tag }}
         run: |
-          TAG="${GITHUB_REF_NAME}"
-          VERSION="${TAG#app-v}"
-          VERSION="${VERSION#v}"
-          CONF_VERSION=$(python3 -c "import json; print(json.load(open('surfaces/gui/src-tauri/tauri.conf.json'))['version'])")
-          if [ "$VERSION" != "$CONF_VERSION" ]; then
-            echo "::error::tag $TAG != tauri.conf.json version $CONF_VERSION"
+          git fetch origin main --no-tags
+          MAIN_SHA=$(git rev-parse origin/main)
+          if [ "$MAIN_SHA" != "$GITHUB_SHA" ]; then
+            echo "::error::main advanced during the build ($GITHUB_SHA -> $MAIN_SHA); dispatch again"
             exit 1
           fi
+
           ZIP="dist/Delta-Windows-Portable.zip"
           SUM="${ZIP}.sha256"
           [ -f "$ZIP" ] && [ -f "$SUM" ] || {
@@ -111,16 +205,63 @@ jobs:
           }
           echo "$(cat "$SUM")  $ZIP" | sha256sum --check --status
 
-      - name: Create draft release
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh release create "${{ github.ref_name }}" \
-            --title "${{ github.ref_name }}" \
-            --draft \
-            --generate-notes
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" >/dev/null 2>&1; then
+            git fetch origin "refs/tags/$TAG:refs/tags/$TAG"
+            TAG_SHA=$(git rev-list -n 1 "$TAG")
+            if [ "$TAG_SHA" != "$GITHUB_SHA" ]; then
+              echo "::error::$TAG already points to $TAG_SHA instead of $GITHUB_SHA"
+              exit 1
+            fi
+          fi
 
-      - name: Upload portable assets
+      - name: Create or resume draft release
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ github.ref_name }}" dist/*
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          if RELEASE_JSON=$(gh release view "$TAG" --json isDraft 2>/dev/null); then
+            if [ "$(jq -r .isDraft <<<"$RELEASE_JSON")" != "true" ]; then
+              echo "::error::$TAG is already published"
+              exit 1
+            fi
+            echo "Resuming existing draft release $TAG"
+          elif git show-ref --verify --quiet "refs/tags/$TAG"; then
+            gh release create "$TAG" --verify-tag --title "$TAG" --draft --generate-notes
+          else
+            gh release create "$TAG" --target "$GITHUB_SHA" --title "$TAG" --draft --generate-notes
+          fi
+
+      - name: Upload and verify release assets
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          gh release upload "$TAG" dist/* --clobber
+
+          ASSETS=$(gh release view "$TAG" --json assets)
+          EXPECTED='["Delta-Windows-Portable.zip","Delta-Windows-Portable.zip.sha256"]'
+          ACTUAL=$(jq -c '[.assets[].name] | sort' <<<"$ASSETS")
+          if [ "$ACTUAL" != "$EXPECTED" ]; then
+            echo "::error::unexpected release assets: $ACTUAL"
+            exit 1
+          fi
+
+          mkdir verified-download
+          gh release download "$TAG" --dir verified-download \
+            --pattern 'Delta-Windows-Portable.zip' \
+            --pattern 'Delta-Windows-Portable.zip.sha256'
+          cd verified-download
+          echo "$(cat Delta-Windows-Portable.zip.sha256)  Delta-Windows-Portable.zip" \
+            | sha256sum --check --status
+
+      - name: Publish release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          gh release edit "$TAG" --draft=false --latest
+          URL=$(gh release view "$TAG" --json url --jq .url)
+          echo "Published $URL" | tee -a "$GITHUB_STEP_SUMMARY"

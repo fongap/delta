@@ -4,6 +4,17 @@
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-24
+
+### 变更 (Changed)
+
+#### 2026-08-24 22:33
+
+- **GitHub Actions 自动发布链路**
+  - Portable Release 改为仅从 `main` 手动调度：自动校验 Python、npm、Tauri 与便携启动器版本及 Changelog 发布节，构建并校验 Windows portable 产物，再由 GitHub CLI 自动创建对应 `vX.Y.Z` 标签和 Release。
+  - Release 先以草稿形态上传两个资产，并回下载验证 SHA-256；验证通过后自动发布为 Latest。重复运行可续接未发布草稿，已发布版本、版本不一致、旧提交或标签指向冲突均会安全失败。
+  - 本次补丁版本统一提升为 `0.2.1`，保留 `v0.2.0` 历史标签不变。
+
 ### 移除 (Removed)
 
 #### 2026-08-24 20:03
