@@ -13,7 +13,9 @@ test("provider error shows a retriable notice; Retry re-runs without a new user 
   await box.fill("please fail the turn");
   await box.press("Enter");
 
-  await expect(page.getByText("Error: model unreachable").first()).toBeVisible({ timeout: 10_000 });
+  // Provider failures render as a friendly retriable notice (raw error is folded into
+  // "Show details"), with the Retry affordance next to it.
+  await expect(page.getByText("Provider temporarily unavailable").first()).toBeVisible({ timeout: 10_000 });
   const retry = page.getByTestId("notice-retry");
   await expect(retry).toBeVisible();
 

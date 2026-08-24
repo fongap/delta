@@ -49,7 +49,6 @@ test("signed in: account row shows the name; one-click appears; sign out from th
   page,
 }) => {
   await openConnectors(page);
-  await signIn(page);
 
   await page.getByTestId("connector-gmail").getByRole("button", { name: "Connect", exact: true }).click();
   const modal = page.getByTestId("add-connection-modal");

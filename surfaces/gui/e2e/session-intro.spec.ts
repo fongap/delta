@@ -9,7 +9,7 @@ test("three rows, no Set-me-up; gated rows show Configure › and expand the rai
   page,
 }) => {
   await page.goto("/");
-  await expect(page.getByText("What should we produce?")).toBeVisible();
+  await expect(page.getByText("How can I help you?")).toBeVisible();
 
   // Exactly the three template tasks; the old setup list is gone.
   await expect(page.locator(".task-card")).toHaveCount(3);
@@ -55,9 +55,7 @@ test("ready rows reveal Start → on hover and prefill the composer", async ({ p
 
   const hs = page.getByTestId("intro-task-hubspot");
   await expect(hs).toContainText("Start →");
-  // The action is hover-revealed on ready rows (hidden at rest).
-  await expect(hs.locator(".task-card-act")).toHaveCSS("opacity", "0");
-  await hs.hover();
+  // Row actions are always visible now (the hover-reveal was removed from styles.css).
   await expect(hs.locator(".task-card-act")).toHaveCSS("opacity", "1");
 
   await hs.click();

@@ -221,7 +221,7 @@ export function AccessSection({
   const folderPart = projectScoped
     ? baseName(workspace || roots.find((r) => r.primary)?.path || "") || null
     : roots.length > 0
-      ? t("access.folderCount", { n: roots.length }, `${roots.length} folder${roots.length === 1 ? "" : "s"}`)
+      ? t("access.folderCount", { n: roots.length, s: roots.length === 1 ? "" : "s" }, `${roots.length} folder${roots.length === 1 ? "" : "s"}`)
       : null;
   const summary = [sourcesPart, folderPart].filter(Boolean).join(" · ");
 

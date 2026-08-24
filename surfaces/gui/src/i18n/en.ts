@@ -414,7 +414,7 @@ export const en = {
   "access.offHintEm": "this session only",
   "access.offHintTail": " — the connector stays connected.",
   "access.channelsCount": "Channels · {n}",
-  "access.folderCount": "{n} folders",
+  "access.folderCount": "{n} folder{s}",
   "access.noSources": "no sources",
   "access.manageAll": "Manage all connectors (global) →",
   "access.searchPlaceholder": "Search connectors…",

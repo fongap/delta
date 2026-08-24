@@ -20,7 +20,9 @@ test("composer: send-gating, + attach menu, Mode menu", async ({ page }) => {
   await page.getByRole("button", { name: "Attach" }).click();
   await expect(page.getByRole("button", { name: "Photo or image" })).toBeVisible();
   await expect(page.getByRole("button", { name: "PDF", exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Other files" })).toBeVisible();
+  // §24 attachment scope: binaries (Office/archives) are explicitly unsupported, so the
+  // third shortcut is text/code, not a generic "Other files".
+  await expect(page.getByRole("button", { name: "Text and code" })).toBeVisible();
   // Clicking the backdrop closes it.
   await page.locator(".fixed.inset-0.z-30").click();
   await expect(page.getByRole("button", { name: "Photo or image" })).toHaveCount(0);
@@ -34,7 +36,7 @@ test("composer: send-gating, + attach menu, Mode menu", async ({ page }) => {
   await expect(menu.getByText("Custom", { exact: true })).toHaveCount(0);
   // The current mode is marked with a ✓.
   await expect(menu.locator("button").filter({ hasText: "Ask for approval" })).toContainText("✓");
-  await expect(menu.getByRole("switch", { name: "Send approvals to the Inbox" })).toBeVisible();
+  await expect(menu.getByRole("switch", { name: "Send approvals to Inbox" })).toBeVisible();
   // Picking an option closes the menu (and would flip the live engine's mode).
   await menu.getByText("Full access").click();
   await expect(page.getByTestId("mode-menu")).toHaveCount(0);

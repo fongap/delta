@@ -11,7 +11,7 @@ test("Settings opens as a full page and navigates sections", async ({ page }) =>
   // Full-page: left sub-nav + the General section (no modal backdrop).
   await expect(page.getByRole("heading", { name: "General" })).toBeVisible();
   await expect(page.locator(".modal-backdrop")).toHaveCount(0);
-  for (const label of ["General", "Models", "Voice input"]) {
+  for (const label of ["General", "Models", "Voice"]) {
     await expect(page.getByRole("button", { name: label, exact: true })).toBeVisible();
   }
   // Folded/hidden tabs: Files is a General card now; Personas is launch-flagged off.

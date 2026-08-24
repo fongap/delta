@@ -20,7 +20,8 @@ async function createCustomToArmNext(page) {
   await page.getByTestId("ob-alias").fill("myapi");
   await page.getByTestId("ob-field-api_key").fill("sk-myapi-realkey");
   await page.getByTestId("ob-create-save").click();
-  await expect(page.getByTestId("ob-provider-myapi")).toContainText("✓ Connected");
+  // Saved providers show a "· Saved" chip (the old "✓ Connected" label was replaced).
+  await expect(page.getByTestId("ob-provider-myapi")).toContainText("Saved");
 }
 
 test("tools page: sign-in morphs the page into the connector gallery; a card connects one-click", async ({
