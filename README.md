@@ -16,6 +16,8 @@
 
 Delta 是一个面向个人工作的本地优先 AI 助手，目前基于 OpenWorker 开发，并逐步形成独立的架构与能力体系。
 
+<img src="assets/images/Delta-2026082401.webp" width="70%" alt="Delta">
+
 ## 项目简介
 
 Delta 帮助用户理解任务、组织步骤、调度本地资源并完成实际操作。模型由用户自主配置，不绑定任何特定服务商。
