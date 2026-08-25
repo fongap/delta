@@ -89,6 +89,14 @@ class ArtifactDTO(ContractModel):
     abs_path: str | None = None
 
 
+class SourceDTO(ContractModel):
+    id: str
+    origin: str
+    name: str
+    fingerprint_prefix: str
+    freshness: Literal["current", "changed", "missing"] = "current"
+
+
 class ModelDTO(ContractModel):
     id: str
     provider: str
