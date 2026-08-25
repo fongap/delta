@@ -173,7 +173,28 @@ class ArtifactsBrowserAuditMixin:
             # PowerPoint/Word binaries can't be previewed inline; the UI offers
             # "Open in default app" instead of trying to render them.
             return {"ok": True, "path": path, "kind": "office"}
-        if kind in ("image", "pdf", "sheet"):
+        if kind == "sheet":
+            # Parsed server-side into a bounded JSON preview (P1 security fix:
+            # the GUI no longer parses workbooks with the vulnerable npm xlsx).
+            # Corrupt/hostile files degrade to a friendly error, never a 500.
+            from .sheet_preview import SheetParseError, read_sheet_preview
+
+            if target.stat().st_size > self.MAX_BINARY_PREVIEW:
+                return {
+                    "ok": False,
+                    "error": "file too large to preview — use Reveal to open it",
+                }
+            try:
+                preview = read_sheet_preview(target)
+            except (SheetParseError, OSError, ValueError):
+                return {
+                    "ok": False,
+                    "path": path,
+                    "kind": kind,
+                    "error": "could not parse spreadsheet — use Reveal to open it",
+                }
+            return {"ok": True, "path": path, "kind": kind, **preview}
+        if kind in ("image", "pdf"):
             import base64
 
             if target.stat().st_size > self.MAX_BINARY_PREVIEW:
@@ -188,8 +209,6 @@ class ArtifactsBrowserAuditMixin:
                 ".webp": "image/webp",
                 ".gif": "image/gif",
                 ".pdf": "application/pdf",
-                ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                ".xls": "application/vnd.ms-excel",
             }.get(target.suffix.lower(), "application/octet-stream")
             data = base64.b64encode(target.read_bytes()).decode("ascii")
             return {

@@ -394,6 +394,9 @@ export interface ArtifactContent {
   truncated?: boolean;
   // kind === "folder": a directory listing (models sometimes link a whole package dir).
   entries?: { name: string; dir: boolean; size: number }[];
+  // kind === "sheet": server-parsed workbook preview (the GUI never parses xlsx itself —
+  // npm xlsx is vulnerable; P1 security fix 2026-08-25). Rows are row-limited server-side.
+  sheets?: { name: string; rows: unknown[][]; total_rows: number; truncated: boolean }[];
 }
 
 export async function getArtifacts(sessionId: string): Promise<ArtifactInfo[]> {
