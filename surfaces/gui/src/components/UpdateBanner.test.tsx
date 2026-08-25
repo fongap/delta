@@ -1,10 +1,13 @@
 // Auto-update banner: periodic check + per-version "Later" + background pre-download,
-// driven through a mocked __TAURI__ global (the browser build renders nothing, so the
+// driven through mocked Tauri API modules (the browser build renders nothing, so the
 // e2e harness never sees this — these unit tests are the coverage).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { UpdateBanner } from "./UpdateBanner";
 import { I18nProvider } from "../i18n/I18nContext";
+
+const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
 
 const renderBanner = () => render(<I18nProvider locale="en-US"><UpdateBanner /></I18nProvider>);
 
@@ -19,19 +22,20 @@ beforeEach(() => {
   vi.useFakeTimers();
   available = { version: "1.2.0", notes: "" };
   download = async () => {};
-  invoke = vi.fn(async (cmd: string) => {
+  invoke = invokeMock;
+  invoke.mockImplementation(async (cmd: string) => {
     if (cmd === "check_for_update") return available;
     if (cmd === "download_update") return download();
     if (cmd === "install_update") return null;
     return null;
   });
-  (globalThis as any).__TAURI__ = { core: { invoke } };
+  (globalThis as any).__TAURI_INTERNALS__ = {};
 });
 
 afterEach(() => {
   cleanup();
   vi.useRealTimers();
-  delete (globalThis as any).__TAURI__;
+  delete (globalThis as any).__TAURI_INTERNALS__;
 });
 
 const advance = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms));

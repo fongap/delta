@@ -4,6 +4,15 @@
 
 ## [Unreleased]
 
+### 安全 (Security)
+
+#### 2026-08-25 14:05
+
+- **HTML Artifact 预览与主 WebView 信任域隔离（P0）**
+  - HTML artifact 预览 iframe 从 `sandbox="allow-scripts allow-same-origin"` 改为完全锁定的 `sandbox=""`：嵌入内容默认禁止脚本、不再保留主页面同源，被污染的 artifact 无法触及渲染进程里的 sidecar token 与原生桥（`RightRail.tsx`）。
+  - 关闭 Tauri `withGlobalTauri`：前端改为显式导入 `@tauri-apps/api` / `@tauri-apps/plugin-opener`，不再存在可被同源脚本直接触达的 `window.__TAURI__` 全局桥。
+  - 新增回归测试锁定 sandbox 属性不含 `allow-scripts`/`allow-same-origin`。
+
 ### 新增 (Added)
 
 #### 2026-08-25 11:06

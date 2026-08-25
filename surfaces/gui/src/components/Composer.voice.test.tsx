@@ -1,9 +1,13 @@
-// §37 voice input — the composer's side of the contract, driven through a mocked
-// __TAURI__ global (the mic is native-only; the browser build renders no mic at all).
+// §37 voice input — the composer's side of the contract, driven through mocked Tauri API
+// modules (the mic is native-only; the browser build renders no mic at all).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Composer } from "./Composer";
 import { I18nProvider } from "../i18n/I18nContext";
+
+const { invokeMock } = vi.hoisted(() => ({ invokeMock: vi.fn() }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke: (...a: unknown[]) => invokeMock(...a) }));
+vi.mock("@tauri-apps/api/event", () => ({ listen: async () => () => {} }));
 
 const wrap = (el: JSX.Element) => <I18nProvider locale="en-US">{el}</I18nProvider>;
 
@@ -37,23 +41,24 @@ const props = (extra: Partial<Parameters<typeof Composer>[0]> = {}) => ({
 });
 
 beforeEach(() => {
-  invoke = vi.fn(async (cmd: string) => {
+  invoke = invokeMock;
+  invoke.mockImplementation(async (cmd: string) => {
     if (cmd === "get_dictation_status") return READY;
     if (cmd === "start_dictation") return RECORDING;
     if (cmd === "stop_dictation") return "hello from the mic";
     return null;
   });
-  (globalThis as any).__TAURI__ = { core: { invoke }, event: { listen: async () => () => {} } };
+  (globalThis as any).__TAURI_INTERNALS__ = {};
 });
 
 afterEach(() => {
   cleanup();
-  delete (globalThis as any).__TAURI__;
+  delete (globalThis as any).__TAURI_INTERNALS__;
 });
 
 describe("Composer voice input (§37)", () => {
   it("renders no mic at all outside the desktop app", () => {
-    delete (globalThis as any).__TAURI__;
+    delete (globalThis as any).__TAURI_INTERNALS__;
     render(wrap(<Composer {...props()} />));
     expect(screen.queryByLabelText(/dictation|Voice Input/)).toBeNull();
   });

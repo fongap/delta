@@ -379,11 +379,15 @@ function ArtifactViewer({
         ) : content.error ? (
           <div className="rail-error">{content.error}</div>
         ) : content.kind === "html" ? (
+          // Untrusted agent/user content: fully locked frame — no script, no same-origin.
+          // An escaped artifact must never reach the main webview's origin, where the
+          // sidecar token and the native bridge live (P0 security fix 2026-08-25).
           <iframe
             key={`${artifact.path}-${reloadKey}`}
-            sandbox="allow-scripts allow-same-origin"
+            sandbox=""
             className="artifact-frame"
             srcDoc={content.content || ""}
+            title={artifact.path}
           />
         ) : content.kind === "markdown" ? (
           <div className="artifact-md">

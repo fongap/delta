@@ -1,10 +1,13 @@
 ﻿// Thin bridge to the Tauri desktop shell. In the browser these are inert (isTauri() === false),
-// so the SPA stays a single codebase. We use the injected `window.__TAURI__` global (the shell
-// sets `withGlobalTauri`) instead of the @tauri-apps npm packages, so the browser build needs
-// no Tauri dependencies.
+// so the SPA stays a single codebase. Tauri APIs are imported explicitly (the shell no longer
+// injects a `window.__TAURI__` global — withGlobalTauri is off, so untrusted content can never
+// reach the native bridge by touching one well-known global).
+import { invoke as tauriInvoke } from "@tauri-apps/api/core";
+import { listen as tauriListen } from "@tauri-apps/api/event";
+import { openUrl as tauriOpenUrl } from "@tauri-apps/plugin-opener";
 
 export const isTauri = (): boolean =>
-  typeof (globalThis as any).__TAURI__ !== "undefined";
+  typeof (globalThis as any).__TAURI_INTERNALS__ !== "undefined";
 
 // "macos" | "windows" | "linux" — injected by the shell (std::env::consts::OS) before the
 // SPA loads; userAgent fallback covers browser dev. The macOS overlay-titlebar layout (and
@@ -35,19 +38,17 @@ export type DictationDownloadProgress = {
 };
 
 const invoke = async <T>(cmd: string, args?: Record<string, unknown>): Promise<T | null> => {
-  const tauri = (globalThis as any).__TAURI__;
-  if (!tauri?.core?.invoke) return null;
+  if (!isTauri()) return null;
   try {
-    return (await tauri.core.invoke(cmd, args)) as T;
+    return (await tauriInvoke(cmd, args)) as T;
   } catch {
     return null;
   }
 };
 
 const invokeStrict = async <T>(cmd: string, args?: Record<string, unknown>): Promise<T> => {
-  const tauri = (globalThis as any).__TAURI__;
-  if (!tauri?.core?.invoke) throw new Error("This feature is available in the desktop app.");
-  return (await tauri.core.invoke(cmd, args)) as T;
+  if (!isTauri()) throw new Error("This feature is available in the desktop app.");
+  return (await tauriInvoke(cmd, args)) as T;
 };
 
 /** Open the native macOS folder picker (Tauri only). Returns the chosen path, or null. */
@@ -102,9 +103,8 @@ export const deleteDictationModel = () => invokeStrict<DictationStatus>("delete_
 export async function listenDictationDownloadProgress(
   handler: (progress: DictationDownloadProgress) => void,
 ): Promise<() => void> {
-  const listen = (globalThis as any).__TAURI__?.event?.listen;
-  if (!listen) return () => {};
-  return (await listen("dictation-download-progress", (event: { payload: DictationDownloadProgress }) => {
+  if (!isTauri()) return () => {};
+  return (await tauriListen("dictation-download-progress", (event: { payload: DictationDownloadProgress }) => {
     handler(event.payload);
   })) as () => void;
 }
@@ -132,12 +132,12 @@ export const clearPendingUpdate = () => invokeStrict<void>("clear_pending_update
  * Windows hands off to the installer). */
 export const installUpdate = () => invokeStrict<void>("install_update");
 
-/** Best-effort open a URL in the user's browser. Uses the Tauri opener plugin if present, else
- * `window.open`. The caller should also render the raw URL so it stays copyable if both no-op. */
+/** Best-effort open a URL in the user's browser. Uses the Tauri opener plugin in the desktop
+ * app, else `window.open`. The caller should also render the raw URL so it stays copyable if
+ * both no-op. */
 export function openExternal(url: string): void {
-  const opener = (globalThis as any).__TAURI__?.opener;
-  if (opener?.openUrl) {
-    opener.openUrl(url).catch(() => window.open(url, "_blank", "noopener,noreferrer"));
+  if (isTauri()) {
+    tauriOpenUrl(url).catch(() => window.open(url, "_blank", "noopener,noreferrer"));
     return;
   }
   window.open(url, "_blank", "noopener,noreferrer");
