@@ -704,6 +704,16 @@ class TurnEngine:
             tool_call.id, gateway.RiskLevel.L4
         )  # noqa: typing — IntEnum
         decision = gateway.enforce_level(level, decision)
+        # Gateway slice 3: side-effectful calls with declared on-disk targets are
+        # re-checked for root confinement at the choke point, whatever rule
+        # allowed them. Read-only calls pass through untouched.
+        decision = gateway.enforce_scope(
+            decision,
+            tool_call.arguments,
+            level,
+            workspace_root=self.permissions.workspace_root,
+            roots=self.permissions.resolved_roots(),
+        )
         allowed = decision.allowed
         reason = decision.reason
 
@@ -868,6 +878,9 @@ class TurnEngine:
             "tool": tool_call.name,
             "arguments": tool_call.arguments,
             "level": getattr(self._tool_levels.get(tool_call.id), "name", ""),
+            "isolation": gateway.isolation_status(
+                self._tool_levels.get(tool_call.id)
+            ),
             **event,
         }
         try:

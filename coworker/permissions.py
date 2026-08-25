@@ -112,6 +112,11 @@ class PermissionEngine:
         if self.roots is None:
             self.roots = [{"path": self.workspace_root, "writable": True}]
 
+    def resolved_roots(self) -> list[tuple[Path, bool]]:
+        """Public view of the live root table as (resolved path, writable) pairs —
+        consumed by the Execution Gateway's confinement re-check."""
+        return self._resolved_roots()
+
     def _resolved_roots(self) -> list[tuple[Path, bool]]:
         out: list[tuple[Path, bool]] = []
         for r in self.roots or []:

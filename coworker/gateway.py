@@ -2,9 +2,11 @@
 
 Slice 1 (observe): every authorized tool call is classified into the L0–L4 risk
 taxonomy (docs/approval-taxonomy-adr.md) BEFORE execution, and the level rides on
-the audit trail. Allow/deny behavior is unchanged in this slice — the gateway is
-where the later policy pipeline (schema validation → resource guard → risk class →
-approval policy → sandbox) attaches, one stage per slice.
+the audit trail. Slice 2 (policy): L4 is never auto-allowed — an irreversible call
+downgrades any rule-based allow to an explicit human decision. Slice 3 (guard):
+declared on-disk targets of side-effectful calls must land inside the session's
+trusted roots, whatever rule allowed the call — the choke point re-checks
+confinement itself instead of trusting upstream classifiers to stay correct.
 
 Fail-closed rule: a call that cannot be classified (no registry metadata, unknown
 risk_level value, or an explicit irreversible-list hit) is treated as L4. Nothing
@@ -14,6 +16,7 @@ is ever "unclassified, so probably fine".
 from __future__ import annotations
 
 from enum import IntEnum
+from pathlib import Path
 from typing import Any, Optional
 
 
@@ -93,3 +96,91 @@ def enforce_level(level: RiskLevel, decision: Any) -> Any:
             + (f"; was: {decision.reason}" if decision.reason else "")
         )
     return decision
+
+
+# Path-shaped argument names a tool uses to declare its on-disk target, mirroring
+# the PermissionEngine's write-scope list (a renamed argument must not bypass
+# confinement by falling outside either check).
+_PATH_ARGS = ("path", "file_path", "filepath", "file")
+
+
+def declared_targets(arguments: Optional[dict[str, Any]]) -> list[str]:
+    """The path-shaped target values this call actually carries."""
+    out: list[str] = []
+    for name in _PATH_ARGS:
+        value = (arguments or {}).get(name)
+        if isinstance(value, str) and value.strip():
+            out.append(value.strip())
+    return out
+
+
+def enforce_scope(
+    decision: Any,
+    arguments: Optional[dict[str, Any]],
+    level: RiskLevel,
+    *,
+    workspace_root: Path,
+    roots: list[tuple[Path, bool]],
+) -> Any:
+    """Slice 3 resource guard (mutates + returns `decision`):
+
+    A side-effectful call (L1+) that declares an on-disk target must land inside
+    the session's trusted roots — writable roots for real effect, read-only roots
+    downgraded to ask. This holds regardless of which rule allowed the call: mode
+    grants, session allowlists, standing rules and future grant paths all pass
+    through here, so classifier drift or a new grant path cannot silently move a
+    write outside the sandbox. Read-only calls (L0) are untouched — consulting
+    files outside the workspace is legitimate (that is what directory grants are
+    for); only side effects are confined.
+
+    A violation never hard-denies interactively: the decision becomes an explicit
+    human ask (which unattended runs resolve as deny+audit — fail closed).
+    """
+    if not getattr(decision, "allowed", False) or level < RiskLevel.L1:
+        return decision
+
+    targets = declared_targets(arguments)
+    if not targets:
+        return decision
+
+    for target in targets:
+        p = Path(target).expanduser()
+        candidate = p.resolve() if p.is_absolute() else (workspace_root / p).resolve()
+        under_any = False
+        under_writable = False
+        for root, writable in roots:
+            try:
+                candidate.relative_to(root)
+                under_any = True
+                under_writable = under_writable or writable
+            except ValueError:
+                continue
+        if under_writable:
+            continue
+        detail = (
+            f"target is in a read-only directory: {target}"
+            if under_any
+            else f"target is outside the trusted directories: {target}"
+        )
+        decision.allowed = False
+        decision.needs_user = True
+        decision.rule = ""
+        decision.reason = (
+            f"{detail} — explicit approval required"
+            + (f"; was: {decision.reason}" if decision.reason else "")
+        )
+        return decision
+    return decision
+
+
+def isolation_status(level: Any) -> str:
+    """Honest sandbox declaration for audit rows (ARCH-002: users are told the
+    truth about consequences). Nothing executes in a container today; L1 writes
+    are covered by session checkpoints, everything above that runs unsandboxed."""
+    if level is None:
+        return ""
+    if level < RiskLevel.L1:
+        return "read-only"
+    if level == RiskLevel.L1:
+        return "checkpoint"
+    return "none"

@@ -1,13 +1,22 @@
-"""Execution Gateway slice 1: deterministic L0–L4 classification + audit levels.
+"""Execution Gateway slices 1–3: deterministic L0–L4 classification, audit levels,
+L4 never auto-allowed, and confinement of declared targets at the choke point.
 
 Behavior contract (docs/approval-taxonomy-adr.md):
 - fail closed — unclassifiable calls are L4, never "probably fine"
 - classification is deterministic and does not depend on model output
-- slice 1 changes NO allow/deny behavior; it only labels
 """
 
+from pathlib import Path
+
 from coworker.audit import AuditStore
-from coworker.gateway import RiskLevel, classify, enforce_level
+from coworker.gateway import (
+    RiskLevel,
+    classify,
+    declared_targets,
+    enforce_level,
+    enforce_scope,
+    isolation_status,
+)
 
 
 class Meta:
@@ -105,3 +114,112 @@ def test_audit_store_persists_level(tmp_path):
     events = store.list(session_id="s1")
     assert len(events) == 1
     assert events[0]["level"] == "L3"
+
+
+# -- slice 3 resource guard: declared targets stay inside trusted roots ----------
+
+class _Scope:
+    """Minimal harness: workspace with a writable root and a read-only root."""
+
+    def __init__(self, tmp_path):
+        self.workspace = tmp_path / "ws"
+        self.workspace.mkdir()
+        self.readonly = tmp_path / "ro"
+        self.readonly.mkdir()
+        self.roots = [
+            (self.workspace.resolve(), True),
+            (self.readonly.resolve(), False),
+        ]
+
+    def check(self, decision, arguments, level=RiskLevel.L2):
+        return enforce_scope(
+            decision,
+            arguments,
+            level,
+            workspace_root=self.workspace,
+            roots=self.roots,
+        )
+
+
+def test_declared_targets_extracts_every_path_arg_alias():
+    assert declared_targets({"path": "a.txt", "file_path": "b.txt"}) == ["a.txt", "b.txt"]
+    assert declared_targets({"path": "   "}) == []
+    assert declared_targets({"command": "rm -rf /"}) == []
+    assert declared_targets(None) == []
+
+
+def test_scope_lets_in_bounds_writes_through(tmp_path):
+    s = _Scope(tmp_path)
+    d = s.check(Decision(allowed=True), {"path": str(s.workspace / "out.txt")})
+    assert d.allowed and not d.needs_user
+
+
+def test_scope_ignores_read_only_calls_even_out_of_bounds(tmp_path):
+    # L0 reads are untouched: consulting files outside the workspace is legitimate.
+    s = _Scope(tmp_path)
+    d = s.check(
+        Decision(allowed=True), {"path": "C:/elsewhere/x.txt"}, level=RiskLevel.L0
+    )
+    assert d.allowed and not d.needs_user
+
+
+def test_scope_downgrades_write_outside_all_roots_to_ask(tmp_path):
+    s = _Scope(tmp_path)
+    d = s.check(Decision(allowed=True), {"path": str(tmp_path / "elsewhere" / "x.txt")})
+    assert not d.allowed and d.needs_user
+    assert "outside the trusted directories" in d.reason
+    assert d.rule == ""
+
+
+def test_scope_downgrades_relative_traversal_escape(tmp_path):
+    s = _Scope(tmp_path)
+    d = s.check(Decision(allowed=True), {"path": "../escape.txt"})
+    assert not d.allowed and d.needs_user
+
+
+def test_scope_downgrades_target_in_read_only_root(tmp_path):
+    s = _Scope(tmp_path)
+    d = s.check(Decision(allowed=True), {"path": str(s.readonly / "f.txt")})
+    assert not d.allowed and d.needs_user
+    assert "read-only" in d.reason
+
+
+def test_scope_keeps_denials_and_ask_decisions_untouched(tmp_path):
+    s = _Scope(tmp_path)
+    denied = Decision(allowed=False, needs_user=False, reason="denied by user")
+    after = s.check(denied, {"path": "C:/nowhere/x.txt"})
+    assert after is denied
+    asking = Decision(allowed=False, needs_user=True, reason="requires approval")
+    assert s.check(asking, {"path": "C:/nowhere/x.txt"}) is asking
+
+
+def test_scope_passes_calls_without_declared_targets(tmp_path):
+    s = _Scope(tmp_path)
+    d = s.check(Decision(allowed=True), {"command": "git status"})
+    assert d.allowed and not d.needs_user
+
+
+# -- isolation declaration -------------------------------------------------------
+
+def test_isolation_status_tells_the_truth():
+    assert isolation_status(None) == ""
+    assert isolation_status(RiskLevel.L0) == "read-only"
+    assert isolation_status(RiskLevel.L1) == "checkpoint"
+    for level in (RiskLevel.L2, RiskLevel.L3, RiskLevel.L4):
+        assert isolation_status(level) == "none"
+
+
+def test_audit_store_persists_isolation(tmp_path):
+    store = AuditStore(db_path=tmp_path / "audit.db")
+    store.append(
+        {
+            "session_id": "s1",
+            "tool": "write_file",
+            "stage": "started",
+            "level": "L1",
+            "isolation": "checkpoint",
+        }
+    )
+    events = store.list(session_id="s1")
+    assert len(events) == 1
+    assert events[0]["isolation"] == "checkpoint"
