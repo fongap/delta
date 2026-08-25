@@ -23,5 +23,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 encoding_rs = "0.8"
+# Localhost auth proxy (proxy.rs): async TCP relay for REST + WebSocket upgrade.
+tokio = { version = "1", features = ["net", "io-util", "rt"] }
 # Kept outside the Tauri shell so another product can depend on the same local STT engine.
 ocw-stt = { path = "../../../stt" }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
