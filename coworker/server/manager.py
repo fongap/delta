@@ -36,7 +36,6 @@ from ..unrouted import UnroutedStore
 from ..unattended import UnattendedRegistry
 from ..audit import AuditStore
 from ..ledger import RunEventLedger
-from ..ledger import RunEventLedger
 from ..config import load_config, workspace_allowed_commands
 from ..conversations import ConversationStore, title_from
 from ..engine import ApprovalOutcome, Approver, TurnEngine
