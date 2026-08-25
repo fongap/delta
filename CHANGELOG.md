@@ -4,7 +4,38 @@
 
 ## [Unreleased]
 
+### 变更 (Changed)
+
+#### 2026-08-25 18:53
+
+- **自动更新入口暂时下线**
+  - 发布链路当前仅产出便携 ZIP + 校验和，没有签名的 updater feed（latest.json + 签名资产），更新检查是永远拿不到清单的死能力。主窗口横幅与设置页"检查更新"入口经 `UPDATER_FEED_PUBLISHED` 开关一并隐藏；发布工作流恢复产出 updater feed 后一行开关即可恢复。
+
 ### 安全 (Security)
+
+#### 2026-08-25 18:44
+
+- **电子表格预览移入 Python sidecar，前端不再解析 xlsx（P1）**
+  - GUI 此前用 npm `xlsx@0.18.5`（已知 Prototype Pollution + ReDoS，npm 上无修复版）在渲染进程内解析工作簿；Delta 的产物面板会把用户/代理生成的工作簿送进这条路径。现在 `.xlsx` 由 sidecar 用标准库（zipfile + xml.etree，OOXML 格式明确）解析为受限 JSON 预览（新增 `coworker/server/sheet_preview.py`），`read_artifact` 对 `kind:"sheet"` 返回 `sheets:[{name, rows, total_rows, truncated}]` 而非 base64 二进制。
+  - 响应有界：每表最多 501 行（表头 + 500 行正文，对齐前端表格上限）、256 列、每格 1000 字符、30 个工作表，并对 zip 成员解压体积设上限（防 zip bomb）；损坏文件降级为友好错误而非 500。
+  - 前端 `SheetViewer` 改为纯渲染服务端 JSON；移除 `import("xlsx")` 动态导入、`package.json` 的 `xlsx` 依赖及失效的 i18n key（`artifacts.parsingSheet`/`artifacts.sheetError`），锁文件已更新。
+  - 遗留 `.xls`（BIFF 二进制）无法用标准库安全解析，预览返回友好提示改用"在默认应用中打开"；CSV 预览路径不变。
+  - 新增测试：Python 多表/值类型/行列与文本上限/损坏文件优雅降级/遗留 .xls 提示（`tests/test_sheets.py`）；前端 sheet JSON 渲染与截断提示（`RightRail.sheet.test.tsx`）。
+
+#### 2026-08-25 18:36
+
+- **后台任务生命周期：托管/脱离双轨，消除"幽灵执行"（P1）**
+  - `run_shell run_in_background` 的默认语义从"永久不死"改为**托管**：进程句柄仍由会话的 `LocalExecutor` 跟踪（独立于前台 shell 循环、超时恢复路径不波及），但在会话删除（`delete_session` → `executor.shutdown()`）与应用退出（`SessionManager.aclose` 遍历全部缓存引擎）时整棵进程树被终止（Windows `taskkill /T /F`，POSIX 进程组 SIGTERM）。前台命令超时走的 `close()` 行为不变——那是会话中途的自愈路径。
+  - 新增显式 **detached durable** 类：`detach: true`（仅与 `run_in_background` 同用）保持旧的永生行为，跨会话删除与应用退出存活。两类 spawn 的返回值都带 `pid` 与 `detach` 标志，随引擎既有的 finished 审计行落库——脱离任务从此可见、可在会话存续期内用 `shell_task_kill` 停止。
+  - 审批语义不变：`run_shell` 本就是高风险需审批工具，`detach` 作为参数随审批卡一起展示。
+  - 新增测试：托管任务随 shutdown 终止、脱离任务在 shutdown 后存活并可手动 kill、spawn 结果报告 pid/detach。
+
+#### 2026-08-25 18:35
+
+- **Secret store：ACL 加固可验证 + 损坏文件不再被静默覆盖**
+  - `coworker/secrets.py` 在应用 icacls（`/inheritance:r /grant:r`）后重新读取 ACL 验证加固是否真正生效；POSIX 同样校验 mode 位。验证失败不阻塞保存，但记录 `secrets.json.acl-unprotected` 标记文件并输出 warning 日志，调用方/UI 可据此提示"密钥未受 ACL 保护"；后续验证成功的写入会自动清除标记。
+  - `_read()` 遇到损坏 JSON 时复用 `_jsonstate.load_json_state` 的约定：把损坏文件保留为 `secrets.json.corrupt-<时间戳>` 兄弟文件后再降级为空状态，避免下一次保存静默覆盖唯一的数据副本。
+  - 新增回归测试：ACL 验证失败路径标记降级且不抛异常并可恢复、损坏文件备份后保存产生干净文件且备份保留、正常路径行为不变。
 
 #### 2026-08-25 16:24
 
