@@ -697,6 +697,13 @@ class TurnEngine:
         decision = self.permissions.evaluate(
             tool_call.name, tool_call.arguments, metadata
         )
+        # Gateway slice 2: L4 (irreversible/sensitive) is never auto-allowed —
+        # any rule-based allow is downgraded to an explicit human decision.
+        # Fail closed: an unclassified call id reads as L4 here.
+        level = self._tool_levels.get(
+            tool_call.id, gateway.RiskLevel.L4
+        )  # noqa: typing — IntEnum
+        decision = gateway.enforce_level(level, decision)
         allowed = decision.allowed
         reason = decision.reason
 
@@ -754,12 +761,16 @@ class TurnEngine:
                     reason=reason,
                 )
             else:
-                if outcome is ApprovalOutcome.ALWAYS_TOOL:
-                    self.permissions.allow_tool_for_session(tool_call.name)
-                elif outcome is ApprovalOutcome.ALWAYS_COMMAND:
-                    self.permissions.allow_command_for_session(
-                        str(tool_call.arguments.get("command", ""))
-                    )
+                # L4 calls never persist "always" grants (ARCH-002: no standing
+                # grants at this level) — the user's single approval is spent on
+                # this action alone.
+                if level < gateway.RiskLevel.L4:
+                    if outcome is ApprovalOutcome.ALWAYS_TOOL:
+                        self.permissions.allow_tool_for_session(tool_call.name)
+                    elif outcome is ApprovalOutcome.ALWAYS_COMMAND:
+                        self.permissions.allow_command_for_session(
+                            str(tool_call.arguments.get("command", ""))
+                        )
                 allowed, reason = True, "approved by user"
                 self._audit(
                     tool_call,

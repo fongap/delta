@@ -7,7 +7,7 @@ Behavior contract (docs/approval-taxonomy-adr.md):
 """
 
 from coworker.audit import AuditStore
-from coworker.gateway import RiskLevel, classify
+from coworker.gateway import RiskLevel, classify, enforce_level
 
 
 class Meta:
@@ -54,6 +54,42 @@ def test_classification_is_deterministic_and_model_blind():
     args_b = {"query": "harmless"}
     m = Meta("high")
     assert classify("run_shell", args_a, m) == classify("run_shell", args_b, m)
+
+
+# -- slice 2 policy: L4 is never auto-allowed -----------------------------------
+
+class Decision:
+    def __init__(self, allowed=True, rule="send_email → x", needs_user=False, reason="standing rule"):
+        self.allowed = allowed
+        self.needs_user = needs_user
+        self.rule = rule
+        self.reason = reason
+
+
+def test_l4_downgrades_rule_based_allow_to_human():
+    d = enforce_level(RiskLevel.L4, Decision(allowed=True))
+    assert not d.allowed and d.needs_user
+    assert "L4" in d.reason
+    assert d.rule == ""  # the auto-allow citation must not survive
+
+
+def test_l4_forces_ask_even_without_a_rule():
+    # A mode/allowlist allow (no standing rule) on an L4 tool still becomes a prompt.
+    d = enforce_level(RiskLevel.L4, Decision(allowed=True, rule="", reason="mode allows"))
+    assert not d.allowed and d.needs_user
+
+
+def test_l4_already_asking_passes_through():
+    d = enforce_level(RiskLevel.L4, Decision(allowed=False, needs_user=True))
+    assert not d.allowed and d.needs_user
+
+
+def test_below_l4_is_untouched():
+    for level in (RiskLevel.L0, RiskLevel.L1, RiskLevel.L2, RiskLevel.L3):
+        original = Decision(allowed=True)
+        before = (original.allowed, original.needs_user, original.reason)
+        after = enforce_level(level, original)
+        assert (after.allowed, after.needs_user, after.reason) == before
 
 
 # -- audit persistence ---------------------------------------------------------

@@ -71,3 +71,25 @@ def classify(
 
     # risk == "low"
     return RiskLevel.L2 if requires_approval else RiskLevel.L0
+
+
+def enforce_level(level: RiskLevel, decision: Any) -> Any:
+    """Slice 2 policy (mutates + returns `decision`):
+
+    **L4 is never auto-allowed.** Whatever PermissionEngine said — standing rule,
+    task grant, session allowlist — an irreversible/sensitive call is downgraded to
+    an explicit human decision. Interactive approvals remain the only path through,
+    every single time (there is no "always allow" for L4).
+
+    L3 and below pass through unchanged in this slice; their standing-rule story
+    stays with the existing §25 machinery.
+    """
+    if level >= RiskLevel.L4 and decision.allowed:
+        decision.allowed = False
+        decision.needs_user = True
+        decision.rule = ""
+        decision.reason = (
+            f"irreversible action (L4) — explicit approval required"
+            + (f"; was: {decision.reason}" if decision.reason else "")
+        )
+    return decision
