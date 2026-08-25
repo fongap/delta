@@ -4,6 +4,32 @@
 
 ## [Unreleased]
 
+### 新增 (Added)
+
+#### 2026-08-25 11:06
+
+- **Execution Gateway slice 3：资源守卫与沙箱诚实声明**
+  - 新增 `gateway.enforce_scope`：带声明磁盘目标的副作用调用（L1+）在工具咽喉点重新校验根约束——目标必须落在会话可信根内（写需可写根，只读根降级为询问），无论该调用被哪条规则放行；分类漂移或新增授权路径都无法再把写入悄悄移出沙箱。L0 只读调用不受影响（跨目录读取本就是目录授权的合法用途）。
+  - 违规不静默拒绝：决策降级为显式人工询问（无人值守运行按拒绝处理并审计——fail closed）。
+  - 审计行新增 `isolation` 字段（`read-only` / `checkpoint` / `none`），如实声明执行隔离现状：今天没有任何调用跑在容器里，L1 写由会话检查点覆盖，L2+ 未沙箱化。
+  - `PermissionEngine` 增加公开的 `resolved_roots()` 视图供网关复用。
+
+### 变更 (Changed)
+
+#### 2026-08-25 11:06
+
+- **SessionManager 拆分（行为保持不变）**
+  - `coworker/server/manager.py` 从 ~4400 行拆为 305 行的组合点 + 12 个内聚 mixin 模块（workspace/sessions/events/mcp+connectors/connections/inbox/gateway-inbound/automations/artifacts/providers/support），AST 级逐方法等价校验通过（194/194 方法、7/7 类常量、10/10 模块函数字节一致）。
+  - 公共接口不变：`from .manager import SessionManager` 及全部方法、属性、monkeypatch 目标路径保持原样，无任何调用方需要修改。
+
+#### 2026-08-25 10:10
+
+- **Source Layer v1（ARCH-001）**
+  - 新增 `coworker/sources.py`：`SourceRef` 成为一等持久化记录（id / origin / location / fingerprint(sha256) / captured_at / freshness(checked_at+status) / cited_ranges / permissions），沿用 `_jsonstate` JSON 状态文件模式。
+  - 按指纹版本化而非复制文件：同一路径重新捕获产生新指纹，旧 ref 自动翻为 `changed`；字节相同则去重复用现有 ref。
+  - 新增后台新鲜度检查入口 `SourceStore.check_freshness` / `check_freshness_async`（`asyncio.to_thread` 下放，不阻塞运行）：重哈希 file 来源位置，内容漂移翻 `changed`、不可读翻 `missing`。
+  - 契约新增 `SourceDTO`（id、origin、display name、fingerprint prefix、freshness），UI 无需文件系统访问即可渲染来源溯源；`sources.to_dto` 提供转换入口。
+
 ## [0.2.1] - 2026-08-24
 
 ### 变更 (Changed)
