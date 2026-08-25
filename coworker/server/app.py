@@ -1861,7 +1861,7 @@ def create_app(manager: SessionManager) -> FastAPI:
         engine.is_attended = lambda: _visibility() == VIS_INLINE
         # Turn driving goes through the RuntimePort; the ready payload's snapshot reads
         # (model/mode/executor) stay on the escape hatch until they become a RuntimeInfo DTO.
-        runtime = TurnEngineAdapter(engine)
+        runtime = TurnEngineAdapter(engine, ledger=manager.run_ledger, session_id=session_id)
         await ws.send_json(
             manager.session_event(
                 session_id,

@@ -77,10 +77,22 @@ class TurnEngineAdapter:
     to the port surface one by one; `.engine` remains as a marked escape hatch for
     the not-yet-migrated corners (permissions grooming, snapshot persistence), to
     be shrunk over time rather than forced.
+
+    When a RunEventLedger is provided, every driven turn becomes a durable run:
+    run.started on entry, run.completed on normal exhaustion, run.failed (then
+    re-raised) on error — docs/run-ledger-adr.md.
     """
 
-    def __init__(self, engine: TurnEngine) -> None:
+    def __init__(
+        self,
+        engine: TurnEngine,
+        *,
+        ledger: Any = None,
+        session_id: Optional[str] = None,
+    ) -> None:
         self._engine = engine
+        self._ledger = ledger
+        self._session_id = session_id
 
     @property
     def engine(self) -> TurnEngine:
@@ -113,13 +125,41 @@ class TurnEngineAdapter:
         source: Optional[dict[str, Any]] = None,
         display: Optional[str] = None,
     ) -> AsyncIterator[Event]:
-        return self._engine.run(user_input, source=source, display=display)
+        return self._track(self._engine.run(user_input, source=source, display=display), "run")
 
     def resume(self) -> AsyncIterator[Event]:
-        return self._engine.resume()
+        return self._track(self._engine.resume(), "resume")
 
     def retry(self) -> AsyncIterator[Event]:
-        return self._engine.retry()
+        return self._track(self._engine.retry(), "retry")
+
+    async def _track(self, agen: AsyncIterator[Event], kind: str) -> AsyncIterator[Event]:
+        """Emit the run's durable bookkeeping around the engine's event stream."""
+        if self._ledger is None:
+            async for event in agen:
+                yield event
+            return
+        import uuid
+
+        run_id = uuid.uuid4().hex
+        self._ledger.append(
+            run_id,
+            "run.started",
+            actor="user" if kind == "run" else "system",
+            payload={"kind": kind, **({"session_id": self._session_id} if self._session_id else {})},
+        )
+        try:
+            async for event in agen:
+                yield event
+        except Exception as exc:
+            self._ledger.append(
+                run_id,
+                "run.failed",
+                actor="system",
+                payload={"reason": str(exc), "kind": kind},
+            )
+            raise
+        self._ledger.append(run_id, "run.completed", payload={"kind": kind})
 
     def steer(self, text: str, source: Optional[dict[str, Any]] = None) -> None:
         self._engine.queue_steering(text, source)

@@ -35,6 +35,8 @@ from ..subscriptions import ChannelBuffer, SubscriptionStore
 from ..unrouted import UnroutedStore
 from ..unattended import UnattendedRegistry
 from ..audit import AuditStore
+from ..ledger import RunEventLedger
+from ..ledger import RunEventLedger
 from ..config import load_config, workspace_allowed_commands
 from ..conversations import ConversationStore, title_from
 from ..engine import ApprovalOutcome, Approver, TurnEngine
@@ -146,6 +148,7 @@ class SessionManager:
         # level, outside the memory table; read at engine build time.
         self.memory_settings = MemorySettingsStore(base / "memory-settings.json")
         self.audit_store = AuditStore(base / "coworker.db")
+        self.run_ledger = RunEventLedger(base / "run-events.db")
         self.session_store = ConversationStore(base)
         self.session_store.canonicalize_workspaces()  # collapse /tmp vs /private/tmp etc.
         if self.default_workspace:
@@ -925,7 +928,7 @@ class SessionManager:
         engine = self.get_engine(item.session_id)
         if engine is None or not hasattr(engine, "resume"):
             return
-        runtime = TurnEngineAdapter(engine)
+        runtime = TurnEngineAdapter(engine, ledger=self.run_ledger, session_id=item.session_id)
         self.mark_running(item.session_id)
         try:
             async for _event in runtime.resume():
@@ -3110,7 +3113,7 @@ class SessionManager:
             return
         # Application-layer code drives the runtime only through the RuntimePort
         # surface (coworker/runtime.py) — the engine stays behind the adapter.
-        runtime = TurnEngineAdapter(engine)
+        runtime = TurnEngineAdapter(engine, ledger=self.run_ledger, session_id=session_id)
         if not self.try_mark_running(session_id):
             runtime.steer(message, source)
             return
@@ -3362,7 +3365,7 @@ class SessionManager:
             f"{task.instructions}"
         )
         try:
-            runtime = TurnEngineAdapter(engine)
+            runtime = TurnEngineAdapter(engine, ledger=self.run_ledger, session_id=run.session_id)
             async for _event in runtime.run(opening):
                 pass
             run.result_text = _last_assistant_text(engine.messages)
