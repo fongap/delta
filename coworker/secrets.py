@@ -11,14 +11,20 @@ a Keychain / age-encrypted backend can swap in later without touching them.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
+import stat
 import subprocess
 import sys
 import threading
 import time
 from pathlib import Path
 from typing import Any, Optional
+
+from ._jsonstate import load_json_state
+
+logger = logging.getLogger(__name__)
 
 _REF = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _IS_WINDOWS = sys.platform == "win32"
@@ -56,18 +62,22 @@ def _load_dotenv(path: Path) -> dict[str, str]:
     return env
 
 
-def _restrict_to_user(path: Path, *, is_dir: bool) -> None:
-    """Restrict a path so only the current user can access it.
+def _restrict_to_user(path: Path, *, is_dir: bool) -> bool:
+    """Restrict a path so only the current user can access it, then VERIFY it took effect.
 
     POSIX expresses this with mode bits (0700 dir / 0600 file). Windows has no such bits —
     `os.chmod` there only toggles the read-only flag, so a 0600 chmod is a silent no-op and
     the file inherits broad ACLs (SYSTEM, Administrators, …). Use an ACL instead: strip
     inherited entries and grant the current user alone. Best-effort on Windows so a transient
-    icacls failure never blocks saving a key."""
+    icacls failure never blocks saving a key.
+
+    Returns True when the restriction is verified in place, False when it was applied
+    best-effort but could not be confirmed (degraded — callers should surface that).
+    """
     if _IS_WINDOWS:
         user = os.environ.get("USERNAME")
         if not user:
-            return
+            return False
         domain = os.environ.get("USERDOMAIN")
         account = f"{domain}\\{user}" if domain else user
         # A directory grant MUST be inheritable — (OI) object-inherit for files, (CI)
@@ -83,9 +93,33 @@ def _restrict_to_user(path: Path, *, is_dir: bool) -> None:
                 check=False,
             )
         except OSError:
-            pass
-        return
+            return False
+        return _windows_acl_ok(path)
     os.chmod(path, 0o700 if is_dir else 0o600)
+    try:
+        return stat.S_IMODE(os.stat(path).st_mode) == (0o700 if is_dir else 0o600)
+    except OSError:
+        return False
+
+
+def _windows_acl_ok(path: Path) -> bool:
+    """Re-read the ACL via `icacls <path>` and confirm only the current user is granted.
+
+    Mirrors the assertions in tests/test_secrets.py::test_secrets_file_is_restricted."""
+    try:
+        proc = subprocess.run(
+            ["icacls", str(path)], capture_output=True, text=True, check=False
+        )
+    except OSError:
+        return False
+    if proc.returncode != 0:
+        return False
+    out = proc.stdout
+    user = os.environ.get("USERNAME", "")
+    if not user or user not in out:
+        return False
+    # Inherited broad principals must be gone after /inheritance:r.
+    return "NT AUTHORITY\\SYSTEM" not in out and "BUILTIN\\Administrators" not in out
 
 
 def write_private_text(path: str | Path, content: str) -> Path:
@@ -174,12 +208,10 @@ class SecretStore:
 
     # -- internals --------------------------------------------------------------
     def _read(self) -> dict[str, Any]:
-        if not self.path.is_file():
-            return {}
-        try:
-            return json.loads(self.path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return {}
+        # Tolerant load: a corrupt file degrades to an empty state but is preserved as a
+        # `.corrupt-<ts>` sibling (same convention as _jsonstate) so the next save cannot
+        # silently overwrite the only copy of the user's secrets.
+        return load_json_state(self.path, {})
 
     def _write(self, store: dict[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -189,5 +221,30 @@ class SecretStore:
             pass
         tmp = self.path.with_name(self.path.name + ".tmp")
         tmp.write_text(json.dumps(store, indent=2), encoding="utf-8")
-        _restrict_to_user(tmp, is_dir=False)
+        protected = _restrict_to_user(tmp, is_dir=False)
         os.replace(tmp, self.path)
+        self._record_acl_state(protected)
+
+    def _record_acl_state(self, ok: bool) -> None:
+        """Persist whether the secrets file is ACL-protected so callers/UI can surface it."""
+        marker = self._acl_marker_path()
+        try:
+            if ok:
+                marker.unlink(missing_ok=True)
+            else:
+                logger.warning(
+                    "secrets stored WITHOUT ACL protection (icacls hardening failed): %s",
+                    self.path,
+                )
+                marker.write_text(time.strftime("%Y-%m-%dT%H:%M:%S") + "\n", encoding="utf-8")
+        except OSError:
+            pass
+
+    def _acl_marker_path(self) -> Path:
+        return self.path.with_name(self.path.name + ".acl-unprotected")
+
+    def acl_unprotected(self) -> bool:
+        """True when the last write could not verify OS-level protection on this file.
+
+        Callers/UI can use this to show "secrets stored without ACL protection"."""
+        return self._acl_marker_path().is_file()

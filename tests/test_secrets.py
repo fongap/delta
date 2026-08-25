@@ -85,3 +85,45 @@ def test_delete(tmp_path):
     assert store.delete("x") is True
     assert store.delete("x") is False
     assert store.get("x") is None
+
+
+def test_acl_verification_failure_marks_degraded_without_raising(tmp_path, monkeypatch):
+    """When ACL hardening can't be verified, saving must still succeed but the degraded
+    state must be persisted (marker file) so callers/UI can surface it."""
+    import coworker.secrets as secrets_mod
+
+    path = tmp_path / "secrets.json"
+    store = SecretStore(path)
+    monkeypatch.setattr(secrets_mod, "_IS_WINDOWS", True)
+    monkeypatch.setattr(secrets_mod, "_windows_acl_ok", lambda p: False)
+    store.put("x", {"a": 1})  # must not raise
+    assert store.get("x") == {"a": 1}
+    assert store.acl_unprotected() is True
+    # A later verified write clears the degraded flag.
+    monkeypatch.setattr(secrets_mod, "_windows_acl_ok", lambda p: True)
+    store.put("y", {"b": 2})
+    assert store.acl_unprotected() is False
+
+
+def test_corrupt_file_backed_up_not_overwritten(tmp_path):
+    """A corrupt secrets file must be preserved as a `.corrupt-<ts>` sibling before a later
+    save can overwrite it; loading degrades to empty state."""
+    path = tmp_path / "secrets.json"
+    path.write_text('{"slack": {"bot_token": "xoxb', encoding="utf-8")  # truncated JSON
+    store = SecretStore(path)
+    assert store._read() == {}
+    backups = list(tmp_path.glob("secrets.json.corrupt-*"))
+    assert len(backups) == 1
+    assert backups[0].read_text(encoding="utf-8").startswith('{"slack"')
+    # A subsequent save produces a clean file; the damaged copy is retained.
+    store.put("x", {"a": 1})
+    assert store.get("x") == {"a": 1}
+    assert len(list(tmp_path.glob("secrets.json.corrupt-*"))) == 1
+
+
+def test_healthy_store_reports_acl_protected(tmp_path):
+    """Happy path unchanged: a normal write verifies protection and sets no degraded flag."""
+    path = tmp_path / "secrets.json"
+    store = SecretStore(path)
+    store.put("x", {"a": 1})
+    assert store.acl_unprotected() is False
