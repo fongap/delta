@@ -925,9 +925,10 @@ class SessionManager:
         engine = self.get_engine(item.session_id)
         if engine is None or not hasattr(engine, "resume"):
             return
+        runtime = TurnEngineAdapter(engine)
         self.mark_running(item.session_id)
         try:
-            async for _event in engine.resume():
+            async for _event in runtime.resume():
                 pass
             self.save(item.session_id, engine)
         finally:
@@ -3361,7 +3362,8 @@ class SessionManager:
             f"{task.instructions}"
         )
         try:
-            async for _event in engine.run(opening):
+            runtime = TurnEngineAdapter(engine)
+            async for _event in runtime.run(opening):
                 pass
             run.result_text = _last_assistant_text(engine.messages)
             run.artifacts = _recent_files(task.workspace, since=run.started_at)

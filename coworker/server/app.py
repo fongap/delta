@@ -169,6 +169,7 @@ from ..attachments import (
     build_user_content,
 )
 from ..engine import ApprovalOutcome
+from ..runtime import TurnEngineAdapter
 from ..inbox import VIS_INBOX, VIS_INLINE, args_preview
 from ..permissions import Mode
 from ..providers import AssistantTurn, PROTOCOLS
@@ -1858,6 +1859,9 @@ def create_app(manager: SessionManager) -> FastAPI:
         # Auto-compaction failure prompt (OPE-27): only an ATTENDED session may be asked
         # Retry/Trim — unattended runs auto-trim (the policy in engine._compact_now).
         engine.is_attended = lambda: _visibility() == VIS_INLINE
+        # Turn driving goes through the RuntimePort; the ready payload's snapshot reads
+        # (model/mode/executor) stay on the escape hatch until they become a RuntimeInfo DTO.
+        runtime = TurnEngineAdapter(engine)
         await ws.send_json(
             manager.session_event(
                 session_id,
@@ -1897,9 +1901,9 @@ def create_app(manager: SessionManager) -> FastAPI:
             # Keeping the claim outside prevents two back-to-back frames from both starting.
             try:
                 events = (
-                    engine.retry()
+                    runtime.retry()
                     if retry
-                    else engine.run(content, display=display)
+                    else runtime.run(content, display=display)
                 )
                 async for event in events:
                     # Broadcast to every socket viewing this session (this socket included — it's a
@@ -1984,7 +1988,7 @@ def create_app(manager: SessionManager) -> FastAPI:
                 elif kind == "question_response":
                     _resolve_pending(str(message.get("answer", "")))
                 elif kind == "interrupt":
-                    engine.request_interrupt()
+                    runtime.interrupt()
                 elif kind == "retry":
                     # Re-run after a provider error (engine guards on the error-notice
                     # tail, so a stray frame is a no-op that still ends with turn_done).
