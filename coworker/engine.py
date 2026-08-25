@@ -704,6 +704,10 @@ class TurnEngine:
             tool_call.id, gateway.RiskLevel.L4
         )  # noqa: typing — IntEnum
         decision = gateway.enforce_level(level, decision)
+        # Gateway slice 4a: L3+ external effects are never released by a blanket
+        # mode grant ("full access") or an approval-card-minted session entry —
+        # explicit approval or user-authored standing policy only.
+        decision = gateway.restrict_grants(level, decision)
         # Gateway slice 3: side-effectful calls with declared on-disk targets are
         # re-checked for root confinement at the choke point, whatever rule
         # allowed them. Read-only calls pass through untouched.
@@ -771,10 +775,10 @@ class TurnEngine:
                     reason=reason,
                 )
             else:
-                # L4 calls never persist "always" grants (ARCH-002: no standing
-                # grants at this level) — the user's single approval is spent on
-                # this action alone.
-                if level < gateway.RiskLevel.L4:
+                # L3+ calls never persist "always" grants (ARCH-002 §4: standing
+                # grants are bounded at ≤L2; L3 only via explicit policy, L4
+                # never) — the user's single approval is spent on this action alone.
+                if level < gateway.RiskLevel.L3:
                     if outcome is ApprovalOutcome.ALWAYS_TOOL:
                         self.permissions.allow_tool_for_session(tool_call.name)
                     elif outcome is ApprovalOutcome.ALWAYS_COMMAND:

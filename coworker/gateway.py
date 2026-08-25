@@ -7,6 +7,9 @@ downgrades any rule-based allow to an explicit human decision. Slice 3 (guard):
 declared on-disk targets of side-effectful calls must land inside the session's
 trusted roots, whatever rule allowed the call — the choke point re-checks
 confinement itself instead of trusting upstream classifiers to stay correct.
+Slice 4a (grants): L3 external effects are never released by a blanket mode grant
+or an approval-card-minted session entry — only explicit per-action approval or
+user-authored standing policy gets through.
 
 Fail-closed rule: a call that cannot be classified (no registry metadata, unknown
 risk_level value, or an explicit irreversible-list hit) is treated as L4. Nothing
@@ -42,6 +45,11 @@ IRREVERSIBLE_TOOLS: frozenset[str] = frozenset(
 
 _VALID_METADATA_RISK = {"low", "medium", "high"}
 
+# Metadata categories whose medium-risk, approval-gated tools are LOCAL effects
+# (checkpointed file writes), not external ones — they sit at L2, not L3. An
+# unknown or missing category conservatively stays at L3 (fail closed → ask).
+_LOCAL_CATEGORIES = frozenset({"filesystem"})
+
 
 def classify(
     tool_name: str,
@@ -58,6 +66,7 @@ def classify(
 
     risk = str(getattr(metadata, "risk_level", "") or "").lower()
     requires_approval = bool(getattr(metadata, "requires_approval", False))
+    category = str(getattr(metadata, "category", "") or "").lower()
 
     if risk not in _VALID_METADATA_RISK:
         return RiskLevel.L4
@@ -69,8 +78,16 @@ def classify(
         return RiskLevel.L3
 
     if risk == "medium":
-        # Connector/integration calls with real external effects.
-        return RiskLevel.L3 if requires_approval else RiskLevel.L2
+        if requires_approval:
+            # Approval-gated medium risk is L3 ONLY for external effects; local
+            # checkpointed writes stay consequential-but-local at L2 (ADR: L3 is
+            # "external effects", not "anything that asks").
+            return (
+                RiskLevel.L2
+                if category in _LOCAL_CATEGORIES
+                else RiskLevel.L3
+            )
+        return RiskLevel.L2
 
     # risk == "low"
     return RiskLevel.L2 if requires_approval else RiskLevel.L0
@@ -170,6 +187,39 @@ def enforce_scope(
             + (f"; was: {decision.reason}" if decision.reason else "")
         )
         return decision
+    return decision
+
+
+def restrict_grants(level: RiskLevel, decision: Any) -> Any:
+    """Slice 4a grant gate (mutates + returns `decision`):
+
+    **L3+ is never released by a blanket or approval-card grant.** Auto mode's "full
+    access" and session-scoped ALWAYS_TOOL/ALWAYS_COMMAND entries minted by earlier
+    approval cards are fine for local reversible work, but external effects (send
+    message/file, shell-grade execution) need either an explicit per-action human
+    decision or a user-authored policy artifact: a trusted-workspace command
+    allowlist, a task-scoped standing rule, or configured auto-allow tools
+    (decision.grant == "policy"). Unattended runs resolve the resulting ask through
+    the same ApprovalService as interactive runs — fail closed when no one answers.
+
+    L2 and below pass through unchanged; L4 was already forced to ask by slice 2.
+    """
+    if level < RiskLevel.L3 or not getattr(decision, "allowed", False):
+        return decision
+    if getattr(decision, "grant", "") == "policy":
+        return decision
+    decision.allowed = False
+    decision.needs_user = True
+    decision.rule = ""
+    decision.reason = (
+        "external effect (L3) requires explicit approval or standing policy"
+        + (
+            f"; was auto-allowed by {getattr(decision, 'grant', '')} grant"
+            if getattr(decision, "grant", "")
+            else ""
+        )
+        + (f"; was: {decision.reason}" if decision.reason else "")
+    )
     return decision
 
 

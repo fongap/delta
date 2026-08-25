@@ -1181,9 +1181,11 @@ def test_provider_set_and_remove_roundtrip(tmp_path):
 
 
 def test_always_allow_grants_survive_restart(tmp_path):
-    """"Always allow" is session-scoped, and the session outlives the process — a restart
-    (fresh manager over the same store) must not re-ask for an approved command
-    (owner-hit 2026-07-22 on the 0.1.6 walkthrough)."""
+    """Gateway slice 4a (ARCH-002 section 4): shell-grade calls are L3 — an approval
+    card's "always command" must NOT mint a session standing grant any more, so the
+    same command re-asks after a restart too (the single approval covers one action).
+    Cross-restart grants remain possible only via explicit policy: trusted-workspace
+    command allowlists / task standing rules."""
 
     def _shell_turns():
         return ScriptedProvider(
@@ -1208,11 +1210,13 @@ def test_always_allow_grants_survive_restart(tmp_path):
             assert asked == expect_prompts
 
     mgr = SessionManager(workspace=None, provider=_shell_turns())
+    # One prompt; the user's "always" is spent on this single L3 action.
     _run_turn(TestClient(create_app(mgr)), expect_prompts=1)
 
-    # "Restart": new manager + engine rebuilt from the persisted record.
+    # "Restart": fresh manager over the same store — the L3 grant was never minted,
+    # so the same command asks again.
     mgr2 = SessionManager(workspace=None, provider=_shell_turns())
-    _run_turn(TestClient(create_app(mgr2)), expect_prompts=0)
+    _run_turn(TestClient(create_app(mgr2)), expect_prompts=1)
 
 
 def test_google_one_click_paused_but_manual_alive(tmp_path):

@@ -6,6 +6,14 @@
 
 ### 安全 (Security)
 
+#### 2026-08-25 15:34
+
+- **Execution Gateway slice 4a：L3 外部效果不再搭便车（P0）**
+  - 新增 `gateway.restrict_grants`：L3+ 调用不再被" blanket 授权"放行——Auto 模式的 full access 与历史审批卡铸出的 session 级 ALWAYS_TOOL/ALWAYS_COMMAND 都无法越过咽喉点；只有显式人工批准或用户编写的策略资产（受信工作区命令白名单、任务级 standing rule、配置的 auto-allow 工具）可以放行 L3。无人值守场景经同一 ApprovalService 解析，无人应答即拒绝并审计（fail closed）。
+  - 审批卡不再为 L3/L4 铸造永久授权（原先只挡 L4）：单次批准只花在这一 个动作上；跨会话授权只能经显式策略建立。
+  - `Decision` 增加结构化 `grant` 来源字段（blanket/session/policy），网关按来源而非 reason 字符串裁决。
+  - 分类修正：`medium + requires_approval` 只有非本地类别升 L3，本地可检查点写（filesystem 类，如 write_file）归位 L2——L3 是"外部影响"，不是"任何要问的调用"；未知类别保守保留 L3。
+
 #### 2026-08-25 14:05
 
 - **HTML Artifact 预览与主 WebView 信任域隔离（P0）**

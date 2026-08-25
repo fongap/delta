@@ -64,6 +64,12 @@ class Decision:
     # Set when a task-scoped standing rule allowed the call ("tool → target") so the
     # engine can audit the exact rule and the tool card can say so (§25).
     rule: str = ""
+    # Structured provenance of an allow, consumed by the Execution Gateway's grant
+    # gate (slice 4a): "blanket" = mode-level full access, "session" = a grant minted
+    # by an earlier approval card (ALWAYS_TOOL/ALWAYS_COMMAND), "policy" = explicitly
+    # user-authored policy (trusted-workspace command allowlist, task standing rules,
+    # configured auto-allow tools). "" = not allowed via any grant path.
+    grant: str = ""
 
 
 def standing_rule_candidate(
@@ -157,19 +163,22 @@ class PermissionEngine:
         if not consequential:
             return Decision(True, "low risk")
 
-        # Full access.
+        # Full access. Blanket by design — the gateway's grant gate (slice 4a) still
+        # refuses to release L3+ external effects on this basis alone.
         if self.mode is Mode.AUTO:
-            return Decision(True, "full access")
+            return Decision(True, "full access", grant="blanket")
 
         # interactive / custom: allowlists.
         if is_shell:
             command = str(arguments.get("command", ""))
             if self._command_allowed(command):
-                return Decision(True, "command on allowlist")
+                # User-authored policy: only via workspace trust / config, never minted
+                # by an approval card.
+                return Decision(True, "command on allowlist", grant="policy")
             if command and command in self.session_allow_commands:
-                return Decision(True, "command allowed for session")
+                return Decision(True, "command allowed for session", grant="session")
         if tool_name in self.session_allow_tools and not is_connector:
-            return Decision(True, "tool allowed for session")
+            return Decision(True, "tool allowed for session", grant="session")
 
         # Task-scoped standing rules (§25): tool + exact target, owned by the automation.
         # Deliberately NOT subject to the connector exclusion above — the exact-target
@@ -182,11 +191,13 @@ class PermissionEngine:
             )
             if target and target in self.task_rules[tool_name]:
                 rule = f"{tool_name} → {target}"
-                return Decision(True, f"allowed by standing rule: {rule}", rule=rule)
+                return Decision(
+                    True, f"allowed by standing rule: {rule}", rule=rule, grant="policy"
+                )
 
-        # Custom mode auto-approves the configured tools.
+        # Custom mode auto-approves the configured tools (explicit user policy).
         if self.mode is Mode.CUSTOM and tool_name in self.auto_allow_tools:
-            return Decision(True, "auto-allowed by config")
+            return Decision(True, "auto-allowed by config", grant="policy")
 
         # Otherwise: ask the user.
         return Decision(False, "requires approval", needs_user=True)

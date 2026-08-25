@@ -16,13 +16,15 @@ from coworker.gateway import (
     enforce_level,
     enforce_scope,
     isolation_status,
+    restrict_grants,
 )
 
 
 class Meta:
-    def __init__(self, risk_level="low", requires_approval=False):
+    def __init__(self, risk_level="low", requires_approval=False, category=""):
         self.risk_level = risk_level
         self.requires_approval = requires_approval
+        self.category = category
 
 
 # -- classification -----------------------------------------------------------
@@ -42,7 +44,15 @@ def test_high_is_l3_even_without_approval():
 
 def test_approval_required_raises_within_the_same_band():
     assert classify("automation_run", {}, Meta("low", True)) is RiskLevel.L2
-    assert classify("gmail_send", {}, Meta("medium", True)) is RiskLevel.L3
+    assert classify("gmail_send", {}, Meta("medium", True, "connector")) is RiskLevel.L3
+
+
+def test_medium_approval_local_category_stays_l2():
+    # Local checkpointed writes are consequential-but-local: they ask in interactive
+    # modes but must not be treated as external effects (slice 4a depends on this).
+    assert classify("write_file", {}, Meta("medium", True, "filesystem")) is RiskLevel.L2
+    # Unknown/missing category conservatively stays at L3 (fail closed → ask).
+    assert classify("mystery_tool", {}, Meta("medium", True)) is RiskLevel.L3
 
 
 def test_unknown_risk_value_fails_closed_to_l4():
@@ -68,11 +78,12 @@ def test_classification_is_deterministic_and_model_blind():
 # -- slice 2 policy: L4 is never auto-allowed -----------------------------------
 
 class Decision:
-    def __init__(self, allowed=True, rule="send_email → x", needs_user=False, reason="standing rule"):
+    def __init__(self, allowed=True, rule="send_email → x", needs_user=False, reason="standing rule", grant=""):
         self.allowed = allowed
         self.needs_user = needs_user
         self.rule = rule
         self.reason = reason
+        self.grant = grant
 
 
 def test_l4_downgrades_rule_based_allow_to_human():
@@ -99,6 +110,60 @@ def test_below_l4_is_untouched():
         before = (original.allowed, original.needs_user, original.reason)
         after = enforce_level(level, original)
         assert (after.allowed, after.needs_user, after.reason) == before
+
+
+# -- slice 4a grant gate: L3+ never rides a blanket or card-minted grant ----------
+
+def test_l3_blanket_mode_grant_is_downgraded_to_ask():
+    # Auto mode's "full access" must not release external effects.
+    d = restrict_grants(
+        RiskLevel.L3, Decision(allowed=True, rule="", reason="full access", grant="blanket")
+    )
+    assert not d.allowed and d.needs_user
+    assert "L3" in d.reason and d.rule == ""
+
+
+def test_l3_session_card_grant_is_downgraded_to_ask():
+    d = restrict_grants(
+        RiskLevel.L3,
+        Decision(allowed=True, reason="tool allowed for session", grant="session"),
+    )
+    assert not d.allowed and d.needs_user
+    assert "session" in d.reason
+
+
+def test_l3_policy_grant_passes_through():
+    d = restrict_grants(
+        RiskLevel.L3,
+        Decision(
+            allowed=True,
+            reason="allowed by standing rule: send_message → slack:chan",
+            rule="send_message → slack:chan",
+            grant="policy",
+        ),
+    )
+    assert d.allowed and not d.needs_user
+    assert d.rule == "send_message → slack:chan"
+
+
+def test_below_l3_grants_are_untouched():
+    for level in (RiskLevel.L0, RiskLevel.L1, RiskLevel.L2):
+        for grant in ("blanket", "session", "policy"):
+            original = Decision(allowed=True, reason="r", grant=grant)
+            before = (original.allowed, original.needs_user, original.reason)
+            after = restrict_grants(level, original)
+            assert (after.allowed, after.needs_user, after.reason) == before
+
+
+def test_l4_policy_still_forced_through_slice2_first():
+    # Slice 2 outranks everything: even a policy grant cannot auto-allow L4.
+    d = enforce_level(RiskLevel.L4, Decision(allowed=True, grant="policy"))
+    assert not d.allowed and d.needs_user
+
+
+def test_denials_pass_the_grant_gate_untouched():
+    denied = Decision(allowed=False, needs_user=False, reason="denied by user")
+    assert restrict_grants(RiskLevel.L3, denied) is denied
 
 
 # -- audit persistence ---------------------------------------------------------
