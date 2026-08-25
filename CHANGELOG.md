@@ -6,6 +6,14 @@
 
 ### 安全 (Security)
 
+#### 2026-08-25 16:24
+
+- **Sidecar 根 token 退出渲染进程（P0-A2）**
+  - Tauri 壳新增本地回环反向代理（`src-tauri/src/proxy.rs`，仅 tokio 依赖）：渲染进程只拿到代理地址，代理校验浏览器 `Origin` 白名单（镜像 sidecar `_ALLOWED_ORIGIN_RE`，缺失/不在白名单一律 403，先于任何转发——阻断针对回环的 CSRF 与 DNS-rebinding），再为每条 REST 请求注入 `X-OpenWorker-Token`、把 WebSocket 升级的子协议改写为 `["openworker", <token>]` 并双向转发帧；token 只存在于 Rust 内存，不再注入 `window.__COWORKER_API_TOKEN__`，日志亦不落 token。
+  - 初始化脚本改为仅注入 `window.__COWORKER_HTTP__` / `window.__COWORKER_WS__` / `window.__OCW_PLATFORM__`（`lib.rs`）；前端删除对已移除 token 全局量的读取（`api.ts`），桌面模式无 token 也不需要——WS 不带子协议连接；纯浏览器开发的 dev token 链路（vite define / env）保留。
+  - CSP 无需放宽（`connect-src` 已含 `http://127.0.0.1:*` / `ws://127.0.0.1:*`）；sidecar 认证与 Origin 逻辑零改动。
+  - 新增 Rust 单测（Origin 白名单 allow/deny/missing）+ 集成冒烟测试（REST 注入头、403 拦截、WS 子协议改写与响应剥离、帧中继），并经手动端到端 harness 复核五种场景。
+
 #### 2026-08-25 15:34
 
 - **Execution Gateway slice 4a：L3 外部效果不再搭便车（P0）**

@@ -3,8 +3,9 @@
 //! Tauri is a thin native window over the existing React SPA. It:
 //!   1. picks a free localhost port and starts the Python `delta-server` as a managed
 //!      sidecar on that port (so it never clashes with a hand-run server on 8765);
-//!   2. injects the sidecar HTTP/WS addresses and per-launch authentication token before the
-//!      SPA loads (single codebase — the browser build still hits 8765);
+//!   2. injects the sidecar HTTP/WS addresses via a localhost auth-injecting reverse proxy
+//!      (`proxy.rs`) before the SPA loads — the launch token stays in Rust and is never
+//!      exposed to the WebView (single codebase — the browser build still hits 8765);
 //!   3. lives in the system tray: closing the window hides it (keeps MyHelper + the scheduler
 //!      running); only tray → Quit stops the sidecar;
 //!   4. exposes native commands: folder picker, autostart (open-at-login), and keep-awake
@@ -29,6 +30,12 @@ use tauri::{
 };
 use tauri_plugin_autostart::ManagerExt;
 use uuid::Uuid;
+
+mod proxy;
+
+/// Integration-test hook (`tests/proxy_smoke.rs`): drive the proxy directly without an app.
+#[doc(hidden)]
+pub use proxy::start_proxy as proxy_start_for_tests;
 
 /// The sidecar server child — killed on exit (orphaned servers have bitten us before).
 struct ServerProcess(Mutex<Option<Child>>);
@@ -678,11 +685,21 @@ pub fn run() {
         }
     };
     let api_token = launch_token();
-    let http = format!("http://127.0.0.1:{port}");
-    let ws = format!("ws://127.0.0.1:{port}");
+    // P0-A2: the sidecar token stays in the Rust shell. The WebView talks to the LOCAL
+    // PROXY (which validates Origin and injects the auth header/subprotocol), never to
+    // the sidecar directly, so the token is never injected into renderer JavaScript.
+    let proxy_port = match proxy::start_proxy(port, api_token.clone()) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("[coworker] failed to start the local sidecar proxy: {e}");
+            return;
+        }
+    };
+    let http = format!("http://127.0.0.1:{proxy_port}");
+    let ws = format!("ws://127.0.0.1:{proxy_port}");
     // Debug-format yields a quoted JS string literal.
     let inject = format!(
-        "window.__COWORKER_HTTP__={http:?};window.__COWORKER_WS__={ws:?};window.__COWORKER_API_TOKEN__={api_token:?};window.__OCW_PLATFORM__={:?};",
+        "window.__COWORKER_HTTP__={http:?};window.__COWORKER_WS__={ws:?};window.__OCW_PLATFORM__={:?};",
         std::env::consts::OS
     );
 

@@ -20,8 +20,16 @@ const wsBase = (): string =>
   (globalThis as any).__COWORKER_WS__ ||
   (import.meta as any).env?.VITE_COWORKER_WS ||
   "ws://127.0.0.1:8765";
+// P0-A2: the desktop shell injects ONLY proxy endpoints (no token global) — the Tauri
+// proxy adds the auth header/subprotocol itself, so the sidecar root token never exists
+// in renderer JavaScript. Every source below serves PURE-BROWSER development against a
+// directly-started sidecar (vite define / env); desktop mode resolves to "" and every
+// call below goes out unauthenticated, which the local proxy upgrades.
+// `__OCW_BROWSER_DEV_TOKEN__` is a runtime override for manual browser debugging and the
+// auth test-suite (env vars are compile-time-inlined by Vite, so not runtime-testable).
+// It is never set by the shell and can only supply a token the page already has.
 const apiToken = (): string =>
-  (globalThis as any).__COWORKER_API_TOKEN__ ||
+  (globalThis as any).__OCW_BROWSER_DEV_TOKEN__ ||
   (import.meta as any).env?.VITE_COWORKER_API_TOKEN ||
   (typeof __COWORKER_DEV_TOKEN__ === "string" ? __COWORKER_DEV_TOKEN__ : "");
 
