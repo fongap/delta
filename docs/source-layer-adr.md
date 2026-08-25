@@ -6,8 +6,10 @@
 
 ## Context
 
-Delta's answers are only as trustworthy as their inputs, but sources are currently a
-display-only sidecar:
+Delta is a **general-purpose, locally-first office agent**: its users connect everyday
+tools (files, spreadsheets, mail, calendar, chat, web) and ask for work products —
+reports, summaries, analyses, drafts. Delta's answers are only as trustworthy as their
+inputs, but sources are currently a display-only sidecar:
 
 - `coworker/connectors/base.py` defines `MessageSource` (connector/kind/channel/sender/
   ts/text) purely for rendering connector messages; it is stripped before any provider call.
@@ -17,8 +19,9 @@ display-only sidecar:
   tell that a previous report's evidence has drifted.
 
 Products like Codex/Claude Code treat attachments as ephemeral turn input. Delta's
-positioning (office work over long-lived evidence: reports, datasets, regulations)
-requires the opposite: answers must remain auditable against the sources they cited.
+positioning (long-lived office evidence: documents, spreadsheets, mail threads, web
+pages) requires the opposite: answers must remain auditable against the sources they
+cited.
 
 ## Decision
 

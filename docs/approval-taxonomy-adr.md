@@ -6,11 +6,12 @@
 
 ## Context
 
-Approvals today are binary and interactive: `PermissionEngine` (coworker/permissions.py)
-classifies by Mode (chat/read/write-ish), workspace roots, and a command whitelist;
-`ApprovalOutcome{ONCE, ALWAYS_TOOL, ALWAYS_COMMAND, DENY}` resolves an inline prompt.
-There is no risk taxonomy, no notion of reversible vs irreversible, and no explicit
-fail-closed rule for missing policy.
+Delta is a general-purpose office agent: one product serving any user's everyday work,
+not a vertical compliance tool. Approvals today are binary and interactive:
+`PermissionEngine` (coworker/permissions.py) classifies by Mode (chat/read/write-ish),
+workspace roots, and a command whitelist; `ApprovalOutcome{ONCE, ALWAYS_TOOL,
+ALWAYS_COMMAND, DENY}` resolves an inline prompt. There is no risk taxonomy, no notion
+of reversible vs irreversible, and no explicit fail-closed rule for missing policy.
 
 Three requirements make the current shape insufficient:
 
@@ -26,11 +27,11 @@ Three requirements make the current shape insufficient:
 
 | Level | Definition | Examples | Default policy |
 |---|---|---|---|
-| L0 | read-only, no side effects | read file, search, list | auto-allow inside trusted scope |
+| L0 | read-only, no side effects | read file, search, list, summarize | auto-allow inside trusted scope |
 | L1 | reversible local writes | write/edit files under scratch & writable roots | auto-allow (audited) |
-| L2 | consequential local writes, outside sandbox guarantees | installs, large deletes, config changes | ask once / standing rule |
-| L3 | external effects, compensatable | send message, create calendar event, open PR | explicit approval per run or standing grant |
-| L4 | irreversible / sensitive | send email, delete cloud data, payments, protected paths | explicit per-action approval, no standing grants |
+| L2 | consequential local writes, outside sandbox guarantees | installs, bulk deletes, config changes | ask once / standing rule |
+| L3 | external effects, compensatable | send chat message, create calendar event, open PR, upload to shared drive | explicit approval per run or standing grant |
+| L4 | irreversible / sensitive | send email, delete cloud files/data, share docs externally, payments, protected paths | explicit per-action approval, no standing grants |
 
 Classification is **deterministic**: tool metadata + target resource + policy tables.
 The model can request; it can never classify itself upward past policy, and approval
