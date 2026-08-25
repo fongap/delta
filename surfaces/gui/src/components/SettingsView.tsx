@@ -35,6 +35,7 @@ import {
   type DictationDownloadProgress,
   type DictationStatus,
 } from "../tauri";
+import { UPDATER_FEED_PUBLISHED } from "./UpdateBanner";
 import { useThemePref } from "../theme";
 import { useI18n, type TranslationKey } from "../i18n/I18nContext";
 import type { Locale } from "../i18n/types";
@@ -524,7 +525,7 @@ function AppearanceSection() {
           <button className={BTN_BORDERED} onClick={runSetupAgain}>
             {t("settings.general.runSetupAgain")}
           </button>
-          {desktop && <UpdateInline />}
+          {desktop && UPDATER_FEED_PUBLISHED && <UpdateInline />}
         </div>
         <div className={FIELD_HELP}>{t("settings.general.setupUpdatesHelp")}</div>
       </div>

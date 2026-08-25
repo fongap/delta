@@ -10,6 +10,15 @@ import {
 import { useI18n } from "../i18n/I18nContext";
 
 // Auto-update prompt (desktop shell only — the browser build never renders this).
+// P1 2026-08-25: the release pipeline currently publishes only the portable ZIP +
+// checksum — there is NO signed updater feed (latest.json + .sig assets), so the
+// updater could never find anything and the UI advertised a dead capability.
+// Gated off at both entry points (banner + settings check) via UPDATER_FEED_PUBLISHED;
+// flip it to true when the release workflow starts publishing the feed.
+
+/** Whether a real updater feed exists. Flip to true once releases publish
+ * latest.json + signatures again. */
+export const UPDATER_FEED_PUBLISHED = false;
 // Deliberately a PROMPT, not a silent background install: swapping the app under a
 // user mid-session would kill their running coworker turn, and quiet self-mutation
 // sits badly with the local-first trust posture. "Later" dismisses that VERSION for

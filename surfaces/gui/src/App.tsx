@@ -61,7 +61,7 @@ import { Markdown } from "./components/Markdown";
 import { SessionIntro } from "./components/SessionIntro";
 import { FolderGate } from "./components/FolderGate";
 import { Onboarding } from "./components/Onboarding";
-import { UpdateBanner } from "./components/UpdateBanner";
+import { UPDATER_FEED_PUBLISHED, UpdateBanner } from "./components/UpdateBanner";
 import { ScheduledView } from "./components/ScheduledView";
 import { RightRail } from "./components/RightRail";
 import { IntegrationsView } from "./components/IntegrationsView";
@@ -1310,8 +1310,9 @@ export function App() {
           <span /><span /><span />
         </div>
       )}
-      {/* Desktop-only auto-update prompt (15s after boot, then every 30 min; inert in browser). */}
-      <UpdateBanner />
+      {/* Desktop-only auto-update prompt (15s after boot, then every 30 min; inert in browser).
+          Gated off while no updater feed is published (see UPDATER_FEED_PUBLISHED). */}
+      {UPDATER_FEED_PUBLISHED && <UpdateBanner />}
       {/* UX-026: automation-start toast — quiet panel, neutral dot/drain, accent only
           on the action (rev 2); auto-dismisses with the 5s drain bar. */}
       {runToast && (
