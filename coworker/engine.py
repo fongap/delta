@@ -20,6 +20,7 @@ from enum import Enum
 from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 
 from . import compaction as _compaction
+from . import gateway
 from .events import Event, EventType
 from .permissions import Mode, PermissionEngine
 from .providers import AssistantTurn, ProviderClient, ToolCall
@@ -123,6 +124,9 @@ class TurnEngine:
         # tool_call.id → the standing rule that auto-allowed it ("tool → target"), so the
         # TOOL_FINISHED event can carry the note to the tool card (§25).
         self._standing_notes: dict[str, str] = {}
+        # Execution Gateway: tool_call.id → RiskLevel, stamped at proposal time and
+        # carried on every audit row for that call (see coworker/gateway.py).
+        self._tool_levels: dict[str, Any] = {}
         self._interrupt_hooks: list[Callable[[], None]] = list(interrupt_hooks or [])
 
     # -- external controls ------------------------------------------------------
@@ -601,6 +605,13 @@ class TurnEngine:
                 EventType.TOOL_PROPOSED,
                 {"name": tool_call.name, "arguments": tool_call.arguments},
             )
+            # Execution Gateway (slice 1): classify before anything else happens.
+            # The level rides on every audit row for this call; allow/deny is
+            # still owned by _authorize/PermissionEngine in this slice.
+            spec = self.registry.get(tool_call.name)
+            self._tool_levels[tool_call.id] = gateway.classify(
+                tool_call.name, tool_call.arguments, spec.metadata if spec else None
+            )
             self._audit(tool_call, stage="proposed")
             # `request_directory` and `propose_plan` are interactive: the user decides
             # out-of-band and that decision IS the consent, so they skip the
@@ -845,6 +856,7 @@ class TurnEngine:
             **self.audit_context,
             "tool": tool_call.name,
             "arguments": tool_call.arguments,
+            "level": getattr(self._tool_levels.get(tool_call.id), "name", ""),
             **event,
         }
         try:

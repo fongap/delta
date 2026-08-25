@@ -44,7 +44,8 @@ class AuditStore:
                 args TEXT,
                 result_preview TEXT,
                 reason TEXT,
-                resource TEXT
+                resource TEXT,
+                level TEXT DEFAULT ''
             )
             """)
         self._conn.commit()
@@ -60,8 +61,8 @@ class AuditStore:
             self._conn.execute(
                 """
                 INSERT INTO audit_events
-                    (session_id, agent, workspace, connector, tool, stage, status, approval, args, result_preview, reason, resource)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    (session_id, agent, workspace, connector, tool, stage, status, approval, args, result_preview, reason, resource, level)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     event.get("session_id") or "",
@@ -76,6 +77,7 @@ class AuditStore:
                     _truncate(str(event.get("result_preview") or "")),
                     _truncate(str(event.get("reason") or "")),
                     _truncate(str(resource or "")),
+                    str(event.get("level") or ""),
                 ),
             )
             self._conn.commit()
