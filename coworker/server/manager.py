@@ -284,6 +284,15 @@ class SessionManager(
         await self.scheduler.stop()
         await self.stop_gateway()
         await self.mcp.aclose()
+        for engine in self._engines.values():
+            executor = getattr(engine, "executor", None)
+            if executor is not None:
+                try:
+                    # App shutdown kills each session's managed background tasks;
+                    # detached (detach=true) tasks survive by design.
+                    executor.shutdown()
+                except Exception:
+                    pass
         self.audit_store.close()
 
 

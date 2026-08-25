@@ -14,10 +14,17 @@ best-effort non-interactive enforcement. A timed-out command is interrupted (SIG
 foreground child on POSIX, Ctrl-Break to the child group on Windows); the shell survives so
 session state is preserved.
 
-Background tasks (`run_shell` with `run_in_background`) get their own detached process —
-NOT the persistent shell — so a dev server can run while the session keeps working. They
-are deliberately not killed by `close()` (which the timeout-recovery path calls); they end
-when they exit or via `shell_task_kill`.
+Background tasks (`run_shell` with `run_in_background`) get their own process — NOT the
+persistent shell — so a dev server can run while the session keeps working. There are two
+explicit classes:
+
+- **managed** (default): tracked here and killed by `shutdown()` when the session's engine
+  is torn down (session delete, app exit). While the session lives it runs independently
+  of the foreground shell loop and survives `close()` (which the timeout-recovery path
+  calls mid-session).
+- **detached durable** (`detach=true`, explicit opt-in): behaves like today's immortal
+  process — survives `shutdown()` too — but every spawn (either class) returns/audits its
+  pid + detach flag, so it stays visible and stoppable via `shell_task_kill`.
 """
 
 from __future__ import annotations
@@ -64,7 +71,7 @@ class Executor(ABC):
     @abstractmethod
     def run(self, command: str, timeout: Optional[float] = None) -> dict[str, Any]: ...
 
-    def run_background(self, command: str) -> dict[str, Any]:
+    def run_background(self, command: str, detach: bool = False) -> dict[str, Any]:
         return {"error": "background execution is not supported by this executor"}
 
     def background_output(self, task_id: str) -> dict[str, Any]:
@@ -79,14 +86,28 @@ class Executor(ABC):
     def close(self) -> None:  # pragma: no cover - default no-op
         pass
 
+    def shutdown(self) -> None:
+        """Full teardown (session delete / app exit): by default just `close()`;
+        executors with managed background work override this to kill managed tasks
+        first. Detached durable tasks are left running."""
+        self.close()
+
 
 class _BackgroundTask:
-    """One detached background command: its own process (not the persistent shell), a
-    reader thread draining output into a buffer, and an incremental-read cursor."""
+    """One background command: its own process (not the persistent shell), a reader
+    thread draining output into a buffer, and an incremental-read cursor."""
 
-    def __init__(self, task_id: str, command: str, cwd: str, env: dict[str, str]):
+    def __init__(
+        self,
+        task_id: str,
+        command: str,
+        cwd: str,
+        env: dict[str, str],
+        detach: bool = False,
+    ):
         self.id = task_id
         self.command = command
+        self.detach = detach
         if _IS_WINDOWS:
             argv = ["powershell.exe", "-NoProfile", "-Command", command]
             spawn_kwargs: dict[str, Any] = {
@@ -350,19 +371,25 @@ class LocalExecutor(Executor):
                 for tid in finished[:excess]:
                     del self._bg_tasks[tid]
 
-    def run_background(self, command: str) -> dict[str, Any]:
+    def run_background(self, command: str, detach: bool = False) -> dict[str, Any]:
         self._sweep_bg_tasks()
         with self._io_lock:
             self._bg_counter += 1
             task_id = f"bg-{self._bg_counter}"
             try:
-                task = _BackgroundTask(task_id, command, self.cwd, self._env)
+                task = _BackgroundTask(
+                    task_id, command, self.cwd, self._env, detach=detach
+                )
             except OSError as exc:
                 return {"error": f"failed to start background task: {exc}"}
             self._bg_tasks[task_id] = task
         return {
             "task_id": task_id,
             "command": command,
+            "pid": task.proc.pid,
+            # Audit-friendly spawn record: rides the engine's finished audit row
+            # (via _record_result), so even a durable detached task is visible.
+            "detach": detach,
             "status": "running",
             "note": "use shell_task_output to read its output, shell_task_kill to stop it",
         }
@@ -470,6 +497,23 @@ class LocalExecutor(Executor):
         except (ProcessLookupError, OSError):
             pass
 
+    def shutdown(self) -> None:
+        """Session/app teardown: kill every live MANAGED background task (the whole
+        process tree), then close the shell. Detached (`detach=true`) tasks are left
+        running. NOT called by `close()` — that runs mid-session on the timeout-recovery
+        path, where managed tasks must survive."""
+        with self._io_lock:
+            managed = [t for t in self._bg_tasks.values() if not t.detach]
+        for task in managed:
+            if task.proc.poll() is not None:
+                continue
+            task.kill()
+            try:
+                task.proc.wait(timeout=5)
+            except (subprocess.TimeoutExpired, OSError):
+                pass
+        self.close()
+
     def _result(
         self, command, exit_code, output, *, timed_out, truncated=False, error=None
     ):
@@ -536,8 +580,17 @@ _RUN_SHELL_SCHEMA = {
                 "run_in_background": {
                     "type": "boolean",
                     "description": (
-                        "Run detached and return a task_id immediately instead of waiting. "
-                        "Use for servers, watchers, and very long builds."
+                        "Run in the background and return a task_id immediately instead "
+                        "of waiting. Use for servers, watchers, and very long builds."
+                    ),
+                },
+                "detach": {
+                    "type": "boolean",
+                    "description": (
+                        "Only with run_in_background: keep the process alive even after "
+                        "this session ends or the app exits (default false — managed "
+                        "tasks are killed at teardown). The spawn is audited with its "
+                        "pid either way; stop it with shell_task_kill."
                     ),
                 },
             },
@@ -595,11 +648,12 @@ def shell_tools(executor: Executor) -> list:
         description: Optional[str] = None,
         timeout_seconds: Optional[int] = None,
         run_in_background: bool = False,
+        detach: bool = False,
     ) -> dict:
         # `description` is not used here on purpose: it rides along in the call arguments
         # so approval prompts and the audit log can show intent, not just the raw command.
         if run_in_background:
-            return executor.run_background(command)
+            return executor.run_background(command, detach=detach)
         timeout = None
         if isinstance(timeout_seconds, (int, float)) and timeout_seconds > 0:
             timeout = min(float(timeout_seconds), _MAX_TIMEOUT)

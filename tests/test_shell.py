@@ -181,3 +181,74 @@ def test_background_unknown_task_errors(executor):
     assert (
         "unknown task" in reg.execute("shell_task_kill", {"task_id": "bg-99"})["error"]
     )
+
+
+# -- managed vs detached lifecycle (P1 ghost-execution fix) -----------------------
+
+def _wait_until_started(reg, task_id, deadline=10.0):
+    acc, _ = _poll_output(reg, task_id, deadline=deadline)
+    assert "started" in acc
+
+
+def _wait_exited(reg, task_id, deadline=10.0):
+    end = time.monotonic() + deadline
+    while time.monotonic() < end:
+        res = reg.execute("shell_task_output", {"task_id": task_id})
+        if res["status"] == "exited":
+            return res
+        time.sleep(0.1)
+    raise AssertionError(f"task {task_id} did not exit")
+
+
+def test_background_spawn_reports_pid_and_detach(executor):
+    reg = ToolRegistry()
+    reg.register_all(shell_tools(executor))
+    managed = reg.execute(
+        "run_shell", {"command": QUICK_ECHO, "run_in_background": True}
+    )
+    assert isinstance(managed["pid"], int) and managed["pid"] > 0
+    assert managed["detach"] is False
+    detached = reg.execute(
+        "run_shell",
+        {"command": QUICK_ECHO, "run_in_background": True, "detach": True},
+    )
+    assert isinstance(detached["pid"], int) and detached["pid"] > 0
+    assert detached["detach"] is True
+
+
+def test_managed_task_killed_on_shutdown(tmp_path):
+    ex = LocalExecutor(cwd=tmp_path, default_timeout=10)
+    try:
+        reg = ToolRegistry()
+        reg.register_all(shell_tools(ex))
+        started = reg.execute(
+            "run_shell", {"command": ECHO_THEN_SLEEP, "run_in_background": True}
+        )
+        _wait_until_started(reg, started["task_id"])
+        # Session/app teardown: the default (managed) task must die with it.
+        ex.shutdown()
+        res = _wait_exited(reg, started["task_id"])
+        assert res["exit_code"] not in (None, 0)
+    finally:
+        ex.close()
+
+
+def test_detached_task_survives_shutdown(tmp_path):
+    ex = LocalExecutor(cwd=tmp_path, default_timeout=10)
+    try:
+        reg = ToolRegistry()
+        reg.register_all(shell_tools(ex))
+        started = reg.execute(
+            "run_shell",
+            {"command": ECHO_THEN_SLEEP, "run_in_background": True, "detach": True},
+        )
+        _wait_until_started(reg, started["task_id"])
+        ex.shutdown()
+        time.sleep(0.5)  # give a wrong kill (if any) time to land
+        res = reg.execute("shell_task_output", {"task_id": started["task_id"]})
+        assert res["status"] == "running"  # still alive after teardown
+        # cleanup: stop it explicitly via the normal kill path
+        killed = reg.execute("shell_task_kill", {"task_id": started["task_id"]})
+        assert killed["status"] == "killed"
+    finally:
+        ex.close()

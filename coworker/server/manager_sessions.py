@@ -434,6 +434,14 @@ class SessionsMixin:
                 engine.request_interrupt()
             except Exception:
                 pass
+            executor = getattr(engine, "executor", None)
+            if executor is not None:
+                try:
+                    # Managed background tasks die with the session; detached
+                    # (detach=true) tasks are deliberately left running.
+                    executor.shutdown()
+                except Exception:
+                    pass
         record = self.session_store.load(session_id)
         ok = self.session_store.delete(session_id)
         # Deleting a session is the one implicit unsubscribe (otherwise subscriptions are permanent).
