@@ -38,6 +38,7 @@ from ..audit import AuditStore
 from ..config import load_config, workspace_allowed_commands
 from ..conversations import ConversationStore, title_from
 from ..engine import ApprovalOutcome, Approver, TurnEngine
+from ..runtime import TurnEngineAdapter
 from ..roots import RootDir
 from ..workspace_trust import WorkspaceTrustStore
 from ..automation import Schedule, ScheduledTask, Scheduler, TaskRun, TaskStore
@@ -3106,11 +3107,14 @@ class SessionManager:
         engine = self.get_engine(session_id)
         if engine is None:
             return
+        # Application-layer code drives the runtime only through the RuntimePort
+        # surface (coworker/runtime.py) — the engine stays behind the adapter.
+        runtime = TurnEngineAdapter(engine)
         if not self.try_mark_running(session_id):
-            engine.queue_steering(message, source)
+            runtime.steer(message, source)
             return
         try:
-            async for event in engine.run(message, source=source):
+            async for event in runtime.run(message, source=source):
                 # Stream every event to any socket viewing this session, so a background turn
                 # (channel delivery, self-wake, durable resume) is seen live — not just on reselect.
                 await self.broadcast_session(session_id, event.type.value, event.data)
