@@ -412,6 +412,7 @@ def test_emit_sends_nothing_when_opted_out(secrets, config, monkeypatch):
 
 def test_emit_is_content_free_and_hashes_session_id(secrets, config, monkeypatch):
     _signed_in(secrets)
+    cloud.set_telemetry_enabled(secrets, True)  # default-off; opt in explicitly here
     sent = {}
 
     def fake_post(url, **kwargs):

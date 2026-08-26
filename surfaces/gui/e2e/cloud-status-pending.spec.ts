@@ -24,7 +24,7 @@ test("pending status shows 'checking', never the sign-in ask; resolves to one-cl
   await page.route("**/v1/cloud/status", async (route) => {
     await gate;
     await route.fulfill({
-      json: { signed_in: true, account: "her@example.com", user_id: "u1", telemetry_enabled: true },
+      json: { signed_in: true, account: "her@example.com", user_id: "u1", telemetry_enabled: false },
     });
   });
 
