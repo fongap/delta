@@ -146,7 +146,10 @@ jobs:
       - name: Install linters
         run: |
           python -m pip install --upgrade pip
-          pip install ruff pyright
+          # Pinned to the versions this baseline was measured against (ruff 0.11.13,
+          # pyright 1.1.397). Bump deliberately: re-measure, update the baseline below
+          # only DOWNWARD (a higher count needs a reviewed change with a comment).
+          pip install ruff==0.11.13 pyright==1.1.397
           pip install -e ".[messaging]"
       - name: Ruff (blocking — runtime-breaking classes only)
         run: ruff check coworker tests --select E9,F63,F7,F82
@@ -154,10 +157,12 @@ jobs:
       # findings, but the count must never grow past the committed baseline (CI fails
       # only on a regression, not on a pre-existing finding). Lower the baseline as
       # lint debt is cleaned up; raise it deliberately (with a comment) after a
-      # reviewed change that adds noise.
-      - name: Ruff full-scan (baseline gate — 467)
+      # reviewed change that adds noise. Baselines were re-measured at the pinned
+      # versions above (ruff 0.11.13 / pyright 1.1.397) and lowered from the prior
+      # 467 / 572 to the actual current counts.
+      - name: Ruff full-scan (baseline gate — 192)
         env:
-          RUFF_BASELINE: "467"
+          RUFF_BASELINE: "192"
         run: |
           RUN=$(ruff check coworker tests --output-format=json || true)
           COUNT=$(python -c "import json,sys; print(len(json.loads('$RUN')))" 2>/dev/null || python -c "import json,sys; print(len(json.load(sys.stdin)))" <<<"$RUN")
@@ -168,9 +173,9 @@ jobs:
           if count > baseline:
               raise SystemExit(f"ruff findings {count} > baseline {baseline} — clean up or raise the baseline deliberately")
           PY
-      - name: Pyright (baseline gate — 572)
+      - name: Pyright (baseline gate — 570)
         env:
-          PYRIGHT_BASELINE: "572"
+          PYRIGHT_BASELINE: "570"
         run: |
           RUN=$(pyright coworker 2>/dev/null || true)
           echo "$RUN" | tail -1
@@ -182,3 +187,47 @@ jobs:
           if count > baseline:
               raise SystemExit(f"pyright errors {count} > baseline {baseline} — clean up or raise the baseline deliberately")
           PY
+
+  rust:
+    # Rust quality gate for the Tauri desktop shell (src-tauri) and the portable
+    # launcher. fmt must be clean, the graph must check, clippy is -D warnings
+    # (fix simple findings rather than blanket-allowing), and tests run where they
+    # exist (src-tauri carries the localhost proxy token-isolation tests).
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - workspace: surfaces/gui/src-tauri
+            tauri-deps: true
+          - workspace: packaging/portable/launcher
+            tauri-deps: false
+    steps:
+      # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      # dtolnay/rust-toolchain, stable branch snapshot
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+        with:
+          components: rustfmt, clippy
+      - name: Install Tauri Linux system deps
+        if: ${{ matrix.tauri-deps }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      # v2
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        with:
+          workspaces: ${{ matrix.workspace }}
+      - name: Format
+        working-directory: ${{ matrix.workspace }}
+        run: cargo fmt --check
+      - name: Check
+        working-directory: ${{ matrix.workspace }}
+        run: cargo check --locked
+      - name: Clippy
+        working-directory: ${{ matrix.workspace }}
+        run: cargo clippy --all-targets -- -D warnings
+      - name: Test
+        working-directory: ${{ matrix.workspace }}
+        run: cargo test
