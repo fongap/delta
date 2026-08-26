@@ -44,7 +44,9 @@ struct ServerProcess(Mutex<Option<Child>>);
 struct KeepAwake(Mutex<Option<KeepAwakeGuard>>);
 
 fn free_port() -> std::io::Result<u16> {
-    Ok(std::net::TcpListener::bind("127.0.0.1:0")?.local_addr()?.port())
+    Ok(std::net::TcpListener::bind("127.0.0.1:0")?
+        .local_addr()?
+        .port())
 }
 
 fn launch_token() -> String {
@@ -622,7 +624,11 @@ async fn download_update(
     // (Guard scope stays sync: a std MutexGuard must not live across an await.)
     {
         let slot = pending.0.lock().unwrap();
-        if slot.as_ref().map(|(v, _)| v == &update.version).unwrap_or(false) {
+        if slot
+            .as_ref()
+            .map(|(v, _)| v == &update.version)
+            .unwrap_or(false)
+        {
             return Ok(());
         }
     }
@@ -757,8 +763,14 @@ pub fn run() {
                 // dirs in edge cases, and the sidecar also needs DELTA_PORTABLE + DELTA_DATA_DIR
                 // (server scratch) even when the GUI env is passed through. Both vars are
                 // runtime-only — never persisted, always recomputed from the current location.
-                .env("DELTA_PORTABLE", std::env::var("DELTA_PORTABLE").unwrap_or_default())
-                .env("DELTA_DATA_DIR", std::env::var("DELTA_DATA_DIR").unwrap_or_default())
+                .env(
+                    "DELTA_PORTABLE",
+                    std::env::var("DELTA_PORTABLE").unwrap_or_default(),
+                )
+                .env(
+                    "DELTA_DATA_DIR",
+                    std::env::var("DELTA_DATA_DIR").unwrap_or_default(),
+                )
                 .env("COWORKER_STATE_DIR", state_dir())
                 // The sidecar self-exits if we die abruptly (dev-watcher restart, crash) —
                 // belt-and-suspenders alongside the RunEvent::ExitRequested kill below.
@@ -884,7 +896,8 @@ pub fn run() {
             let settings_label = if zh { "设置" } else { "Settings" };
             let quit_label = if zh { "退出" } else { "Quit" };
             let open_i = MenuItem::with_id(app, "open", open_label, true, None::<&str>)?;
-            let settings_i = MenuItem::with_id(app, "settings", settings_label, true, None::<&str>)?;
+            let settings_i =
+                MenuItem::with_id(app, "settings", settings_label, true, None::<&str>)?;
             let quit_i = MenuItem::with_id(app, "quit", quit_label, true, None::<&str>)?;
             let menu = Menu::with_items(app, &[&open_i, &settings_i, &quit_i])?;
 

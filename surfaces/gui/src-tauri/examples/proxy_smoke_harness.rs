@@ -51,27 +51,28 @@ fn main() -> std::io::Result<()> {
         }
     });
 
-    let proxy_port =
-        openworker_desktop_lib::proxy_start_for_tests(sidecar_port, TOKEN.to_string())
-            .expect("start proxy");
+    let proxy_port = openworker_desktop_lib::proxy_start_for_tests(sidecar_port, TOKEN.to_string())
+        .expect("start proxy");
     println!("fake sidecar port: {sidecar_port}\nproxy port:         {proxy_port}");
 
     // 1. REST with allowed Origin.
-    let out = send(format!(
-        "GET /v1/health HTTP/1.1\r\nhost: x\r\norigin: tauri://localhost\r\nconnection: close\r\n\r\n"
-    ), proxy_port);
+    let out = send(
+        "GET /v1/health HTTP/1.1\r\nhost: x\r\norigin: tauri://localhost\r\nconnection: close\r\n\r\n".into(),
+        proxy_port,
+    );
     println!("[REST allowed origin]   {out}");
     // 2. REST with missing Origin.
-    let out = send("GET /v1/x HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n".into(), proxy_port);
+    let out = send(
+        "GET /v1/x HTTP/1.1\r\nhost: x\r\nconnection: close\r\n\r\n".into(),
+        proxy_port,
+    );
     println!("[REST missing origin]   {out}");
     // 3. REST with evil Origin.
     let out = send("GET /v1/x HTTP/1.1\r\nhost: x\r\norigin: https://evil.example\r\nconnection: close\r\n\r\n".into(), proxy_port);
     println!("[REST denied origin]    {out}");
     // 4. WS upgrade WITHOUT token subprotocol (renderer-style).
     let out = send(
-        format!(
-            "GET /ws/session/x HTTP/1.1\r\nhost: x\r\norigin: http://tauri.localhost\r\nconnection: Upgrade\r\nupgrade: websocket\r\nsec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==\r\nsec-websocket-version: 13\r\n\r\n"
-        ),
+        "GET /ws/session/x HTTP/1.1\r\nhost: x\r\norigin: http://tauri.localhost\r\nconnection: Upgrade\r\nupgrade: websocket\r\nsec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==\r\nsec-websocket-version: 13\r\n\r\n".into(),
         proxy_port,
     );
     println!("[WS no token offered]   {out}");
