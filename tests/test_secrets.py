@@ -108,6 +108,10 @@ def test_acl_verification_failure_marks_degraded_without_raising(tmp_path, monke
     path = tmp_path / "secrets.json"
     store = SecretStore(path)
     monkeypatch.setattr(secrets_mod, "_IS_WINDOWS", True)
+    # Linux runners have no USERNAME env (they use USER); the Windows branch reads it
+    # before any icacls call, so without it _restrict_to_user returns False early and
+    # the apply/verify mocks below never run. Simulate the Windows shell's env too.
+    monkeypatch.setenv("USERNAME", "testuser")
     monkeypatch.setattr(secrets_mod.subprocess, "run", _fake_icacls_apply)
     monkeypatch.setattr(secrets_mod, "_windows_acl_ok", lambda p: False)
     store.put("x", {"a": 1})  # must not raise
