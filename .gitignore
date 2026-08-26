@@ -18,3 +18,12 @@ releases/
 
 # Local secrets (live-smoke BYO keys) — never committed
 .env
+
+# Local diagnostic / runtime artifacts — never commit
+.tmp_*
+*.pid
+*.tmp
+*.bak
+
+# Local portable release build output (generated; carries user DBs/logs/prefs)
+packaging/release/
