@@ -162,7 +162,7 @@ describe("custom provider identity", () => {
     expect(card.textContent).not.toContain("AWS Bedrock");
   });
 
-  it("clears fetched models and status after create succeeds", async () => {
+  it("keeps fetched models visible after a successful fetch in create mode", async () => {
     let savedProvider: ProviderInfo | null = null;
     vi.stubGlobal("fetch", vi.fn(async (input: string | URL, init?: RequestInit) => {
       const url = String(input);
@@ -211,13 +211,69 @@ describe("custom provider identity", () => {
     const alias = await screen.findByTestId("set-alias");
     fireEvent.change(alias, { target: { value: "fong" } });
     fireEvent.click(screen.getByTestId("set-fetch"));
-    // Create mode: Fetch registers the alias (key included) and completes creation —
-    // the draft resets immediately and no dead Create & save step remains.
+    // Success: the result + model chips stay visible — the form does NOT reset and wipe
+    // them the instant they were set. The alias stays so the user can pick a default
+    // model, then close the form explicitly when done.
     await screen.findByText(/Fetched 2 model/);
-    expect((screen.getByTestId("set-alias") as HTMLInputElement).value).toBe("");
+    expect((screen.getByTestId("set-alias") as HTMLInputElement).value).toBe("fong");
+    const chips = await screen.findByTestId("fetched-models");
+    expect(chips.textContent).toContain("code-max");
+    expect(chips.textContent).toContain("code-mini");
+  });
+
+  it("shows an error message and clears models on a failed fetch", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      const json = (value: unknown) => ({ json: async () => value });
+      if (url.endsWith("/v1/protocols")) {
+        return json([{ id: "openai-compatible", title: "OpenAI compatible", needs_key: false, recommended_model: null, fields: [{ key: "api_key", label: "API key", secret: true, required: false, help: "", placeholder: "" }, { key: "base_url", label: "Server address", secret: false, required: true, help: "", placeholder: "" }] }]);
+      }
+      if (url.endsWith("/v1/providers") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body));
+        return json({ ok: true, provider: body.name, protocol: body.protocol });
+      }
+      if (url.endsWith("/v1/providers/fetch")) return json({ ok: false, error: "Invalid API key." });
+      if (url.endsWith("/v1/providers")) return json([]);
+      throw new Error(`unexpected request: ${url}`);
+    }));
+
+    function Harness() {
+      const ps = useProviderSetup();
+      return <CustomCreateForm ps={ps} tp="set" inline />;
+    }
+    render(wrap(<Harness />));
+    fireEvent.change(await screen.findByTestId("set-alias"), { target: { value: "fong" } });
+    fireEvent.click(screen.getByTestId("set-fetch"));
+    // A failed fetch surfaces a stable error line and never renders model chips.
+    expect(await screen.findByTestId("set-fetch-msg")).toBeTruthy();
     expect(screen.queryByTestId("fetched-models")).toBeNull();
-    // The stale Create & save affordance is gone from the completed draft's flow:
-    // the fresh (cleared) form renders it disabled until a new alias is typed.
-    expect((screen.getByTestId("set-create-save") as HTMLButtonElement).disabled).toBe(true);
+  });
+
+  it("reports an up-to-date list and no chips when fetch returns no models", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (input: string | URL, init?: RequestInit) => {
+      const url = String(input);
+      const json = (value: unknown) => ({ json: async () => value });
+      if (url.endsWith("/v1/protocols")) {
+        return json([{ id: "openai-compatible", title: "OpenAI compatible", needs_key: false, recommended_model: null, fields: [{ key: "api_key", label: "API key", secret: true, required: false, help: "", placeholder: "" }, { key: "base_url", label: "Server address", secret: false, required: true, help: "", placeholder: "" }] }]);
+      }
+      if (url.endsWith("/v1/providers") && init?.method === "POST") {
+        const body = JSON.parse(String(init.body));
+        return json({ ok: true, provider: body.name, protocol: body.protocol });
+      }
+      if (url.endsWith("/v1/providers/fetch")) return json({ ok: true, models: [], added: [] });
+      if (url.endsWith("/v1/providers")) return json([]);
+      throw new Error(`unexpected request: ${url}`);
+    }));
+
+    function Harness() {
+      const ps = useProviderSetup();
+      return <CustomCreateForm ps={ps} tp="set" inline />;
+    }
+    render(wrap(<Harness />));
+    fireEvent.change(await screen.findByTestId("set-alias"), { target: { value: "fong" } });
+    fireEvent.click(screen.getByTestId("set-fetch"));
+    const emptyMsg = await screen.findByTestId("set-fetch-msg");
+    expect(emptyMsg.textContent).toContain("up to date");
+    expect(screen.queryByTestId("fetched-models")).toBeNull();
   });
 });

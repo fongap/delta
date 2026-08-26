@@ -26,13 +26,16 @@ test.describe("custom provider", () => {
     // 3. Fill a fixture-only mock key (never sent to a real service).
     await page.getByTestId("set-field-api_key").fill("mock-provider-key");
 
-    // 4. Fetch models → success message + models auto-added.
+    // 4. Fetch models → success message + the fetched model list stays visible (the form
+    // does NOT reset and wipe the chips the instant they arrived). The alias is registered
+    // and the key stored by the fetch itself, so creation is complete.
     await page.getByTestId("set-fetch").click();
     await expect(page.getByTestId("set-fetch-msg")).toContainText("Fetched 2 model(s)");
+    await expect(page.getByTestId("fetched-models")).toBeVisible();
 
-    // 5. Fetch itself registers the alias and stores the key (backend parity), so creation
-    // is complete: the draft form closes and the gallery card shows the saved state —
-    // no dead "Create & save" step after the fact.
+    // 5. Fetch itself registers the alias and stores the key (backend parity), so the
+    // gallery card reflects the saved state. The create form stays open so the user can
+    // pick a default model from the chips, then close it when done.
     const card = page.getByTestId("set-provider-myapi");
     await expect(card).toContainText("myapi");
     await expect(card).toContainText("Saved");
