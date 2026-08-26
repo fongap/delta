@@ -297,9 +297,9 @@ fn set_keep_awake(state: tauri::State<KeepAwake>, enabled: bool) -> bool {
             *guard = start_keep_awake();
         }
     } else {
-        // Dropping the taken guard releases the hold (kills caffeinate / clears the
-        // Windows execution state).
-        drop(guard.take());
+        // Taking the guard out of the Option and letting it drop at the statement's
+        // end releases the hold (kills caffeinate / clears the Windows execution state).
+        guard.take();
     }
     let on = guard.is_some();
     write_keep_awake_pref(on);
@@ -937,8 +937,9 @@ pub fn run() {
                     }
                 }
                 if let Some(state) = app.try_state::<KeepAwake>() {
-                    // Dropping the guard releases the hold (caffeinate kill / execution-state clear).
-                    drop(state.0.lock().unwrap().take());
+                    // Taking the guard out lets it drop at the statement's end, which
+                    // releases the hold (caffeinate kill / execution-state clear).
+                    state.0.lock().unwrap().take();
                 }
             }
         });
