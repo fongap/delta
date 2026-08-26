@@ -214,6 +214,41 @@ jobs:
             fi
           fi
 
+      - name: Verify CI passed for this commit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Release preflight: the commit being published must have a SUCCESSFUL CI
+          # run. "main didn't move" alone is not enough — a commit whose CI failed
+          # (red pytest / cargo-deny / ruff baseline regression / clippy) could still
+          # be dispatched. Require conclusion == success on the CI workflow for THIS
+          # exact SHA; no run, running, or non-success conclusion -> refuse release.
+          echo "Checking CI status for $GITHUB_SHA"
+          RUNS=$(gh run list --workflow=ci.yml --branch=main --commit="$GITHUB_SHA" \
+            --json status,conclusion,headSha,databaseId)
+          if [ "$(echo "$RUNS" | jq 'length')" -eq 0 ]; then
+            echo "::error::no CI run found for $GITHUB_SHA — refusing to release"
+            exit 1
+          fi
+          STATUS=$(echo "$RUNS" | jq -r '.[0].status')
+          CONCLUSION=$(echo "$RUNS" | jq -r '.[0].conclusion')
+          HEAD_SHA=$(echo "$RUNS" | jq -r '.[0].headSha')
+          echo "CI run: status=$STATUS conclusion=$CONCLUSION headSha=$HEAD_SHA"
+          if [ "$HEAD_SHA" != "$GITHUB_SHA" ]; then
+            echo "::error::CI run headSha ($HEAD_SHA) != release SHA ($GITHUB_SHA)"
+            exit 1
+          fi
+          if [ "$STATUS" != "completed" ]; then
+            echo "::error::CI is still running ($STATUS) — wait for it to finish, then dispatch again"
+            exit 1
+          fi
+          if [ "$CONCLUSION" != "success" ]; then
+            echo "::error::CI for $GITHUB_SHA concluded $CONCLUSION (not success) — refusing to release"
+            exit 1
+          fi
+          echo "CI for $GITHUB_SHA is green; proceeding."
+
       - name: Create or resume draft release
         shell: bash
         env:
