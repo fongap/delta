@@ -10,7 +10,6 @@ from __future__ import annotations
 import asyncio
 
 import aisuite as ai
-import pytest
 
 from coworker.automation import Schedule, ScheduledTask, Scheduler, TaskRun, TaskStore
 from coworker.automation.models import grant_entries, rule_entry, rule_parts
@@ -258,7 +257,7 @@ async def test_scheduled_approver_parks_and_mints(tmp_path, monkeypatch):
     # …and a rebuilt run engine auto-allows exactly that call, nothing else.
     engine = manager._build_task_engine(
         manager.task_store.get(task.id), session_id=run.session_id
-    )
+    ).engine
     hit = engine.permissions.evaluate(
         "send_message", {"target": "slack:T1/C1"}, _Meta()
     )
@@ -353,7 +352,7 @@ def test_get_engine_seeds_run_session_rules(tmp_path, monkeypatch):
     manager.task_store.add_run(run)
     # Manual "Run now" / durable resume rebuilds via get_engine — rules must ride along.
     engine = manager.get_engine(run.session_id, workspace=str(ws), agent="cowork")
-    assert engine.permissions.task_rules == {"send_message": {"slack:T1/C1"}}
+    assert engine.engine.permissions.task_rules == {"send_message": {"slack:T1/C1"}}
 
 
 # -- REST surface: grants at creation, revoke on the task page --------------------
@@ -428,6 +427,7 @@ async def test_blocked_run_does_not_stall_other_tasks(tmp_path):
 
 
 def test_engine_events_carry_standing_context(tmp_path):
+    from coworker.engine import TurnEngine
     from coworker.events import EventType
     from coworker.providers import (
         AssistantTurn,
@@ -435,7 +435,6 @@ def test_engine_events_carry_standing_context(tmp_path):
         ProviderClient,
         ToolCall,
     )
-    from coworker.engine import TurnEngine
     from coworker.tools import ToolRegistry
 
     def send_message(target: str, text: str):

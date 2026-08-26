@@ -31,7 +31,7 @@ logger = logging.getLogger("coworker.connectors")
 TokenClient = Callable[[str], Awaitable[str]]
 
 
-def split_thread(chat_id: str) -> tuple[str, Optional[int]]:
+def split_thread(chat_id: str) -> tuple[str, int | None]:
     """`owner/repo#N` → ("owner/repo", N); a bare repo has no thread number."""
     repo, _, num = chat_id.partition("#")
     try:
@@ -47,8 +47,8 @@ class GitHubRelayAdapter(BasePlatformAdapter):
         self,
         hub: RelayHub,
         *,
-        installs: Optional[dict[str, dict[str, Any]]] = None,
-        token_client: Optional[TokenClient] = None,
+        installs: dict[str, dict[str, Any]] | None = None,
+        token_client: TokenClient | None = None,
     ) -> None:
         super().__init__()
         self._hub = hub
@@ -59,7 +59,7 @@ class GitHubRelayAdapter(BasePlatformAdapter):
         # owner/repo -> installation_id, learned from inbound events so replies
         # to a repo mint the right installation's token.
         self._repo_installs: dict[str, str] = {}
-        self.last_event_at: Optional[float] = None
+        self.last_event_at: float | None = None
         # owner/repo -> events the cloud dropped (offline > TTL / overflow);
         # surfaced via status() — GitHub has no cheap "what did I miss" pull.
         self.missed: dict[str, int] = {}
@@ -156,7 +156,7 @@ class GitHubRelayAdapter(BasePlatformAdapter):
 
     # -- outbound --------------------------------------------------------------
     async def send(
-        self, chat_id: str, text: str, *, thread_id: Optional[str] = None
+        self, chat_id: str, text: str, *, thread_id: str | None = None
     ) -> SendResult:
         """Comment on the issue/PR the event came from, as `ocw[bot]`."""
         owner_repo, number = split_thread(chat_id)

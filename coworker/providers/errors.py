@@ -35,7 +35,7 @@ _NO_QUOTA = (
 )
 
 
-def friendly_model_error(model: str, exc: Exception) -> Optional[str]:
+def friendly_model_error(model: str, exc: Exception) -> str | None:
     """One actionable sentence for "your account can't use this model" failures, or None."""
     text = str(exc).lower()
     no_access = (

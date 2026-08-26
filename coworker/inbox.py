@@ -45,7 +45,7 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def args_preview(arguments: Optional[dict], *, limit: int = 240) -> str:
+def args_preview(arguments: dict | None, *, limit: int = 240) -> str:
     """A compact one-line summary of a tool call's arguments, for an approval card body (so a
     mirrored 'Run `write_file`?' shows *what* — path/content — not just the tool name).
     """
@@ -68,16 +68,16 @@ class InboxItem:
     title: str
     body: str = ""
     state: str = STATE_PENDING
-    resolution: Optional[str] = (
+    resolution: str | None = (
         None  # approval: "allow"/"deny"/"always"; question: answer text
     )
     inbox: str = "default"  # named inbox / delivery binding (Phase 3 routing)
     created_at: str = field(default_factory=_now)
-    resolved_at: Optional[str] = None
+    resolved_at: str | None = None
     visibility: str = VIS_INBOX  # inline (attended) vs inbox (unattended)
     # The tool call this prompt is blocking (durable resume: persisted so a restart can rebuild the
     # suspension and continue the turn). Makes an item idempotent by (session_id, tool_call_id).
-    tool_call_id: Optional[str] = None
+    tool_call_id: str | None = None
     # Question metadata (ask_user): optional quick-reply choices + a free-text escape, mirroring
     # the structured-but-always-answerable shape of Claude Code's AskUserQuestion.
     # An option is a plain string OR a rich {label, description, recommended, preview} object
@@ -98,7 +98,7 @@ class InboxItem:
 
 
 class InboxStore:
-    def __init__(self, path: Optional[str | Path] = None) -> None:
+    def __init__(self, path: str | Path | None = None) -> None:
         self.path = Path(path) if path else None
         self._lock = threading.Lock()
         self._items: dict[str, InboxItem] = {}
@@ -130,13 +130,13 @@ class InboxStore:
         body: str = "",
         inbox: str = "default",
         visibility: str = VIS_INBOX,
-        data: Optional[dict[str, Any]] = None,
+        data: dict[str, Any] | None = None,
         options=None,
         allow_text: bool = True,
         multi: bool = False,
         header: str = "",
         questions=None,
-        tool_call_id: Optional[str] = None,
+        tool_call_id: str | None = None,
     ) -> InboxItem:
         # Idempotent by (session_id, tool_call_id): a durable resume re-raises the same prompt, and
         # must reuse the existing (possibly already-resolved) item rather than re-prompt.
@@ -165,7 +165,7 @@ class InboxStore:
             self._save()
         return item
 
-    def for_tool_call(self, session_id: str, tool_call_id: str) -> Optional[InboxItem]:
+    def for_tool_call(self, session_id: str, tool_call_id: str) -> InboxItem | None:
         for i in self._items.values():
             if i.session_id == session_id and i.tool_call_id == tool_call_id:
                 return i
@@ -282,16 +282,16 @@ class InboxStore:
         )
 
     # -- queries ----------------------------------------------------------------
-    def get(self, item_id: str) -> Optional[InboxItem]:
+    def get(self, item_id: str) -> InboxItem | None:
         return self._items.get(item_id)
 
     def list(
         self,
         *,
-        session_id: Optional[str] = None,
-        state: Optional[str] = None,
-        inbox: Optional[str] = None,
-        visibility: Optional[str] = None,
+        session_id: str | None = None,
+        state: str | None = None,
+        inbox: str | None = None,
+        visibility: str | None = None,
     ) -> list[InboxItem]:
         out = list(self._items.values())
         if session_id is not None:
@@ -304,7 +304,7 @@ class InboxStore:
             out = [i for i in out if i.visibility == visibility]
         return sorted(out, key=lambda i: i.created_at)
 
-    def pending(self, session_id: Optional[str] = None) -> list[InboxItem]:
+    def pending(self, session_id: str | None = None) -> list[InboxItem]:
         return self.list(session_id=session_id, state=STATE_PENDING)
 
     # -- the state machine ------------------------------------------------------
@@ -367,7 +367,7 @@ def inbox_approver(store: InboxStore, session_id: str, *, inbox: str = "default"
     """
     from .engine import ApprovalOutcome, PermissionRequest
 
-    async def approve(request: "PermissionRequest") -> "ApprovalOutcome":
+    async def approve(request: PermissionRequest) -> ApprovalOutcome:
         item = store.add_approval(
             session_id,
             title=f"Run `{request.tool_name}`?",

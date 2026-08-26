@@ -35,7 +35,7 @@ class Subscription:
 
 
 class SubscriptionStore:
-    def __init__(self, path: Optional[str | Path] = None) -> None:
+    def __init__(self, path: str | Path | None = None) -> None:
         self.path = Path(path) if path else None
         self._lock = threading.Lock()
         self._subs: list[Subscription] = []
@@ -138,7 +138,7 @@ class ChannelBuffer:
     ``state_path`` is given: a suggestion list that empties on every restart is useless
     (owner call, 2026-07-04). Traffic is human-rate, so writing per message is fine."""
 
-    def __init__(self, cap: int = 50, state_path: Optional[Path] = None) -> None:
+    def __init__(self, cap: int = 50, state_path: Path | None = None) -> None:
         self._cap = cap
         self._path = Path(state_path) if state_path else None
         self._by_channel: dict[str, deque] = {}
@@ -161,7 +161,7 @@ class ChannelBuffer:
                 pass  # a corrupt buffer must never block startup
 
     def record(
-        self, channel: str, who: str, text: str, name: Optional[str] = None
+        self, channel: str, who: str, text: str, name: str | None = None
     ) -> None:
         self._by_channel.setdefault(channel, deque(maxlen=self._cap)).append(
             {"from": who, "text": text}
@@ -191,7 +191,7 @@ class ChannelBuffer:
         msgs = list(self._by_channel.get(channel, ()))
         return msgs[-max(1, min(n, self._cap)) :]
 
-    def name_for(self, channel: str) -> Optional[str]:
+    def name_for(self, channel: str) -> str | None:
         """The channel's resolved display name, if any inbound message carried one."""
         return self._names.get(channel)
 
@@ -217,7 +217,7 @@ def subscription_tools(
     buffer: ChannelBuffer,
     *,
     default_platform: str = "slack",
-    routing_targets: Optional[list[str]] = None,
+    routing_targets: list[str] | None = None,
 ) -> list:
     """The channel-subscription tools for a messaging persona's session: subscribe / unsubscribe /
     list / catch up. The agent obtains a channel by asking the user (ask_user) or from a channel

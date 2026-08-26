@@ -6,26 +6,20 @@ mixin inheritance so behavior is unchanged.
 
 from __future__ import annotations
 
+import asyncio
+import json
+import re
+from typing import Any, Optional
+
 from ..connectors import (
     Gateway,
     MessageSource,
-    connect_connector,
-    connector_list,
-    disconnect_connector,
-    experimental_enabled,
     load_settings,
     make_adapter,
-    set_experimental_enabled,
     slack_split,
-    update_connector_tools,
 )
-import asyncio
-from typing import Any, Optional
-import json
-from ..runtime import TurnEngineAdapter
-import re
-
 from .manager_support import _inbound_epoch, logger
+
 
 class GatewayInboundMixin:
 
@@ -111,7 +105,7 @@ class GatewayInboundMixin:
 
     # -- unauthorized inbound (parked, §19) --------------------------------------
     def _note_person(
-        self, platform: str, user_id: Optional[str], name: Optional[str]
+        self, platform: str, user_id: str | None, name: str | None
     ) -> None:
         """Remember a sender's display name (persisted) so ID-keyed surfaces — the allow-list
         chips above all — can show who a U07JK… actually is. Best-effort, newest name wins.
@@ -311,7 +305,7 @@ class GatewayInboundMixin:
 
 
     async def deliver_to_session(
-        self, session_id: str, message: str, *, source: Optional[dict[str, Any]] = None
+        self, session_id: str, message: str, *, source: dict[str, Any] | None = None
     ) -> None:
         """Deliver an out-of-band message to a (durable) session — the agent stays resumable
         forever, so this works with no live socket. Busy (mid tool-loop): steer it into the live
@@ -320,12 +314,9 @@ class GatewayInboundMixin:
         by self-wake and channel-subscription delivery. `source` is the display-only MessageSource
         sidecar for connector messages (framed `message` stays the model-facing text).
         """
-        engine = self.get_engine(session_id)
-        if engine is None:
+        runtime = self.get_engine(session_id)
+        if runtime is None:
             return
-        # Application-layer code drives the runtime only through the RuntimePort
-        # surface (coworker/runtime.py) — the engine stays behind the adapter.
-        runtime = TurnEngineAdapter(engine, ledger=self.run_ledger, session_id=session_id)
         if not self.try_mark_running(session_id):
             runtime.steer(message, source)
             return
@@ -342,7 +333,7 @@ class GatewayInboundMixin:
                         "background turn failed for %s: %s", session_id, reason
                     )
                     self.unrouted.record(session_id, "-", message, reason=reason)
-            self.save(session_id, engine)
+            self.save(session_id, runtime)
         except (
             Exception
         ) as exc:  # an unexpected raise out of the turn must not be swallowed
@@ -486,8 +477,8 @@ class GatewayInboundMixin:
         who = src.user_name or src.user_id or "?"
         chan = f"#{src.chat_name}" if src.chat_name else src.chat_id
         sid = uuid.uuid4().hex
-        engine = self.get_engine(sid, agent=self.personas.default_id())
-        if engine is None:
+        runtime = self.get_engine(sid, agent=self.personas.default_id())
+        if runtime is None:
             self.unrouted.record(
                 src.target, who, event.text, reason="could not spawn mention session"
             )
@@ -497,10 +488,8 @@ class GatewayInboundMixin:
         self.mention_sessions.set(
             thread_target, sid, channel=f"{src.platform}:{src.chat_id}"
         )
-        engine.permissions.task_rules.setdefault("send_message", set()).add(
-            thread_target
-        )
-        self.save(sid, engine)  # the sessions row must exist before rename/set_origin
+        runtime.add_task_rule("send_message", thread_target)
+        self.save(sid, runtime)  # the sessions row must exist before rename/set_origin
         # Title = the ASK first, channel last (owner call 2026-07-14): the text is what
         # varies between sessions, so it gets the truncation budget; the mention token is
         # noise (origin is already told by the From Slack group + icon + origin_label).

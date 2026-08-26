@@ -9,14 +9,17 @@ accepted until the user revokes trust.
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Optional
 
-from .secrets import state_dir, write_private_text
+from .secrets import state_dir, verify_user_restricted, write_private_text
+
+logger = logging.getLogger("coworker.workspace_trust")
 
 
 class WorkspaceTrustStore:
-    def __init__(self, path: Optional[str | Path] = None) -> None:
+    def __init__(self, path: str | Path | None = None) -> None:
         self.path = (
             Path(path) if path is not None else state_dir() / "workspace_trust.json"
         )
@@ -56,4 +59,41 @@ class WorkspaceTrustStore:
         write_private_text(
             self.path, json.dumps({"trusted_workspaces": sorted(values)}, indent=2) + "\n"
         )
+        self._record_acl_state()
         return canonical
+
+    def _record_acl_state(self) -> None:
+        """Persist whether the trust file is actually protected, mirroring the
+        SecretStore's degradation marker: best-effort hardening must never degrade
+        silently — callers/UI can surface "trust decisions stored unprotected"."""
+        try:
+            protected = verify_user_restricted(self.path)
+        except Exception:
+            protected = False
+        marker = self._acl_marker_path()
+        if protected:
+            # A later successful write clears an earlier degradation marker.
+            try:
+                marker.unlink(missing_ok=True)
+            except OSError:
+                pass
+            return
+        try:
+            marker.write_text(
+                "ACL/permission hardening could not be verified for this file.\n",
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+        logger.warning(
+            "workspace trust stored WITHOUT ACL protection (hardening unverified): %s",
+            self.path,
+        )
+
+    def _acl_marker_path(self) -> Path:
+        return self.path.with_name(self.path.name + ".acl-unprotected")
+
+    def acl_unprotected(self) -> bool:
+        """True when the last write could not confirm user-only protection.
+        Callers/UI can use this to show a degraded-security notice."""
+        return self._acl_marker_path().is_file()

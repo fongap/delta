@@ -32,12 +32,12 @@ _DENY_WORDS = re.compile(r"\b(?:deny|denied|reject|rejected|no)\b")
 @dataclass
 class InboxBinding:
     name: str
-    channel: Optional[str] = None  # None (in-app only) | "slack" | "telegram"
+    channel: str | None = None  # None (in-app only) | "slack" | "telegram"
     target: str = ""  # channel id / chat id for the binding
 
 
 class InboxRouting:
-    def __init__(self, path: Optional[str | Path] = None) -> None:
+    def __init__(self, path: str | Path | None = None) -> None:
         self.path = Path(path) if path else None
         self._lock = threading.Lock()
         self._bindings: dict[str, InboxBinding] = {
@@ -70,7 +70,7 @@ class InboxRouting:
 
     # -- config -----------------------------------------------------------------
     def set_binding(
-        self, name: str, *, channel: Optional[str] = None, target: str = ""
+        self, name: str, *, channel: str | None = None, target: str = ""
     ) -> None:
         with self._lock:
             self._bindings[name] = InboxBinding(name, channel, target)
@@ -90,7 +90,7 @@ class InboxRouting:
             self._save()
 
     # -- resolution -------------------------------------------------------------
-    def route_for(self, session_id: str, persona_id: Optional[str] = None) -> str:
+    def route_for(self, session_id: str, persona_id: str | None = None) -> str:
         """Per-session override > persona default > the global default inbox."""
         if session_id in self._session_override:
             return self._session_override[session_id]
@@ -106,7 +106,7 @@ class InboxRouting:
 Sender = Callable[[str, str, str], None]  # (channel, target, text) -> None
 
 
-def deliver(item, binding: InboxBinding, sender: Optional[Sender]) -> bool:
+def deliver(item, binding: InboxBinding, sender: Sender | None) -> bool:
     """Mirror an inbox item to its bound channel (if any). The item id is embedded so an inbound
     reply can be correlated back. In-app-only bindings deliver nothing here. Returns True if a
     channel message was sent."""
@@ -119,7 +119,7 @@ def deliver(item, binding: InboxBinding, sender: Optional[Sender]) -> bool:
 
 def resolve_from_reply(
     reply: str, resolve: Callable[[str, str], bool]
-) -> Optional[bool]:
+) -> bool | None:
     """Correlate an inbound channel reply to its item (by the embedded id) and resolve it.
 
     Looks for the ``[ow:<id>]`` token (or legacy ``[ocw:…]``) and an allow/deny intent; falls back to treating the whole

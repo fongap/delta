@@ -49,7 +49,7 @@ from .base import (
 from .capabilities import capabilities_for
 
 
-def _usage_from(usage: Any) -> Optional[TokenUsage]:
+def _usage_from(usage: Any) -> TokenUsage | None:
     """Converse `usage` dict → normalized counts (`inputTokens` excludes cache)."""
     if not isinstance(usage, dict):
         return None
@@ -86,10 +86,10 @@ _DOC_NAME_RE = re.compile(r"[^A-Za-z0-9\s\-\(\)\[\]]+")
 
 
 def _session_kwargs(
-    profile_name: Optional[str],
-    access_key_id: Optional[str],
-    secret_access_key: Optional[str],
-    session_token: Optional[str],
+    profile_name: str | None,
+    access_key_id: str | None,
+    secret_access_key: str | None,
+    session_token: str | None,
 ) -> dict[str, Any]:
     """boto3.Session kwargs for the explicit → profile → ambient resolution order."""
     if access_key_id and secret_access_key:
@@ -243,7 +243,7 @@ def convert_messages(
     return system, folded
 
 
-def convert_tools(tools: Optional[list[dict[str, Any]]]) -> Optional[dict[str, Any]]:
+def convert_tools(tools: list[dict[str, Any]] | None) -> dict[str, Any] | None:
     """OpenAI function schemas → Converse `toolConfig` (None when there are no tools —
     Converse rejects an empty tool list)."""
     specs = []
@@ -284,12 +284,12 @@ class _BedrockConverseClient(ProviderClient):
         self,
         client: Any = None,
         *,
-        region: Optional[str] = None,
-        bedrock_api_key: Optional[str] = None,
-        profile_name: Optional[str] = None,
-        access_key_id: Optional[str] = None,
-        secret_access_key: Optional[str] = None,
-        session_token: Optional[str] = None,
+        region: str | None = None,
+        bedrock_api_key: str | None = None,
+        profile_name: str | None = None,
+        access_key_id: str | None = None,
+        secret_access_key: str | None = None,
+        session_token: str | None = None,
     ):
         self._client = client  # tests inject a dict-returning fake
         self._region = region
@@ -302,6 +302,7 @@ class _BedrockConverseClient(ProviderClient):
         if self._client is None:
             try:
                 import boto3
+                import boto3.session  # noqa: F401 — submodule import so pyright resolves boto3.session
             except ImportError as exc:
                 raise RuntimeError(
                     "AWS Bedrock support needs the boto3 package — "
@@ -321,7 +322,7 @@ class _BedrockConverseClient(ProviderClient):
         *,
         model: str,
         messages: list[dict[str, Any]],
-        tools: Optional[list[dict[str, Any]]],
+        tools: list[dict[str, Any]] | None,
         settings: dict[str, Any],
     ) -> dict[str, Any]:
         system, converted = convert_messages(messages)
@@ -355,7 +356,7 @@ class _BedrockConverseClient(ProviderClient):
         *,
         model: str,
         messages: list[dict[str, Any]],
-        tools: Optional[list[dict[str, Any]]] = None,
+        tools: list[dict[str, Any]] | None = None,
         **settings: Any,
     ) -> AssistantTurn:
         kwargs = self._request_kwargs(
@@ -402,7 +403,7 @@ class _BedrockConverseClient(ProviderClient):
         *,
         model: str,
         messages: list[dict[str, Any]],
-        tools: Optional[list[dict[str, Any]]] = None,
+        tools: list[dict[str, Any]] | None = None,
         **settings: Any,
     ):
         kwargs = self._request_kwargs(
@@ -414,7 +415,7 @@ class _BedrockConverseClient(ProviderClient):
         reasoning_parts: list[str] = []
         tool_accum: dict[int, dict[str, str]] = {}
         stop_reason = None
-        usage: Optional[TokenUsage] = None
+        usage: TokenUsage | None = None
 
         for event in response.get("stream") or []:
             if "contentBlockStart" in event:
@@ -473,15 +474,15 @@ class BedrockProvider(ProviderClient):
     def __init__(
         self,
         *,
-        region: Optional[str] = None,
-        auth_method: Optional[str] = None,
-        bedrock_api_key: Optional[str] = None,
-        profile_name: Optional[str] = None,
-        access_key_id: Optional[str] = None,
-        secret_access_key: Optional[str] = None,
-        session_token: Optional[str] = None,
-        claude_client: Optional[ProviderClient] = None,
-        converse_client: Optional[ProviderClient] = None,
+        region: str | None = None,
+        auth_method: str | None = None,
+        bedrock_api_key: str | None = None,
+        profile_name: str | None = None,
+        access_key_id: str | None = None,
+        secret_access_key: str | None = None,
+        session_token: str | None = None,
+        claude_client: ProviderClient | None = None,
+        converse_client: ProviderClient | None = None,
     ):
         # Narrow to the selected auth method here, once — stale values stored under a
         # previously-selected method must never reach a different credential path.
@@ -553,7 +554,7 @@ class BedrockProvider(ProviderClient):
         *,
         model: str,
         messages: list[dict[str, Any]],
-        tools: Optional[list[dict[str, Any]]] = None,
+        tools: list[dict[str, Any]] | None = None,
         **settings: Any,
     ) -> AssistantTurn:
         family, rest = self._split(model)
@@ -566,7 +567,7 @@ class BedrockProvider(ProviderClient):
         *,
         model: str,
         messages: list[dict[str, Any]],
-        tools: Optional[list[dict[str, Any]]] = None,
+        tools: list[dict[str, Any]] | None = None,
         **settings: Any,
     ):
         family, rest = self._split(model)

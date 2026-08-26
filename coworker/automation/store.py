@@ -20,8 +20,8 @@ from .models import ScheduledTask, TaskRun
 
 
 def compute_next_run(
-    task: ScheduledTask, *, after: Optional[float] = None
-) -> Optional[float]:
+    task: ScheduledTask, *, after: float | None = None
+) -> float | None:
     """Next fire time (epoch seconds), or None if the task is exhausted/one-shot-past."""
     sched = task.schedule
     now = after if after is not None else _epoch_now()
@@ -106,7 +106,7 @@ class TaskStore:
             self._conn.commit()
         return task
 
-    def get(self, task_id: str) -> Optional[ScheduledTask]:
+    def get(self, task_id: str) -> ScheduledTask | None:
         with self._lock:
             row = self._conn.execute(
                 "SELECT data FROM scheduled_tasks WHERE id=?", (task_id,)
@@ -129,7 +129,7 @@ class TaskStore:
             self._conn.commit()
             return cur.rowcount > 0
 
-    def due(self, *, now: Optional[float] = None) -> list[ScheduledTask]:
+    def due(self, *, now: float | None = None) -> list[ScheduledTask]:
         now = now if now is not None else _epoch_now()
         with self._lock:
             rows = self._conn.execute(
@@ -148,14 +148,14 @@ class TaskStore:
             self._conn.commit()
         return run
 
-    def find_run(self, run_id: str) -> Optional[TaskRun]:
+    def find_run(self, run_id: str) -> TaskRun | None:
         with self._lock:
             row = self._conn.execute(
                 "SELECT data FROM task_runs WHERE run_id=?", (run_id,)
             ).fetchone()
         return TaskRun.from_dict(json.loads(row["data"])) if row else None
 
-    def task_for_run_session(self, session_id: str) -> Optional[ScheduledTask]:
+    def task_for_run_session(self, session_id: str) -> ScheduledTask | None:
         """The owning task of a run session ('__run__<run_id>'), or None. How standing
         scoped approvals resolve which automation a live approval belongs to (§25)."""
         if not session_id.startswith("__run__"):

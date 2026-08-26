@@ -22,7 +22,8 @@ from __future__ import annotations
 import base64
 import json
 import re
-from dataclasses import dataclass, field as dataclass_field
+from dataclasses import dataclass
+from dataclasses import field as dataclass_field
 from typing import Any, Optional
 
 from .base import (
@@ -36,7 +37,7 @@ from .base import (
 from .capabilities import capabilities_for
 
 
-def _usage_from(meta: Any) -> Optional[TokenUsage]:
+def _usage_from(meta: Any) -> TokenUsage | None:
     """`usage_metadata` → normalized counts. `prompt_token_count` INCLUDES the cached
     share; thinking tokens are billed as output, so they fold into `output`."""
     if meta is None:
@@ -101,7 +102,7 @@ _PDF_DATA_URL_RE = re.compile(
 )
 
 
-def resolve_api_key(secrets: Any = None) -> Optional[str]:
+def resolve_api_key(secrets: Any = None) -> str | None:
     """Resolve the Gemini API key: env `GEMINI_API_KEY` (then `GOOGLE_API_KEY`, the SDK's own
     convention) first, else the SecretStore `provider:gemini` profile (`{api_key}`)."""
     import os
@@ -115,7 +116,7 @@ def resolve_api_key(secrets: Any = None) -> Optional[str]:
     return None
 
 
-def _image_part(url: str) -> Optional[dict[str, Any]]:
+def _image_part(url: str) -> dict[str, Any] | None:
     """An OpenAI `image_url` part → a Gemini inline_data part. Attachments are always data
     URLs (attachments.py). Plain http(s) URLs are not fetchable by the API → None."""
     match = _DATA_URL_RE.match(url or "")
@@ -126,7 +127,7 @@ def _image_part(url: str) -> Optional[dict[str, Any]]:
     return None
 
 
-def _pdf_part(part: dict[str, Any]) -> Optional[dict[str, Any]]:
+def _pdf_part(part: dict[str, Any]) -> dict[str, Any] | None:
     """An OpenAI `file` part (PDF data URL, attachments.py) → a Gemini inline_data part."""
     file = part.get("file") or {}
     match = _PDF_DATA_URL_RE.match(file.get("file_data") or "")
@@ -182,7 +183,7 @@ def _result_payload(content: Any) -> dict[str, Any]:
 
 def convert_messages(
     messages: list[dict[str, Any]],
-) -> tuple[Optional[str], list[dict[str, Any]]]:
+) -> tuple[str | None, list[dict[str, Any]]]:
     """OpenAI-shaped history → (`system_instruction`, Gemini `contents`).
 
     Function calls have no ids on the wire, so tool results are matched back to their function
@@ -303,7 +304,7 @@ def _sanitize_schema(schema: Any) -> Any:
     return cleaned
 
 
-def convert_tools(tools: Optional[list[dict[str, Any]]]) -> list[dict[str, Any]]:
+def convert_tools(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     """OpenAI function schemas → Gemini tool declarations (one tool, N function_declarations)."""
     declarations = []
     for tool in tools or []:
@@ -319,7 +320,7 @@ def convert_tools(tools: Optional[list[dict[str, Any]]]) -> list[dict[str, Any]]
     return [{"function_declarations": declarations}] if declarations else []
 
 
-def _sig_str(part: Any) -> Optional[str]:
+def _sig_str(part: Any) -> str | None:
     """A part's thought signature as a base64 string (jsonl-safe; the SDK's base64 bytes
     validation turns it back into the original bytes on send)."""
     sig = getattr(part, "thought_signature", None)
@@ -331,7 +332,7 @@ def _sig_str(part: Any) -> Optional[str]:
 
 
 def _signature_extras(
-    text_sig: Optional[str], call_sigs: list[Optional[str]]
+    text_sig: str | None, call_sigs: list[str | None]
 ) -> dict[str, Any]:
     """Captured signatures → the `_gemini` assistant-message sidecar (empty when none)."""
     if not text_sig and not any(call_sigs):
@@ -346,9 +347,9 @@ class _Parsed:
     texts: list[str] = dataclass_field(default_factory=list)
     thoughts: list[str] = dataclass_field(default_factory=list)  # `thought` summary parts
     calls: list[ToolCall] = dataclass_field(default_factory=list)
-    finish: Optional[str] = None
-    text_sig: Optional[str] = None
-    call_sigs: list[Optional[str]] = dataclass_field(default_factory=list)
+    finish: str | None = None
+    text_sig: str | None = None
+    call_sigs: list[str | None] = dataclass_field(default_factory=list)
 
 
 def _parse_candidate(response: Any) -> _Parsed:
@@ -390,7 +391,7 @@ def _parse_candidate(response: Any) -> _Parsed:
     return out
 
 
-def _map_finish(finish: Optional[str], has_calls: bool) -> Optional[str]:
+def _map_finish(finish: str | None, has_calls: bool) -> str | None:
     if has_calls:
         return "tool_calls"
     if finish is None:
@@ -404,7 +405,7 @@ class GeminiProvider(ProviderClient):
         client: Any = None,
         *,
         default_model: str = "",
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         secrets: Any = None,
     ):
         # Mirrors AnthropicProvider: the SDK client is built lazily so engines can be assembled
@@ -434,7 +435,7 @@ class GeminiProvider(ProviderClient):
         *,
         model: str,
         messages: list[dict[str, Any]],
-        tools: Optional[list[dict[str, Any]]],
+        tools: list[dict[str, Any]] | None,
         settings: dict[str, Any],
     ) -> dict[str, Any]:
         system, contents = convert_messages(messages)
@@ -464,7 +465,7 @@ class GeminiProvider(ProviderClient):
         *,
         model: str,
         messages: list[dict[str, Any]],
-        tools: Optional[list[dict[str, Any]]] = None,
+        tools: list[dict[str, Any]] | None = None,
         **settings: Any,
     ) -> AssistantTurn:
         kwargs = self._request_kwargs(
@@ -494,7 +495,7 @@ class GeminiProvider(ProviderClient):
         *,
         model: str,
         messages: list[dict[str, Any]],
-        tools: Optional[list[dict[str, Any]]] = None,
+        tools: list[dict[str, Any]] | None = None,
         **settings: Any,
     ):
         kwargs = self._request_kwargs(
@@ -506,9 +507,9 @@ class GeminiProvider(ProviderClient):
         thought_parts: list[str] = []
         calls: list[ToolCall] = []
         finish = None
-        text_sig: Optional[str] = None
-        call_sigs: list[Optional[str]] = []
-        usage: Optional[TokenUsage] = None
+        text_sig: str | None = None
+        call_sigs: list[str | None] = []
+        usage: TokenUsage | None = None
 
         # Unlike Anthropic, function_call parts arrive whole (args are a complete dict per
         # part), so there is no JSON accumulation — just collect parts across chunks.

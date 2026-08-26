@@ -456,3 +456,96 @@ def test_complete_picks_up_reasoning_content():
     provider = OpenAIProvider(client=_FakeClient(SimpleNamespace(choices=[choice])))
     turn = provider.complete(model="deepseek-v4-pro", messages=[{"role": "user", "content": "x"}])
     assert turn.text == "Answer" and turn.reasoning == "deep thought"
+
+# -- P0 regression: truncated streams must error, never masquerade as answers ----
+# (owner-hit 2026-08-26: a pseudo-streaming OpenAI-compatible relay closed the SSE
+# after the first content chunk, so "你是谁" rendered as just "我是". A compliant
+# stream ALWAYS carries a finish_reason chunk before [DONE]; ending without one is
+# a truncation and must surface as an error, not a silently-short answer.)
+
+def _stream_chunk(delta=None, finish_reason=None, usage=None):
+    choice = SimpleNamespace(
+        delta=SimpleNamespace(**(delta or {})),
+        finish_reason=finish_reason,
+    )
+    return SimpleNamespace(choices=[choice], usage=usage)
+
+
+class _StreamClient:
+    def __init__(self, chunks):
+        self.chat = SimpleNamespace(
+            completions=SimpleNamespace(
+                create=lambda **kwargs: iter(chunks)
+            )
+        )
+
+
+def _drain(provider, **kw):
+    out = []
+    for c in provider.stream(model="m", messages=[], **kw):
+        out.append(c)
+    return out
+
+
+def test_stream_accumulates_multiple_deltas_into_full_answer():
+    chunks = [
+        _stream_chunk(delta={"role": "assistant", "content": ""}),
+        _stream_chunk(delta={"content": "你好，"}),
+        _stream_chunk(delta={"content": "我是一个用于日常工作的助手，"}),
+        _stream_chunk(delta={"content": "可以帮你处理文档、写代码和整理信息。"}),
+        _stream_chunk(delta={}, finish_reason="stop"),
+        _stream_chunk(usage=SimpleNamespace(prompt_tokens=9, completion_tokens=20)),
+    ]
+    out = _drain(OpenAIProvider(client=_StreamClient(chunks)))
+    assert out[-1].turn.text == "你好，我是一个用于日常工作的助手，可以帮你处理文档、写代码和整理信息。"
+    assert out[-1].turn.finish_reason == "stop"
+
+
+def test_stream_truncated_without_finish_reason_raises():
+    # Pseudo-streaming relay: exactly one content chunk, then the stream ends with
+    # no finish_reason and no [DONE]. Must raise, never yield a "complete" turn.
+    chunks = [_stream_chunk(delta={"content": "我是"})]
+    provider = OpenAIProvider(client=_StreamClient(chunks))
+    try:
+        _drain(provider)
+        raise AssertionError("truncated stream must raise")
+    except RuntimeError as exc:
+        assert "截断" in str(exc)
+
+
+def test_stream_truncated_reasoning_only_raises():
+    # A reasoning model whose thinking consumed the whole (broken) stream:
+    # reasoning deltas arrived, no finish_reason → still a truncation.
+    chunks = [_stream_chunk(delta={"reasoning_content": "The user asks"})]
+    provider = OpenAIProvider(client=_StreamClient(chunks))
+    try:
+        _drain(provider)
+        raise AssertionError("truncated stream must raise")
+    except RuntimeError:
+        pass
+
+
+def test_stream_user_stop_does_not_raise_truncation():
+    # User pressed Stop: the consumer closes the generator mid-stream. GeneratorExit
+    # unwinds the provider generator BEFORE the finish_reason check, so a user stop
+    # must never be misreported as an upstream truncation.
+    chunks = [
+        _stream_chunk(delta={"content": "部分"}),
+        _stream_chunk(delta={"content": "回答"}),
+        _stream_chunk(delta={}, finish_reason="stop"),
+    ]
+    provider = OpenAIProvider(client=_StreamClient(chunks))
+    gen = provider.stream(model="m", messages=[])
+    next(gen)  # first delta delivered
+    gen.close()  # user stop
+    assert True
+
+
+def test_stream_reasoning_then_content_accumulates_both():
+    chunks = [
+        _stream_chunk(delta={"reasoning_content": "想一下"}),
+        _stream_chunk(delta={"content": "答"}),
+        _stream_chunk(delta={}, finish_reason="stop"),
+    ]
+    out = _drain(OpenAIProvider(client=_StreamClient(chunks)))
+    assert out[-1].turn.text == "答" and out[-1].turn.reasoning == "想一下"

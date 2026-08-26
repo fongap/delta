@@ -74,7 +74,7 @@ def default_portal(secrets: SecretStore) -> str:
 
 def resolve(
     secrets: SecretStore, portal: str = ""
-) -> tuple[str, str, Optional[dict[str, Any]]]:
+) -> tuple[str, str, dict[str, Any] | None]:
     """(hub_id, profile_key, profile) for the requested — or default — portal.
     `portal` may be a hub id or a portal name (account) — names are what agents
     see in results, so accept both."""

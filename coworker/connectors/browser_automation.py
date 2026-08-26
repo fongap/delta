@@ -4,13 +4,18 @@ The dependency is optional. If Playwright or its browser binaries are not instal
 tools return a clear setup error instead of breaking engine construction.
 """
 
+# pyright: reportFunctionMemberAccess=false
+# (tool-builder module: attaches aisuite's dynamic metadata attributes
+# (__aisuite_tool_metadata__ / __coworker_schema__) to plain functions —
+# the framework's plugin protocol, not a type error.)
+
 from __future__ import annotations
 
+import base64
 import re
 import tempfile
 import threading
 import time
-import base64
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -21,7 +26,7 @@ from ..web.guard import check_url
 
 
 def _meta(
-    name: str, *, approval: bool = False, capabilities: Optional[list[str]] = None
+    name: str, *, approval: bool = False, capabilities: list[str] | None = None
 ):
     return ai.ToolMetadata(
         name=name,
@@ -68,7 +73,7 @@ class _BrowserController:
         self._browser = None
         self._context = None
         self._page = None
-        self._error: Optional[str] = None
+        self._error: str | None = None
         self._executor = ThreadPoolExecutor(
             max_workers=1, thread_name_prefix="coworker-browser"
         )

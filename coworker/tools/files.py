@@ -6,6 +6,11 @@ returns `cat -n`-style numbered lines, windows big files instead of failing, and
 the agent how to continue reading. Read-only, workspace-scoped.
 """
 
+# pyright: reportFunctionMemberAccess=false
+# (tool-builder module: attaches aisuite's dynamic metadata attributes
+# (__aisuite_tool_metadata__ / __coworker_schema__) to plain functions —
+# the framework's plugin protocol, not a type error.)
+
 from __future__ import annotations
 
 from pathlib import Path
@@ -71,13 +76,17 @@ def file_tools(workspace: str) -> list:
             return {"error": f"not a file: {path}"}
 
         selected: list[str] = []
-        total = 0
+        has_more = False
         try:
             with open(target, "r", encoding="utf-8", errors="replace") as fh:
                 for i, line in enumerate(fh, 1):
-                    total = i
-                    if i < start or len(selected) >= n:
+                    if i < start:
                         continue
+                    if len(selected) >= n:
+                        # Reaching one line past the window is the cheapest honest
+                        # proof that more content exists — no whole-file count.
+                        has_more = True
+                        break
                     text = line.rstrip("\n")
                     if len(text) > _MAX_LINE_CHARS:
                         text = text[:_MAX_LINE_CHARS] + "… (line truncated)"
@@ -90,12 +99,14 @@ def file_tools(workspace: str) -> list:
             "path": str(target.relative_to(root)),
             "start_line": start,
             "end_line": end,
-            "total_lines": total,
+            # Windowed reads stop at the window edge (a huge file is never scanned
+            # just to number its last line): callers page forward via has_more.
+            "has_more": has_more,
             "content": "\n".join(selected),
         }
-        if end < total:
+        if has_more:
             result["note"] = (
-                f"showing lines {start}-{end} of {total}; "
+                f"showing lines {start}-{end}; "
                 f"call again with start_line={end + 1} to continue"
             )
         return result

@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 
 import aisuite as ai
+
 from coworker.engine import TurnEngine
 from coworker.events import EventType
 from coworker.permissions import Mode, PermissionEngine

@@ -188,7 +188,7 @@ def list_channels(
     return {"ok": True, "channels": _rank(rows, query, "name", limit)}
 
 
-def clear_cache(team_id: Optional[str] = None) -> None:
+def clear_cache(team_id: str | None = None) -> None:
     """Drop cached rosters (all teams, or one) — disconnect/reconnect hygiene."""
     if team_id is None:
         _CACHE.clear()

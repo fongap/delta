@@ -34,7 +34,7 @@ from .base import (
 from .capabilities import capabilities_for
 
 
-def _usage_from(usage: Any) -> Optional[TokenUsage]:
+def _usage_from(usage: Any) -> TokenUsage | None:
     """Messages-API usage object → normalized counts (input_tokens excludes cache)."""
     if usage is None:
         return None
@@ -137,7 +137,7 @@ _PDF_DATA_URL_RE = re.compile(
 )
 
 
-def resolve_api_key(secrets: Any = None) -> Optional[str]:
+def resolve_api_key(secrets: Any = None) -> str | None:
     """Resolve the Anthropic API key: env `ANTHROPIC_API_KEY` first, else the SecretStore
     `provider:anthropic` profile (`{api_key}`). Same contract as the OpenAI resolver: the
     Tauri-launched sidecar does not inherit the shell env, so Settings-entered keys must work.
@@ -166,7 +166,7 @@ def _parse_args(raw: Any) -> dict[str, Any]:
         return {"_raw": raw}
 
 
-def _image_block(url: str) -> Optional[dict[str, Any]]:
+def _image_block(url: str) -> dict[str, Any] | None:
     """An OpenAI `image_url` part → an Anthropic image block. Attachments are always data URLs
     (attachments.py); plain http(s) URLs map to a url source. Anything else → None."""
     match = _DATA_URL_RE.match(url or "")
@@ -184,7 +184,7 @@ def _image_block(url: str) -> Optional[dict[str, Any]]:
     return None
 
 
-def _document_block(part: dict[str, Any]) -> Optional[dict[str, Any]]:
+def _document_block(part: dict[str, Any]) -> dict[str, Any] | None:
     """An OpenAI `file` part (PDF data URL, attachments.py) → an Anthropic document block."""
     file = part.get("file") or {}
     match = _PDF_DATA_URL_RE.match(file.get("file_data") or "")
@@ -235,7 +235,7 @@ def _user_blocks(content: Any) -> list[dict[str, Any]]:
 
 def convert_messages(
     messages: list[dict[str, Any]],
-) -> tuple[Optional[str], list[dict[str, Any]]]:
+) -> tuple[str | None, list[dict[str, Any]]]:
     """OpenAI-shaped history → (`system`, Anthropic `messages`).
 
     Leading system messages become the `system` param. Consecutive same-role outputs are folded
@@ -320,7 +320,7 @@ def convert_messages(
     return ("\n\n".join(system_parts) or None), folded
 
 
-def convert_tools(tools: Optional[list[dict[str, Any]]]) -> list[dict[str, Any]]:
+def convert_tools(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     """OpenAI function schemas → Anthropic tool definitions. Missing description is omitted;
     missing/typeless parameters become an empty object schema (Anthropic requires one).
     """
@@ -364,7 +364,7 @@ def _add_cache_breakpoints(kwargs: dict[str, Any]) -> None:
             content[-1] = {**content[-1], "cache_control": marker}
 
 
-def _reasoning_text(thinking_blocks: list[dict[str, Any]]) -> Optional[str]:
+def _reasoning_text(thinking_blocks: list[dict[str, Any]]) -> str | None:
     """Display text for the GUI's disclosure — thinking text only (redacted stays opaque)."""
     text = "".join(
         b.get("thinking", "") for b in thinking_blocks if b.get("type") == "thinking"
@@ -383,9 +383,9 @@ class AnthropicProvider(ProviderClient):
         client: Any = None,
         *,
         default_model: str = "",
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         secrets: Any = None,
-        thinking_budget: Optional[int] = None,
+        thinking_budget: int | None = None,
     ):
         # Mirrors OpenAIProvider: the SDK client is built lazily so engines can be assembled
         # before any key exists; the key resolves at call time (explicit → env → SecretStore).
@@ -416,7 +416,7 @@ class AnthropicProvider(ProviderClient):
         *,
         model: str,
         messages: list[dict[str, Any]],
-        tools: Optional[list[dict[str, Any]]],
+        tools: list[dict[str, Any]] | None,
         settings: dict[str, Any],
     ) -> dict[str, Any]:
         system, converted = convert_messages(messages)
@@ -459,7 +459,7 @@ class AnthropicProvider(ProviderClient):
         *,
         model: str,
         messages: list[dict[str, Any]],
-        tools: Optional[list[dict[str, Any]]] = None,
+        tools: list[dict[str, Any]] | None = None,
         **settings: Any,
     ) -> AssistantTurn:
         kwargs = self._request_kwargs(
@@ -525,7 +525,7 @@ class AnthropicProvider(ProviderClient):
         *,
         model: str,
         messages: list[dict[str, Any]],
-        tools: Optional[list[dict[str, Any]]] = None,
+        tools: list[dict[str, Any]] | None = None,
         **settings: Any,
     ):
         kwargs = self._request_kwargs(
@@ -548,7 +548,7 @@ class AnthropicProvider(ProviderClient):
         # so both the text and the signature_delta tail are collected (in block order).
         thinking_accum: dict[int, dict[str, Any]] = {}
         stop_reason = None
-        usage: Optional[TokenUsage] = None
+        usage: TokenUsage | None = None
 
         last_message_delta: Any = None
         for event in events:

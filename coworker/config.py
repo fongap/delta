@@ -109,9 +109,9 @@ def workspace_allowed_commands(workspace: str | Path) -> list[str]:
 
 
 def load_config(
-    workspace: Optional[str | Path] = None,
+    workspace: str | Path | None = None,
     *,
-    global_path: Optional[Path] = None,
+    global_path: Path | None = None,
     workspace_trusted: bool = False,
 ) -> Config:
     cfg = Config()

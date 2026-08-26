@@ -67,7 +67,7 @@ def _digest(file_data: str) -> str:
     return hashlib.sha256(file_data.encode("ascii", "ignore")).hexdigest()
 
 
-def _pdf_bytes(file_data: str) -> Optional[bytes]:
+def _pdf_bytes(file_data: str) -> bytes | None:
     prefix = "data:application/pdf;base64,"
     if not isinstance(file_data, str) or not file_data.startswith(prefix):
         return None
@@ -99,11 +99,11 @@ def inspect(file_data: str) -> dict[str, Any]:
         return {"ok": False, "error": f"could not read PDF: {exc.__class__.__name__}"}
 
 
-def extract_text(file_data: str) -> Optional[str]:
+def extract_text(file_data: str) -> str | None:
     """Embedded text of the whole document (capped), or None if unreadable.
     Scanned PDFs legitimately return "" — callers surface that distinctly."""
 
-    def compute() -> Optional[str]:
+    def compute() -> str | None:
         raw = _pdf_bytes(file_data)
         if raw is None:
             return None
@@ -161,11 +161,11 @@ def _encode_png(
     )
 
 
-def rasterize(file_data: str, max_pages: int = RASTER_MAX_PAGES) -> Optional[list[str]]:
+def rasterize(file_data: str, max_pages: int = RASTER_MAX_PAGES) -> list[str] | None:
     """Each page as a PNG data URL, or None when rendering isn't possible
     (pypdfium2 missing or the document is broken) — callers fall back to text."""
 
-    def compute() -> Optional[list[str]]:
+    def compute() -> list[str] | None:
         raw = _pdf_bytes(file_data)
         if raw is None:
             return None

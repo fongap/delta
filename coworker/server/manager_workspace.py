@@ -6,16 +6,16 @@ mixin inheritance so behavior is unchanged.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any, Optional
-from ..workspace_trust import WorkspaceTrustStore
-from ..config import load_config, workspace_allowed_commands
-import os
-from ..agents import get_agent
-from ..sessions import SessionRecord
-from ..roots import RootDir
 
+from ..agents import get_agent
+from ..config import load_config, workspace_allowed_commands
+from ..sessions import SessionRecord
+from ..workspace_trust import WorkspaceTrustStore
 from .manager_support import _git_branch
+
 
 class WorkspaceTrustMixin:
 
@@ -68,7 +68,7 @@ class WorkspaceTrustMixin:
         }
 
 
-    def _mcp_workspace_trusted(self, workspace: Optional[str | Path]) -> bool:
+    def _mcp_workspace_trusted(self, workspace: str | Path | None) -> bool:
         """Whether workspace `.coworker/mcp.json` may be loaded (#213).
 
         Same consent boundary as repository ``allowed_commands``: an untrusted
@@ -90,14 +90,12 @@ class WorkspaceTrustMixin:
             canonical, workspace_trusted=trusted
         ).allowed_commands
         # Apply trust/revocation immediately to live sessions rooted at this exact path.
-        for engine in self._engines.values():
-            engine_workspace = str(
-                (getattr(engine, "audit_context", {}) or {}).get("workspace", "")
-            )
+        for runtime in self._runtimes.values():
+            engine_workspace = runtime.workspace_path
             if engine_workspace and WorkspaceTrustStore.canonical(
                 engine_workspace
             ) == canonical:
-                engine.permissions.allowed_commands = list(effective)
+                runtime.set_allowed_commands(list(effective))
         return {
             "ok": True,
             **self.workspace_command_trust(canonical),
@@ -157,7 +155,7 @@ class WorkspaceTrustMixin:
         return str(d.resolve())
 
 
-    def resolve_workspace(self, requested: Optional[str]) -> Optional[str]:
+    def resolve_workspace(self, requested: str | None) -> str | None:
         if requested:
             p = Path(requested).expanduser()
             if p.is_dir():
@@ -168,8 +166,8 @@ class WorkspaceTrustMixin:
 
     # -- engines ----------------------------------------------------------------
     def engine_workspace(
-        self, session_id: str, *, workspace: Optional[str] = None, agent: str = "code"
-    ) -> Optional[str]:
+        self, session_id: str, *, workspace: str | None = None, agent: str = "code"
+    ) -> str | None:
         """The workspace `get_engine` would bind — for prepping MCP tools beforehand."""
         record = self.session_store.load(session_id)
         if record:
@@ -235,7 +233,7 @@ class WorkspaceTrustMixin:
         return {"ok": True, "path": path}
 
 
-    def _scratch_workspace_error(self, workspace: Any) -> Optional[dict[str, Any]]:
+    def _scratch_workspace_error(self, workspace: Any) -> dict[str, Any] | None:
         """Refuse skill WRITES into a per-conversation scratch dir — a skill saved there is
         stranded in a throwaway folder. Backend chokepoint: guards every entry path (UI,
         REST, future import), not just the flows the GUI happens to gate."""
@@ -261,18 +259,20 @@ class WorkspaceTrustMixin:
         """The directories this session can touch: primary scratch first, then added folders.
         Reads the live engine when one is running; otherwise reconstructs from persisted state.
         """
-        engine = self._engines.get(session_id)
-        if engine is not None and getattr(engine, "roots", None):
-            return [
-                {
-                    "path": str(r.path),
-                    "writable": bool(r.writable),
-                    "label": r.label,
-                    "primary": i == 0,
-                    "exists": r.path.is_dir(),
-                }
-                for i, r in enumerate(engine.roots)
-            ]
+        runtime = self._runtimes.get(session_id)
+        if runtime is not None and runtime.roots_supported:
+            roots = runtime.list_roots()
+            if roots:
+                return [
+                    {
+                        "path": str(r.path),
+                        "writable": bool(r.writable),
+                        "label": r.label,
+                        "primary": i == 0,
+                        "exists": r.path.is_dir(),
+                    }
+                    for i, r in enumerate(roots)
+                ]
         record = self.session_store.load(session_id)
         primary = (
             record.workspace
@@ -313,16 +313,12 @@ class WorkspaceTrustMixin:
         if not p.is_dir():
             return {"ok": False, "error": f"not a directory: {path}"}
         resolved = p.resolve()
-        engine = self._engines.get(session_id)
-        if engine is not None and getattr(engine, "roots", None) is not None:
-            if any(r.path == resolved for r in engine.roots):
-                # already present: just update its access level
-                for r in engine.roots:
-                    if r.path == resolved:
-                        r.writable = bool(writable)
-            else:
-                engine.roots.append(RootDir(path=resolved, writable=bool(writable)))
-            self.session_store.set_extra_roots(session_id, self._extra_roots_of(engine))
+        runtime = self._runtimes.get(session_id)
+        if runtime is not None and runtime.roots_supported:
+            runtime.upsert_root(resolved, bool(writable))
+            self.session_store.set_extra_roots(
+                session_id, self._extra_roots_of(runtime)
+            )
         else:
             # A brand-new conversation has no record yet (it's only saved after the first turn) —
             # create one now so set_extra_roots has a row to update and the folder survives.
@@ -364,15 +360,18 @@ class WorkspaceTrustMixin:
     def remove_root(self, session_id: str, path: str) -> dict[str, Any]:
         """Revoke a previously-added folder. The primary scratch cannot be removed."""
         resolved = Path(path).expanduser().resolve()
-        engine = self._engines.get(session_id)
-        if engine is not None and getattr(engine, "roots", None):
-            if engine.roots and engine.roots[0].path == resolved:
+        runtime = self._runtimes.get(session_id)
+        if runtime is not None and runtime.list_roots():
+            roots = runtime.list_roots()
+            if roots and roots[0].path == resolved:
                 return {
                     "ok": False,
                     "error": "cannot remove the primary scratch directory",
                 }
-            engine.roots[:] = [r for r in engine.roots if r.path != resolved]
-            self.session_store.set_extra_roots(session_id, self._extra_roots_of(engine))
+            runtime.remove_root(resolved)
+            self.session_store.set_extra_roots(
+                session_id, self._extra_roots_of(runtime)
+            )
         else:
             current = self.get_roots(session_id)
             if (

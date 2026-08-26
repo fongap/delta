@@ -49,7 +49,7 @@ class SourceRef:
     location: str  # workspace-relative path / URI / connector coordinate
     fingerprint: str  # sha256 of content bytes at capture time
     captured_at: str = field(default_factory=_now)
-    checked_at: Optional[str] = None
+    checked_at: str | None = None
     status: str = FRESH_CURRENT
     # Per-run citations ({run_id, ranges}) linking runs → this source.
     cited_ranges: list[dict[str, Any]] = field(default_factory=list)
@@ -59,7 +59,7 @@ class SourceRef:
 
 class SourceStore:
     def __init__(
-        self, path: Optional[str | Path] = None, *, workspace: Optional[str | Path] = None
+        self, path: str | Path | None = None, *, workspace: str | Path | None = None
     ) -> None:
         self.path = Path(path) if path else None
         self.workspace = Path(workspace) if workspace else None
@@ -88,7 +88,7 @@ class SourceStore:
         return p
 
     @staticmethod
-    def _location_for(p: Path, workspace: Optional[Path]) -> str:
+    def _location_for(p: Path, workspace: Path | None) -> str:
         """Prefer a workspace-relative, forward-slash path (stable across machines)."""
         if workspace is not None:
             try:
@@ -101,8 +101,8 @@ class SourceStore:
         self,
         path: str | Path,
         *,
-        workspace: Optional[str | Path] = None,
-        permissions: Optional[dict[str, Any]] = None,
+        workspace: str | Path | None = None,
+        permissions: dict[str, Any] | None = None,
     ) -> SourceRef:
         """Capture one version of a workspace file: hash its content bytes and record a
         SourceRef. Older refs for the same path flip to ``changed``; re-capturing
@@ -136,15 +136,15 @@ class SourceStore:
             return ref
 
     # -- queries ----------------------------------------------------------------
-    def get(self, ref_id: str) -> Optional[SourceRef]:
+    def get(self, ref_id: str) -> SourceRef | None:
         return self._refs.get(ref_id)
 
     def list(
         self,
         *,
-        origin: Optional[str] = None,
-        location: Optional[str] = None,
-        status: Optional[str] = None,
+        origin: str | None = None,
+        location: str | None = None,
+        status: str | None = None,
     ) -> list[SourceRef]:
         out = list(self._refs.values())
         if origin is not None:
@@ -155,7 +155,7 @@ class SourceStore:
             out = [r for r in out if r.status == status]
         return sorted(out, key=lambda r: r.captured_at)
 
-    def latest(self, location: str, *, origin: str = ORIGIN_FILE) -> Optional[SourceRef]:
+    def latest(self, location: str, *, origin: str = ORIGIN_FILE) -> SourceRef | None:
         refs = self.list(origin=origin, location=location)
         return refs[-1] if refs else None
 

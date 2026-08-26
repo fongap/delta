@@ -4,6 +4,11 @@ Most of the "organized agent" feel in interactive work. Low risk, auto-approved.
 is held in a `TodoList` the surface can read; `todo_write` replaces it.
 """
 
+# pyright: reportFunctionMemberAccess=false
+# (tool-builder module: attaches aisuite's dynamic metadata attributes
+# (__aisuite_tool_metadata__ / __coworker_schema__) to plain functions —
+# the framework's plugin protocol, not a type error.)
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field

@@ -27,7 +27,7 @@ class FakeAdapter(BasePlatformAdapter):
         self.connected = False
 
     async def send(
-        self, chat_id: str, text: str, *, thread_id: Optional[str] = None
+        self, chat_id: str, text: str, *, thread_id: str | None = None
     ) -> SendResult:
         self.outbox.append({"chat_id": chat_id, "text": text, "thread_id": thread_id})
         return SendResult(True, message_id=str(len(self.outbox)))
@@ -41,7 +41,7 @@ class FakeAdapter(BasePlatformAdapter):
         user_id: str = "u1",
         user_name: str = "tester",
         chat_type: str = "dm",
-        thread_id: Optional[str] = None,
+        thread_id: str | None = None,
     ) -> None:
         """Simulate an inbound message arriving from the platform."""
         source = SessionSource(

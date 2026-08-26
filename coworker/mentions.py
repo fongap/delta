@@ -31,7 +31,7 @@ class MentionThread:
 
 
 class MentionSessionStore:
-    def __init__(self, path: Optional[str | Path] = None) -> None:
+    def __init__(self, path: str | Path | None = None) -> None:
         self.path = Path(path) if path else None
         self._lock = threading.Lock()
         self._threads: list[MentionThread] = []
@@ -73,7 +73,7 @@ class MentionSessionStore:
                 self._save()
 
     # -- queries ----------------------------------------------------------------
-    def get(self, thread_target: str) -> Optional[str]:
+    def get(self, thread_target: str) -> str | None:
         for t in self._threads:
             if t.thread_target == thread_target:
                 return t.session_id

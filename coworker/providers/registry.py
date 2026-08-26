@@ -74,7 +74,7 @@ class ProviderField:
     choices: tuple = ()
     # {"other_field_key": "value"} → the field only renders while that other field holds
     # that value. Drives auth-method switching (Bedrock) without a per-provider form.
-    show_when: Optional[dict] = None
+    show_when: dict | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -99,10 +99,10 @@ class ProviderDescriptor:
     needs_key: bool
     fields: list[ProviderField]
     build: Callable[[dict[str, Any], Any], ProviderClient] = field(repr=False)
-    recommended_model: Optional[str] = (
+    recommended_model: str | None = (
         None  # pre-filled in the UI; auto-added on configure
     )
-    env_key: Optional[str] = (
+    env_key: str | None = (
         None  # env var that can supply the API key (e.g. ANTHROPIC_API_KEY)
     )
     # One-line note under the provider title (e.g. "Connects through X's OpenAI-compatible API").
@@ -119,7 +119,7 @@ class ProviderDescriptor:
         }
 
 
-def _normalize_ollama_url(url: Optional[str]) -> str:
+def _normalize_ollama_url(url: str | None) -> str:
     """Accept `http://host:11434` or `.../v1` and return an OpenAI-compatible base URL.
 
     Ollama serves its OpenAI-compatible API under `/v1`; the native API lives at the root, so we
@@ -191,7 +191,7 @@ def _build_bedrock(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     # named profile → ambient chain (env / ~/.aws default / instance role).
     p = profile or {}
 
-    def get(key: str) -> Optional[str]:
+    def get(key: str) -> str | None:
         return (p.get(key) or "").strip() or None
 
     return BedrockProvider(
@@ -208,7 +208,7 @@ def _build_bedrock(profile: dict[str, Any], secrets: Any) -> ProviderClient:
 def _build_vertex(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     p = profile or {}
 
-    def get(key: str) -> Optional[str]:
+    def get(key: str) -> str | None:
         return (p.get(key) or "").strip() or None
 
     return VertexProvider(
@@ -227,7 +227,7 @@ def _build_ollama(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     return OpenAIProvider(api_key="ollama", base_url=base_url)
 
 
-def _openai_compat(vendor: str, default_base_url: str, env_key: Optional[str] = None):
+def _openai_compat(vendor: str, default_base_url: str, env_key: str | None = None):
     """Builder factory for vendors reached through their OpenAI-compatible API (Z AI, DeepSeek,
     Kimi, MiniMax, Qwen, xAI, Mistral). The key is resolved from the vendor's OWN profile (or its
     env var) — deliberately NOT from the OpenAI env/SecretStore fallback, so a configured OpenAI
@@ -751,13 +751,13 @@ def is_custom_provider(name: str) -> bool:
     return name in CUSTOM_PROVIDERS
 
 
-def get_descriptor(name: str) -> Optional[ProviderDescriptor]:
+def get_descriptor(name: str) -> ProviderDescriptor | None:
     if name in _BY_NAME:
         return _BY_NAME[name]
     return _custom_descriptor(name)
 
 
-def _custom_descriptor(name: str) -> Optional[ProviderDescriptor]:
+def _custom_descriptor(name: str) -> ProviderDescriptor | None:
     meta = CUSTOM_PROVIDERS.get(name)
     if not meta:
         return None
@@ -787,7 +787,7 @@ def custom_provider_descriptors() -> list[ProviderDescriptor]:
 
 
 def register_custom_provider(
-    alias: str, protocol: str, fields_meta: Optional[dict[str, Any]] = None
+    alias: str, protocol: str, fields_meta: dict[str, Any] | None = None
 ) -> None:
     """Register (or overwrite) a user-defined provider alias.
 
@@ -834,7 +834,7 @@ def descriptor_configured(d: ProviderDescriptor, profile: dict[str, Any]) -> boo
     return all(profile.get(f.key) for f in d.fields if f.required)
 
 
-def detect_provider(api_key: str) -> Optional[str]:
+def detect_provider(api_key: str) -> str | None:
     """Best-effort provider guess from an API key's shape, for the onboarding auto-detect.
     Returns a known provider name or None. Mirrors the GUI's client-side detection so both agree.
     """
@@ -857,11 +857,12 @@ def _verify_bedrock(fields: dict[str, Any], timeout: float) -> dict[str, Any]:
     ambient credential resolution the provider itself uses."""
     from .bedrock_provider import _session_kwargs
 
-    def get(key: str) -> Optional[str]:
+    def get(key: str) -> str | None:
         return (fields.get(key) or "").strip() or None
 
     try:
         import boto3
+        import boto3.session  # noqa: F401 — submodule import so pyright resolves boto3.session
         from botocore.config import Config
     except ImportError:
         return {
@@ -1023,9 +1024,9 @@ def _verify_vertex(fields: dict[str, Any], timeout: float) -> dict[str, Any]:
 def verify_provider_key(
     name: str,
     *,
-    api_key: Optional[str] = None,
-    base_url: Optional[str] = None,
-    fields: Optional[dict[str, Any]] = None,
+    api_key: str | None = None,
+    base_url: str | None = None,
+    fields: dict[str, Any] | None = None,
     timeout: float = 10.0,
 ) -> dict[str, Any]:
     """Validate a provider's credentials with one cheap, read-only call (list models) — the same
@@ -1096,7 +1097,7 @@ def verify_provider_key(
 
 
 def _fetch_models_request(
-    name: str, api_key: Optional[str], base_url: Optional[str], timeout: float = 10.0
+    name: str, api_key: str | None, base_url: str | None, timeout: float = 10.0
 ) -> Any:
     """Build the read-only models-list request for a custom provider, honouring its protocol.
 

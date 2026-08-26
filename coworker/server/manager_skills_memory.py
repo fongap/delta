@@ -6,19 +6,20 @@ mixin inheritance so behavior is unchanged.
 
 from __future__ import annotations
 
-from typing import Any, Optional
-from ..agents import list_agents as _list_agents
+import asyncio
 from pathlib import Path
+from typing import Any, Optional
+
+from ..agents import list_agents as _list_agents
+from ..memory import MemorySettingsStore, MemoryStore, Scope, SQLiteMemoryStore
 from ..skills import (
     SessionSkillStore,
     SkillLoader,
     SkillStore,
     effective_skills,
 )
-import asyncio
-from ..memory import MemorySettingsStore, MemoryStore, Scope, SQLiteMemoryStore
-
 from .manager_support import _SCOPES
+
 
 class SkillsMemoryMixin:
 
@@ -27,14 +28,14 @@ class SkillsMemoryMixin:
 
 
     # -- skills (SKILLS-SPEC §4.4) ------------------------------------------------
-    def list_skills(self, workspace: Optional[str] = None) -> list[dict[str, Any]]:
+    def list_skills(self, workspace: str | None = None) -> list[dict[str, Any]]:
         """Enriched rows for the Settings screen (scope/source/enabled). Optional workspace
         adds that project's skills, with project copies shadowing same-named global ones."""
         return self.skill_store.rows(workspace or None)
 
 
     def reveal_skill(
-        self, name: str, workspace: Optional[str] = None
+        self, name: str, workspace: str | None = None
     ) -> dict[str, Any]:
         """Open the skill's folder in the OS file manager (§6 "Show folder" — the power-user
         window into folder-is-truth). Same local-machine rationale as reveal_artifact."""
@@ -68,7 +69,7 @@ class SkillsMemoryMixin:
 
 
     def effective_skill_names(
-        self, session_id: str, workspace: Optional[str | Path] = None
+        self, session_id: str, workspace: str | Path | None = None
     ) -> set[str]:
         """The session's skill menu (§3): merged scopes − Settings disables − session mutes.
         The single resolver behind the engine catalog, the rail list, and the composer popup."""
@@ -84,7 +85,7 @@ class SkillsMemoryMixin:
 
 
     def session_skills_view(
-        self, session_id: str, workspace: Optional[str] = None
+        self, session_id: str, workspace: str | None = None
     ) -> dict[str, Any]:
         """The rail payload: every in-scope, Settings-enabled skill with its mute state."""
         disabled = self.skill_store.disabled_names()
@@ -135,7 +136,7 @@ class SkillsMemoryMixin:
         return {"ok": True}
 
 
-    def delete_skill(self, name: str, workspace: Optional[str] = None) -> dict[str, Any]:
+    def delete_skill(self, name: str, workspace: str | None = None) -> dict[str, Any]:
         try:
             self.skill_store.delete(name, workspace or None)
         except ValueError as exc:
@@ -230,7 +231,7 @@ class SkillsMemoryMixin:
 
 
     def add_memory(
-        self, content: str, scope: str = "workspace", workspace: Optional[str] = None
+        self, content: str, scope: str = "workspace", workspace: str | None = None
     ) -> dict[str, Any]:
         content = (content or "").strip()
         if not content:
@@ -269,6 +270,6 @@ class SkillsMemoryMixin:
 
 
     def set_memory_settings(
-        self, enabled: Optional[bool] = None, user_rules: Optional[str] = None
+        self, enabled: bool | None = None, user_rules: str | None = None
     ) -> dict[str, Any]:
         return self.memory_settings.set(enabled=enabled, user_rules=user_rules)

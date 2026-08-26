@@ -508,7 +508,12 @@ function CsvTable({ text }: { text: string }) {
 // (see coworker/server/sheet_preview.py) — this component only renders it. Sheet tabs +
 // a capped grid; real spreadsheet work belongs in Numbers/Excel via "Open in default app".
 // WKWebView has no inline PDF plugin (<embed> shows a gray pane in the Tauri shell), so we
-// rasterize pages with pdf.js onto stacked canvases — same lazy-chunk pattern as PdfViewer.
+// rasterize pages with pdf.js onto stacked canvases (lazy-chunked like the sheet viewer).
+// Pages are VIRTUALIZED (IntersectionObserver, ±2 around the viewport): placeholder slots
+// reserve scroll space and only nearby pages rasterize, so a few-hundred-page document
+// doesn't allocate hundreds of full-page bitmaps up front.
+const PDF_RENDER_MARGIN = 2; // pages rendered beyond the visible one
+
 function PdfViewer({ dataUrl }: { dataUrl: string }) {
   const { t } = useI18n();
   const [error, setError] = useState("");
@@ -517,6 +522,8 @@ function PdfViewer({ dataUrl }: { dataUrl: string }) {
 
   useEffect(() => {
     let cancelled = false;
+    let observer: IntersectionObserver | null = null;
+    let docRef: { destroy?: () => void } | null = null;
     setError("");
     setLoading(true);
     const base64 = dataUrl.split(",")[1] || "";
@@ -526,27 +533,76 @@ function PdfViewer({ dataUrl }: { dataUrl: string }) {
         const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
         const doc = await pdfjs.getDocument({ data: bytes }).promise;
         const el = holder.current;
-        if (cancelled || !el) return;
+        if (cancelled || !el) {
+          doc.destroy();
+          return;
+        }
+        docRef = doc;
         el.innerHTML = "";
         const width = el.clientWidth || 640;
         const dpr = window.devicePixelRatio || 1;
+
+        // Page 1 defines the slot geometry (aspect ratio) for every page — good
+        // enough scroll estimation without loading each page's real viewport.
+        const firstBase = (await doc.getPage(1)).getViewport({ scale: 1 });
+        const estHeight = Math.round((firstBase.height / firstBase.width) * width);
+        const slots = new Map<number, HTMLElement>();
+        const pending = new Set<number>();
+        const rendering = new Set<number>();
         for (let i = 1; i <= doc.numPages; i++) {
-          const page = await doc.getPage(i);
-          const base = page.getViewport({ scale: 1 });
-          const viewport = page.getViewport({ scale: (width / base.width) * dpr });
-          const canvas = document.createElement("canvas");
-          canvas.width = viewport.width;
-          canvas.height = viewport.height;
-          canvas.className = "artifact-pdf-page";
-          await page.render({ canvasContext: canvas.getContext("2d")!, viewport }).promise;
-          if (cancelled) return;
-          el.appendChild(canvas);
+          const slot = document.createElement("div");
+          slot.className = "artifact-pdf-slot";
+          slot.style.height = `${estHeight}px`;
+          slot.dataset.page = String(i);
+          el.appendChild(slot);
+          slots.set(i, slot);
+          pending.add(i);
         }
         setLoading(false);
+
+        const renderPage = async (pageNum: number) => {
+          if (!pending.has(pageNum) || rendering.has(pageNum)) return;
+          rendering.add(pageNum);
+          try {
+            const page = await doc.getPage(pageNum);
+            if (cancelled) return;
+            const base = page.getViewport({ scale: 1 });
+            const scale = (width / base.width) * dpr;
+            const viewport = page.getViewport({ scale });
+            const canvas = document.createElement("canvas");
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+            canvas.className = "artifact-pdf-page";
+            await page.render({ canvasContext: canvas.getContext("2d")!, viewport }).promise;
+            const slot = slots.get(pageNum);
+            if (cancelled || !slot) return;
+            slot.replaceChildren(canvas);
+            slot.style.height = `${Math.round(viewport.height / dpr)}px`;
+            pending.delete(pageNum);
+          } finally {
+            rendering.delete(pageNum);
+          }
+        };
+
+        observer = new IntersectionObserver(
+          (entries) => {
+            for (const entry of entries) {
+              if (!entry.isIntersecting) continue;
+              const pageNum = Number((entry.target as HTMLElement).dataset.page);
+              for (let p = pageNum - PDF_RENDER_MARGIN; p <= pageNum + PDF_RENDER_MARGIN; p++) {
+                void renderPage(p);
+              }
+            }
+          },
+          { root: el.closest(".rail-scroll, .artifact-pdfjs") ?? null, rootMargin: "200px" },
+        );
+        for (const slot of slots.values()) observer.observe(slot);
       })
       .catch((e) => !cancelled && setError(String(e?.message || e)));
     return () => {
       cancelled = true;
+      observer?.disconnect();
+      docRef?.destroy?.();
     };
   }, [dataUrl]);
 

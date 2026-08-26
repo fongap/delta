@@ -261,6 +261,8 @@ def test_task_engine_has_no_scheduling_tools(tmp_path, monkeypatch):
     creates another automation instead of doing the task."""
     from coworker.providers import (
         AssistantTurn as _AT,
+    )
+    from coworker.providers import (
         ModelCapabilities,
         ProviderClient,
     )
@@ -281,7 +283,7 @@ def test_task_engine_has_no_scheduling_tools(tmp_path, monkeypatch):
     manager.task_store.save(task)
 
     engine = manager._build_task_engine(task, session_id="__run__test")
-    names = set(engine.registry.names())
+    names = set(engine.engine.registry.names())
     assert "create_scheduled_task" not in names
     assert "update_scheduled_task" not in names
     assert "write_file" in names  # the deliverable tools are still there

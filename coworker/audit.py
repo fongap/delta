@@ -9,18 +9,15 @@ from pathlib import Path
 from typing import Any, Optional
 
 from .connectors import connector_for_tool
-
-_SECRET_KEYS = (
-    "token",
-    "secret",
-    "password",
-    "api_key",
-    "access_token",
-    "bot_token",
-    "app_token",
-    "raw",
+from .sanitize import (
+    BODY_KEYS,
+    SECRET_KEY_MARKERS,
 )
-_BODY_KEYS = ("body", "content", "html")
+
+# Legacy names kept as aliases (the definitions now live in coworker/sanitize.py,
+# the one shared SensitiveDataSanitizer).
+_SECRET_KEYS = SECRET_KEY_MARKERS
+_BODY_KEYS = BODY_KEYS
 
 
 class AuditStore:
@@ -88,9 +85,9 @@ class AuditStore:
         self,
         *,
         limit: int = 100,
-        session_id: Optional[str] = None,
-        connector: Optional[str] = None,
-        tool: Optional[str] = None,
+        session_id: str | None = None,
+        connector: str | None = None,
+        tool: str | None = None,
     ) -> list[dict[str, Any]]:
         where = []
         params: list[Any] = []
@@ -125,20 +122,16 @@ class AuditStore:
 
 
 def _sanitize_args(tool: str, args: dict[str, Any]) -> dict[str, Any]:
+    """Audit-shaped scrubbing: the shared SensitiveDataSanitizer decides what is
+    secret; this layer only adds the tool-specific input rule (what the model was
+    asked to TYPE into a page is sensitive even though its key says "text") and
+    the preview truncation."""
     if not isinstance(args, dict):
         return {}
-    out: dict[str, Any] = {}
-    for key, value in args.items():
-        lk = str(key).lower()
-        if any(s in lk for s in _SECRET_KEYS):
-            out[key] = "[redacted]"
-        elif tool == "browser_type" and lk == "text":
-            out[key] = "[redacted input]"
-        elif any(b == lk or lk.endswith("_" + b) for b in _BODY_KEYS):
-            out[key] = "[redacted body]"
-        else:
-            out[key] = _summarize(value)
-    return out
+    from .sanitize import sanitize_value
+
+    typed = frozenset({"text"}) if tool == "browser_type" else frozenset()
+    return _summarize(sanitize_value(args, typed_input_keys=typed))
 
 
 def _summarize(value: Any) -> Any:

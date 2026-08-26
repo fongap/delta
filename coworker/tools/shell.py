@@ -27,6 +27,11 @@ explicit classes:
   pid + detach flag, so it stays visible and stoppable via `shell_task_kill`.
 """
 
+# pyright: reportFunctionMemberAccess=false
+# (tool-builder module: attaches aisuite's dynamic metadata attributes
+# (__aisuite_tool_metadata__ / __coworker_schema__) to plain functions —
+# the framework's plugin protocol, not a type error.)
+
 from __future__ import annotations
 
 import os
@@ -69,7 +74,7 @@ _MAX_FINISHED_BG_TASKS = 32
 
 class Executor(ABC):
     @abstractmethod
-    def run(self, command: str, timeout: Optional[float] = None) -> dict[str, Any]: ...
+    def run(self, command: str, timeout: float | None = None) -> dict[str, Any]: ...
 
     def run_background(self, command: str, detach: bool = False) -> dict[str, Any]:
         return {"error": "background execution is not supported by this executor"}
@@ -174,7 +179,7 @@ class _BackgroundTask:
                 pass
             return
         try:
-            os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)
+            os.killpg(os.getpgid(self.proc.pid), signal.SIGTERM)  # pyright: ignore[reportAttributeAccessIssue]  # POSIX-only; guarded by the _is_windows branch above
         except (ProcessLookupError, PermissionError, OSError):
             pass
 
@@ -184,8 +189,8 @@ class LocalExecutor(Executor):
         self,
         *,
         cwd: str | Path,
-        env: Optional[dict[str, str]] = None,
-        shell_path: Optional[str] = None,
+        env: dict[str, str] | None = None,
+        shell_path: str | None = None,
         default_timeout: float = _DEFAULT_TIMEOUT,
         max_output_chars: int = 20_000,
     ) -> None:
@@ -204,6 +209,12 @@ class LocalExecutor(Executor):
         # Set by interrupt_now() (user Stop) — run()'s read loop treats it like an
         # early deadline, so the in-flight foreground command dies within one tick.
         self._abort = threading.Event()
+        # Optional observer for background-process lifecycle (spawn/kill). The
+        # application layer attaches it post-construction (see SessionManager's
+        # runtime binding); the executor stays ledger-agnostic. Failures inside the
+        # sink are swallowed by _emit_process_event — bookkeeping must never break
+        # execution.
+        self.process_event_sink: Any | None = None
 
         # Pick a native shell per-OS. POSIX drives bash line-by-line; Windows drives
         # PowerShell in `-Command -` mode, which is a true stdin REPL (executes
@@ -249,7 +260,7 @@ class LocalExecutor(Executor):
             env=self._env,
             **spawn_kwargs,
         )
-        self._queue: "queue.Queue[Optional[str]]" = queue.Queue()
+        self._queue: queue.Queue[str | None] = queue.Queue()
         self._reader = threading.Thread(target=self._read_loop, daemon=True)
         self._reader.start()
 
@@ -267,7 +278,7 @@ class LocalExecutor(Executor):
         finally:
             self._queue.put(None)  # EOF sentinel
 
-    def run(self, command: str, timeout: Optional[float] = None) -> dict[str, Any]:
+    def run(self, command: str, timeout: float | None = None) -> dict[str, Any]:
         if self._proc.poll() is not None:
             # Shell exited (e.g. hard-closed after a prior command's timeout). Respawn so
             # the session self-heals rather than wedging every future command.
@@ -290,7 +301,7 @@ class LocalExecutor(Executor):
         interrupted = False
         timed_out = False
         aborted = False
-        exit_code: Optional[int] = None
+        exit_code: int | None = None
         lines: list[str] = []
 
         while True:
@@ -371,6 +382,25 @@ class LocalExecutor(Executor):
                 for tid in finished[:excess]:
                     del self._bg_tasks[tid]
 
+    def _emit_process_event(self, event: str, task: _BackgroundTask, **extra: Any) -> None:
+        """Report one background-process lifecycle fact to the attached sink (if any)."""
+        sink = getattr(self, "process_event_sink", None)
+        if sink is None:
+            return
+        try:
+            sink(
+                {
+                    "event": event,
+                    "task_id": task.id,
+                    "pid": task.proc.pid,
+                    "command": task.command,
+                    "detach": bool(task.detach),
+                    **extra,
+                }
+            )
+        except Exception:
+            pass
+
     def run_background(self, command: str, detach: bool = False) -> dict[str, Any]:
         self._sweep_bg_tasks()
         with self._io_lock:
@@ -383,6 +413,7 @@ class LocalExecutor(Executor):
             except OSError as exc:
                 return {"error": f"failed to start background task: {exc}"}
             self._bg_tasks[task_id] = task
+        self._emit_process_event("process.spawned", task)
         return {
             "task_id": task_id,
             "command": command,
@@ -427,6 +458,7 @@ class LocalExecutor(Executor):
             task.proc.wait(timeout=5)
         except (subprocess.TimeoutExpired, OSError):
             pass
+        self._emit_process_event("process.killed", task)
         return {
             "task_id": task_id,
             "status": "running" if task.proc.poll() is None else "killed",
@@ -512,6 +544,7 @@ class LocalExecutor(Executor):
                 task.proc.wait(timeout=5)
             except (subprocess.TimeoutExpired, OSError):
                 pass
+            self._emit_process_event("process.killed", task, reason="shutdown")
         self.close()
 
     def _result(
@@ -530,7 +563,7 @@ class LocalExecutor(Executor):
         return result
 
 
-def _parse_exit_code(line: str, marker: str) -> Optional[int]:
+def _parse_exit_code(line: str, marker: str) -> int | None:
     parts = line.strip().split()
     try:
         return int(parts[parts.index(marker) + 1])
@@ -538,7 +571,7 @@ def _parse_exit_code(line: str, marker: str) -> Optional[int]:
         return None
 
 
-def _parse_cwd(line: str, marker: str) -> Optional[str]:
+def _parse_cwd(line: str, marker: str) -> str | None:
     parts = line.strip().split()
     try:
         return " ".join(parts[parts.index(marker) + 2 :]) or None
@@ -645,8 +678,8 @@ def shell_tools(executor: Executor) -> list:
 
     def run_shell(
         command: str,
-        description: Optional[str] = None,
-        timeout_seconds: Optional[int] = None,
+        description: str | None = None,
+        timeout_seconds: int | None = None,
         run_in_background: bool = False,
         detach: bool = False,
     ) -> dict:

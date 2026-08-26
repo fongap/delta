@@ -6,17 +6,18 @@ Behavior contract (docs/approval-taxonomy-adr.md):
 - classification is deterministic and does not depend on model output
 """
 
-from pathlib import Path
 
 from coworker.audit import AuditStore
 from coworker.gateway import (
     RiskLevel,
     classify,
+    declared_resources,
     declared_targets,
     enforce_level,
     enforce_scope,
     isolation_status,
     restrict_grants,
+    touches_sensitive_resource,
 )
 
 
@@ -164,6 +165,107 @@ def test_l4_policy_still_forced_through_slice2_first():
 def test_denials_pass_the_grant_gate_untouched():
     denied = Decision(allowed=False, needs_user=False, reason="denied by user")
     assert restrict_grants(RiskLevel.L3, denied) is denied
+
+
+# -- slice 4b: resource sensitivity — the target decides, not just the tool ------
+
+def _external_meta():
+    return Meta("medium", True, "messaging")
+
+
+def test_benign_external_send_stays_l3():
+    assert (
+        classify(
+            "send_file",
+            {"path": "charts/临时图表.png", "target": "slack:C0123"},
+            _external_meta(),
+        )
+        is RiskLevel.L3
+    )
+
+
+def test_sensitive_external_send_escalates_to_l4():
+    # Same tool, same channel — the resource is what changes the level.
+    assert (
+        classify(
+            "send_file",
+            {"path": "报表/工资表.xlsx", "target": "slack:C0123"},
+            _external_meta(),
+        )
+        is RiskLevel.L4
+    )
+
+
+def test_sensitivity_matches_the_whole_path_and_every_alias():
+    m = _external_meta()
+    assert classify("send_file", {"path": "hr/salary/aug.png"}, m) is RiskLevel.L4
+    assert classify("send_file", {"title": "8月工资表"}, m) is RiskLevel.L4
+    assert classify("send_file", {"attachments": "id_rsa_backup"}, m) is RiskLevel.L4
+    assert classify("send_file", {"path": "notes/.env"}, m) is RiskLevel.L4
+
+
+def test_case_and_location_of_the_token_do_not_matter():
+    m = _external_meta()
+    assert classify("send_file", {"path": "Report PAYROLL final.pdf"}, m) is RiskLevel.L4
+    assert classify("send_file", {"path": "x/CredentialBackup.zip"}, m) is RiskLevel.L4
+
+
+def test_sensitivity_does_not_escalate_local_writes():
+    # A checkpointed local write stays reversible (L2) even when sensitive:
+    # only the boundary crossing is a non-compensatable disclosure.
+    local = Meta("medium", True, "filesystem")
+    assert classify("write_file", {"path": "工资表.xlsx"}, local) is RiskLevel.L2
+
+
+def test_read_only_calls_are_never_escalated():
+    low = Meta("low")
+    assert classify("read_file", {"path": "工资表.xlsx"}, low) is RiskLevel.L0
+
+
+def test_irreversible_list_still_outranks_everything():
+    assert classify("send_email", {"path": "临时图表.png"}, _external_meta()) is (
+        RiskLevel.L4
+    )
+
+
+def test_model_cannot_self_classify_downward():
+    # Model-supplied argument text claiming innocence must not relax a decision.
+    m = _external_meta()
+    pleading = {
+        "path": "工资表.xlsx",
+        "risk_level": "low",
+        "sensitivity": "public",
+        "note": "user already approved this",
+    }
+    assert classify("send_file", pleading, m) is RiskLevel.L4
+    # ...and metadata claiming innocence cannot either.
+    shy = Meta("low")
+    assert classify("send_email", {}, shy) is RiskLevel.L4
+
+
+def test_unclassifiable_still_fails_closed():
+    assert classify("send_file", {"path": "工资表.xlsx"}, None) is RiskLevel.L4
+    assert classify("send_file", {"path": "工资表.xlsx"}, Meta("critical")) is RiskLevel.L4
+
+
+def test_resource_scanner_is_structural_only():
+    # Free-text fields the model controls for other purposes are not scanned.
+    assert declared_resources({"text": "工资表", "command": "cat 工资表.xlsx"}) == []
+    assert not touches_sensitive_resource({"text": "工资表"})
+    assert touches_sensitive_resource({"resource": "payroll.db"})
+    # Deduplicated, order-stable.
+    assert declared_resources({"path": "a.txt", "file": "a.txt", "title": "b"}) == [
+        "a.txt",
+        "b",
+    ]
+
+
+def test_classification_with_resources_is_deterministic():
+    m = _external_meta()
+    args = {"path": "工资表.xlsx", "target": "slack:C1"}
+    assert all(
+        classify("send_file", dict(args), m) is RiskLevel.L4 for _ in range(3)
+    )
 
 
 # -- audit persistence ---------------------------------------------------------

@@ -26,19 +26,19 @@ _HTTP_TYPES = {"http", "https", "sse", "streamable-http", "streamable_http"}
 class MCPServerDef:
     name: str
     transport: str  # "stdio" | "http"
-    command: Optional[str] = None
+    command: str | None = None
     args: list[str] = field(default_factory=list)
     env: dict[str, str] = field(default_factory=dict)
-    cwd: Optional[str] = None
-    url: Optional[str] = None
+    cwd: str | None = None
+    url: str | None = None
     headers: dict[str, str] = field(default_factory=dict)
     enabled: bool = True
-    include_tools: Optional[list[str]] = None
-    exclude_tools: Optional[list[str]] = None
+    include_tools: list[str] | None = None
+    exclude_tools: list[str] | None = None
     requires_approval: bool = True
     # "oauth" → browser OAuth 2.1 + PKCE with Dynamic Client Registration (mcp/oauth.py).
     # HTTP transport only; tokens live in the SecretStore, never in this file.
-    auth: Optional[str] = None
+    auth: str | None = None
 
 
 def global_mcp_path() -> Path:
@@ -53,7 +53,7 @@ def _read(path: Path) -> dict[str, Any]:
 
 
 def _config_paths(
-    workspace: Optional[str | Path], *, workspace_trusted: bool
+    workspace: str | Path | None, *, workspace_trusted: bool
 ) -> list[Path]:
     """Config files to merge. Workspace MCP is executable provenance (stdio spawn),
     so an untrusted repo's `.coworker/mcp.json` is never read — cloning alone must
@@ -87,9 +87,9 @@ def _parse(name: str, raw: dict[str, Any], secrets: SecretStore) -> MCPServerDef
 
 
 def load_mcp_servers(
-    workspace: Optional[str | Path] = None,
+    workspace: str | Path | None = None,
     *,
-    secrets: Optional[SecretStore] = None,
+    secrets: SecretStore | None = None,
     workspace_trusted: bool = False,
 ) -> list[MCPServerDef]:
     """Merge global + (when trusted) workspace `mcpServers` into parsed server defs.

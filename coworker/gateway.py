@@ -10,10 +10,18 @@ confinement itself instead of trusting upstream classifiers to stay correct.
 Slice 4a (grants): L3 external effects are never released by a blanket mode grant
 or an approval-card-minted session entry — only explicit per-action approval or
 user-authored standing policy gets through.
+Slice 4b (resources): classification reads four declared inputs — the action's
+risk band, the target/resource the call carries, reversibility, and resource
+sensitivity. An external effect (L3) that touches a sensitive resource
+(payroll sheets, credential files, identity documents) escalates to L4: the
+disclosure itself is not compensatable. `send_file(临时图表)` stays L3;
+`send_file(工资表.xlsx)` is L4.
 
 Fail-closed rule: a call that cannot be classified (no registry metadata, unknown
 risk_level value, or an explicit irreversible-list hit) is treated as L4. Nothing
-is ever "unclassified, so probably fine".
+is ever "unclassified, so probably fine". The model can never classify downward:
+sensitivity signals live in fixed tables here; model-supplied argument text can
+only ever escalate a decision (by naming what is being shared), never relax one.
 """
 
 from __future__ import annotations
@@ -50,17 +58,102 @@ _VALID_METADATA_RISK = {"low", "medium", "high"}
 # unknown or missing category conservatively stays at L3 (fail closed → ask).
 _LOCAL_CATEGORIES = frozenset({"filesystem"})
 
+# -- Slice 4b: resource sensitivity ---------------------------------------------
+
+# Argument names that carry the RESOURCE a side effect lands on. Sensitivity is
+# evaluated only over these structural fields — never over free-text fields the
+# model controls for other purposes (message bodies, selectors, commands).
+_RESOURCE_ARGS = (
+    "path",
+    "file_path",
+    "filepath",
+    "file",
+    "filename",
+    "attachment",
+    "attachments",
+    "document",
+    "resource",
+    "title",
+)
+
+# Deterministic sensitivity signals in a resource's name/path (lowercased
+# substring match against the FULL path — a folder can carry the signal even
+# when the filename does not). A hit means "this resource carries data whose
+# disclosure cannot be compensated". Extend deliberately: everything not listed
+# is NOT sensitive, and only these tables decide — the model cannot volunteer
+# new signals, and it cannot remove them either.
+_SENSITIVE_TOKENS: tuple[str, ...] = (
+    # payroll / HR
+    "工资",
+    "薪资",
+    "薪酬",
+    "绩效",
+    "payroll",
+    "salary",
+    "compensation",
+    # identity / government records
+    "身份证",
+    "护照",
+    "社保",
+    "passport",
+    "national_id",
+    "ssn",
+    # financial accounts
+    "银行卡",
+    "银行流水",
+    "bank_statement",
+    # credentials / keys / secrets
+    "id_rsa",
+    ".pem",
+    ".pfx",
+    ".p12",
+    ".keystore",
+    ".env",
+    "credential",
+    "password",
+    "secret",
+)
+
+
+def declared_resources(arguments: dict[str, Any] | None) -> list[str]:
+    """The resource values this call declares (deduplicated, order-stable)."""
+    out: list[str] = []
+    for name in _RESOURCE_ARGS:
+        value = (arguments or {}).get(name)
+        if isinstance(value, str) and value.strip() and value not in out:
+            out.append(value)
+    return out
+
+
+def touches_sensitive_resource(arguments: dict[str, Any] | None) -> bool:
+    """True when any declared resource matches a sensitivity signal."""
+    for resource in declared_resources(arguments):
+        haystack = resource.lower()
+        if any(token in haystack for token in _SENSITIVE_TOKENS):
+            return True
+    return False
+
 
 def classify(
     tool_name: str,
-    arguments: Optional[dict[str, Any]] = None,
+    arguments: dict[str, Any] | None = None,
     metadata: Any = None,
 ) -> RiskLevel:
     """Deterministic L0–L4 classification for one tool call. Never raises; an
-    unclassifiable call classifies as L4."""
+    unclassifiable call classifies as L4.
+
+    Slice 4b: the level is derived from four declared inputs — the action's risk
+    band (metadata), the target/resource the arguments carry, reversibility (the
+    irreversible table), and resource sensitivity (the sensitivity table). The
+    model cannot self-evaluate: no model-visible field can lower a level, and
+    sensitivity signals come only from the fixed tables below.
+    """
+    # Reversibility first: an explicitly irreversible tool is L4 whatever the
+    # metadata claims — even if a future refactor marks it "low".
     if tool_name in IRREVERSIBLE_TOOLS:
         return RiskLevel.L4
 
+    # Fail closed: no registry metadata or an unknown risk value is L4.
     if metadata is None:
         return RiskLevel.L4
 
@@ -71,6 +164,21 @@ def classify(
     if risk not in _VALID_METADATA_RISK:
         return RiskLevel.L4
 
+    base = _band_level(risk, requires_approval, category)
+
+    # Sensitivity: an external effect (L3) that touches a sensitive resource
+    # escalates to L4 — sharing payroll/credential/identity data off-machine is
+    # a disclosure that no compensation can undo. Local writes and reads are
+    # untouched: writing 工资表.xlsx into a checkpointed workspace stays
+    # reversible (L2); only the boundary crossing escalates.
+    if base is RiskLevel.L3 and touches_sensitive_resource(arguments):
+        return RiskLevel.L4
+
+    return base
+
+
+def _band_level(risk: str, requires_approval: bool, category: str) -> RiskLevel:
+    """The action's risk band from registry metadata alone (no argument inspection)."""
     if risk == "high":
         # Arbitrary local execution (shell): consequential and unsandboxed today,
         # so it sits at L3 — allowed only with an explicit per-run grant path.
@@ -121,7 +229,7 @@ def enforce_level(level: RiskLevel, decision: Any) -> Any:
 _PATH_ARGS = ("path", "file_path", "filepath", "file")
 
 
-def declared_targets(arguments: Optional[dict[str, Any]]) -> list[str]:
+def declared_targets(arguments: dict[str, Any] | None) -> list[str]:
     """The path-shaped target values this call actually carries."""
     out: list[str] = []
     for name in _PATH_ARGS:
@@ -133,7 +241,7 @@ def declared_targets(arguments: Optional[dict[str, Any]]) -> list[str]:
 
 def enforce_scope(
     decision: Any,
-    arguments: Optional[dict[str, Any]],
+    arguments: dict[str, Any] | None,
     level: RiskLevel,
     *,
     workspace_root: Path,

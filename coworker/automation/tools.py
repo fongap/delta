@@ -7,6 +7,11 @@ the launching session and runs in its workspace, so the origin conversation can 
 results (the artifacts are real files in that folder).
 """
 
+# pyright: reportFunctionMemberAccess=false
+# (tool-builder module: attaches aisuite's dynamic metadata attributes
+# (__aisuite_tool_metadata__ / __coworker_schema__) to plain functions —
+# the framework's plugin protocol, not a type error.)
+
 from __future__ import annotations
 
 from typing import Any, Callable, Optional

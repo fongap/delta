@@ -45,7 +45,7 @@ class ModelEntry:
     caps: ModelCapabilities = _AGENTIC
     # Max context length in tokens (prompt side), for the GUI's context-fill meter.
     # None = not verified against the vendor spec yet; the meter hides.
-    context_window: Optional[int] = None
+    context_window: int | None = None
 
 
 MATRIX: dict[str, ModelEntry] = {

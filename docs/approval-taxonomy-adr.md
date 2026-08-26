@@ -63,6 +63,46 @@ Standing grants (`ALWAYS_TOOL`/`ALWAYS_COMMAND`) survive but are bounded: per to
 per resource scope, per level ≤ L2. L3 may have standing grants only when explicitly
 created by the user in Settings; L4 never.
 
+## Slice 4b: classification inputs (implemented)
+
+Classification is a deterministic function of four declared inputs, evaluated at the
+Execution Gateway (`coworker/gateway.py::classify`) before any permission rule runs:
+
+1. **Action** — the tool's risk band from registry metadata (`risk_level`,
+   `requires_approval`, `category`). This is the base level (L0–L3 banding; high → L3).
+2. **Target / resource** — the structurally declared on-disk or file-shaped targets the
+   arguments carry (`path`, `file_path`, `filepath`, `file`, `filename`, `attachment(s)`,
+   `document`, `resource`, `title`). Free-text fields the model controls for other
+   purposes (message bodies, selectors, commands) are never scanned.
+3. **Reversibility** — the explicit irreversible table (`IRREVERSIBLE_TOOLS`, e.g.
+   `send_email`). A table hit is L4 regardless of anything else. Until compensation
+   handlers exist (§2), an external effect is treated as compensatable-by-human-ask,
+   which is exactly the L3 approval flow.
+4. **Sensitivity** — fixed lowercase-substring signal table over declared resources
+   (`_SENSITIVE_TOKENS`: payroll/HR terms, identity documents, financial-account
+   records, credential/key artifacts). The full path is scanned, not just the filename —
+   a folder can carry the signal. A hit means "disclosure of this resource cannot be
+   compensated".
+
+The one cross-rule: **an external effect (L3) that touches a sensitive resource
+escalates to L4.** `send_file(临时图表)` is L3 (ask / standing policy);
+`send_file(工资表.xlsx)` is L4 (explicit per-action approval only, no standing grant).
+Local writes and reads are never escalated by sensitivity: writing 工资表.xlsx into a
+checkpointed workspace stays reversible (L2), and reading it is L0 — only the boundary
+crossing is a disclosure.
+
+Model blindness, both directions:
+
+- The model cannot classify downward. No model-visible field (`risk_level`,
+  `sensitivity`, approval claims in arguments or text) relaxes any decision; levels come
+  only from registry metadata plus the fixed tables here.
+- Model-supplied strings can only ever escalate, and only incidentally — by naming what
+  is being shared in a declared resource field. That asymmetry is safe by construction:
+  false positives cost one extra ask, false negatives leak.
+
+Extending either table is a deliberate policy act (edit the tables, add tests); absence
+from the table means "not sensitive", never "the model said so".
+
 ## Consequences
 
 - `permissions.py` gains a level classifier ahead of the existing root/whitelist checks.

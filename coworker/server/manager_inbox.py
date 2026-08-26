@@ -7,24 +7,15 @@ mixin inheritance so behavior is unchanged.
 
 from __future__ import annotations
 
-from typing import Any, Optional
-from ..runtime import TurnEngineAdapter
-from ..connectors import (
-    Gateway,
-    MessageSource,
-    connect_connector,
-    connector_list,
-    disconnect_connector,
-    experimental_enabled,
-    load_settings,
-    make_adapter,
-    set_experimental_enabled,
-    slack_split,
-    update_connector_tools,
-)
 import asyncio
+from typing import Any, Optional
 
+from ..connectors import (
+    load_settings,
+    slack_split,
+)
 from .manager_support import _approval_body, _parse_inbox_json
+
 
 class InboxApprovalsMixin:
 
@@ -35,7 +26,7 @@ class InboxApprovalsMixin:
         like the approver does."""
 
         async def ask(
-            args: dict[str, Any], tool_call_id: Optional[str] = None
+            args: dict[str, Any], tool_call_id: str | None = None
         ) -> dict[str, Any]:
             from ..tools.ask import answer_result, question_item_fields
 
@@ -158,15 +149,14 @@ class InboxApprovalsMixin:
     async def _durable_resume(self, item) -> None:
         if not getattr(item, "tool_call_id", None):
             return  # nothing to reconstruct (legacy item) — best-effort: leave it
-        engine = self.get_engine(item.session_id)
-        if engine is None or not hasattr(engine, "resume"):
+        runtime = self.get_engine(item.session_id)
+        if runtime is None:
             return
-        runtime = TurnEngineAdapter(engine, ledger=self.run_ledger, session_id=item.session_id)
         self.mark_running(item.session_id)
         try:
             async for _event in runtime.resume():
                 pass
-            self.save(item.session_id, engine)
+            self.save(item.session_id, runtime)
         finally:
             self.mark_idle(item.session_id)
 
@@ -176,7 +166,7 @@ class InboxApprovalsMixin:
         self,
         name: str,
         user_id: str,
-        team_id: Optional[str] = None,
+        team_id: str | None = None,
         *,
         display_name: str = "",
     ) -> dict[str, Any]:
@@ -189,7 +179,7 @@ class InboxApprovalsMixin:
 
 
     def disallow_user(
-        self, name: str, user_id: str, team_id: Optional[str] = None
+        self, name: str, user_id: str, team_id: str | None = None
     ) -> dict[str, Any]:
         if name == "slack" and user_id in self.slack_approval_owner_ids(team_id):
             return {
@@ -199,7 +189,7 @@ class InboxApprovalsMixin:
         return self._set_allowed(name, user_id, team_id=team_id, add=False)
 
 
-    def slack_approval_owner_ids(self, team_id: Optional[str] = None) -> set[str]:
+    def slack_approval_owner_ids(self, team_id: str | None = None) -> set[str]:
         """Stable Slack user ids allowed to resolve consequential Inbox prompts.
 
         Managed relay installs are installer-owned. Manual Socket Mode has no
@@ -287,7 +277,7 @@ class InboxApprovalsMixin:
         *,
         actor_id: str,
         chat_id: str,
-        team_id: Optional[str],
+        team_id: str | None,
     ) -> bool:
         """Authorize a Slack resolution against both its owner and delivery binding."""
         event_team, event_channel = slack_split(chat_id)
@@ -302,7 +292,7 @@ class InboxApprovalsMixin:
 
 
     def set_inbox_binding(
-        self, name: str, *, channel: Optional[str], target: str
+        self, name: str, *, channel: str | None, target: str
     ) -> dict[str, Any]:
         """Persist an Inbox transport after validating its approval identity."""
         channel = str(channel or "").strip() or None
@@ -335,7 +325,7 @@ class InboxApprovalsMixin:
 
 
     def _set_allowed(
-        self, name: str, user_id: str, *, team_id: Optional[str] = None, add: bool
+        self, name: str, user_id: str, *, team_id: str | None = None, add: bool
     ) -> dict[str, Any]:
         """Add/remove a sender on the allow-list. With `team_id` the edit targets that
         scope's profile — a workspace's `slack:team:<id>`, or a GitHub App
@@ -556,9 +546,9 @@ class InboxApprovalsMixin:
         if not target or not task.add_rule(tool_name, target):
             return False
         self.task_store.save(task)
-        engine = self._engines.get(session_id)
-        if engine is not None:
-            engine.permissions.task_rules.setdefault(tool_name, set()).add(target)
+        runtime = self._runtimes.get(session_id)
+        if runtime is not None:
+            runtime.add_task_rule(tool_name, target)
         try:
             self.audit_store.append(
                 {

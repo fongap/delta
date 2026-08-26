@@ -6,21 +6,10 @@ mixin inheritance so behavior is unchanged.
 
 from __future__ import annotations
 
-from typing import Any, Optional
-from ..providers import (
-    ProviderClient,
-    ProviderRouter,
-    descriptor_configured,
-    fetch_provider_models,
-    get_descriptor,
-    is_custom_provider,
-    provider_descriptors,
-    register_custom_provider,
-    unregister_custom_provider,
-    verify_provider_key,
-)
-from pathlib import Path
 import json
+from pathlib import Path
+from typing import Any, Optional
+
 from ..connectors import (
     Gateway,
     MessageSource,
@@ -34,6 +23,19 @@ from ..connectors import (
     slack_split,
     update_connector_tools,
 )
+from ..providers import (
+    ProviderClient,
+    ProviderRouter,
+    descriptor_configured,
+    fetch_provider_models,
+    get_descriptor,
+    is_custom_provider,
+    provider_descriptors,
+    register_custom_provider,
+    unregister_custom_provider,
+    verify_provider_key,
+)
+
 
 class ProvidersSettingsMixin:
 
@@ -125,7 +127,7 @@ class ProvidersSettingsMixin:
     def set_provider(
         self,
         name: str,
-        fields: Optional[dict[str, Any]],
+        fields: dict[str, Any] | None,
         require_complete: bool = True,
     ) -> dict[str, Any]:
         """Store a provider's config in its `provider:<name>` SecretStore profile and rebuild
@@ -165,7 +167,7 @@ class ProvidersSettingsMixin:
         # Convenience: if the provider recommends a model and it's actually available, add it to
         # the curated list so it shows up in the composer right after configuring the provider.
         rec = d.recommended_model
-        added: Optional[str] = None
+        added: str | None = None
         if rec and rec in self._suggested_models(name):
             # OpenAI models stay bare (the router's default); others carry their prefix.
             added = rec if name == "openai" else f"{name}:{rec}"
@@ -197,7 +199,7 @@ class ProvidersSettingsMixin:
 
 
     def create_custom_provider(
-        self, alias: str, protocol: str, fields: Optional[dict[str, Any]]
+        self, alias: str, protocol: str, fields: dict[str, Any] | None
     ) -> dict[str, Any]:
         """Register a user-defined provider alias (custom-config-first model setup).
 
@@ -259,7 +261,7 @@ class ProvidersSettingsMixin:
 
 
     def verify_provider(
-        self, name: str, fields: Optional[dict[str, Any]]
+        self, name: str, fields: dict[str, Any] | None
     ) -> dict[str, Any]:
         """Test a provider's credentials with a live read-only call, WITHOUT persisting them, so
         onboarding can offer a "Test" button. Falls back to stored/env values when the form left
@@ -330,13 +332,13 @@ class ProvidersSettingsMixin:
 
 
     # -- direct-message routing -------------------------------------------------
-    def dm_session(self) -> Optional[str]:
+    def dm_session(self) -> str | None:
         """The session a DM to the bot is routed to (user-designated). None → DMs are parked."""
         sid = self._prefs.get("dm_session")
         return sid or None
 
 
-    def set_dm_session(self, session_id: Optional[str]) -> dict[str, Any]:
+    def set_dm_session(self, session_id: str | None) -> dict[str, Any]:
         """Designate (or clear, with a falsy id) the session that handles incoming DMs."""
         sid = (session_id or "").strip()
         if sid:
@@ -438,9 +440,13 @@ class ProvidersSettingsMixin:
     def remove_model(self, model: str) -> dict[str, Any]:
         """Remove a model id from the picker. Custom ids are dropped; matrix models are
         hidden by id (the matrix is derived, not stored, so a bare drop would resurrect
-        them on the next read)."""
+        them on the next read). The default model can never be hidden — the picker's
+        invariant is default ∈ enabled (the UI asks for a new default first)."""
         from ..providers.matrix import MATRIX
 
+        model = (model or "").strip()
+        if model and model == self._prefs.get("default_model"):
+            return {"ok": False, "error": "default model cannot be hidden"}
         models = self._prefs.get("models")
         models = models if isinstance(models, list) else []
         self._prefs["models"] = [m for m in models if m != model]
@@ -523,7 +529,7 @@ class ProvidersSettingsMixin:
 
 
     def set_surfaces(
-        self, chat: Optional[bool] = None, code: Optional[bool] = None
+        self, chat: bool | None = None, code: bool | None = None
     ) -> dict[str, Any]:
         """Toggle Chat/Code visibility (Cowork is always shown). Persisted in prefs."""
         if chat is not None:
@@ -746,7 +752,7 @@ class ProvidersSettingsMixin:
         return self.provider.complete(model=model, messages=messages, tools=tools)
 
 
-    def _refresh_provider(self, name: Optional[str] = None) -> None:
+    def _refresh_provider(self, name: str | None = None) -> None:
         """Drop the router's cached client(s) so the next turn rebuilds with fresh config.
         No-op for an injected non-router provider (tests)."""
         invalidate = getattr(self.provider, "invalidate", None)

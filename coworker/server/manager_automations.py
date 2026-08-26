@@ -6,18 +6,18 @@ mixin inheritance so behavior is unchanged.
 
 from __future__ import annotations
 
-from ..engine import ApprovalOutcome, Approver, TurnEngine
+import asyncio
+import time
 from pathlib import Path
+from typing import Any
+
 from ..agent import build_engine
 from ..agents import get_agent
+from ..automation import Schedule, ScheduledTask, TaskRun
 from ..permissions import Mode
-from ..runtime import TurnEngineAdapter
-from ..automation import Schedule, ScheduledTask, Scheduler, TaskRun, TaskStore
-import asyncio
-from typing import Any, Optional
-import time
-
+from ..runtime import RuntimePort
 from .manager_support import _approval_body, _epoch, _last_assistant_text, _recent_files
+
 
 class AutomationsMixin:
 
@@ -54,16 +54,16 @@ class AutomationsMixin:
         return approver
 
 
-    def _seed_task_permissions(self, engine: TurnEngine, task) -> None:
-        """Apply a task's standing allowances to an engine: target-bound rules feed the
+    def _seed_task_permissions(self, runtime: RuntimePort, task) -> None:
+        """Apply a task's standing allowances to a runtime: target-bound rules feed the
         permission engine's matcher (connector tools included — the target binding is the
         safety); name-only legacy entries keep their session-allowlist behavior."""
-        engine.permissions.task_rules = task.standing_rules()
+        runtime.set_task_rules(task.standing_rules())
         for tool in task.name_allowed_tools():
-            engine.permissions.allow_tool_for_session(tool)
+            runtime.grant_tool(tool)
 
 
-    def _build_task_engine(self, task, *, session_id: str) -> TurnEngine:
+    def _build_task_engine(self, task, *, session_id: str) -> RuntimePort:
         ag = get_agent(task.agent)
         Path(task.workspace).mkdir(parents=True, exist_ok=True)
         engine = build_engine(
@@ -94,8 +94,9 @@ class AutomationsMixin:
                 self.effective_skill_names(sid, w)
             ),
         )
-        self._seed_task_permissions(engine, task)
-        return engine
+        runtime = self._bind_runtime(engine, session_id)
+        self._seed_task_permissions(runtime, task)
+        return runtime
 
 
     async def _run_scheduled_task(self, task, trigger: str) -> TaskRun:
@@ -121,10 +122,11 @@ class AutomationsMixin:
         # Each run is a real, persisted conversation thread: it runs the instructions under its
         # own session id, then saves the transcript. The user can reopen that session and ask a
         # follow-up — the scheduled agent is no longer fire-and-forget.
-        engine = self._build_task_engine(task, session_id=run.session_id)
-        # Register the live engine up-front: a parked approval persists the session
+        runtime = self._build_task_engine(task, session_id=run.session_id)
+        # Register the live runtime up-front: a parked approval persists the session
         # mid-run (durable suspend), and resolving from the Inbox must find this engine.
-        self._engines[run.session_id] = engine
+        # The adapter (built with the run ledger) makes this a durable, ledgered run.
+        self._runtimes[run.session_id] = runtime
         # The first turn is the task itself. The framing matters: instructions often restate the
         # schedule ("every day at 5:32pm…"), so make explicit that the schedule already fired and
         # the job now is to execute, not to (re)schedule.
@@ -135,10 +137,9 @@ class AutomationsMixin:
             f"{task.instructions}"
         )
         try:
-            runtime = TurnEngineAdapter(engine, ledger=self.run_ledger, session_id=run.session_id)
             async for _event in runtime.run(opening):
                 pass
-            run.result_text = _last_assistant_text(engine.messages)
+            run.result_text = _last_assistant_text(runtime.messages)
             run.artifacts = _recent_files(task.workspace, since=run.started_at)
             run.status = "ok"
             if task.notify_on_completion:
@@ -147,11 +148,11 @@ class AutomationsMixin:
             run.status, run.error = "error", str(exc)
         finally:
             run.finished_at = _epoch()
-            # Persist the run as a continuable session + keep the live engine for an immediate
-            # follow-up; record the run (now carrying its session_id).
+            # Persist the run as a continuable session + keep the live runtime for an
+            # immediate follow-up; record the run (now carrying its session_id).
             try:
-                self.save(run.session_id, engine)
-                self._engines[run.session_id] = engine
+                self.save(run.session_id, runtime)
+                self._runtimes[run.session_id] = runtime
             except Exception:
                 pass
             self.task_store.add_run(run)
@@ -303,10 +304,10 @@ class AutomationsMixin:
         self.task_store.save(task)
         if changes.get("revoke"):
             # A live run engine may still hold the revoked rule — reseed from the record.
-            for sid, engine in self._engines.items():
+            for sid, runtime in self._runtimes.items():
                 owner = self.task_store.task_for_run_session(sid)
                 if owner is not None and owner.id == task.id:
-                    engine.permissions.task_rules = task.standing_rules()
+                    runtime.set_task_rules(task.standing_rules())
         return {"ok": True, "task": task.public()}
 
 

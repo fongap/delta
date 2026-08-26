@@ -36,10 +36,10 @@ class Field:
 @dataclass
 class ValidationResult:
     ok: bool
-    identity: Optional[str] = (
+    identity: str | None = (
         None  # e.g. "@mybot" — shown back to the user, never a secret
     )
-    error: Optional[str] = None
+    error: str | None = None
 
 
 @dataclass
@@ -57,7 +57,7 @@ class ConnectorDescriptor:
     # connector's channels (Sources ▸ Channels, listening-sessions block). GitHub is
     # two_way via the relay (inbound mentions) but has no channel semantics.
     channels: bool = False
-    validate: Optional[Callable[[dict], ValidationResult]] = None
+    validate: Callable[[dict], ValidationResult] | None = None
     # Registry metadata (UI-Refresh §1): the connector's brand color (hex; fallback gray) and a
     # stable logo id (e.g. "slack") the frontend maps to a bundled SVG. Empty logo → UI fallback.
     brand_color: str = "#6b7280"
@@ -143,7 +143,7 @@ def _validate_whoami(
     *,
     headers: dict,
     identity: Callable[[dict], str],
-    json: Optional[dict] = None,
+    json: dict | None = None,
 ) -> ValidationResult:
     """Shared one-shot whoami check: 2xx + extractable identity, else a failure."""
     import httpx
@@ -1466,5 +1466,5 @@ def list_descriptors() -> list[ConnectorDescriptor]:
     return list(DESCRIPTORS)
 
 
-def get_descriptor(name: str) -> Optional[ConnectorDescriptor]:
+def get_descriptor(name: str) -> ConnectorDescriptor | None:
     return _BY_NAME.get(name)

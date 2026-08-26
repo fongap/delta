@@ -7,6 +7,7 @@ import threading
 import time
 
 import aisuite as ai
+
 from coworker.engine import ApprovalOutcome, PermissionRequest, TurnEngine
 from coworker.events import EventType
 from coworker.permissions import PermissionEngine

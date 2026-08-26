@@ -746,12 +746,12 @@ export function Composer(props: Props) {
             <button
               className={
                 "w-7 h-7 rounded-full grid place-items-center shrink-0 transition-colors " +
-                (hasContent && props.connected && !dictation?.recording && !dictationBusy
+                (hasContent && !dictation?.recording && !dictationBusy
                   ? "bg-accent text-onAccent hover:brightness-105"
                   : "bg-paper border border-line text-faint")
               }
               onClick={submit}
-              disabled={!props.connected || !!dictation?.recording || !!dictationBusy}
+              disabled={!!dictation?.recording || !!dictationBusy}
               title={needsModel ? t("composer.connectModelToSend", undefined, "Connect a model to send") : undefined}
               aria-label={t("composer.send", undefined, "Send")}
             >

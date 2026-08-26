@@ -564,7 +564,7 @@ export function Transcript({ items, running, streamingText, onRetry, onUndoMemor
                           produces a fresh answer to the edited content. */
                       <button
                         className="flex items-center cursor-pointer hover:text-muted"
-                        title={t("transcript.editMessage", undefined, "Edit")}
+                        title={t("transcript.editMessage", undefined, "编辑消息")}
                         onClick={() => onEditMessage(item.index!)}
                       >
                         <Icon name="pencil" size={11} />

@@ -38,15 +38,15 @@ class Wake:
     session_id: str
     kind: str
     state: str = STATE_PENDING
-    fire_at: Optional[str] = None  # ISO, for timer wakes
-    job_id: Optional[str] = None  # for completion wakes
-    event_key: Optional[str] = None  # for on-event wakes
+    fire_at: str | None = None  # ISO, for timer wakes
+    job_id: str | None = None  # for completion wakes
+    event_key: str | None = None  # for on-event wakes
     note: str = ""
     created_at: str = field(default_factory=lambda: _now().isoformat())
 
 
 class WakeStore:
-    def __init__(self, path: Optional[str | Path] = None) -> None:
+    def __init__(self, path: str | Path | None = None) -> None:
         self.path = Path(path) if path else None
         self._lock = threading.Lock()
         self._wakes: dict[str, Wake] = {}
@@ -92,7 +92,7 @@ class WakeStore:
             self._save()
         return w
 
-    def due(self, now: Optional[datetime] = None) -> list[Wake]:
+    def due(self, now: datetime | None = None) -> list[Wake]:
         """Timer wakes whose fire time has passed, plus completion/event wakes marked due."""
         now = now or _now()
         out = []
@@ -139,7 +139,7 @@ class WakeStore:
                 w.state = STATE_FIRED
                 self._save()
 
-    def pending(self, session_id: Optional[str] = None) -> list[Wake]:
+    def pending(self, session_id: str | None = None) -> list[Wake]:
         return [
             w
             for w in self._wakes.values()

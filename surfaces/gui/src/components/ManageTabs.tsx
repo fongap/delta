@@ -132,33 +132,7 @@ export function ModelsTab() {
 
   return (
     <div>
-      <ProviderForm
-        ps={ps}
-        tp="set"
-        footer={
-          !ps.creating && info?.custom ? (
-            <button
-              className="text-[12.5px] text-danger/80 hover:text-danger hover:underline underline-offset-2"
-              data-testid="set-remove-custom"
-              onClick={() => {
-                if (window.confirm(t("providers.removeCustomConfirm", { name: info.alias || info.name }))) void ps.removeCustom();
-              }}
-            >
-              {t("providers.removeCustom")}
-            </button>
-          ) : !ps.creating && ps.credentialed ? (
-            <button
-              className="text-[12.5px] text-danger/80 hover:text-danger hover:underline underline-offset-2"
-              data-testid="set-remove-key"
-              onClick={() => {
-                if (window.confirm(t("providers.removeKeyConfirm", { name: info?.title ?? "" }))) ps.removeKey();
-              }}
-            >
-              {t("providers.removeKey")}
-            </button>
-          ) : null
-        }
-      />
+      <ProviderForm ps={ps} tp="set" />
 
       {ps.sel === "openai" && settings.source === "env" && (
         <p className="text-[12px] text-muted mt-3 leading-relaxed">
@@ -170,19 +144,45 @@ export function ModelsTab() {
 
       {ps.sel && info?.configured ? (
         <div className="mt-6">
-          <div className={SEC_H + " mb-1.5"}>{t("models.title")}</div>
-          <p className="text-[12px] text-muted mb-2.5 leading-relaxed">
-            {t("models.pickerNote")}
-          </p>
-          <ModelChecklist
-            provider={ps.sel}
-            knownProviders={knownNames}
-            suggested={info?.suggested_models || []}
-            curated={settings.models}
-            defaultModel={settings.model}
-            labels={settings.model_labels}
-            onChanged={(next) => setSettings((s) => (s ? { ...s, models: next.models, model: next.model } : s))}
-          />
+          <div className="rounded-xl border border-line bg-panel p-4" data-testid="set-models-card">
+            <div className="flex items-center justify-between gap-3 mb-1.5">
+              <div className={SEC_H}>{t("models.title")}</div>
+              {info.custom && (
+                <button
+                  className="btn-secondary sm shrink-0"
+                  onClick={() => void ps.fetchCustomModels()}
+                  disabled={ps.fetching}
+                  data-testid="set-fetch"
+                >
+                  {ps.fetching ? "…" : t("providers.refreshModels", undefined, "Refresh models")}
+                </button>
+              )}
+            </div>
+            <p className="text-[12px] text-muted mb-2.5 leading-relaxed">
+              {t("models.pickerNote")}
+            </p>
+            {ps.fetchMsg && (
+              <p
+                className={
+                  "mb-2 text-[12px] " + (ps.fetchMsg.state === "ok" ? "text-ok" : "text-warnInk")
+                }
+                data-testid="set-fetch-msg"
+              >
+                {ps.fetchMsg.text}
+              </p>
+            )}
+            <ModelChecklist
+              provider={ps.sel}
+              knownProviders={knownNames}
+              suggested={info?.suggested_models || []}
+              curated={settings.models}
+              defaultModel={settings.model}
+              labels={settings.model_labels}
+              onChanged={(next) => setSettings((s) => (s ? { ...s, models: next.models, model: next.model } : s))}
+              onRefresh={() => void ps.fetchCustomModels()}
+              refreshing={ps.fetching}
+            />
+          </div>
         </div>
       ) : (
         // Unconfigured providers still show their curated models as a read-only preview — what a
@@ -211,6 +211,93 @@ export function ModelsTab() {
           </div>
         )
       )}
+
+      {/* Danger zone — always the LAST block on the page (spec: 删除服务商必须位于
+          整个页面最下方), with an explicit two-step confirm instead of a bare red
+          link that deletes on click. */}
+      {ps.sel && !ps.creating && (info?.custom || ps.credentialed) && (
+        <DangerZone
+          label={info?.custom ? info.alias || info.name : info?.title || ""}
+          custom={!!info?.custom}
+          onConfirm={() => (info?.custom ? ps.removeCustom() : ps.removeKey())}
+        />
+      )}
+    </div>
+  );
+}
+
+/** 危险操作 — delete-this-provider block with an inline two-step confirmation
+    ("删除 FongAI？该服务商的连接配置和模型设置将被移除。此操作无法撤销。"). */
+function DangerZone({
+  label,
+  custom,
+  onConfirm,
+}: {
+  label: string;
+  custom: boolean;
+  onConfirm: () => Promise<void>;
+}) {
+  const { t } = useI18n();
+  const [arming, setArming] = useState(false);
+  const [busy, setBusy] = useState(false);
+  if (!arming)
+    return (
+      <div className="mt-8 rounded-xl border border-line px-4 py-3" data-testid="set-danger-zone">
+        <div className={SEC_H + " mb-2"}>{t("providers.dangerZone", undefined, "Danger zone")}</div>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-[13px] text-ink">
+            {custom
+              ? t("providers.deleteThisProvider", undefined, "Delete this provider")
+              : t("providers.removeThisKey", undefined, "Remove the saved API key")}
+          </span>
+          <button
+            className="btn-secondary shrink-0 !text-danger !border-danger/40 hover:!border-danger"
+            onClick={() => setArming(true)}
+            data-testid="set-danger-arm"
+          >
+            {custom
+              ? t("providers.deleteBtn", undefined, "Delete")
+              : t("providers.removeKeyBtn", undefined, "Remove")}
+          </button>
+        </div>
+      </div>
+    );
+  return (
+    <div className="mt-8 rounded-xl border border-danger/50 bg-danger/5 px-4 py-3" data-testid="set-danger-confirm">
+      <div className={SEC_H + " mb-2 !text-danger"}>{t("providers.dangerZone", undefined, "Danger zone")}</div>
+      <p className="text-[13px] text-ink font-medium">
+        {t("providers.deleteConfirmTitle", { name: label }, `Delete ${label}?`)}
+      </p>
+      <p className="text-[12px] text-muted mt-1 leading-relaxed">
+        {t(
+          "providers.deleteConfirmBody",
+          undefined,
+          "This provider's connection settings and model choices will be removed. This cannot be undone.",
+        )}
+      </p>
+      <div className="flex gap-2 justify-end mt-3">
+        <button className="btn-secondary sm" onClick={() => setArming(false)} data-testid="set-danger-cancel">
+          {t("common.cancel", undefined, "Cancel")}
+        </button>
+        <button
+          className="rounded-lg border border-danger bg-danger px-4 py-1.5 text-[12.5px] font-medium text-white hover:brightness-110 disabled:opacity-40"
+          disabled={busy}
+          data-testid="set-danger-confirm-btn"
+          onClick={async () => {
+            setBusy(true);
+            try {
+              await onConfirm();
+            } finally {
+              setBusy(false);
+              setArming(false);
+            }
+          }}
+        >
+          {custom
+            ? t("providers.deleteBtn", undefined, "Delete")
+            : t("providers.removeKeyBtn", undefined, "Remove")}
+        </button>
+      </div>
     </div>
   );
 }

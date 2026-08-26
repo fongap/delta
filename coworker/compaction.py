@@ -58,7 +58,7 @@ def estimate_tokens(messages: list[dict[str, Any]]) -> int:
 
 
 def trigger_tokens(
-    context_window: Optional[int],
+    context_window: int | None,
     *,
     threshold_pct: float = DEFAULT_THRESHOLD_PCT,
     cap_tokens: int = DEFAULT_CAP_TOKENS,
@@ -69,7 +69,7 @@ def trigger_tokens(
 
 def should_compact(
     signal: int,
-    context_window: Optional[int],
+    context_window: int | None,
     *,
     threshold_pct: float = DEFAULT_THRESHOLD_PCT,
     cap_tokens: int = DEFAULT_CAP_TOKENS,
@@ -112,7 +112,7 @@ class CompactionState:
         }
 
     @classmethod
-    def from_dict(cls, raw: Any) -> Optional["CompactionState"]:
+    def from_dict(cls, raw: Any) -> CompactionState | None:
         if not isinstance(raw, dict) or "boundary_index" not in raw:
             return None
         return cls(
@@ -144,7 +144,7 @@ def _turn_starts(messages: list[dict[str, Any]], *, start: int) -> tuple[list[in
     return users, assistants
 
 
-def pick_boundary(messages: list[dict[str, Any]], *, keep_tokens: int) -> Optional[int]:
+def pick_boundary(messages: list[dict[str, Any]], *, keep_tokens: int) -> int | None:
     """The canonical index where the verbatim tail begins: the earliest turn start whose
     suffix fits the keep budget. Prefers user-message boundaries; falls back to iteration
     (assistant) boundaries when the newest turn alone exceeds the budget (a giant tool
@@ -152,7 +152,7 @@ def pick_boundary(messages: list[dict[str, Any]], *, keep_tokens: int) -> Option
     start = 1 if messages and messages[0].get("role") == "system" else 0
     users, assistants = _turn_starts(messages, start=start)
 
-    def _fit(candidates: list[int]) -> Optional[int]:
+    def _fit(candidates: list[int]) -> int | None:
         for i in candidates:  # earliest-first: keep as much verbatim as fits
             if estimate_tokens(messages[i:]) <= keep_tokens:
                 return i
@@ -420,8 +420,8 @@ def build_state(
     provider: Any,
     model: str,
     keep_tokens: int,
-    prior: Optional[CompactionState] = None,
-) -> Optional[CompactionState]:
+    prior: CompactionState | None = None,
+) -> CompactionState | None:
     """Summarize everything older than the picked boundary into a new CompactionState.
     On repeated compaction the prior summary heads the new span. Returns None when there
     is nothing to compact; raises when the summarizer fails (caller applies policy)."""
@@ -455,9 +455,9 @@ def build_state(
 def trim_state(
     messages: list[dict[str, Any]],
     *,
-    prior: Optional[CompactionState] = None,
+    prior: CompactionState | None = None,
     fraction: float = _TRIM_FRACTION,
-) -> Optional[CompactionState]:
+) -> CompactionState | None:
     """The no-LLM fallback: advance the boundary past ~`fraction` of the outbound
     messages. No summary — but the mechanical block and the user-message list (never
     trimmed away, per spec) are free, so the model still gets deterministic state."""
@@ -522,7 +522,7 @@ def compacted_block(state: CompactionState) -> str:
 
 
 def apply_to_outbound(
-    messages: list[dict[str, Any]], state: Optional[CompactionState]
+    messages: list[dict[str, Any]], state: CompactionState | None
 ) -> list[dict[str, Any]]:
     """The outbound view: [system?] + the compacted block (as a user message) + the
     verbatim tail. Canonical history is untouched; provider-private sidecars in the

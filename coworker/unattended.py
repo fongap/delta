@@ -16,7 +16,7 @@ from ._jsonstate import load_json_state, save_json_state
 
 
 class UnattendedRegistry:
-    def __init__(self, path: Optional[str | Path] = None) -> None:
+    def __init__(self, path: str | Path | None = None) -> None:
         self.path = Path(path) if path else None
         self._lock = threading.Lock()
         self._flags: dict[str, bool] = {}

@@ -4,8 +4,9 @@ Implements docs/run-ledger-adr.md slice 1:
 
 - one row per durable event; rows are hash-chained per run
   (hash = sha256(prev_hash | seq | type | actor | ts | canonical payload))
-- secrets never enter payloads (scrub before calling append — the ledger does not
-  know secret shapes; callers do)
+- secrets never enter payloads: every append is scrubbed through the shared
+  SensitiveDataSanitizer (coworker/sanitize.py) before hashing/storage — callers
+  are still expected to pass clean payloads, but the ledger no longer trusts them
 - large results are referenced by id/sha256, never embedded
 - crash recovery: a run without a terminal event gets a synthetic
   `run.interrupted {reason: crashed}` on cold start, preserving its durable prefix
@@ -61,11 +62,16 @@ class RunEventLedger:
         type: str,
         *,
         actor: str = "system",
-        payload: Optional[dict[str, Any]] = None,
-        ts: Optional[float] = None,
+        payload: dict[str, Any] | None = None,
+        ts: float | None = None,
     ) -> dict[str, Any]:
-        """Append one event, extending the run's hash chain. Returns the stored row."""
+        """Append one event, extending the run's hash chain. Returns the stored row.
+        The payload is scrubbed through the shared sanitizer before it is hashed and
+        stored — the chain is computed over exactly what persists."""
         ts = time.time() if ts is None else ts
+        from .sanitize import sanitize_payload
+
+        stored_payload = sanitize_payload(payload)
         with self._conn:
             row = self._conn.execute(
                 "SELECT seq, hash FROM run_events WHERE run_id = ? "
@@ -75,7 +81,7 @@ class RunEventLedger:
             seq = (row["seq"] + 1) if row else 1
             prev_hash = row["hash"] if row else ""
             basis = "|".join(
-                [prev_hash, str(seq), type, actor, repr(ts), _canonical(payload)]
+                [prev_hash, str(seq), type, actor, repr(ts), _canonical(stored_payload)]
             )
             digest = hashlib.sha256(basis.encode("utf-8")).hexdigest()
             self._conn.execute(
@@ -89,7 +95,7 @@ class RunEventLedger:
                     type,
                     ts,
                     actor,
-                    _canonical(payload),
+                    _canonical(stored_payload),
                     prev_hash,
                     digest,
                 ),
@@ -100,7 +106,7 @@ class RunEventLedger:
             "type": type,
             "ts": ts,
             "actor": actor,
-            "payload": payload or {},
+            "payload": stored_payload or {},
             "prev_hash": prev_hash,
             "hash": digest,
         }

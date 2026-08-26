@@ -676,6 +676,12 @@ button.btn.danger { color: var(--accent); }
   border: 1px solid var(--line); border-radius: 4px; background: #fff;
   box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
 }
+/* Virtualized placeholder slot: reserves a page's scroll space until it scrolls
+   into view (±2 pages render around it) — hundreds of pages never all rasterize. */
+.artifact-pdf-slot {
+  margin: 0 auto 14px;
+  border: 1px solid var(--line); border-radius: 4px; background: var(--paper);
+}
 
 /* csv / spreadsheet preview */
 .artifact-tablewrap { padding: 14px 16px 40px; overflow: auto; }
@@ -884,24 +890,28 @@ button.btn.danger { color: var(--accent); }
 .seg button { font: inherit; font-size: 12.5px; padding: 5px 14px; border: none; border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer; }
 .seg button.active { background: var(--accent-soft); color: var(--ink); }
 
-/* Model checklist (Onboarding + Configure Models): tick = in the composer picker. */
+/* Model checklist (Onboarding + Configure Models): compact 44px rows.
+   checkbox = shown in the picker (display) · radio = default for new sessions. */
 .mlist { display: flex; flex-direction: column; gap: 1px; margin: 6px 0 4px; }
-.mlist-row { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 8px; }
+.mlist-row {
+  display: flex; align-items: center; gap: 8px; padding: 0 8px; height: 44px;
+  border-radius: 8px;
+}
 .mlist-row:hover { background: var(--panel); }
 .mlist-main { display: flex; align-items: center; gap: 9px; flex: 1; min-width: 0; cursor: pointer; }
-.mlist-main input { accent-color: var(--accent); margin: 0; }
+.mlist-main input, .mlist-default-radio input { accent-color: var(--accent); margin: 0; cursor: pointer; }
 .mlist-name { font-size: 13.5px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mlist-row.off .mlist-name { color: var(--muted); }
-.mlist-default {
-  background: var(--ink); color: var(--panel); font-size: 10.5px; font-weight: 600;
-  padding: 2px 9px; border-radius: 999px; letter-spacing: 0.03em; flex: none;
+.mlist-default-radio {
+  display: flex; align-items: center; gap: 6px; cursor: pointer; flex: none;
+  font-size: 12px; color: var(--muted);
 }
-.mlist-make {
-  visibility: hidden; border: 1px solid var(--line-strong); background: var(--panel);
-  border-radius: 7px; padding: 3px 9px; font-size: 11.5px; color: var(--muted); cursor: pointer; flex: none;
+.mlist-default-radio input:checked + .mlist-default-label { color: var(--ink); font-weight: 500; }
+.mlist-note {
+  font-size: 12px; color: var(--warn-ink, #b45309); background: var(--warn-soft, rgba(180, 83, 9, 0.08));
+  border-radius: 8px; padding: 6px 10px; margin: 2px 0;
 }
-.mlist-row:hover .mlist-make { visibility: visible; }
-.mlist-make:hover { color: var(--ink); border-color: var(--ink); }
+.mlist-empty { padding: 18px 8px; text-align: center; }
 .mlist-add { display: flex; gap: 8px; margin-top: 8px; }
 .mlist-add input {
   flex: 1; background: var(--panel); border: 1px solid var(--line-strong); border-radius: 8px;
@@ -913,6 +923,22 @@ button.btn.danger { color: var(--accent); }
   padding: 7px 8px; color: var(--ink); font: inherit; font-size: 13px; outline: none;
 }
 .mlist-add select:focus { border-color: var(--accent); }
+.mlist-add-form { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+.mlist-add-toggle {
+  align-self: flex-start; border: none; background: none; padding: 4px 0; margin: 0;
+  font: inherit; font-size: 12.5px; color: var(--muted); cursor: pointer;
+}
+.mlist-add-toggle:hover { color: var(--ink); }
+
+/* Secondary action — outlined, for Test/Refresh/Cancel-class operations. */
+button.btn-secondary {
+  font: inherit; font-size: 13px; padding: 7px 14px; border-radius: 9px;
+  border: 1px solid var(--line-strong); background: var(--panel); color: var(--ink);
+  cursor: pointer; align-self: flex-start;
+}
+button.btn-secondary:hover { border-color: var(--ink); }
+button.btn-secondary.sm { padding: 5px 13px; font-size: 12.5px; }
+button.btn-secondary:disabled { opacity: 0.4; cursor: default; }
 
 /* .mcp-error is used by ScheduledView; the MCP servers list itself is Tailwind-styled inline
    (ManageTabs McpTab/McpRow/AddForm). */

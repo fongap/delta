@@ -123,6 +123,108 @@ async def test_concurrent_runs_get_distinct_chains(tmp_path):
         assert led.verify(r)
 
 
+# -- run scope + process events (spawn/kill land in the run's chain) -------------
+
+def test_run_scope_is_empty_outside_a_turn():
+    from coworker import runscope
+
+    assert runscope.current() is None
+    token = runscope.set_current("run-x", "sess-1")
+    try:
+        assert runscope.current() == ("run-x", "sess-1")
+    finally:
+        runscope.reset(token)
+    assert runscope.current() is None
+
+
+@pytest.mark.asyncio
+async def test_scope_is_visible_inside_the_driven_turn_and_reset_after(tmp_path):
+    from coworker import runscope
+
+    led = RunEventLedger(tmp_path / "events.db")
+    seen_in_turn = []
+    run_id_holder = []
+
+    class ScopeSpyEngine(FakeEngine):
+        async def run(self, user_input, *, source=None, display=None):
+            scope = runscope.current()
+            if scope is not None:
+                seen_in_turn.append(scope)
+                run_id_holder.append(scope[0])
+            yield ("turn_start", {})
+            yield ("turn_done", {})
+
+    rt = TurnEngineAdapter(ScopeSpyEngine(), ledger=led, session_id="sess-9")
+    await _drain(rt.run("go"))
+    assert seen_in_turn and seen_in_turn[0][1] == "sess-9"
+    # The scope's run id matches the ledger's chain for this run.
+    assert run_id_holder[0] in led.runs()
+    # ...and the scope is gone once the turn ends.
+    assert runscope.current() is None
+
+
+@pytest.mark.asyncio
+async def test_process_spawn_kill_events_land_in_the_run_chain(tmp_path):
+    """Background spawn + kill facts reported while a turn is driven become durable
+    process events attributed to the run that caused them (the manager's recorder
+    reads the ambient run scope) — no signature threading through build_engine."""
+    from coworker import runscope
+    from coworker.sanitize import sanitize_payload
+
+    led = RunEventLedger(tmp_path / "events.db")
+
+    def record(event):
+        # The manager's _record_process_event: ledger inside a run's scope.
+        scope = runscope.current()
+        assert scope is not None, "process event observed outside any run"
+        led.append(scope[0], event["event"], actor="tool", payload=sanitize_payload(
+            {k: v for k, v in event.items() if k != "event"}
+        ))
+
+    COMMAND = "python worker.py --token=supersecret"
+
+    class SpawnEngine(FakeEngine):
+        async def run(self, user_input, *, source=None, display=None):
+            record(
+                {
+                    "event": "process.spawned",
+                    "task_id": "bg-1",
+                    "pid": 4242,
+                    "command": COMMAND,
+                    "detach": False,
+                }
+            )
+            record(
+                {
+                    "event": "process.killed",
+                    "task_id": "bg-1",
+                    "pid": 4242,
+                    "command": COMMAND,
+                    "detach": False,
+                }
+            )
+            yield ("turn_start", {})
+            yield ("turn_done", {})
+
+    rt = TurnEngineAdapter(SpawnEngine(), ledger=led, session_id="s1")
+    await _drain(rt.run("start the worker"))
+
+    run_id = led.runs()[0]
+    types = [e["type"] for e in led.events(run_id)]
+    assert types == [
+        "run.started",
+        "process.spawned",
+        "process.killed",
+        "run.completed",
+    ]
+    assert led.verify(run_id)
+    spawned = led.events(run_id)[1]
+    assert spawned["actor"] == "tool"
+    assert spawned["payload"]["task_id"] == "bg-1"
+    # No scope leaks after the run.
+    assert runscope.current() is None
+
+
 async def _drain(agen):
     async for _ in agen:
         pass

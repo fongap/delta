@@ -21,7 +21,7 @@ class ConnectorToolDef:
     # "this automation may call this tool against this exact target without asking". Only
     # single-argument targets are declarable in v1 (no wildcards, no composite targets), and
     # only write tools should declare one — reads never gate, so a rule would be meaningless.
-    target_arg: Optional[str] = None
+    target_arg: str | None = None
 
 
 TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
@@ -1119,7 +1119,7 @@ TARGET_ARGS: dict[str, str] = {d.name: d.target_arg for d in TOOL_DEFS if d.targ
 TARGET_ARGS["send_message"] = "target"
 
 
-def target_arg_for(tool_name: str) -> Optional[str]:
+def target_arg_for(tool_name: str) -> str | None:
     """The argument that names this tool's standing-rule target, or None if the tool
     isn't eligible for standing rules."""
     return TARGET_ARGS.get(tool_name)

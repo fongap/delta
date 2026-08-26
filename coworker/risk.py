@@ -37,7 +37,7 @@ RiskOverrides = Callable[[str], Optional["RiskClass"]]
 
 
 def classify(
-    tool_name: str, metadata: Any = None, overrides: Optional[RiskOverrides] = None
+    tool_name: str, metadata: Any = None, overrides: RiskOverrides | None = None
 ) -> RiskClass:
     """Effective risk of a tool call. ``overrides`` (user-local) wins, then the by-name base
     table, then aisuite metadata (`requires_approval` → external), else read."""

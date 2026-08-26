@@ -9,12 +9,12 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
+import aisuite as ai
 import pytest
 
-import aisuite as ai
 from coworker.engine import TurnEngine
 from coworker.events import EventType
-from coworker.permissions import Decision, Mode, PermissionEngine
+from coworker.permissions import PermissionEngine
 from coworker.providers import AssistantTurn, ToolCall
 from coworker.roots import RootDir, normalize_roots, render_context
 from coworker.tools import ToolRegistry
@@ -209,7 +209,7 @@ def test_add_and_remove_roots_live_and_persisted(tmp_path):
     # add a read-only and a read-write folder; the live engine sees them immediately
     mgr.add_root(sid, str(ro), writable=False)
     mgr.add_root(sid, str(rw), writable=True)
-    assert {r.path for r in engine.roots} == {
+    assert {r.path for r in engine.list_roots()} == {
         Path(roots[0]["path"]).resolve(),
         ro.resolve(),
         rw.resolve(),
@@ -219,14 +219,18 @@ def test_add_and_remove_roots_live_and_persisted(tmp_path):
     assert by_path[str(rw.resolve())]["writable"] is True
 
     # the permission engine now allows writes into the rw folder but not the ro folder
-    assert mgr.get_engine(sid).permissions._under_writable_root(str(rw / "x.txt"))
-    assert not mgr.get_engine(sid).permissions._under_writable_root(str(ro / "x.txt"))
+    assert (
+        mgr.get_engine(sid).engine.permissions._under_writable_root(str(rw / "x.txt"))
+    )
+    assert not (
+        mgr.get_engine(sid).engine.permissions._under_writable_root(str(ro / "x.txt"))
+    )
 
     # cannot remove the primary scratch
     assert not mgr.remove_root(sid, roots[0]["path"])["ok"]
     # remove the read-only folder
     mgr.remove_root(sid, str(ro))
-    assert ro.resolve() not in {r.path for r in engine.roots}
+    assert ro.resolve() not in {r.path for r in engine.list_roots()}
 
     # persist (as a turn would) and reload in a fresh manager → the rw folder survives
     mgr.save(sid, engine)

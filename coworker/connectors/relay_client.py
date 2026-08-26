@@ -42,7 +42,7 @@ class RelayTransport(Protocol):
     WebSocket library; the frame contract is decoded JSON dicts."""
 
     async def open(self) -> None: ...
-    async def recv(self) -> Optional[dict]:
+    async def recv(self) -> dict | None:
         """Next frame, or None when the connection has closed."""
         ...
 
@@ -75,8 +75,8 @@ class RelayHub:
         relay_url: str,
         token_provider: TokenProvider,
         *,
-        transport_factory: Optional[TransportFactory] = None,
-        reconnect_delay: Optional[float] = None,
+        transport_factory: TransportFactory | None = None,
+        reconnect_delay: float | None = None,
     ) -> None:
         self.relay_url = relay_url
         self._token_provider = token_provider
@@ -85,8 +85,8 @@ class RelayHub:
             reconnect_delay if reconnect_delay is not None else self._RECONNECT_DELAY
         )
         self._handlers: dict[str, Callable[[dict], Awaitable[None]]] = {}
-        self._transport: Optional[RelayTransport] = None
-        self._task: Optional[asyncio.Task] = None
+        self._transport: RelayTransport | None = None
+        self._task: asyncio.Task | None = None
         self._closing = False
         self._connections = 0  # total successful opens; reconnects == connections-1
         self._connected = False  # the desktop↔relay socket is open RIGHT NOW
@@ -222,11 +222,11 @@ class SlackRelayAdapter(BasePlatformAdapter):
         relay_url: str,
         token_provider: TokenProvider,
         *,
-        teams: Optional[dict[str, dict[str, Any]]] = None,
-        transport_factory: Optional[TransportFactory] = None,
-        history_fetcher: Optional[HistoryFetcher] = None,
-        reconnect_delay: Optional[float] = None,
-        hub: Optional[RelayHub] = None,
+        teams: dict[str, dict[str, Any]] | None = None,
+        transport_factory: TransportFactory | None = None,
+        history_fetcher: HistoryFetcher | None = None,
+        reconnect_delay: float | None = None,
+        hub: RelayHub | None = None,
     ) -> None:
         super().__init__()
         self.relay_url = relay_url
@@ -242,7 +242,7 @@ class SlackRelayAdapter(BasePlatformAdapter):
         # new install updates it.
         self._teams: dict[str, dict[str, Any]] = dict(teams or {})
         self._history_fetcher = history_fetcher
-        self.last_event_at: Optional[float] = None  # last Slack event delivered
+        self.last_event_at: float | None = None  # last Slack event delivered
         # Name resolution caches, keyed PER WORKSPACE — a U…/C… id only means
         # something inside its team, and resolution uses that team's bot token.
         self._names: dict[str, dict[str, str]] = {}  # team_id -> {uid: name}
@@ -289,14 +289,14 @@ class SlackRelayAdapter(BasePlatformAdapter):
 
     # -- team registry -------------------------------------------------------
     def set_team(
-        self, team_id: str, bot_token: str, bot_user_id: Optional[str] = None
+        self, team_id: str, bot_token: str, bot_user_id: str | None = None
     ) -> None:
         self._teams[team_id] = {"bot_token": bot_token, "bot_user_id": bot_user_id}
 
-    def _bot_user_id(self, team_id: str) -> Optional[str]:
+    def _bot_user_id(self, team_id: str) -> str | None:
         return (self._teams.get(team_id) or {}).get("bot_user_id")
 
-    def _bot_token(self, team_id: str) -> Optional[str]:
+    def _bot_token(self, team_id: str) -> str | None:
         return (self._teams.get(team_id) or {}).get("bot_token")
 
     # -- frame dispatch ------------------------------------------------------
@@ -382,7 +382,7 @@ class SlackRelayAdapter(BasePlatformAdapter):
         for raw in messages:
             await self._dispatch_slack_event(team_id, {**raw, "channel": channel})
 
-    def _note_token_health(self, team_id: str, error: Optional[str]) -> None:
+    def _note_token_health(self, team_id: str, error: str | None) -> None:
         """Record what a Web API call said about the team's bot token: success
         proves it live; a token-class error marks it dead; anything else —
         network trouble, channel_not_found — says nothing, so changes nothing."""
@@ -397,7 +397,7 @@ class SlackRelayAdapter(BasePlatformAdapter):
     # -- name resolution (per workspace, via that team's bot token) ----------
     async def _slack_get(
         self, team_id: str, method: str, params: dict
-    ) -> Optional[dict]:
+    ) -> dict | None:
         """Call a Slack Web API read method with the team's bot token. Best-effort
         (None on any failure). `SLACK_API_URL` redirects to the fake in tests."""
         import httpx
@@ -419,7 +419,7 @@ class SlackRelayAdapter(BasePlatformAdapter):
         self._note_token_health(team_id, None if data.get("ok") else data.get("error"))
         return data if data.get("ok") else None
 
-    async def _display_name(self, team_id: str, uid: Optional[str]) -> Optional[str]:
+    async def _display_name(self, team_id: str, uid: str | None) -> str | None:
         if not uid:
             return None
         cache = self._names.setdefault(team_id, {})
@@ -438,7 +438,7 @@ class SlackRelayAdapter(BasePlatformAdapter):
             cache[uid] = name
         return name
 
-    async def _channel_name(self, team_id: str, cid: Optional[str]) -> Optional[str]:
+    async def _channel_name(self, team_id: str, cid: str | None) -> str | None:
         if not cid:
             return None
         cache = self._channels.setdefault(team_id, {})
@@ -462,7 +462,7 @@ class SlackRelayAdapter(BasePlatformAdapter):
 
     # -- outbound ------------------------------------------------------------
     async def send(
-        self, chat_id: str, text: str, *, thread_id: Optional[str] = None
+        self, chat_id: str, text: str, *, thread_id: str | None = None
     ) -> SendResult:
         """Reply directly via the Slack Web API with the per-team bot token."""
         from .slack_addr import split
@@ -476,7 +476,7 @@ class SlackRelayAdapter(BasePlatformAdapter):
         return result
 
     async def send_interactive(
-        self, chat_id: str, text: str, buttons, *, thread_id: Optional[str] = None
+        self, chat_id: str, text: str, buttons, *, thread_id: str | None = None
     ) -> SendResult:
         from .slack_addr import split
 
@@ -511,7 +511,7 @@ class _WebSocketsTransport:
             self._url, additional_headers={"Authorization": f"Bearer {token}"}
         )
 
-    async def recv(self) -> Optional[dict]:
+    async def recv(self) -> dict | None:
         import websockets
 
         if self._ws is None:

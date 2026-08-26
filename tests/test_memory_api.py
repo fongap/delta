@@ -125,7 +125,7 @@ def test_disabled_memory_refuses_writes_and_says_so(tmp_path):
     client, manager = _fixture(tmp_path)
     client.put("/v1/memory/settings", json={"enabled": False})
 
-    engine = manager.get_engine("mem-off-session")
+    engine = manager.get_engine("mem-off-session").engine
     assert engine is not None
     assert engine.registry.execute("remember", {"content": "x"})["saved"] is False
     assert engine.registry.execute("memory_forget", {"memory_id": 1})["deleted"] is False
@@ -147,7 +147,7 @@ def test_existing_memories_stay_known_while_off(tmp_path):
 
     # turning saving back on restores the write tools for NEW sessions
     client.put("/v1/memory/settings", json={"enabled": True})
-    engine2 = manager.get_engine("back-on-session")
+    engine2 = manager.get_engine("back-on-session").engine
     assert "remember" in engine2.registry.names()
     assert "kept fact" in engine2.messages[0]["content"]
 
@@ -156,7 +156,7 @@ def test_toggle_off_applies_to_a_running_session(tmp_path):
     """End to end for the live switch: a session built while saving was ON must stop
     saving the moment the user flips it off — no restart, no new conversation."""
     client, manager = _fixture(tmp_path)
-    engine = manager.get_engine("live-switch-session")
+    engine = manager.get_engine("live-switch-session").engine
 
     first = engine.registry.execute(
         "remember", {"content": "saved while on", "scope": "global"}
@@ -188,7 +188,7 @@ def test_agent_saves_reach_the_screen(tmp_path):
     """Journey: the agent's `remember` (with summary) lands in the same store the
     screen lists — one source of truth for chat and Settings."""
     client, manager = _fixture(tmp_path)
-    engine = manager.get_engine("save-session")
+    engine = manager.get_engine("save-session").engine
     engine.registry.execute(
         "remember",
         {"content": "user is not technical — avoid jargon", "summary": "avoid jargon", "scope": "global"},

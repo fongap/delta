@@ -7,25 +7,19 @@ circular import. Behavior unchanged.
 
 from __future__ import annotations
 
-from typing import Any, Optional
-from pathlib import Path
-from ..memory import MemorySettingsStore, MemoryStore, Scope, SQLiteMemoryStore
-from ..inbox import InboxStore, args_preview
 import logging
 import re
 import subprocess
 import time
+from pathlib import Path
+from typing import Any, Optional
+
+from ..inbox import args_preview
+from ..memory import Scope
 
 _SCOPES = {s.value for s in Scope}
 
 logger = logging.getLogger("coworker.manager")
-
-
-def _grants_of(engine) -> dict[str, Any]:
-    """The engine's session-scoped "Always allow" approvals, in persistable shape."""
-    tools = sorted(getattr(engine.permissions, "session_allow_tools", None) or ())
-    commands = sorted(getattr(engine.permissions, "session_allow_commands", None) or ())
-    return {"tools": tools, "commands": commands} if (tools or commands) else {}
 
 
 def _approval_body(request) -> str:
@@ -58,7 +52,7 @@ def _epoch() -> float:
 _SLACK_TS_RE = re.compile(r"^\d+\.\d+$")
 
 
-def _inbound_epoch(message_id: Optional[str]) -> float:
+def _inbound_epoch(message_id: str | None) -> float:
     """Best-effort epoch-seconds for a MessageSource: a Slack-style ts, else wall-clock now."""
     if message_id and _SLACK_TS_RE.match(str(message_id)):
         try:
@@ -68,7 +62,7 @@ def _inbound_epoch(message_id: Optional[str]) -> float:
     return time.time()
 
 
-def _last_assistant_text(messages: list[dict[str, Any]]) -> Optional[str]:
+def _last_assistant_text(messages: list[dict[str, Any]]) -> str | None:
     for msg in reversed(messages or []):
         if msg.get("role") == "assistant" and msg.get("content"):
             return msg["content"]
@@ -124,7 +118,7 @@ def _redact(raw: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def _git_branch(path: Path) -> Optional[str]:
+def _git_branch(path: Path) -> str | None:
     try:
         result = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],

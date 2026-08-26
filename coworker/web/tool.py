@@ -6,6 +6,11 @@ resolve `${VAR}` through the SecretStore. The tool is read-only; results are ext
 be treated as untrusted data, not instructions.
 """
 
+# pyright: reportFunctionMemberAccess=false
+# (tool-builder module: attaches aisuite's dynamic metadata attributes
+# (__aisuite_tool_metadata__ / __coworker_schema__) to plain functions —
+# the framework's plugin protocol, not a type error.)
+
 from __future__ import annotations
 
 import os
@@ -41,7 +46,7 @@ _SCHEMA = {
 
 
 def resolve_provider(
-    secrets: Optional[SecretStore] = None, *, default: str = "duckduckgo"
+    secrets: SecretStore | None = None, *, default: str = "duckduckgo"
 ) -> WebSearchProvider:
     secrets = secrets or SecretStore()
     profile = secrets.get("web_search:default") or {}
@@ -50,7 +55,7 @@ def resolve_provider(
     return build_provider(name, api_key)
 
 
-def _config_provider() -> Optional[str]:
+def _config_provider() -> str | None:
     try:
         from ..config import load_config
 
@@ -60,9 +65,9 @@ def _config_provider() -> Optional[str]:
 
 
 def make_web_search_tool(
-    secrets: Optional[SecretStore] = None,
+    secrets: SecretStore | None = None,
     *,
-    provider: Optional[WebSearchProvider] = None,
+    provider: WebSearchProvider | None = None,
 ) -> Callable[..., Any]:
     """Build the `web_search` tool. `provider` overrides resolution (used by tests)."""
 

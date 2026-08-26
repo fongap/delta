@@ -225,12 +225,12 @@ async def test_real_bolt_dispatches_both_envelope_shapes(fake_slack):
     action_fired = asyncio.Event()
 
     @app.event("message")
-    async def _on_event(event, say):  # noqa: ANN001
+    async def _on_event(event, say):
         seen["event"] = event
         event_fired.set()
 
     @app.action(re.compile(r"^ocw_"))
-    async def _on_action(ack, body):  # noqa: ANN001
+    async def _on_action(ack, body):
         await ack()
         seen["action"] = body
         action_fired.set()

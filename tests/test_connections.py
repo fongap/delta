@@ -242,5 +242,5 @@ def test_muted_connector_tools_absent(tmp_path):
     off_engine = mgr.get_engine("sOff")
 
     # the un-muted session still has github tools; the muted session's engine omits them
-    assert "github_search" in on_engine.registry.names()
-    assert "github_search" not in off_engine.registry.names()
+    assert "github_search" in on_engine.engine.registry.names()
+    assert "github_search" not in off_engine.engine.registry.names()

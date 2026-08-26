@@ -55,14 +55,14 @@ class TokenUsage:
 class AssistantTurn:
     """One assistant response: free text and/or a set of tool calls."""
 
-    text: Optional[str] = None
+    text: str | None = None
     tool_calls: list[ToolCall] = field(default_factory=list)
-    finish_reason: Optional[str] = None
+    finish_reason: str | None = None
     raw: Any = field(default=None, repr=False, compare=False)
     # The model's thinking text (DeepSeek reasoning_content, Gemini thought summaries, …).
     # Display-only: persisted on the assistant message as the `reasoning` sidecar and shown
     # in the GUI, but stripped before every provider call — never replayed as context.
-    reasoning: Optional[str] = None
+    reasoning: str | None = None
     # Provider-private sidecars to persist on the canonical assistant message
     # (underscore-prefixed keys, e.g. `_gemini` thought signatures). Contract: the
     # owning provider consumes its own key when converting history; every other
@@ -70,7 +70,7 @@ class AssistantTurn:
     extras: dict[str, Any] = field(default_factory=dict)
     # Token counts for this round-trip, normalized across providers. None when the
     # backend didn't report usage (some compat servers) — never guessed.
-    usage: Optional[TokenUsage] = None
+    usage: TokenUsage | None = None
 
     @property
     def has_tool_calls(self) -> bool:
@@ -94,9 +94,9 @@ class ModelCapabilities:
 class StreamChunk:
     """One streamed piece: a text and/or reasoning delta, and/or (final) the full turn."""
 
-    text_delta: Optional[str] = None
-    reasoning_delta: Optional[str] = None
-    turn: Optional[AssistantTurn] = None
+    text_delta: str | None = None
+    reasoning_delta: str | None = None
+    turn: AssistantTurn | None = None
 
 
 class ProviderClient(ABC):
@@ -112,7 +112,7 @@ class ProviderClient(ABC):
         *,
         model: str,
         messages: list[dict[str, Any]],
-        tools: Optional[list[dict[str, Any]]] = None,
+        tools: list[dict[str, Any]] | None = None,
         **settings: Any,
     ) -> AssistantTurn:
         """Return one assistant turn for the given messages/tools."""
@@ -126,7 +126,7 @@ class ProviderClient(ABC):
         *,
         model: str,
         messages: list[dict[str, Any]],
-        tools: Optional[list[dict[str, Any]]] = None,
+        tools: list[dict[str, Any]] | None = None,
         **settings: Any,
     ):
         """Yield StreamChunks. Default: no token streaming — one final chunk with the

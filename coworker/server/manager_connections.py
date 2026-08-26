@@ -7,6 +7,14 @@ mixin inheritance so behavior is unchanged.
 from __future__ import annotations
 
 from typing import Any, Optional
+
+from ..connections import (
+    PersonaConnectionStore,
+    SessionConnectionStore,
+)
+from ..connections import (
+    effective as effective_connections,
+)
 from ..connectors import (
     Gateway,
     MessageSource,
@@ -20,11 +28,7 @@ from ..connectors import (
     slack_split,
     update_connector_tools,
 )
-from ..connections import (
-    PersonaConnectionStore,
-    SessionConnectionStore,
-    effective as effective_connections,
-)
+
 
 class ConnectionsMixin:
 
@@ -39,7 +43,7 @@ class ConnectionsMixin:
 
 
     # -- connection hierarchy (UI-REFRESH §4) -----------------------------------
-    def _persona_of(self, session_id: str, persona_id: Optional[str] = None) -> str:
+    def _persona_of(self, session_id: str, persona_id: str | None = None) -> str:
         if persona_id:
             return persona_id
         record = self.session_store.load(session_id)
@@ -47,7 +51,7 @@ class ConnectionsMixin:
 
 
     def effective_connectors(
-        self, session_id: str, persona_id: Optional[str] = None
+        self, session_id: str, persona_id: str | None = None
     ) -> set[str]:
         """The connectors effectively enabled for this session (§4.1): connected AND not muted by
         the session override / persona default. Drives the engine's connector-tool gating; seeds the
@@ -114,7 +118,7 @@ class ConnectionsMixin:
         ]
 
 
-    def persona_detail(self, persona_id: str) -> Optional[dict[str, Any]]:
+    def persona_detail(self, persona_id: str) -> dict[str, Any] | None:
         """Identity + capabilities + recommends(+connected) + default connections for one persona
         (UI-REFRESH §5). Returns None for an unknown id (the route maps that to an error).
         """
@@ -197,7 +201,7 @@ class ConnectionsMixin:
 
 
     def _connection_detail(
-        self, session_id: str, connector: str, info: Optional[dict[str, Any]]
+        self, session_id: str, connector: str, info: dict[str, Any] | None
     ) -> str:
         """A short human description of WHY a connector is live for a session: the chat ids it's
         subscribed to on that platform, plus "DMs" if this is the designated DM session. Channel
@@ -217,7 +221,7 @@ class ConnectionsMixin:
 
 
     def session_connections_view(
-        self, session_id: str, persona_id: Optional[str] = None
+        self, session_id: str, persona_id: str | None = None
     ) -> dict[str, Any]:
         """The per-session connections drawer payload (UI-REFRESH §6): every account-connected
         connector with its effective on/off state (muted ones stay VISIBLE as off — a §4.2 toggle

@@ -137,16 +137,31 @@ def write_private_text(path: str | Path, content: str) -> Path:
     return target
 
 
+def verify_user_restricted(path: str | Path) -> bool:
+    """Verify (without mutating) that `path` is restricted to the current user.
+
+    The read-only counterpart of `_restrict_to_user`: lets stores that share the
+    best-effort private-write path (workspace trust, future JSON stores) detect a
+    degraded ACL and surface it instead of silently assuming protection."""
+    p = Path(path)
+    if _IS_WINDOWS:
+        return _windows_acl_ok(p)
+    try:
+        return stat.S_IMODE(os.stat(p).st_mode) == 0o600
+    except OSError:
+        return False
+
+
 class SecretStore:
     """File-backed secret store. Reads resolve `${VAR}` refs; status never leaks values."""
 
-    def __init__(self, path: Optional[str | Path] = None) -> None:
+    def __init__(self, path: str | Path | None = None) -> None:
         self.path = Path(path).expanduser() if path else state_dir() / "secrets.json"
         self._dotenv_path = self.path.parent / ".env"
         self._lock = threading.Lock()
 
     # -- reads ------------------------------------------------------------------
-    def get(self, profile: str) -> Optional[dict[str, Any]]:
+    def get(self, profile: str) -> dict[str, Any] | None:
         """Return a profile with `${VAR}` refs resolved, or None if absent."""
         data = self._read().get(profile)
         if data is None:

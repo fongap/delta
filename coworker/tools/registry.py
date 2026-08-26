@@ -31,7 +31,7 @@ class ToolRegistry:
         func: Callable[..., Any],
         *,
         metadata: Any = None,
-        schema: Optional[dict[str, Any]] = None,
+        schema: dict[str, Any] | None = None,
     ) -> ToolSpec:
         name = getattr(func, "__name__", None)
         if not name:
@@ -53,13 +53,13 @@ class ToolRegistry:
     def names(self) -> list[str]:
         return list(self._tools)
 
-    def get(self, name: str) -> Optional[ToolSpec]:
+    def get(self, name: str) -> ToolSpec | None:
         return self._tools.get(name)
 
     def schemas(self) -> list[dict[str, Any]]:
         return [spec.schema for spec in self._tools.values()]
 
-    def execute(self, name: str, arguments: Optional[dict[str, Any]] = None) -> Any:
+    def execute(self, name: str, arguments: dict[str, Any] | None = None) -> Any:
         spec = self._tools.get(name)
         if spec is None:
             raise KeyError(f"Tool not registered: {name}")

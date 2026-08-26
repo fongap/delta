@@ -311,7 +311,7 @@ def test_router_routes_vertex_ids():
 # -- verify ---------------------------------------------------------------------------------
 
 
-def _patch_verify(monkeypatch, creds: Any, status_code: Optional[int]):
+def _patch_verify(monkeypatch, creds: Any, status_code: int | None):
     import httpx
 
     import coworker.providers.vertex_provider as vp

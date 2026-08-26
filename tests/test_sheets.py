@@ -16,7 +16,6 @@ from fastapi.testclient import TestClient
 
 from coworker.server import SessionManager, create_app
 
-
 # -- fixture builders -----------------------------------------------------------
 
 
@@ -104,6 +103,80 @@ def _client(tmp_path) -> TestClient:
     return TestClient(create_app(manager))
 
 
+def _make_xlsx_with_styles(path, *, numfmts, cell_xfs, rows):
+    """Build a minimal .xlsx with a real styles.xml (date/time formatting).
+
+    numfmts: [(numFmtId, formatCode)] custom formats.
+    cell_xfs: list of numFmtIds — each becomes an <xf> in cellXfs (in order).
+    rows: list of rows; each cell is (kind, value, xf_index) or (kind, value).
+    """
+    ns = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    rns = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    members: dict[str, str] = {}
+    sheet_tags, rel_tags = [], []
+    for idx, (name, srows) in enumerate(rows, 1):
+        member = f"xl/worksheets/sheet{idx}.xml"
+        rel_tags.append(
+            f'<Relationship Id="rId{idx}" '
+            'Type="http://schemas.openxmlformats.org/officeDocument/2006/'
+            f'relationships/worksheet" Target="worksheets/sheet{idx}.xml"/>'
+        )
+        row_tags = []
+        for ri, row in enumerate(srows, 1):
+            cell_tags = []
+            for ci, spec in enumerate(row):
+                if spec is None:
+                    continue
+                kind, val = spec[0], spec[1]
+                xf = spec[2] if len(spec) > 2 else 0
+                ref = f"{_col_letter(ci)}{ri}"
+                style = f' s="{xf}"' if xf else ""
+                if kind == "s":
+                    cell_tags.append(
+                        f'<c r="{ref}" t="s"{style}><v>{val}</v></c>'
+                    )
+                elif kind == "inline":
+                    cell_tags.append(
+                        f'<c r="{ref}" t="inlineStr"{style}><is><t>{val}</t></is></c>'
+                    )
+                elif kind == "b":
+                    cell_tags.append(
+                        f'<c r="{ref}" t="b"{style}><v>{1 if val else 0}</v></c>'
+                    )
+                else:  # "n"
+                    cell_tags.append(f'<c r="{ref}"{style}><v>{val}</v></c>')
+            row_tags.append(f'<row r="{ri}">{"".join(cell_tags)}</row>')
+        members[member] = (
+            '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+            f'<worksheet xmlns="{ns}"><sheetData>{"".join(row_tags)}</sheetData></worksheet>'
+        )
+        sheet_tags.append(f'<sheet name="{name}" sheetId="{idx}" r:id="rId{idx}"/>')
+
+    members["xl/workbook.xml"] = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<workbook xmlns="{ns}" xmlns:r="{rns}"><sheets>{"".join(sheet_tags)}</sheets></workbook>'
+    )
+    members["xl/_rels/workbook.xml.rels"] = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">'
+        f'{"".join(rel_tags)}</Relationships>'
+    )
+    fmt_tags = "".join(
+        f'<numFmt numFmtId="{fid}" formatCode="{code}"/>' for fid, code in numfmts
+    )
+    xf_tags = "".join(f'<xf numFmtId="{nid}"/>' for nid in cell_xfs)
+    members["xl/styles.xml"] = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+        f'<styleSheet xmlns="{ns}">'
+        f'<numFmts count="{len(numfmts)}">{fmt_tags}</numFmts>'
+        f'<cellXfs count="{len(cell_xfs)}">{xf_tags}</cellXfs>'
+        "</styleSheet>"
+    )
+    with zipfile.ZipFile(path, "w") as zf:
+        for name, data in members.items():
+            zf.writestr(name, data)
+
+
 def _read(client: TestClient, path: str) -> dict:
     return client.get(
         "/v1/sessions/unknown/artifacts/read", params={"path": path}
@@ -143,6 +216,61 @@ def test_sheet_preview_multi_sheet_values(tmp_path):
         ["", "TRUE"],
     ]
     assert notes["rows"] == [["hello", 2.5]]
+
+
+def test_sheet_preview_renders_dates_not_serial_numbers(tmp_path):
+    """A numeric cell whose style is a date format shows a readable date, not the
+    raw Excel serial (styles.xml is parsed for numFmt codes)."""
+    _make_xlsx_with_styles(
+        tmp_path / "dated.xlsx",
+        numfmts=[(164, "yyyy-mm-dd")],
+        cell_xfs=[0, 164],  # 0 = General, 1 (index 1) = custom date
+        rows=[
+            ("Sheet1", [
+                [("inline", "Date"), ("inline", "Amount")],
+                [("n", 45123, 1), ("n", 99.5, 0)],
+            ]),
+        ],
+    )
+    body = _read(_client(tmp_path), "dated.xlsx")
+    assert body["ok"] is True
+    rows = body["sheets"][0]["rows"]
+    assert rows[0] == ["Date", "Amount"]
+    assert rows[1][0] == "2023-07-16"  # 45123 → 2023-07-16 (epoch 1899-12-30 base)
+    assert rows[1][1] == 99.5  # plain numeric (General style) unchanged
+
+
+def test_sheet_preview_renders_datetime_and_time_formats(tmp_path):
+    _make_xlsx_with_styles(
+        tmp_path / "times.xlsx",
+        numfmts=[(165, "h:mm:ss"), (166, "yyyy-mm-dd h:mm:ss")],
+        cell_xfs=[0, 165, 166],
+        rows=[
+            ("Sheet1", [
+                [("n", 0.5, 1), ("n", 45123.6770833333, 2)],
+            ]),
+        ],
+    )
+    body = _read(_client(tmp_path), "times.xlsx")
+    row = body["sheets"][0]["rows"][0]
+    # Time-only (no date tokens): '0.5' → 12:00:00.
+    assert row[0] == "12:00:00"
+    # Datetime: serial + fractional day → both date and time.
+    assert row[1].startswith("2023-07-16 16:14:59")
+
+
+def test_sheet_preview_does_not_render_plain_numbers_as_dates(tmp_path):
+    _make_xlsx_with_styles(
+        tmp_path / "nums.xlsx",
+        numfmts=[(167, "General")],
+        cell_xfs=[0, 167],
+        rows=[
+            ("Sheet1", [[("n", 0), ("n", 45000, 1)]]),
+        ],
+    )
+    body = _read(_client(tmp_path), "nums.xlsx")
+    # 'General' has no date tokens → the integer survives as an integer.
+    assert body["sheets"][0]["rows"][0] == [0, 45000]
 
 
 def test_sheet_preview_row_cap_reports_totals(tmp_path):

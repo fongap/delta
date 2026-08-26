@@ -4,6 +4,11 @@ ripgrep respects `.gitignore`, so it skips `node_modules`/`target`/`dist` automa
 fallback skips a hardcoded set of heavy dirs. Read-only, workspace-scoped. Returns file:line:text.
 """
 
+# pyright: reportFunctionMemberAccess=false
+# (tool-builder module: attaches aisuite's dynamic metadata attributes
+# (__aisuite_tool_metadata__ / __coworker_schema__) to plain functions —
+# the framework's plugin protocol, not a type error.)
+
 from __future__ import annotations
 
 import fnmatch
@@ -85,7 +90,7 @@ def search_tools(workspace: str) -> list:
     def grep(
         pattern: str,
         path: str = ".",
-        glob: Optional[str] = None,
+        glob: str | None = None,
         max_results: int = 100,
     ) -> dict[str, Any]:
         n = max_results if isinstance(max_results, int) and max_results > 0 else 100
@@ -174,7 +179,7 @@ def _parse_rg(stdout: str, root: Path, n: int) -> dict[str, Any]:
 
 
 def _py_grep(
-    root: Path, base: Path, pattern: str, glob: Optional[str], n: int
+    root: Path, base: Path, pattern: str, glob: str | None, n: int
 ) -> dict[str, Any]:
     try:
         rx = re.compile(pattern)

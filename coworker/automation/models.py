@@ -24,11 +24,11 @@ def _now() -> float:
 # on the task record so revocation is per-automation and deletion takes them along.
 
 
-def rule_entry(tool: str, target: Optional[str] = None) -> str:
+def rule_entry(tool: str, target: str | None = None) -> str:
     return f"{tool} {target}" if target else tool
 
 
-def rule_parts(entry: str) -> tuple[str, Optional[str]]:
+def rule_parts(entry: str) -> tuple[str, str | None]:
     tool, _, target = entry.strip().partition(" ")
     return tool, (target.strip() or None)
 
@@ -67,8 +67,8 @@ def _human_time(hour: int, minute: int) -> str:
 @dataclass
 class Schedule:
     kind: str  # "cron" | "once"
-    cron: Optional[str] = None
-    fire_at: Optional[str] = None  # ISO datetime for one-time
+    cron: str | None = None
+    fire_at: str | None = None  # ISO datetime for one-time
     timezone: str = (
         "local"  # 'local' = the machine's clock (a local-first tool default)
     )
@@ -102,7 +102,7 @@ class Schedule:
         }
 
     @classmethod
-    def from_dict(cls, d: dict) -> "Schedule":
+    def from_dict(cls, d: dict) -> Schedule:
         return cls(
             kind=d.get("kind", "cron"),
             cron=d.get("cron"),
@@ -122,19 +122,19 @@ class ScheduledTask:
     agent: str = "cowork"
     id: str = field(default_factory=lambda: "task-" + uuid.uuid4().hex[:10])
     task_session_id: str = ""  # the task's OWN thread (set to f"__task__{id}")
-    model: Optional[str] = None
+    model: str | None = None
     notify_on_completion: bool = True
-    notify_target: Optional[str] = None  # extra messaging target ("telegram:123")
+    notify_target: str | None = None  # extra messaging target ("telegram:123")
     always_allowed_tools: list[str] = field(default_factory=list)
     always_allowed_commands: list[str] = field(default_factory=list)
     enabled: bool = True
     created_at: float = field(default_factory=_now)
     updated_at: float = field(default_factory=_now)
-    next_run: Optional[float] = None  # epoch seconds; computed by the store
-    last_run: Optional[float] = None
-    last_status: Optional[str] = None
+    next_run: float | None = None  # epoch seconds; computed by the store
+    last_run: float | None = None
+    last_status: str | None = None
     run_count: int = 0
-    max_runs: Optional[int] = None
+    max_runs: int | None = None
     # Sidebar unread tracking (UX-023): runs started after this mark count as
     # "unseen"; opening the automation's detail advances it. 0.0 = never opened.
     seen_runs_at: float = 0.0
@@ -149,7 +149,7 @@ class ScheduledTask:
         return d
 
     @classmethod
-    def from_dict(cls, d: dict) -> "ScheduledTask":
+    def from_dict(cls, d: dict) -> ScheduledTask:
         d = dict(d)
         d["schedule"] = Schedule.from_dict(d.get("schedule") or {})
         return cls(**d)
@@ -219,11 +219,11 @@ class TaskRun:
     task_id: str
     run_id: str = field(default_factory=lambda: "run-" + uuid.uuid4().hex[:10])
     started_at: float = field(default_factory=_now)
-    finished_at: Optional[float] = None
+    finished_at: float | None = None
     status: str = "running"  # running | ok | error | skipped
-    result_text: Optional[str] = None
+    result_text: str | None = None
     artifacts: list[str] = field(default_factory=list)
-    error: Optional[str] = None
+    error: str | None = None
     trigger: str = "schedule"  # schedule | manual | catchup
     session_id: str = ""  # the run's own conversation thread — persisted + continuable
 
@@ -235,5 +235,5 @@ class TaskRun:
         return self.__dict__.copy()
 
     @classmethod
-    def from_dict(cls, d: dict) -> "TaskRun":
+    def from_dict(cls, d: dict) -> TaskRun:
         return cls(**d)

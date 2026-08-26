@@ -32,11 +32,31 @@ progress / typing                        tool.proposed / approval.requested / re
 download progress                        tool.completed / failed
                                          source.used / artifact.created
                                          checkpoint.created / compensation.recorded
+                                         process.spawned / process.killed
                                          run.completed / run.failed
 ```
 
 Only durable events hit disk. LLM history remains derivable from persisted messages;
 the ledger records *what happened*, not every token.
+
+### 2b. Process events reach the ledger without signature threading
+
+Background-process lifecycle (`run_in_background` spawns, `shell_task_kill`, managed
+teardown kills) happens deep below the Runtime Adapter, in the executor. Instead of
+threading `run_id` through `build_engine → shell_tools → executor` signatures, the
+adapter publishes the active `(run_id, session_id)` into an ambient context variable
+(`coworker/runscope.py`) for the duration of each driven turn; `asyncio.to_thread`
+copies contexts, so the executor observes the scope with no API changes. The executor
+stays ledger-agnostic: it reports structured facts to an injected sink
+(`process_event_sink`), and the manager decides persistence:
+
+- inside a run → durable `process.spawned` / `process.killed` ledger rows (actor
+  "tool"), payloads scrubbed by the shared sanitizer;
+- outside any run (session/app teardown kills) → session-scoped audit rows instead,
+  since the hash-chained narrative is per-run and must not grow synthetic pseudo-runs.
+
+Detached tasks surviving a restart are recorded as spawned-with-`detach:true`; a full
+OS-level process table for cross-restart liveness tracking remains future work.
 
 ### 2. Ledger shape
 

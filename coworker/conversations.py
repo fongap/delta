@@ -20,7 +20,7 @@ from typing import Optional
 from .sessions import SessionRecord
 
 
-def _load_roots(raw: Optional[str]) -> list[dict]:
+def _load_roots(raw: str | None) -> list[dict]:
     if not raw:
         return []
     try:
@@ -30,7 +30,7 @@ def _load_roots(raw: Optional[str]) -> list[dict]:
     return value if isinstance(value, list) else []
 
 
-def _load_grants(raw: Optional[str]) -> dict:
+def _load_grants(raw: str | None) -> dict:
     if not raw:
         return {}
     try:
@@ -40,7 +40,7 @@ def _load_grants(raw: Optional[str]) -> dict:
     return value if isinstance(value, dict) else {}
 
 
-def _display_title(row: sqlite3.Row) -> Optional[str]:
+def _display_title(row: sqlite3.Row) -> str | None:
     """Title precedence for every read path: a manual rename (renamed=1) always wins,
     then the generated auto_title, then the first-line snapshot `save()` wrote."""
     if row["renamed"]:
@@ -113,7 +113,7 @@ class ConversationStore:
     def _file(self, sid: str) -> Path:
         return self.conv_dir / f"{sid}.jsonl"
 
-    def _read_jsonl(self, sid: str) -> Optional[list[dict]]:
+    def _read_jsonl(self, sid: str) -> list[dict] | None:
         path = self._file(sid)
         if not path.exists():
             return None
@@ -266,7 +266,7 @@ class ConversationStore:
             self._conn.commit()
         self.touch_workspace(record.workspace)
 
-    def load(self, session_id: str) -> Optional[SessionRecord]:
+    def load(self, session_id: str) -> SessionRecord | None:
         with self._lock:
             row = self._conn.execute(
                 "SELECT * FROM sessions WHERE session_id = ?", (session_id,)
@@ -317,7 +317,7 @@ class ConversationStore:
             )
             self._conn.commit()
 
-    def list(self, *, workspace: Optional[str] = None) -> list[SessionRecord]:
+    def list(self, *, workspace: str | None = None) -> list[SessionRecord]:
         with self._lock:
             if workspace is None:
                 rows = self._conn.execute(
@@ -435,7 +435,7 @@ class ConversationStore:
             self._conn.commit()
         return cur.rowcount > 0
 
-    def title_state(self, session_id: str) -> Optional[dict]:
+    def title_state(self, session_id: str) -> dict | None:
         """The auto-title guard inputs: whether the user renamed and whether a generated
         title already exists. None when the session has no row yet."""
         with self._lock:
@@ -451,8 +451,8 @@ class ConversationStore:
         self,
         session_id: str,
         *,
-        pinned: Optional[bool] = None,
-        archived: Optional[bool] = None,
+        pinned: bool | None = None,
+        archived: bool | None = None,
     ) -> bool:
         """Update pin/archive flags without touching updated_at (so pinning doesn't reorder)."""
         sets, params = [], []

@@ -30,7 +30,7 @@ def encode(item_id: str, resolution: str) -> str:
     return json.dumps({"id": item_id, "r": resolution})
 
 
-def decode(value: str) -> Optional[tuple[str, str]]:
+def decode(value: str) -> tuple[str, str] | None:
     """`(item_id, resolution)` from a button value, or None if it isn't ours."""
     try:
         d = json.loads(value)

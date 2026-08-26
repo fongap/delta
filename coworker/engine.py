@@ -41,7 +41,7 @@ class PermissionRequest:
     arguments: dict[str, Any]
     metadata: Any
     reason: str
-    tool_call_id: Optional[str] = None  # for durable resume (idempotent inbox item)
+    tool_call_id: str | None = None  # for durable resume (idempotent inbox item)
 
 
 Approver = Callable[[PermissionRequest], Awaitable[ApprovalOutcome]]
@@ -59,25 +59,19 @@ class TurnEngine:
         registry: ToolRegistry,
         permissions: PermissionEngine,
         model: str,
-        instructions: Optional[str] = None,
-        approver: Optional[Approver] = None,
+        instructions: str | None = None,
+        approver: Approver | None = None,
         max_iterations: int = 12,
-        model_settings: Optional[dict[str, Any]] = None,
-        messages: Optional[list[dict[str, Any]]] = None,
-        audit_sink: Optional[Callable[[dict[str, Any]], None]] = None,
-        context_provider: Optional[Callable[[], str]] = None,
-        directory_requester: Optional[
-            Callable[[dict[str, Any]], "Awaitable[dict[str, Any]]"]
-        ] = None,
-        plan_approver: Optional[
-            Callable[[dict[str, Any]], "Awaitable[dict[str, Any]]"]
-        ] = None,
-        question_asker: Optional[
-            Callable[[dict[str, Any]], "Awaitable[dict[str, Any]]"]
-        ] = None,
+        model_settings: dict[str, Any] | None = None,
+        messages: list[dict[str, Any]] | None = None,
+        audit_sink: Callable[[dict[str, Any]], None] | None = None,
+        context_provider: Callable[[], str] | None = None,
+        directory_requester: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
+        plan_approver: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
+        question_asker: Callable[[dict[str, Any]], Awaitable[dict[str, Any]]] | None = None,
         # Called (thread-safe, best-effort) when the user stops the turn — e.g. the
         # executor's kill for a running shell command.
-        interrupt_hooks: Optional[list[Callable[[], None]]] = None,
+        interrupt_hooks: list[Callable[[], None]] | None = None,
     ) -> None:
         self.provider = provider
         self.registry = registry
@@ -109,10 +103,10 @@ class TurnEngine:
         # constructor footprint stays put. `compaction_settings` is a live getter (Settings
         # changes apply without a rebuild); `is_attended` gates the failure prompt (None →
         # treat as unattended: never park a background run on internal bookkeeping).
-        self.compaction_state: Optional[_compaction.CompactionState] = None
-        self.compaction_settings: Optional[Callable[[], dict[str, Any]]] = None
-        self.is_attended: Optional[Callable[[], bool]] = None
-        self._last_context_tokens: Optional[int] = None
+        self.compaction_state: _compaction.CompactionState | None = None
+        self.compaction_settings: Callable[[], dict[str, Any]] | None = None
+        self.is_attended: Callable[[], bool] | None = None
+        self._last_context_tokens: int | None = None
         self.audit_context: dict[str, Any] = {}
         if instructions and not (
             self.messages and self.messages[0].get("role") == "system"
@@ -120,7 +114,7 @@ class TurnEngine:
             self.messages.insert(0, {"role": "system", "content": instructions})
         self._cancel = asyncio.Event()
         # Each pending steering message: (text, optional MessageSource sidecar dict).
-        self._steering: list[tuple[str, Optional[dict[str, Any]]]] = []
+        self._steering: list[tuple[str, dict[str, Any] | None]] = []
         # tool_call.id → the standing rule that auto-allowed it ("tool → target"), so the
         # TOOL_FINISHED event can carry the note to the tool card (§25).
         self._standing_notes: dict[str, str] = {}
@@ -161,17 +155,17 @@ class TurnEngine:
             cancel_wait.cancel()
 
     def queue_steering(
-        self, text: str, source: Optional[dict[str, Any]] = None
+        self, text: str, source: dict[str, Any] | None = None
     ) -> None:
         self._steering.append((text, source))
 
     # -- main loop --------------------------------------------------------------
     async def run(
         self,
-        user_input: "str | list",
+        user_input: str | list,
         *,
-        source: Optional[dict[str, Any]] = None,
-        display: Optional[str] = None,
+        source: dict[str, Any] | None = None,
+        display: str | None = None,
     ) -> AsyncIterator[Event]:
         # `user_input` is a string, or OpenAI content-parts (text + image_url) for attachments.
         # `source` (a MessageSource dict) is a display-only sidecar for connector messages: it
@@ -201,7 +195,7 @@ class TurnEngine:
         async for event in self._loop():
             yield event
 
-    def switch_model(self, model: str) -> Optional[str]:
+    def switch_model(self, model: str) -> str | None:
         """Rebind the session's model mid-conversation (roadmap item 3). History is
         canonical OpenAI shape and every provider converts per call, so the switch is just
         the field write — plus a persisted notice marking WHERE it happened, with a
@@ -251,7 +245,7 @@ class TurnEngine:
             return message.get("kind") == "error"
         return False
 
-    def _append_notice(self, kind: str, text: Optional[str] = None, **extra: Any) -> None:
+    def _append_notice(self, kind: str, text: str | None = None, **extra: Any) -> None:
         """Persist a turn-ending marker (error/interrupted) as a display-only `notice`
         message: it survives reload like the transcript does, but `_outbound_messages`
         drops the role so no provider ever sees it. Extra fields (e.g. ``model`` for
@@ -342,7 +336,7 @@ class TurnEngine:
                 self._append_notice("compacted", notice)
                 yield Event(EventType.COMPACTED, {"text": notice})
 
-            turn: Optional[AssistantTurn] = None
+            turn: AssistantTurn | None = None
             streamed: list[str] = []
             streamed_reasoning: list[str] = []
 
@@ -468,7 +462,7 @@ class TurnEngine:
             cap_tokens=int(cfg["cap_tokens"]),
         )
 
-    async def _compact_now(self, *, force: bool = False) -> Optional[str]:
+    async def _compact_now(self, *, force: bool = False) -> str | None:
         """Run the compaction policy. Callers gate on `_compaction_due()` (or `force`,
         the overflow path). Returns the user-facing notice text when the outbound view
         changed, else None. Failure policy per spec: retry once (both modes); attended →
@@ -484,7 +478,7 @@ class TurnEngine:
         )
         model = str(cfg.get("model") or "") or self.model
 
-        def _build() -> Optional[_compaction.CompactionState]:
+        def _build() -> _compaction.CompactionState | None:
             return _compaction.build_state(
                 self.messages,
                 provider=self.provider,
@@ -493,7 +487,7 @@ class TurnEngine:
                 prior=self.compaction_state,
             )
 
-        state: Optional[_compaction.CompactionState] = None
+        state: _compaction.CompactionState | None = None
         failed = False
         for _attempt in range(2):  # first try + the unconditional single retry
             try:
@@ -554,10 +548,12 @@ class TurnEngine:
         provider = self.provider
 
         def produce():
+            chunks = None
             try:
-                for chunk in provider.stream(
+                chunks = provider.stream(
                     model=model, messages=messages, tools=tools, **settings
-                ):
+                )
+                for chunk in chunks:
                     # User pressed Stop: drop the stream between chunks (reading the
                     # asyncio.Event's flag from a thread is safe; we only read).
                     if self._cancel.is_set():
@@ -566,6 +562,17 @@ class TurnEngine:
             except Exception as exc:  # surfaced to the awaiting consumer
                 loop.call_soon_threadsafe(queue.put_nowait, ("error", exc))
             finally:
+                # Cancel must propagate INTO the provider: closing the generator
+                # raises GeneratorExit at its yield point, which tears down the
+                # in-flight HTTP request instead of leaving it streaming to a
+                # consumer that already left (the GC would only get to it later).
+                # chunks stays None when stream() itself raised — that failure was
+                # already surfaced as an error event above.
+                if chunks is not None:
+                    try:
+                        chunks.close()
+                    except Exception:
+                        pass
                 loop.call_soon_threadsafe(queue.put_nowait, ("done", None))
 
         loop.run_in_executor(None, produce)
@@ -685,7 +692,7 @@ class TurnEngine:
             metadata, "requires_approval", False
         )
 
-    async def _authorize(self, tool_call: ToolCall) -> "AsyncIterator[Event | bool]":
+    async def _authorize(self, tool_call: ToolCall) -> AsyncIterator[Event | bool]:
         """Permission flow for one call (TOOL_PROPOSED is emitted by the caller). Yields
         its events, then True/False (allowed) last. Denied/unknown calls get their
         tool-error message appended here."""
@@ -832,7 +839,7 @@ class TurnEngine:
         # the model could probe around). Lift it onto the message as a sidecar
         # (like `source`), stripped from every provider feed in
         # `_outbound_messages` but persisted for the GUI's tool card.
-        display: Optional[dict[str, Any]] = None
+        display: dict[str, Any] | None = None
         if isinstance(result, dict) and "_display" in result:
             display = result.get("_display") or None
             result = {k: v for k, v in result.items() if k != "_display"}
@@ -1187,7 +1194,7 @@ class TurnEngine:
         return out
 
 
-def _assistant_message(turn: AssistantTurn, model: Optional[str] = None) -> dict[str, Any]:
+def _assistant_message(turn: AssistantTurn, model: str | None = None) -> dict[str, Any]:
     message: dict[str, Any] = {
         "role": "assistant",
         "content": turn.text or "",

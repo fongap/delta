@@ -5,6 +5,11 @@ execution time and never enter prompts. OAuth-managed setup can later replace th
 access-token fields without changing the tool surface.
 """
 
+# pyright: reportFunctionMemberAccess=false
+# (tool-builder module: attaches aisuite's dynamic metadata attributes
+# (__aisuite_tool_metadata__ / __coworker_schema__) to plain functions —
+# the framework's plugin protocol, not a type error.)
+
 from __future__ import annotations
 
 import base64
@@ -26,7 +31,7 @@ from .tool_defs import approval_for_tool, connector_for_tool
 
 
 def _meta(
-    name: str, *, approval: bool = False, capabilities: Optional[list[str]] = None
+    name: str, *, approval: bool = False, capabilities: list[str] | None = None
 ):
     return ai.ToolMetadata(
         name=name,
@@ -59,7 +64,7 @@ def _attach(
     schema: dict[str, Any],
     *,
     approval: bool = True,
-    caps: Optional[list[str]] = None,
+    caps: list[str] | None = None,
 ):
     name = schema["function"]["name"]
     # §36: the tool registry's read/write kind overrides the call-site flag for
@@ -74,7 +79,7 @@ def _attach(
 
 def _profile(
     secrets: SecretStore, name: str, *keys: str
-) -> tuple[Optional[dict[str, Any]], Optional[dict[str, str]]]:
+) -> tuple[dict[str, Any], dict[str, str] | None]:
     profile = secrets.get(f"{name}:default") or {}
     if profile.get("managed"):
         # Managed-OAuth profiles renew through the cloud broker just before
@@ -86,13 +91,15 @@ def _profile(
         profile = secrets.get(f"{name}:default") or {}
     missing = [k for k in keys if not profile.get(k)]
     if missing:
-        return None, {"error": f"{name} is not connected; missing {', '.join(missing)}"}
+        # profile stays a (possibly empty) dict — callers branch on err, and an
+        # always-non-None profile lets the type checker narrow after the guard.
+        return {}, {"error": f"{name} is not connected; missing {', '.join(missing)}"}
     return profile, None
 
 
 def _account_profile(
     secrets: SecretStore, connector: str, account: str = "", *keys: str
-) -> tuple[str, Optional[dict[str, Any]], Optional[dict[str, str]]]:
+) -> tuple[str, dict[str, Any], dict[str, str] | None]:
     """(account_id, profile, err) for an account-patterned connector (generic
     accounts.py layer): requested — or default — account, managed tokens
     refreshed in place. The gmail/gcal/hubspot bespoke helpers predate this."""
@@ -105,7 +112,7 @@ def _account_profile(
             if account
             else f"{connector} is not connected"
         )
-        return "", None, {"error": hint}
+        return "", {}, {"error": hint}
     if profile.get("managed"):
         from ..cloud import ensure_fresh_connector_token
         from ..config import load_config
@@ -138,7 +145,7 @@ _GEN_ACCOUNT_PROP = {
 
 def _gmail_profile(
     secrets: SecretStore, account: str = ""
-) -> tuple[str, Optional[dict[str, Any]], Optional[dict[str, str]]]:
+) -> tuple[str, dict[str, Any], dict[str, str] | None]:
     """(email, profile, err) for the requested — or default — mailbox, with the
     managed token refreshed in place. Multi-account: `gmail:account:<email>`."""
     from . import gmail_accounts
@@ -150,7 +157,7 @@ def _gmail_profile(
             if account
             else "gmail is not connected"
         )
-        return "", None, {"error": hint}
+        return "", {}, {"error": hint}
     if profile.get("managed"):
         from ..cloud import ensure_fresh_connector_token
         from ..config import load_config
@@ -158,13 +165,13 @@ def _gmail_profile(
         ensure_fresh_connector_token(secrets, load_config(), "gmail", profile_key=key)
         profile = secrets.get(key) or profile
     if not profile.get("access_token"):
-        return "", None, {"error": f"gmail account {email} has no usable token"}
+        return "", {}, {"error": f"gmail account {email} has no usable token"}
     return email, profile, None
 
 
 def _gcal_profile(
     secrets: SecretStore, account: str = ""
-) -> tuple[str, Optional[dict[str, Any]], Optional[dict[str, str]]]:
+) -> tuple[str, dict[str, Any], dict[str, str] | None]:
     """(email, profile, err) for the requested — or default — Google account,
     with the managed token refreshed in place. Multi-account:
     `google_calendar:account:<email>`."""
@@ -177,7 +184,7 @@ def _gcal_profile(
             if account
             else "google calendar is not connected"
         )
-        return "", None, {"error": hint}
+        return "", {}, {"error": hint}
     if profile.get("managed"):
         from ..cloud import ensure_fresh_connector_token
         from ..config import load_config
@@ -207,7 +214,7 @@ def _now_ms() -> int:
 
 def _hubspot_profile(
     secrets: SecretStore, portal: str = ""
-) -> tuple[str, str, Optional[dict[str, str]]]:
+) -> tuple[str, str, dict[str, str] | None]:
     """(portal name, bearer token, err) for the requested — or default — portal,
     with a managed token refreshed in place. Multi-portal: `hubspot:portal:<id>`."""
     from . import hubspot_portals
@@ -254,7 +261,7 @@ def _hubspot_result(secrets: SecretStore, portal_name: str, result: dict) -> dic
 # --- "Never show agents" enforcement (desktop tool layer, silent to agents) ----
 
 
-def _gmail_filters(secrets: SecretStore) -> Optional[dict[str, list[str]]]:
+def _gmail_filters(secrets: SecretStore) -> dict[str, list[str]] | None:
     from . import gmail_accounts
 
     f = gmail_accounts.get_filters(secrets)
@@ -396,7 +403,7 @@ def _github_base() -> str:
 
 def _github_auth(
     secrets: SecretStore, install: str = "", *, force: bool = False
-) -> tuple[Optional[dict[str, str]], Optional[dict[str, str]]]:
+) -> tuple[dict[str, str], dict[str, str] | None]:
     """(headers, err). A manual PAT (`github:default.token`) wins, untouched;
     a managed relay profile mints a short-lived installation token instead —
     memory-cached, never stored (github-relay-spec §4). `install` picks the
@@ -414,17 +421,17 @@ def _github_auth(
         if not installation_id and install:
             installation_id, _prof = github_installs.resolve(secrets, "")
         if not installation_id:
-            return None, {"error": "github is not connected; no App installation"}
+            return {}, {"error": "github is not connected; no App installation"}
         token = github_installation_token(
             secrets, load_config(), installation_id, force=force
         )
         if not token:
-            return None, {
+            return {}, {
                 "error": "github installation token unavailable "
                 "(sign in to Delta Cloud and retry)"
             }
         return _github_headers(token), None
-    return None, {"error": "github is not connected; missing token"}
+    return {}, {"error": "github is not connected; missing token"}
 
 
 def _github_git_auth_args(secrets: SecretStore, owner: str) -> list[str]:
@@ -546,9 +553,9 @@ def _qbo_base(profile: dict[str, Any]) -> str:
 def make_integration_tools(
     secrets: SecretStore,
     *,
-    enabled_connectors: Optional[set[str]] = None,
-    enabled_tools: Optional[set[str]] = None,
-    roots: Optional[list[Any]] = None,
+    enabled_connectors: set[str] | None = None,
+    enabled_tools: set[str] | None = None,
+    roots: list[Any] | None = None,
 ) -> list[Callable[..., Any]]:
     tools: list[Callable[..., Any]] = make_browser_automation_tools()
     # Email needs the session roots: attachment downloads land in the primary scratch
@@ -4625,7 +4632,7 @@ def make_integration_tools(
 
     def _docusign_ctx(
         profile: dict[str, Any],
-    ) -> tuple[Optional[dict[str, Any]], Optional[dict[str, str]]]:
+    ) -> tuple[dict[str, Any], dict[str, str] | None]:
         """Return {token, base} — discovering and caching account_id + base_uri
         from the OAuth userinfo endpoint on first use."""
         token = str(profile.get("access_token", ""))
@@ -4638,7 +4645,7 @@ def make_integration_tools(
                 headers=_bearer_headers(token),
             )
             if not info.get("ok"):
-                return None, {
+                return {}, {
                     "error": "docusign account discovery failed",
                     "details": str(info.get("details") or info.get("error")),
                 }
@@ -4648,7 +4655,7 @@ def make_integration_tools(
                 accounts[0] if accounts else None,
             )
             if not chosen:
-                return None, {"error": "docusign token has no accounts"}
+                return {}, {"error": "docusign token has no accounts"}
             account_id = chosen.get("account_id")
             base_uri = chosen.get("base_uri")
             secrets.put(

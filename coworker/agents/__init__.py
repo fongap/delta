@@ -8,10 +8,10 @@ from .registry import get_agent, list_agents
 __all__ = [
     "Agent",
     "AgentContext",
-    "code_agent",
     "chat_agent",
+    "code_agent",
     "cowork_agent",
-    "myhelper_agent",
     "get_agent",
     "list_agents",
+    "myhelper_agent",
 ]

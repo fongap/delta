@@ -28,7 +28,7 @@ def _api_base() -> str:
     return os.environ.get("SLACK_API_URL", "https://slack.com/api/")
 
 
-def _fetch_display_name(token: str, user_id: str) -> Optional[str]:
+def _fetch_display_name(token: str, user_id: str) -> str | None:
     """users.info → the human's name (display name, else real name). None on any failure."""
     import httpx
 

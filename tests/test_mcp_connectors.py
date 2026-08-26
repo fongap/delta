@@ -10,12 +10,12 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
+from coworker.connectors.descriptors import list_descriptors
 from coworker.connectors.setup import (
     connector_list,
     disconnect_connector,
     update_connector_tools,
 )
-from coworker.connectors.descriptors import list_descriptors
 from coworker.connectors.tool_defs import mcp_pinned_tools, mcp_tool_defs, tool_dicts
 from coworker.mcp.config import put_global_server, read_global
 from coworker.secrets import SecretStore

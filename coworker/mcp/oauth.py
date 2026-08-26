@@ -63,7 +63,7 @@ class SecretStoreTokenStorage(TokenStorage):
     def _merge(self, patch: dict[str, Any]) -> None:
         self._secrets.put(_profile(self._name), {**self._data(), **patch})
 
-    async def get_tokens(self) -> Optional[OAuthToken]:
+    async def get_tokens(self) -> OAuthToken | None:
         raw = self._data().get("tokens")
         if not raw:
             return None
@@ -75,7 +75,7 @@ class SecretStoreTokenStorage(TokenStorage):
     async def set_tokens(self, tokens: OAuthToken) -> None:
         self._merge({"tokens": tokens.model_dump(mode="json", exclude_none=True)})
 
-    async def get_client_info(self) -> Optional[OAuthClientInformationFull]:
+    async def get_client_info(self) -> OAuthClientInformationFull | None:
         raw = self._data().get("client_info")
         if not raw:
             return None
@@ -114,20 +114,20 @@ def is_auth_required(exc: BaseException) -> bool:
 
 
 # -- single-slot interactive flow ------------------------------------------------
-_pending: Optional[asyncio.Future] = None
+_pending: asyncio.Future | None = None
 # The last authorize URL we sent the user to — surfaced over REST so the GUI can offer
 # a "reopen sign-in page" link if the browser popup was lost.
-last_authorize_url: Optional[str] = None
+last_authorize_url: str | None = None
 # The `state` the SDK put in the current authorize URL. The SDK itself re-checks the
 # returned state (mcp.client.auth.oauth2 compare_digest), so this is NOT the CSRF guard —
 # it's a loopback gate: without it any local caller could hit /mcp/oauth/callback with a
 # bogus code and consume the single pending future, aborting the user's real sign-in
 # (which then finds no pending flow). Matching state here rejects that stray callback and
 # leaves the flow waiting for the genuine one.
-_expected_state: Optional[str] = None
+_expected_state: str | None = None
 
 
-def _state_from_url(url: str) -> Optional[str]:
+def _state_from_url(url: str) -> str | None:
     """Pull the `state` query param out of an authorize URL (None if absent)."""
     from urllib.parse import parse_qs, urlsplit
 
@@ -135,7 +135,7 @@ def _state_from_url(url: str) -> Optional[str]:
     return values[0] if values else None
 
 
-def deliver_callback(code: str, state: Optional[str]) -> bool:
+def deliver_callback(code: str, state: str | None) -> bool:
     """Called by the loopback route. Resolves the waiting flow; False if none waits.
 
     A callback whose `state` doesn't match the pending flow's is ignored (returns False)
@@ -176,13 +176,13 @@ async def _refuse_browser(url: str) -> None:
     )
 
 
-async def _refuse_callback() -> tuple[str, Optional[str]]:
+async def _refuse_callback() -> tuple[str, str | None]:
     raise InteractiveAuthRequired(
         "sign-in required — reconnect this server from its page"
     )
 
 
-async def _wait_for_callback() -> tuple[str, Optional[str]]:
+async def _wait_for_callback() -> tuple[str, str | None]:
     global _pending, _expected_state
     if _pending is not None and not _pending.done():
         _pending.cancel()  # a stale flow lost its browser tab; the new one wins

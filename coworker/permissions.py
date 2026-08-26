@@ -76,8 +76,8 @@ def standing_rule_candidate(
     tool_name: str,
     arguments: dict[str, Any],
     metadata: Any = None,
-    overrides: Optional[RiskOverrides] = None,
-) -> Optional[str]:
+    overrides: RiskOverrides | None = None,
+) -> str | None:
     """The target value iff this call is eligible for a task-scoped standing rule
     (UX-DECISIONS §25): external-risk only (never exec/write-local — shell asks forever),
     the tool must declare a target argument, and the call must actually name a target.
@@ -106,11 +106,11 @@ class PermissionEngine:
     # rule minted mid-run ("Allow every time") applies to the run's next call too.
     task_rules: dict[str, set[str]] = field(default_factory=dict)
     # User-local risk override resolver (Phase 2). None → use the base classification.
-    risk_overrides: Optional[RiskOverrides] = None
+    risk_overrides: RiskOverrides | None = None
     # Shared, possibly-mutable list of roots (RootDir-like / dicts). When omitted, the single
     # `workspace_root` is the sole writable root (back-compat). Kept by reference and re-read on
     # every check, so runtime add/remove of folders takes effect without rebuilding the engine.
-    roots: Optional[list] = None
+    roots: list | None = None
 
     def __post_init__(self) -> None:
         self.workspace_root = Path(self.workspace_root).expanduser().resolve()

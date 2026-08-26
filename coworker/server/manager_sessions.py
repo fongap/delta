@@ -7,46 +7,101 @@ mixin inheritance so behavior is unchanged.
 
 from __future__ import annotations
 
+import asyncio
+import json
+import os
+import shutil
+import time
 from pathlib import Path
 from typing import Any, Optional
+
 from ..agent import build_engine
 from ..agents import get_agent
+from ..conversations import title_from
+from ..engine import Approver, TurnEngine
 from ..permissions import Mode
-from ..engine import ApprovalOutcome, Approver, TurnEngine
-from ..conversations import ConversationStore, title_from
+from ..runtime import RuntimePort, TurnEngineAdapter
 from ..sessions import SessionRecord
-import os
-import asyncio
-import time
-import shutil
+from .manager_support import logger
 
-from .manager_support import _grants_of, logger
 
 class SessionsMixin:
+
+    def _bind_runtime(self, engine: TurnEngine, session_id: str) -> RuntimePort:
+        """Wrap a freshly built TurnEngine into the application-layer RuntimePort.
+        The ledger binding makes every driven turn a durable run (docs/run-ledger-adr.md);
+        storing ONLY adapters means the business layer never holds a bare TurnEngine.
+        The executor's process-event observer rides along, so background-process
+        spawn/kill facts land in the run ledger of the turn that caused them."""
+        executor = getattr(engine, "executor", None)
+        if executor is not None:
+            executor.process_event_sink = self._record_process_event
+        return TurnEngineAdapter(
+            engine, ledger=self.run_ledger, session_id=session_id
+        )
+
+    def _record_process_event(self, event: dict[str, Any]) -> None:
+        """Persist one background-process lifecycle fact (spawn/kill).
+
+        Inside a driven run (the usual case — `run_in_background`, `shell_task_kill`)
+        the ambient run scope names the owning run: append a durable ledger event.
+        Outside any run (managed-task teardown at session/app shutdown) there is no
+        run to attribute to, so the fact goes to the session-scoped audit trail
+        instead — durable either way, never silently dropped."""
+        from .. import runscope
+        from ..sanitize import sanitize_payload
+
+        payload = sanitize_payload(
+            {
+                key: value
+                for key, value in event.items()
+                if key != "event"  # the event type travels in its own column
+            }
+        )
+        scope = runscope.current()
+        if scope is not None:
+            run_id, _session_id = scope
+            try:
+                self.run_ledger.append(
+                    run_id, event["event"], actor="tool", payload=payload
+                )
+            except Exception:
+                pass
+            return
+        try:
+            self.audit_store.append(
+                {
+                    "tool": "run_shell",
+                    "stage": event["event"],
+                    "status": str(event.get("reason") or "teardown"),
+                    "reason": json.dumps(payload, default=str),
+                }
+            )
+        except Exception:
+            pass
 
     def get_engine(
         self,
         session_id: str,
         *,
-        workspace: Optional[str] = None,
+        workspace: str | None = None,
         agent: str = "code",
-        approver: Optional[Approver] = None,
-        extra_tools: Optional[list[Any]] = None,
-        directory_requester: Optional[Any] = None,
-        plan_approver: Optional[Any] = None,
-        question_asker: Optional[Any] = None,
-    ) -> Optional[TurnEngine]:
-        engine = self._engines.get(session_id)
-        if engine is not None:
-            if approver is not None:
-                engine.approver = approver
-            if directory_requester is not None:
-                engine.directory_requester = directory_requester
-            if plan_approver is not None:
-                engine.plan_approver = plan_approver
-            if question_asker is not None:
-                engine.question_asker = question_asker
-            return engine
+        approver: Approver | None = None,
+        extra_tools: list[Any] | None = None,
+        directory_requester: Any | None = None,
+        plan_approver: Any | None = None,
+        question_asker: Any | None = None,
+    ) -> RuntimePort | None:
+        runtime = self._runtimes.get(session_id)
+        if runtime is not None:
+            # bind() ignores None arguments — only supplied callbacks rebind.
+            runtime.bind(
+                approver=approver,
+                directory_requester=directory_requester,
+                plan_approver=plan_approver,
+                question_asker=question_asker,
+            )
+            return runtime
 
         record = self.session_store.load(session_id)
         is_new_session = record is None
@@ -134,82 +189,73 @@ class SessionsMixin:
             # disables/new skills immediately; the catalog snapshot is taken at build.
             skill_filter=lambda sid=session_id, w=ws: self.effective_skill_names(sid, w),
         )
+        # Wrap into the RuntimePort immediately: every later touch (task grants,
+        # mention rules, persistence, turn driving) goes through the port surface.
+        runtime = self._bind_runtime(engine, session_id)
         # An automation run rebuilt here (manual "Run now" over WS, durable resume) still
         # carries its task's standing allowances — the rules live on the task record.
         owning_task = self.task_store.task_for_run_session(session_id)
         if owning_task is not None:
-            self._seed_task_permissions(engine, owning_task)
+            self._seed_task_permissions(runtime, owning_task)
         # A mention-spawned session (§31) keeps its in-thread reply pre-approved across
         # rebuilds/restarts — the grant is re-derived from the durable thread map.
         for thread_target in self.mention_sessions.targets_for(session_id):
-            engine.permissions.task_rules.setdefault("send_message", set()).add(
-                thread_target
-            )
+            runtime.add_task_rule("send_message", thread_target)
         if record is not None and record.grants:
-            self._apply_grants(engine, record.grants)
+            self._apply_grants(runtime, record.grants)
         # Auto-compaction (OPE-27): restore the persisted view boundary and wire the live
         # Settings getter — post-construction, so build_engine's signature stays put.
         if record is not None and record.compaction:
             from ..compaction import CompactionState
 
-            engine.compaction_state = CompactionState.from_dict(record.compaction)
-        engine.compaction_settings = self.compaction_settings
-        self._engines[session_id] = engine
+            runtime.set_compaction_state(CompactionState.from_dict(record.compaction))
+        runtime.set_compaction_settings(self.compaction_settings)
+        self._runtimes[session_id] = runtime
         if is_new_session:
             self._emit_session_created(session_id, agent_name)
-        return engine
+        return runtime
 
 
     def persist_session(self, session_id: str) -> None:
         """Save the cached engine's thread (so a prompt's pending tool call survives a crash)."""
-        engine = self._engines.get(session_id)
-        if engine is not None:
-            self.save(session_id, engine)
+        runtime = self._runtimes.get(session_id)
+        if runtime is not None:
+            self.save(session_id, runtime)
 
 
-    def save(self, session_id: str, engine: TurnEngine) -> None:
-        executor = getattr(engine, "executor", None)
-        workspace = os.path.realpath(str(executor.cwd)) if executor else ""
+    def save(self, session_id: str, runtime: RuntimePort) -> None:
+        cwd = runtime.workspace_dir
         self.session_store.save(
             SessionRecord(
                 session_id=session_id,
-                workspace=workspace,
-                model=engine.model,
-                mode=engine.permissions.mode.value,
-                messages=engine.messages,
-                title=title_from(engine.messages),
-                agent=getattr(engine, "agent_name", "code"),
-                extra_roots=self._extra_roots_of(engine),
-                grants=_grants_of(engine),
-                compaction=(
-                    engine.compaction_state.as_dict()
-                    if getattr(engine, "compaction_state", None)
-                    else {}
-                ),
-                reasoning_effort=(
-                    getattr(engine, "model_settings", {}).get(
-                        "reasoning_effort", "auto"
-                    )
-                    or "auto"
-                ),
+                workspace=os.path.realpath(cwd) if cwd else "",
+                model=runtime.model,
+                mode=runtime.mode.value,
+                messages=runtime.messages,
+                title=title_from(runtime.messages),
+                agent=runtime.agent_name,
+                extra_roots=self._extra_roots_of(runtime),
+                grants=runtime.session_grants(),
+                compaction=runtime.compaction_dict(),
+                reasoning_effort=runtime.reasoning_effort,
             )
         )
 
 
     @staticmethod
-    def _apply_grants(engine: TurnEngine, grants: dict[str, Any]) -> None:
+    def _apply_grants(runtime: RuntimePort, grants: dict[str, Any]) -> None:
         """Re-apply a reloaded session's persisted "Always allow" approvals — they're
         session-scoped, and the session outlives the process (owner-hit 2026-07-22)."""
         for tool in grants.get("tools") or []:
-            engine.permissions.allow_tool_for_session(str(tool))
+            runtime.grant_tool(str(tool))
         for command in grants.get("commands") or []:
-            engine.permissions.allow_command_for_session(str(command))
+            runtime.grant_command(str(command))
 
 
     @staticmethod
-    def _extra_roots_of(engine: TurnEngine) -> list[dict[str, Any]]:
-        """Added folders = the engine's roots minus the primary scratch (index 0)."""
-        roots = getattr(engine, "roots", None) or []
+    def _extra_roots_of(runtime: RuntimePort) -> list[dict[str, Any]]:
+        """Added folders = the runtime's roots minus the primary scratch (index 0)."""
+        roots = runtime.list_roots()
         return [
             {"path": str(r.path), "writable": bool(r.writable), "label": r.label}
             for r in roots[1:]
@@ -234,14 +280,14 @@ class SessionsMixin:
         forgetting the counter is harmless: renamed/auto_title still gate re-titling."""
         if session_id.startswith("__"):
             return
-        engine = self._engines.get(session_id)
-        if engine is None or session_id in self._autotitle_inflight:
+        runtime = self._runtimes.get(session_id)
+        if runtime is None or session_id in self._autotitle_inflight:
             return
         if self.task_store.task_for_run_session(session_id) is not None:
             return  # automation runs are titled by their task
         if self._autotitle_attempts.get(session_id, 0) >= 2:
             return
-        users = [m for m in engine.messages if m.get("role") == "user"]
+        users = [m for m in runtime.messages if m.get("role") == "user"]
         if not users:
             return
         state = self.session_store.title_state(session_id)
@@ -266,22 +312,25 @@ class SessionsMixin:
         self._autotitle_inflight.add(session_id)
         # Retain the task: the loop holds only a weak ref, and a GC'd task would both
         # kill the title mid-flight and strand the inflight guard.
-        task = loop.create_task(self._generate_autotitle(session_id, engine, openers))
+        task = loop.create_task(
+            self._generate_autotitle(session_id, runtime.model, openers)
+        )
         self._autotitle_tasks.add(task)
         task.add_done_callback(self._autotitle_tasks.discard)
 
 
     async def _generate_autotitle(
-        self, session_id: str, engine: TurnEngine, openers: list[str]
+        self, session_id: str, model: str, openers: list[str]
     ) -> None:
         """One cheap non-streaming completion on the session's own provider/model. Every
         failure (provider error, empty, absurdly long) is swallowed — the title_from
         fallback stays; the small-talk sentinel leaves auto_title unset so the turn-2
-        retry can run."""
+        retry can run. The manager's provider IS the session engine's provider (the
+        same object flows through build_engine), so no runtime escape hatch is needed."""
         try:
             turn = await asyncio.to_thread(
-                engine.provider.complete,
-                model=engine.model,
+                self.provider.complete,
+                model=model,
                 messages=[
                     {"role": "system", "content": self._AUTOTITLE_PROMPT},
                     {"role": "user", "content": "\n\n".join(openers)},
@@ -327,9 +376,9 @@ class SessionsMixin:
         # A live engine's in-memory thread is authoritative: mid-turn it's ahead of the
         # persisted record — which may not even exist yet for a scheduled run's first turn
         # (opening a "running" automation showed a blank session; owner report 2026-07-04).
-        engine = self._engines.get(session_id)
-        if engine is not None:
-            return list(engine.messages)
+        runtime = self._runtimes.get(session_id)
+        if runtime is not None:
+            return list(runtime.messages)
         record = self.session_store.load(session_id)
         return record.messages if record else []
 
@@ -349,8 +398,8 @@ class SessionsMixin:
         self,
         session_id: str,
         *,
-        pinned: Optional[bool] = None,
-        archived: Optional[bool] = None,
+        pinned: bool | None = None,
+        archived: bool | None = None,
     ) -> dict[str, Any]:
         if session_id.startswith("__"):
             return {"ok": False, "error": "internal sessions cannot be modified here"}
@@ -367,10 +416,10 @@ class SessionsMixin:
         if session_id.startswith("__"):
             return {"ok": False, "error": "internal sessions cannot be reverted here"}
         if self.is_running(session_id):
-            engine = self._engines.get(session_id)
-            if engine is None:
+            runtime = self._runtimes.get(session_id)
+            if runtime is None:
                 return {"ok": False, "error": "session is running"}
-            engine.request_interrupt()
+            runtime.interrupt()
             deadline = time.monotonic() + 15
             while self.is_running(session_id) and time.monotonic() < deadline:
                 await asyncio.sleep(0.1)
@@ -379,10 +428,10 @@ class SessionsMixin:
         dropped = self.session_store.revert(session_id, index)
         if not dropped:
             return {"ok": False, "error": "nothing to revert at that index"}
-        engine = self._engines.get(session_id)
-        if engine is not None:
-            engine.messages = engine.messages[:index]
-            self.save(session_id, engine)
+        runtime = self._runtimes.get(session_id)
+        if runtime is not None:
+            runtime.truncate_messages(index)
+            self.save(session_id, runtime)
         # The FIRST dropped message IS the user message being edited — later entries in
         # the dropped slice are the assistant's replies to it (scanning reversed() used
         # to prefill the composer with the ANSWER instead of the question).
@@ -402,46 +451,38 @@ class SessionsMixin:
         if effort not in allowed:
             return {"ok": False, "error": f"effort must be one of {sorted(allowed)}"}
         record = self.session_store.load(session_id)
-        engine = self._engines.get(session_id)
-        if record is None and engine is None:
+        runtime = self._runtimes.get(session_id)
+        if record is None and runtime is None:
             return {"ok": False, "error": "unknown session"}
         # A connected, never-sent session intentionally has no store row yet. Apply the
         # selection to its live engine; the first turn checkpoint creates the row with it.
         if record is not None:
             record.reasoning_effort = effort
             self.session_store.save(record)
-        if engine is not None:
+        if runtime is not None:
             # Apply to the live engine immediately: model_settings flows into every
             # provider call (the next build re-reads it from the store).
-            if effort == "auto":
-                engine.model_settings.pop("reasoning_effort", None)
-            else:
-                engine.model_settings["reasoning_effort"] = effort
+            runtime.set_reasoning_effort(effort)
         return {"ok": True, "reasoning_effort": effort}
 
 
     def delete_session(self, session_id: str) -> dict[str, Any]:
         if session_id.startswith("__"):
             return {"ok": False, "error": "internal sessions cannot be deleted here"}
-        engine = self._engines.pop(session_id, None)
+        runtime = self._runtimes.pop(session_id, None)
         self._session_event_sequences.pop(session_id, None)
         self._app_event_sequences.pop(session_id, None)
         self._autotitle_attempts.pop(session_id, None)
-        if engine is not None:
+        if runtime is not None:
             try:
                 # (was engine.interrupt() — a method that never existed; the AttributeError
                 # was silently swallowed, so deleting a running session never stopped it.)
-                engine.request_interrupt()
+                runtime.interrupt()
             except Exception:
                 pass
-            executor = getattr(engine, "executor", None)
-            if executor is not None:
-                try:
-                    # Managed background tasks die with the session; detached
-                    # (detach=true) tasks are deliberately left running.
-                    executor.shutdown()
-                except Exception:
-                    pass
+            # Managed background tasks die with the session; detached
+            # (detach=true) tasks are deliberately left running.
+            runtime.shutdown_executor()
         record = self.session_store.load(session_id)
         ok = self.session_store.delete(session_id)
         # Deleting a session is the one implicit unsubscribe (otherwise subscriptions are permanent).
@@ -474,7 +515,7 @@ class SessionsMixin:
 
 
     # -- read models ------------------------------------------------------------
-    def list_sessions(self, workspace: Optional[str] = None) -> list[dict[str, Any]]:
+    def list_sessions(self, workspace: str | None = None) -> list[dict[str, Any]]:
         ws = self.resolve_workspace(workspace) if workspace else None
         return [
             {

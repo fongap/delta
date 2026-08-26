@@ -4,9 +4,8 @@ view (summary block + verbatim tail), user intent must survive every compaction,
 state must survive a save/rebuild mid-conversation. This is the scripted stand-in for
 the live-model smoke (which needs a configured provider key)."""
 
-import json
-
 import asyncio
+import json
 
 from coworker.providers import AssistantTurn, ModelCapabilities, ProviderClient
 from coworker.providers.base import TokenUsage
@@ -62,31 +61,32 @@ def test_long_session_survives_repeated_compaction(tmp_path):
     # primitives bind to the loop they first run on, so a per-turn asyncio.run() would
     # silently drop every stream after the first (found the hard way in the live smoke).
     async def scenario():
-        engine = mgr.get_engine(sid, agent="cowork", workspace=str(tmp_path))
+        port = mgr.get_engine(sid, agent="cowork", workspace=str(tmp_path))
         for i in range(8):
-            async for _ in engine.run(f"user step {i}: keep drafting the Q3 report"):
+            async for _ in port.run(f"user step {i}: keep drafting the Q3 report"):
                 pass
             # Every turn must produce a real reply — an empty assistant message means
             # the stream got dropped, not answered.
             last = next(
-                m for m in reversed(engine.messages) if m.get("role") == "assistant"
+                m for m in reversed(port.messages) if m.get("role") == "assistant"
             )
             assert f"turn {i + 1}:" in str(last.get("content", ""))
+            engine = port.engine
             if engine.compaction_state is not None:
                 if (
                     not boundaries
                     or engine.compaction_state.boundary_index != boundaries[-1]
                 ):
                     boundaries.append(engine.compaction_state.boundary_index)
-            mgr.save(sid, engine)
+            mgr.save(sid, port)
             if i == 4:  # mid-conversation restart: state must survive the rebuild
-                mgr._engines.pop(sid)
-                engine = mgr.get_engine(sid, agent="cowork", workspace=str(tmp_path))
-                assert engine.compaction_state is not None
-        return engine
+                mgr._runtimes.pop(sid)
+                port = mgr.get_engine(sid, agent="cowork", workspace=str(tmp_path))
+                assert port.compaction_dict() is not None
+        return port
 
-    engine = asyncio.run(scenario())
-
+    port = asyncio.run(scenario())
+    engine = port.engine
     # Repeated compaction actually happened, moving forward each time.
     assert len(boundaries) >= 2
     assert boundaries == sorted(boundaries)

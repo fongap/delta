@@ -65,7 +65,7 @@ class PersonaManifest:
     mcp: list[str] = field(default_factory=list)
     recommends: list[Recommendation] = field(default_factory=list)
     builtin: bool = False
-    source: Optional[str] = (
+    source: str | None = (
         None  # where it was loaded from (path / url), for provenance
     )
 
@@ -170,9 +170,9 @@ def _recommends(persona_id: str, meta: dict) -> list[Recommendation]:
 def parse_manifest(
     text: str,
     *,
-    fallback_id: Optional[str] = None,
+    fallback_id: str | None = None,
     builtin: bool = False,
-    source: Optional[str] = None,
+    source: str | None = None,
 ) -> PersonaManifest:
     meta, body = _split_frontmatter(text)
 

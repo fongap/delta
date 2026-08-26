@@ -7,16 +7,17 @@ mixin inheritance so behavior is unchanged.
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
 from typing import Any, Optional
+
 from ..connectors.browser_automation import (
     browser_close_session,
     browser_state,
     browser_take_screenshot,
 )
-from pathlib import Path
-import os
-
 from .manager_support import _artifact_kind
+
 
 class ArtifactsBrowserAuditMixin:
 
@@ -24,9 +25,9 @@ class ArtifactsBrowserAuditMixin:
         self,
         *,
         limit: int = 100,
-        session_id: Optional[str] = None,
-        connector: Optional[str] = None,
-        tool: Optional[str] = None,
+        session_id: str | None = None,
+        connector: str | None = None,
+        tool: str | None = None,
     ) -> list[dict[str, Any]]:
         return self.audit_store.list(
             limit=limit, session_id=session_id, connector=connector, tool=tool
@@ -125,7 +126,7 @@ class ArtifactsBrowserAuditMixin:
 
     def _artifact_target(
         self, session_id: str, path: str, *, allow_dir: bool = False
-    ) -> tuple[Optional[Path], Optional[str]]:
+    ) -> tuple[Path | None, str | None]:
         """Resolve an artifact path under the session's workspace, or (None, error)."""
         record = self.session_store.load(session_id)
         workspace = record.workspace if record else self.default_workspace
@@ -291,7 +292,7 @@ class ArtifactsBrowserAuditMixin:
 
 
     def set_web_search(
-        self, provider: str, api_key: Optional[str] = None
+        self, provider: str, api_key: str | None = None
     ) -> dict[str, Any]:
         from ..web import provider_names
 

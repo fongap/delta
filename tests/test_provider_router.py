@@ -14,8 +14,8 @@ from coworker.providers import (
     StreamChunk,
     capabilities_for,
 )
-from coworker.providers.registry import _normalize_ollama_url, build_provider_client
 from coworker.providers.openai_provider import _salvage_tool_calls_from_text
+from coworker.providers.registry import _normalize_ollama_url, build_provider_client
 
 
 # -- base_url passthrough -------------------------------------------------------
@@ -447,7 +447,10 @@ def test_custom_descriptor_protocol_fields():
 
 def test_custom_aliases_with_same_protocol_keep_distinct_titles():
     from coworker.providers import get_descriptor
-    from coworker.providers.registry import register_custom_provider, unregister_custom_provider
+    from coworker.providers.registry import (
+        register_custom_provider,
+        unregister_custom_provider,
+    )
 
     register_custom_provider("fong", "openai-compatible")
     register_custom_provider("local-gateway", "openai-compatible")

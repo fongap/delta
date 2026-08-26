@@ -79,7 +79,7 @@ class ProviderRouter(ProviderClient):
                 return rest
         return model
 
-    def invalidate(self, name: Optional[str] = None) -> None:
+    def invalidate(self, name: str | None = None) -> None:
         """Drop cached client(s) so the next call rebuilds with fresh config."""
         with self._lock:
             if name is None:
@@ -93,7 +93,7 @@ class ProviderRouter(ProviderClient):
         *,
         model: str,
         messages: list[dict[str, Any]],
-        tools: Optional[list[dict[str, Any]]] = None,
+        tools: list[dict[str, Any]] | None = None,
         **settings: Any,
     ):
         self._note_use(model)
@@ -106,7 +106,7 @@ class ProviderRouter(ProviderClient):
         *,
         model: str,
         messages: list[dict[str, Any]],
-        tools: Optional[list[dict[str, Any]]] = None,
+        tools: list[dict[str, Any]] | None = None,
         **settings: Any,
     ):
         self._note_use(model)

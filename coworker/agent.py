@@ -11,8 +11,6 @@ from typing import Any, Callable, Optional
 
 from .agents import Agent, AgentContext, code_agent
 from .automation import scheduling_tools
-from .selfwake import selfwake_tools
-from .subscriptions import subscription_tools
 from .config import load_config
 from .connectors import (
     connector_list,
@@ -30,22 +28,24 @@ from .memory import (
     memory_tools,
     render_memory_block,
 )
+from .overrides import RiskOverrideStore
 from .permissions import Mode, PermissionEngine
 from .project import load_agents_md
-from .roots import RootDir, normalize_roots, render_context
 from .providers import ProviderClient, ProviderRouter
-from .overrides import RiskOverrideStore
+from .roots import RootDir, normalize_roots, render_context
 from .secrets import SecretStore, state_dir
+from .selfwake import selfwake_tools
 from .skills import SkillLoader, save_skill_tool, skill_catalog_text, skill_tools
+from .subscriptions import subscription_tools
 from .tools import ToolRegistry
 from .tools.ask import ask_user_tool
 from .tools.directories import request_directory_tool
 from .tools.plan import propose_plan_tool
+from .tools.shell import LocalExecutor
 from .tools.subagent import explorer_tools
+from .tools.todo import TodoList
 from .web import make_web_fetch_tool, make_web_search_tool
 from .workspace_trust import WorkspaceTrustStore
-from .tools.shell import LocalExecutor
-from .tools.todo import TodoList
 
 # Appended each turn while discuss mode is active: enforcement-only read-only, with no
 # pressure toward a plan proposal (that's what distinguishes it from plan mode).
@@ -166,7 +166,7 @@ def _loaded_skill_names(messages: list[dict[str, Any]]) -> set[str]:
     return loaded
 
 
-def _skill_dirs(workspace: Optional[Path]) -> list[Path]:
+def _skill_dirs(workspace: Path | None) -> list[Path]:
     dirs = [state_dir() / "skills"]
     if workspace is not None:
         dirs.append(workspace / ".coworker" / "skills")
@@ -176,47 +176,47 @@ def _skill_dirs(workspace: Optional[Path]) -> list[Path]:
 def build_engine(
     *,
     agent: Agent,
-    workspace: Optional[str | Path] = None,
+    workspace: str | Path | None = None,
     model: str = "",
     mode: Mode = Mode.INTERACTIVE,
-    approver: Optional[Approver] = None,
-    provider: Optional[ProviderClient] = None,
-    allowed_commands: Optional[list[str]] = None,
-    max_iterations: Optional[int] = None,
-    model_settings: Optional[dict[str, Any]] = None,
-    memory_store: Optional[MemoryStore] = None,
+    approver: Approver | None = None,
+    provider: ProviderClient | None = None,
+    allowed_commands: list[str] | None = None,
+    max_iterations: int | None = None,
+    model_settings: dict[str, Any] | None = None,
+    memory_store: MemoryStore | None = None,
     # MEMORY-SPEC §5.1: called with the MemoryItem right after `remember` persists it —
     # the manager uses this to push the memory_saved event that powers the save toast.
-    on_memory_saved: Optional[Any] = None,
+    on_memory_saved: Any | None = None,
     # MEMORY-SPEC §6: the user's standing rules (Settings textarea). Injected verbatim
     # above auto memories; independent of the memory on/off switch. No tool writes it.
     # A CALLABLE is read per turn (the server passes one so a Settings edit reaches
     # conversations already open); a plain string is a fixed value for CLI/tests.
-    user_rules: Optional[Any] = None,
+    user_rules: Any | None = None,
     # True when the user turned memory OFF in Settings (vs. memory simply not wired):
     # injects the honesty notice so the model says so instead of faking a save.
     memory_off: bool = False,
     # LIVE saving switch, consulted per write so turning memory off applies to
     # conversations already running (the registry is fixed at build, so the tool stays
     # and refuses). Same pattern as the skills menu's live filter.
-    memory_saving_enabled: Optional[Any] = None,
-    messages: Optional[list[dict[str, Any]]] = None,
-    extra_tools: Optional[list[Any]] = None,
-    secrets: Optional[SecretStore] = None,
-    task_store: Optional[Any] = None,
-    wake_store: Optional[Any] = None,
-    session_id: Optional[str] = None,
-    audit_sink: Optional[Any] = None,
-    roots: Optional[list] = None,
-    directory_requester: Optional[Any] = None,
-    plan_approver: Optional[Any] = None,
-    question_asker: Optional[Any] = None,
-    subscription_store: Optional[Any] = None,
-    channel_buffer: Optional[Any] = None,
-    routing_targets: Optional[list[str]] = None,
-    connector_filter: Optional[set[str]] = None,
+    memory_saving_enabled: Any | None = None,
+    messages: list[dict[str, Any]] | None = None,
+    extra_tools: list[Any] | None = None,
+    secrets: SecretStore | None = None,
+    task_store: Any | None = None,
+    wake_store: Any | None = None,
+    session_id: str | None = None,
+    audit_sink: Any | None = None,
+    roots: list | None = None,
+    directory_requester: Any | None = None,
+    plan_approver: Any | None = None,
+    question_asker: Any | None = None,
+    subscription_store: Any | None = None,
+    channel_buffer: Any | None = None,
+    routing_targets: list[str] | None = None,
+    connector_filter: set[str] | None = None,
     # A set (static snapshot) or a zero-arg callable (live, re-evaluated per load_skill).
-    skill_filter: Optional[set[str] | Callable[[], set[str]]] = None,
+    skill_filter: set[str] | Callable[[], set[str]] | None = None,
 ) -> TurnEngine:
     ws = Path(workspace).expanduser().resolve() if workspace else None
     if agent.needs_workspace and ws is None:

@@ -163,16 +163,16 @@ _CONNECT_FAILED_DETAIL = (
 
 from ..attachments import (
     MAX_ATTACHMENTS as _MAX_ATTACHMENTS,
+)
+from ..attachments import (
     MAX_IMAGE_CHARS,
     MAX_PDF_CHARS,
     MAX_TEXT_CHARS,
     build_user_content,
 )
 from ..engine import ApprovalOutcome
-from ..runtime import TurnEngineAdapter
 from ..inbox import VIS_INBOX, VIS_INLINE, args_preview
-from ..permissions import Mode
-from ..providers import AssistantTurn, PROTOCOLS
+from ..providers import PROTOCOLS, AssistantTurn
 from .contracts import error_envelope
 from .manager import SessionManager
 
@@ -292,7 +292,7 @@ def create_app(manager: SessionManager) -> FastAPI:
                 rec is None
                 and not session_id
                 and i.state == "pending"
-                and i.session_id not in manager._engines
+                and i.session_id not in manager._runtimes
             ):
                 # Lazy cleanup for legacy orphans (sessions deleted before delete_session
                 # started closing their items): an orphaned prompt can never be answered.
@@ -1156,7 +1156,7 @@ def create_app(manager: SessionManager) -> FastAPI:
 
     @app.post("/v1/connectors/{name}/connect-managed")
     async def connector_connect_managed(
-        name: str, body: Optional[dict] = None
+        name: str, body: dict | None = None
     ) -> dict[str, Any]:
         """One-click managed OAuth (requires cloud sign-in). Opens the provider
         consent page in the system browser; the broker's callback page will
@@ -1806,7 +1806,7 @@ def create_app(manager: SessionManager) -> FastAPI:
                 }
             return {"approved": True, "mode": resp.get("mode") or "interactive"}
 
-        async def _apply_model(model: Optional[str]) -> None:
+        async def _apply_model(model: str | None) -> None:
             # Mid-session rebind is allowed (roadmap item 3, supersedes the 2026-07-04
             # lock): history is canonical and providers convert per call. A real switch
             # appends a persisted notice; broadcast it so live views render the marker
@@ -1815,7 +1815,7 @@ def create_app(manager: SessionManager) -> FastAPI:
             # old lock existed to prevent.
             if not model or manager.is_running(session_id):
                 return
-            notice = engine.switch_model(model)
+            notice = runtime.switch_model(model)
             if notice is None:  # same model, or first bind on a fresh session
                 return
             manager.persist_session(session_id)
@@ -1836,7 +1836,7 @@ def create_app(manager: SessionManager) -> FastAPI:
         mcp_tools = await manager.prepare_mcp_tools(
             session_id, workspace=workspace, agent=agent
         )
-        engine = manager.get_engine(
+        runtime = manager.get_engine(
             session_id,
             workspace=workspace,
             agent=agent,
@@ -1846,7 +1846,7 @@ def create_app(manager: SessionManager) -> FastAPI:
             plan_approver=plan_approver,
             question_asker=question_asker,
         )
-        if engine is None:
+        if runtime is None:
             await ws.send_json(
                 manager.session_event(
                     session_id,
@@ -1858,26 +1858,19 @@ def create_app(manager: SessionManager) -> FastAPI:
             return
         # Auto-compaction failure prompt (OPE-27): only an ATTENDED session may be asked
         # Retry/Trim — unattended runs auto-trim (the policy in engine._compact_now).
-        engine.is_attended = lambda: _visibility() == VIS_INLINE
-        # Turn driving goes through the RuntimePort; the ready payload's snapshot reads
-        # (model/mode/executor) stay on the escape hatch until they become a RuntimeInfo DTO.
-        runtime = TurnEngineAdapter(engine, ledger=manager.run_ledger, session_id=session_id)
+        runtime.set_attended_resolver(lambda: _visibility() == VIS_INLINE)
         await ws.send_json(
             manager.session_event(
                 session_id,
                 "ready",
                 {
                     "session_id": session_id,
-                    "agent": getattr(engine, "agent_name", "code"),
-                    "model": engine.model,
-                    "mode": engine.permissions.mode.value,
-                    "workspace": (
-                        str(getattr(engine, "executor").cwd)
-                        if getattr(engine, "executor", None)
-                        else None
-                    ),
+                    "agent": runtime.agent_name,
+                    "model": runtime.model,
+                    "mode": runtime.mode.value,
+                    "workspace": runtime.workspace_dir,
                     "command_trust": manager.workspace_command_trust(
-                        str(getattr(engine, "audit_context", {}).get("workspace", ""))
+                        runtime.workspace_path
                     ),
                 },
             )
@@ -1910,10 +1903,10 @@ def create_app(manager: SessionManager) -> FastAPI:
                     # registered client), so a second view of the same session stays in sync too.
                     await manager.broadcast_session(session_id, event.type.value, event.data)
                     if event.type.value in _CHECKPOINTS:
-                        manager.save(session_id, engine)
+                        manager.persist_session(session_id)
             finally:
                 manager.mark_idle(session_id)
-                manager.save(session_id, engine)
+                manager.persist_session(session_id)
                 await manager.broadcast_session(session_id, "turn_done", {})
 
         # This socket is now a live view of the session; background turns (channel delivery,
@@ -1995,7 +1988,7 @@ def create_app(manager: SessionManager) -> FastAPI:
                     await claim_turn(retry=True)
                 elif kind == "set_mode":
                     try:
-                        engine.permissions.mode = Mode(message.get("mode"))
+                        runtime.set_mode(message.get("mode"))
                     except (TypeError, ValueError):
                         pass
                 elif kind == "set_model":

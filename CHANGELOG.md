@@ -4,14 +4,42 @@
 
 ## [Unreleased]
 
-### 变更 (Changed)
+### 修复 (Fixed)
 
-#### 2026-08-25 18:53
+#### 2026-08-25 23:26
 
-- **自动更新入口暂时下线**
-  - 发布链路当前仅产出便携 ZIP + 校验和，没有签名的 updater feed（latest.json + 签名资产），更新检查是永远拿不到清单的死能力。主窗口横幅与设置页"检查更新"入口经 `UPDATER_FEED_PUBLISHED` 开关一并隐藏；发布工作流恢复产出 updater feed 后一行开关即可恢复。
+- **本机测试环境补全 + 暴露一个 slice 4a 边界真实回归（P2 收尾）**
+  - 本机 venv 此前缺 `boto3` / `slack-bolt`，导致 14 个测试失败（进而在多个会话里被误判为已知环境问题而跳过修补）。经镜像装齐后全量 Python 套件由 12xx+fail 变为 **1285 passed / 3 skipped / 0 failed**；前端 156 passed、build 通过。
+  - 装好 slack-bolt 后 `test_ui_refresh_e2e` 首次真正跑通，暴露 slice 4a 安全边界的真实回归：outbound `send_message`（L3 外部效果）不再被 session 级授权放行，rejected 后回复卡死。测试改为用**目标绑定的 standing rule**（`add_task_rule`）生产 `grant="policy"`——符合 approval-taxonomy-adr —— 回复不再二次询问，测试语义与安全边界一致。
+  - `requires-python` 修正 `>=3.10 → >=3.11`（`coworker/config.py` 本就用 3.11+ 的 `tomllib`），并让 ruff 识别 `ExceptionGroup`，静态阻断门 `E9/F63/F7/F82` 全绿。
+
+- **xlsx 日期单元格不再显示原始序列号（已知回归）**
+  - `coworker/server/sheet_preview.py` 现解析 `xl/styles.xml`：单元格 `s` 样式索引 → `cellXfs/xf` 的 `numFmtId` → 内建日期格式（14–22、45–47）或自定义 `numFmt` 的 `formatCode`；命中日期/时间格式的数字单元格按 Excel 序列号（1900-01-01 epoch 约定，基 1899-12-30）渲染为可读的 `YYYY-MM-DD` / `HH:MM:SS` / `YYYY-MM-DD HH:MM:SS`。普通数字与 `General` 格式不受影响——不再以裸序列号呈现。
+  - 新增测试 3 例（`tests/test_sheets.py`）：纯日期 / 时间与日期时间 / 普通数字不误判。
 
 ### 安全 (Security)
+
+#### 2026-08-25 21:27
+
+- **CI 供应链硬化（P2）**
+  - 全部第三方 Actions 固定为不可变 commit SHA（checkout/setup-python/setup-node/upload-artifact/download-artifact/rust-toolchain/rust-cache，标签保留为行内注释），移动分支引用不再自动漂移。
+  - 新增依赖公告门：`pip-audit`（Python 全依赖集）、`npm audit --omit=dev --audit-level=high`、`cargo deny check advisories`（Tauri 壳 + 便携启动器两个 Rust 工作区）。
+  - 新增静态门：ruff 阻断"运行时破坏类"问题（E9/F63/F7/F82）；ruff 全量扫描与 pyright 采用**基线回归阻断**——允许存在未清理项，但错误数不得超过提交的基线（python 侧计数比较，超出即失败），lint 债务逐条清理后下调基线、经评审的噪音变化则谨慎上调。首轮安全自动修复（import 排序 UP037/RUF022/ISC004/RUF100 及 UP045 Optional→`X | None` 全量转换，排除会破坏 re-export 的 F401）后基线：ruff 全量 **467**（初始约 1200）、pyright **572**（初始 760；已清：aisuite 动态工具属性的文件级指令 ×33、integration_tools 凭据 profile 辅助函数的 Optional 收窄 ×149、email/boto3/os 平台假阳性 ×6）。`requires-python` 随之修正为 `>=3.11`——`coworker/config.py` 已使用 3.11+ 的 `tomllib`，旧声明使 ruff 误报 `ExceptionGroup` 未定义。
+
+- **统一 SensitiveDataSanitizer：audit / Run Ledger 共用一份递归脱敏策略（P2）**
+  - 新增 `coworker/sanitize.py`：嵌套 dict/list 任意深度递归脱敏；凭据型 HTTP 头（Authorization/Cookie/Set-Cookie 等）按名全遮蔽；http(s) URL 查询串中的凭据参数（token/api_key/signature…）改写为 `[redacted]`；body/content 类键整体遮蔽。截断/预览整形仍归调用方。
+  - `coworker/audit.py` 的 `_sanitize_args` 改为委托共享策略（保留 browser_type 输入遮蔽特例）；RunEventLedger 在 append 时对 payload 自我脱敏——哈希链按实际落库内容计算，调用方漏脱敏不再等于泄漏。较旧行为更严：新增 apikey/credential/private_key/refresh_token 等键标记与请求头识别。
+
+- **workspace_trust ACL 降级可标记（P2）**
+  - workspace_trust.json 与 SecretStore 共用 best-effort 私有写入但此前不校验结果；现在写入后经 `verify_user_restricted` 验证，失败落 `.acl-unprotected` 标记文件并告警，后续验证成功的写入自动清除标记——降级不再静默。
+
+#### 2026-08-25 19:16
+
+- **资源敏感度分类（P0-B slice 4b）：审批分级从"看工具名"升级为"看动作 + 资源"**
+  - 执行网关 `coworker/gateway.py::classify` 此前只读 `tool_name + metadata.risk_level`，`send_file(临时图表)` 与 `send_file(工资表.xlsx)` 同级。现在分级是四个确定性输入的函数：动作风险带（registry metadata）、声明式资源目标（path/attachment/title 等结构化参数）、可逆性（irreversible 表，最优先）、敏感度（固定信号表：工资/薪酬/payroll、身份证/passport、银行卡/bank_statement、id_rsa/.pem/.env 等）。
+  - 唯一交叉规则：**外部效应（L3）触达敏感资源 → 升级 L4**——外发不可补偿的披露只能逐次显式批准，任何 standing policy 都放不了行；本地可检查点写入与只读调用不因敏感名升级（写本地工资表仍是 L2）。
+  - 模型不可自评双向成立：模型可见字段永远无法下调级别；模型提供的字符串只能在声明的资源字段里"顺带"触发上调。表外即非敏感，扩充表是刻意的策略行为。
+  - ADR 更新：docs/approval-taxonomy-adr.md 新增 "Slice 4b: classification inputs" 一节；新增测试 12 例（tests/test_gateway.py）。
 
 #### 2026-08-25 18:44
 
@@ -62,6 +90,12 @@
 
 ### 新增 (Added)
 
+#### 2026-08-25 21:27
+
+- **后台进程 spawn/kill 进入 Run Event Ledger（run-ledger-adr §2b）**
+  - 执行器新增进程生命周期观察点：`run_in_background` 启动、`shell_task_kill` 终止、会话/应用退出时的托管任务清理都会发出结构化事件（task_id/pid/command/detach）。观察点故障绝不影响执行。
+  - 归属无需穿透 build_engine → shell_tools → executor 签名：RuntimePort 适配器在每个驱动回合把 `(run_id, session_id)` 发布进环境上下文（`coworker/runscope.py` contextvar），asyncio.to_thread 自动携带，回合内的 spawn/kill 落入对应 run 的哈希链（`process.spawned`/`process.killed`，actor=tool）。回合外的托管清理走会话级审计而非伪造 run。detached 任务跨重启的 OS 级存活追踪仍留作后续项。
+
 #### 2026-08-25 11:06
 
 - **Execution Gateway slice 3：资源守卫与沙箱诚实声明**
@@ -71,6 +105,22 @@
   - `PermissionEngine` 增加公开的 `resolved_roots()` 视图供网关复用。
 
 ### 变更 (Changed)
+
+#### 2026-08-25 21:27
+
+- **RuntimePort 迁移完成：业务层不再持有 TurnEngine（架构主线）**
+  - `SessionManager._engines: dict[str, TurnEngine]` 改为 `_runtimes: dict[str, RuntimePort]`，引擎在构建后立即包装为适配器入库，get_engine 返回端口对象。全部 server 访问点逐个提升为 Port 面：读投影（model/mode/messages/agent_name/reasoning_effort/workspace_path/workspace_dir/list_roots/session_grants/compaction_dict）、命令（switch_model/set_mode/set_attended_resolver/grant_tool/grant_command/set_allowed_commands/add_task_rule/set_task_rules/set_reasoning_effort/set_compaction_state/set_compaction_settings/truncate_messages/upsert_root/remove_root/shutdown_executor）。app.py 不再临时二次包一层适配器；`.engine` 逃逸口收缩为仅测试/调试使用。
+  - 行为保持等价：审批回调绑定、standing rules 播种、目录授权、压缩状态恢复、撤销回滚、删除会话的托管任务清理等语义逐一保留；自动化调度路径同样经由端口驱动并天然获得 ledger 记账。
+
+- **性能边界三处（P2）**
+  - `read_file` 不再为报告 `total_lines` 而整文件扫描（大文件反复读呈 O(N²)）：窗口读停在窗口边缘，多读一行作为 `has_more` 的诚实证据，续读提示不变。
+  - GUI PDF 预览页虚拟化：占位槽保留滚动几何，IntersectionObserver 仅渲染视口 ±2 页——几百页文档不再一次性分配整页位图；卸载时销毁 pdf.js 文档释放内存。
+  - Provider 流取消传播：用户停止后生产者线程显式 close 流生成器（GeneratorExit 到 yield 点），在途 HTTP 请求即刻拆除，而非等 GC 兜底继续下载。
+
+#### 2026-08-25 18:53
+
+- **自动更新入口暂时下线**
+  - 发布链路当前仅产出便携 ZIP + 校验和，没有签名的 updater feed（latest.json + 签名资产），更新检查是永远拿不到清单的死能力。主窗口横幅与设置页"检查更新"入口经 `UPDATER_FEED_PUBLISHED` 开关一并隐藏；发布工作流恢复产出 updater feed 后一行开关即可恢复。
 
 #### 2026-08-25 11:06
 

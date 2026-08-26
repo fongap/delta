@@ -16,13 +16,13 @@ from ..tools.todo import TodoList
 
 @dataclass
 class AgentContext:
-    workspace: Optional[Path] = None
-    executor: Optional[Any] = None
-    todo: Optional[TodoList] = None
+    workspace: Path | None = None
+    executor: Any | None = None
+    todo: TodoList | None = None
     # Shared, mutable list of RootDir the session may touch (primary scratch + added folders).
     # When None, tools fall back to the single `workspace` root. Held by reference so runtime
     # add/remove of folders is seen by the file tools built from it.
-    roots: Optional[list] = None
+    roots: list | None = None
 
 
 @dataclass
@@ -31,7 +31,7 @@ class Agent:
     title: str
     system_prompt: str
     needs_workspace: bool = False
-    tool_factory: Optional[Callable[[AgentContext], list]] = None
+    tool_factory: Callable[[AgentContext], list] | None = None
     # Traits that replace the old per-agent-name branching in build_engine / manager.
     # family: "code" gets explorer subagents; "knowledge" gets scheduling / request_directory /
     # roots context (when it has a workspace). messaging: exposes send_message. connectors:

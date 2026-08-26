@@ -19,10 +19,13 @@ const MODEL_FAMILIES: Record<string, { value: string; label: string }[]> = {
   ],
 };
 
-// One provider's models as a checklist: tick = shown in the composer's model picker (the
-// curated list), the black "default" badge marks the model new sessions use, and hovering any
-// other row reveals "Make default". A free-type row below adds models by hand, so brand-new
-// releases work without an app update. Shared by Onboarding and Manage → Configure Models.
+// One provider's models as a compact list. Two ORTHOGONAL states per row:
+//   checkbox = shown in the composer's model picker (display)
+//   radio    = the model new sessions start with (default; exactly one)
+// The default model can never be unchecked — the backend rejects it and the row
+// explains why (spec: 默认模型不能处于隐藏状态). Manual adds live behind a collapsed
+// "＋ 手动添加模型" row so discovery-first flow stays clean. Shared by Onboarding
+// and Settings ▸ Models.
 export function ModelChecklist({
   provider,
   knownProviders,
@@ -31,6 +34,8 @@ export function ModelChecklist({
   defaultModel,
   labels,
   onChanged,
+  onRefresh,
+  refreshing,
 }: {
   provider: string; // decides the id prefix; OpenAI models stay bare
   knownProviders: string[]; // all provider names, to parse prefixes in curated ids
@@ -39,9 +44,13 @@ export function ModelChecklist({
   defaultModel: string;
   labels?: Record<string, string>; // curated display names (full id → label); raw id when absent
   onChanged: (next: { models: string[]; model: string }) => void;
+  onRefresh?: () => void; // re-pull /models from the provider (custom providers)
+  refreshing?: boolean;
 }) {
   const { t } = useI18n();
   const [draft, setDraft] = useState("");
+  const [addOpen, setAddOpen] = useState(false);
+  const [hideBlocked, setHideBlocked] = useState(false);
   const families = MODEL_FAMILIES[provider];
   const [family, setFamily] = useState(families?.[0]?.value || "");
 
@@ -64,6 +73,14 @@ export function ModelChecklist({
   };
 
   const tick = async (id: string, on: boolean) => {
+    if (!on && id === defaultModel) {
+      // The default can never be hidden (data-layer invariant: default ∈ enabled).
+      // Say so instead of silently failing or greying out without explanation.
+      setHideBlocked(true);
+      window.setTimeout(() => setHideBlocked(false), 2600);
+      return;
+    }
+    setHideBlocked(false);
     const res = on ? await addModel(id) : await removeModel(id);
     if (res.ok) onChanged({ models: res.models, model: res.model });
   };
@@ -82,64 +99,116 @@ export function ModelChecklist({
     const res = await addModel(prefixed(typed));
     if (res.ok) {
       setDraft("");
+      setAddOpen(false);
       onChanged({ models: res.models, model: res.model });
     }
   };
 
+  const empty = rows.length === 0;
   return (
     <div className="mlist">
-      {rows.map((id) => {
-        const isDefault = id === defaultModel;
-        return (
-          <div className={"mlist-row" + (checked(id) ? "" : " off")} key={id}>
-            <label className="mlist-main">
-              <input
-                type="checkbox"
-                checked={checked(id)}
-                disabled={isDefault}
-                title={isDefault ? t("models.defaultModelTitle", undefined, "The default model is always shown — make another model default first") : undefined}
-                onChange={(e) => tick(id, e.target.checked)}
-              />
-              <span className="mlist-name" title={id}>
-                {labels?.[id] || bare(id)}
-              </span>
-            </label>
-            {isDefault ? (
-              <span className="mlist-default">{t("models.defaultBadge", undefined, "default")}</span>
-            ) : (
-              <button className="mlist-make" onClick={() => makeDefault(id)}>
-                {t("models.makeDefault", undefined, "Make default")}
-              </button>
-            )}
+      {empty && (
+        <div className="mlist-empty" data-testid="mlist-empty">
+          <div className="text-[13px] font-medium text-ink">
+            {t("models.emptyTitle", undefined, "No models yet")}
           </div>
-        );
-      })}
+          <div className="text-[12px] text-muted mt-0.5">
+            {t("models.emptySub", undefined, "Fetch the model list from this provider.")}
+          </div>
+          {onRefresh && (
+            <button className="btn-secondary sm mt-2.5" onClick={onRefresh} disabled={refreshing}>
+              {refreshing ? "…" : t("models.fetchModels", undefined, "Fetch models")}
+            </button>
+          )}
+        </div>
+      )}
+      {!empty && (
+        <>
+          {hideBlocked && (
+            <div className="mlist-note" role="status" data-testid="mlist-hide-blocked">
+              {t("models.defaultCannotHide", undefined, "Pick a new default model before hiding this one.")}
+            </div>
+          )}
+          {rows.map((id) => {
+            const isDefault = id === defaultModel;
+            return (
+              <div className={"mlist-row" + (checked(id) ? "" : " off")} key={id}>
+                <label className="mlist-main">
+                  <input
+                    type="checkbox"
+                    checked={checked(id)}
+                    onChange={(e) => tick(id, e.target.checked)}
+                    aria-label={t("models.showAria", { m: bare(id) }, `Show ${bare(id)} in the picker`)}
+                  />
+                  <span className="mlist-name" title={id}>
+                    {labels?.[id] || bare(id)}
+                  </span>
+                </label>
+                <label className="mlist-default-radio" title={t("models.defaultAria", undefined, "Use as the default model")}>
+                  <input
+                    type="radio"
+                    name="mlist-default"
+                    checked={isDefault}
+                    onChange={() => makeDefault(id)}
+                    aria-label={t("models.defaultAria", undefined, "Use as the default model")}
+                  />
+                  <span className="mlist-default-label">
+                    {t("models.defaultLabel", undefined, "Default")}
+                  </span>
+                </label>
+              </div>
+            );
+          })}
+        </>
+      )}
       <div className="mlist-add">
-        {families && (
-          <select
-            value={family}
-            onChange={(e) => setFamily(e.target.value)}
-            aria-label={t("models.familyAria", undefined, "Model family")}
-            data-testid="mlist-family"
+        {addOpen ? (
+          <div className="mlist-add-form" data-testid="mlist-add-form">
+            <input
+              placeholder={t("models.modelIdLabel", undefined, "Model ID")}
+              value={draft}
+              spellCheck={false}
+              autoComplete="off"
+              autoFocus
+              data-testid="mlist-add-input"
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") void add();
+                if (e.key === "Escape") setAddOpen(false);
+              }}
+            />
+            {families && (
+              <select
+                value={family}
+                onChange={(e) => setFamily(e.target.value)}
+                aria-label={t("models.familyAria", undefined, "Model family")}
+                data-testid="mlist-family"
+              >
+                {families.map((f) => (
+                  <option key={f.value} value={f.value}>
+                    {t(`models.family.${f.value}`, undefined, f.label)}
+                  </option>
+                ))}
+              </select>
+            )}
+            <div className="flex gap-2 justify-end">
+              <button className="btn-secondary sm" onClick={() => setAddOpen(false)}>
+                {t("common.cancel", undefined, "Cancel")}
+              </button>
+              <button className="btn-primary sm" onClick={add} disabled={!draft.trim()}>
+                {t("common.add", undefined, "Add")}
+              </button>
+            </div>
+          </div>
+        ) : (
+          <button
+            className="mlist-add-toggle"
+            onClick={() => setAddOpen(true)}
+            data-testid="mlist-add-toggle"
           >
-            {families.map((f) => (
-              <option key={f.value} value={f.value}>
-                {t(`models.family.${f.value}`, undefined, f.label)}
-              </option>
-            ))}
-          </select>
+            ＋ {t("models.manualAdd", undefined, "Add a model manually")}
+          </button>
         )}
-        <input
-          placeholder={t("models.addAnother", undefined, "Add another model…")}
-          value={draft}
-          spellCheck={false}
-          autoComplete="off"
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && add()}
-        />
-        <button className="btn-primary sm" onClick={add} disabled={!draft.trim()}>
-          {t("common.add", undefined, "Add")}
-        </button>
       </div>
     </div>
   );

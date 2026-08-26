@@ -315,7 +315,7 @@ def test_corrupt_settings_json_treated_as_empty(store):
 # -- save_skill tool (SKILLS-SPEC §5.2 — the worker-authors door) -------------------
 
 
-from coworker.skills import save_skill_tool  # noqa: E402
+from coworker.skills import save_skill_tool
 
 
 @pytest.fixture()

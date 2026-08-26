@@ -4,11 +4,24 @@ Extracted verbatim from SessionManager (see manager.py); composed back via
 mixin inheritance so behavior is unchanged.
 """
 
+# pyright: reportFunctionMemberAccess=false
+# (tool-builder module: attaches aisuite's dynamic metadata attributes
+# (__aisuite_tool_metadata__ / __coworker_schema__) to plain functions —
+# the framework's plugin protocol, not a type error.)
+
 from __future__ import annotations
 
+import asyncio
 from typing import Any, Optional
+
+from ..connectors import (
+    connect_connector,
+    connector_list,
+    disconnect_connector,
+    set_experimental_enabled,
+    update_connector_tools,
+)
 from ..mcp import (
-    MCPManager,
     build_callables,
     delete_global_server,
     load_mcp_servers,
@@ -16,35 +29,21 @@ from ..mcp import (
     put_global_server,
     read_global,
 )
-import asyncio
-from ..connectors import (
-    Gateway,
-    MessageSource,
-    connect_connector,
-    connector_list,
-    disconnect_connector,
-    experimental_enabled,
-    load_settings,
-    make_adapter,
-    set_experimental_enabled,
-    slack_split,
-    update_connector_tools,
-)
-
 from .manager_support import _redact, logger
+
 
 class McpConnectorsMixin:
 
     # -- MCP --------------------------------------------------------------------
     async def prepare_mcp_tools(
-        self, session_id: str, *, workspace: Optional[str] = None, agent: str = "code"
+        self, session_id: str, *, workspace: str | None = None, agent: str = "code"
     ) -> list[Any]:
         """Connect enabled MCP servers (global + workspace) and return their tool callables.
 
         Called from the async WS handler before `get_engine`; no-op if the engine is already
         built (its MCP tools are attached). Servers that fail to connect are skipped.
         """
-        if session_id in self._engines:
+        if session_id in self._runtimes:
             return []
         from ..connectors.descriptors import get_descriptor
         from ..connectors.tool_defs import (
@@ -52,12 +51,11 @@ class McpConnectorsMixin:
             mcp_tool_defs,
             tool_enabled,
         )
-
         from ..mcp import oauth as mcp_oauth
 
         ws = self.engine_workspace(session_id, workspace=workspace, agent=agent)
         loop = asyncio.get_running_loop()
-        effective: Optional[set[str]] = None  # computed lazily, once
+        effective: set[str] | None = None  # computed lazily, once
         out: list[Any] = []
         for server in load_mcp_servers(
             ws,
@@ -128,9 +126,8 @@ class McpConnectorsMixin:
 
     def list_mcp(self) -> list[dict[str, Any]]:
         """Servers from the global config + connection status (does not connect)."""
-        from ..mcp import oauth as mcp_oauth
-
         from ..connectors.descriptors import get_descriptor
+        from ..mcp import oauth as mcp_oauth
 
         out = []
         for name, raw in read_global().items():

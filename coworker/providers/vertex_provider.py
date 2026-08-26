@@ -46,7 +46,7 @@ _SCOPES = ["https://www.googleapis.com/auth/cloud-platform"]
 _FAMILIES = ("gemini", "claude", "openweight")
 
 
-def _regional_host(location: Optional[str]) -> str:
+def _regional_host(location: str | None) -> str:
     """Vertex REST host for a location — `global` (newer Gemini models) has no region
     prefix (checked live 2026-07-26)."""
     if not location or location == "global":
@@ -54,7 +54,7 @@ def _regional_host(location: Optional[str]) -> str:
     return f"{location}-aiplatform.googleapis.com"
 
 
-def load_credentials(service_account_json: Optional[str]) -> Any:
+def load_credentials(service_account_json: str | None) -> Any:
     """Explicit service-account JSON (content or path) → Credentials; blank → None (the
     SDKs and the token path then fall back to Application Default Credentials)."""
     raw = (service_account_json or "").strip()
@@ -76,15 +76,15 @@ class VertexProvider(ProviderClient):
     def __init__(
         self,
         *,
-        project: Optional[str] = None,
-        location: Optional[str] = None,
-        auth_method: Optional[str] = None,
-        service_account_json: Optional[str] = None,
-        api_key: Optional[str] = None,
+        project: str | None = None,
+        location: str | None = None,
+        auth_method: str | None = None,
+        service_account_json: str | None = None,
+        api_key: str | None = None,
         credentials: Any = None,
-        gemini_client: Optional[ProviderClient] = None,
-        claude_client: Optional[ProviderClient] = None,
-        openweight_client: Optional[ProviderClient] = None,
+        gemini_client: ProviderClient | None = None,
+        claude_client: ProviderClient | None = None,
+        openweight_client: ProviderClient | None = None,
     ):
         # Narrow to the selected auth method here, once — stale values stored under a
         # previously-selected method must never reach a different credential path.
@@ -212,7 +212,7 @@ class VertexProvider(ProviderClient):
         *,
         model: str,
         messages: list[dict[str, Any]],
-        tools: Optional[list[dict[str, Any]]] = None,
+        tools: list[dict[str, Any]] | None = None,
         **settings: Any,
     ) -> AssistantTurn:
         family, rest = self._split(model)
@@ -225,7 +225,7 @@ class VertexProvider(ProviderClient):
         *,
         model: str,
         messages: list[dict[str, Any]],
-        tools: Optional[list[dict[str, Any]]] = None,
+        tools: list[dict[str, Any]] | None = None,
         **settings: Any,
     ):
         family, rest = self._split(model)

@@ -21,12 +21,12 @@ class MessageType(str, Enum):
 
 
 # -- target tokens -------------------------------------------------------------
-def format_target(platform: str, chat_id: str, thread_id: Optional[str] = None) -> str:
+def format_target(platform: str, chat_id: str, thread_id: str | None = None) -> str:
     base = f"{platform}:{chat_id}"
     return f"{base}:{thread_id}" if thread_id else base
 
 
-def parse_target(target: str) -> tuple[str, str, Optional[str]]:
+def parse_target(target: str) -> tuple[str, str, str | None]:
     """`'platform:chat_id[:thread]'` -> (platform, chat_id, thread_id)."""
     parts = (target or "").split(":")
     if len(parts) < 2 or not parts[0] or not parts[1]:
@@ -42,12 +42,12 @@ def parse_target(target: str) -> tuple[str, str, Optional[str]]:
 class SessionSource:
     platform: str
     chat_id: str
-    user_id: Optional[str] = None
-    user_name: Optional[str] = None
-    chat_name: Optional[str] = None  # channel/DM display name (resolved, §2.3)
+    user_id: str | None = None
+    user_name: str | None = None
+    chat_name: str | None = None  # channel/DM display name (resolved, §2.3)
     chat_type: str = "dm"  # "dm" | "group" | "channel"
-    thread_id: Optional[str] = None
-    team_id: Optional[str] = None  # workspace id for managed-relay multi-workspace
+    thread_id: str | None = None
+    team_id: str | None = None  # workspace id for managed-relay multi-workspace
 
     @property
     def target(self) -> str:
@@ -88,9 +88,9 @@ class MessageSource:
 class MessageEvent:
     text: str
     source: SessionSource
-    message_id: Optional[str] = None
+    message_id: str | None = None
     message_type: MessageType = MessageType.TEXT
-    reply_to_message_id: Optional[str] = None
+    reply_to_message_id: str | None = None
     raw: Any = None
     # The bot itself was @-mentioned (UX-DECISIONS §31 mention router). Computed from the RAW
     # platform text at mapping time — mention tokens are rewritten for display afterwards.
@@ -110,8 +110,8 @@ class MessageEvent:
 @dataclass
 class SendResult:
     ok: bool
-    message_id: Optional[str] = None
-    error: Optional[str] = None
+    message_id: str | None = None
+    error: str | None = None
 
 
 MessageHandler = Callable[[MessageEvent], Awaitable[None]]
@@ -127,12 +127,12 @@ class InteractionEvent:
 
     platform: str
     chat_id: str
-    message_id: Optional[str]  # the clicked message's id/ts (to update it)
+    message_id: str | None  # the clicked message's id/ts (to update it)
     value: str
-    user_id: Optional[str] = None
-    user_name: Optional[str] = None
-    team_id: Optional[str] = None
-    response_url: Optional[str] = None
+    user_id: str | None = None
+    user_name: str | None = None
+    team_id: str | None = None
+    response_url: str | None = None
 
 
 InteractionHandler = Callable[[InteractionEvent], Awaitable[None]]
@@ -145,8 +145,8 @@ class BasePlatformAdapter(ABC):
     platform: str = "base"
 
     def __init__(self) -> None:
-        self._handler: Optional[MessageHandler] = None
-        self._interaction_handler: Optional[InteractionHandler] = None
+        self._handler: MessageHandler | None = None
+        self._interaction_handler: InteractionHandler | None = None
 
     def set_message_handler(self, handler: MessageHandler) -> None:
         self._handler = handler
@@ -155,7 +155,7 @@ class BasePlatformAdapter(ABC):
         self._interaction_handler = handler
 
     async def send_interactive(
-        self, chat_id: str, text: str, buttons, *, thread_id: Optional[str] = None
+        self, chat_id: str, text: str, buttons, *, thread_id: str | None = None
     ) -> SendResult:
         """Send a prompt with choice buttons. Default: plain text (adapters without interactive
         support just show the text — the user answers in the app)."""
@@ -175,7 +175,7 @@ class BasePlatformAdapter(ABC):
 
     @abstractmethod
     async def send(
-        self, chat_id: str, text: str, *, thread_id: Optional[str] = None
+        self, chat_id: str, text: str, *, thread_id: str | None = None
     ) -> SendResult:
         """Send an outbound message."""
 

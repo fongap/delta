@@ -243,7 +243,8 @@ def test_compaction_state_survives_save_and_rebuild(tmp_path):
 
     mgr = SessionManager(workspace=tmp_path, provider=Provider())
     sid = "compact-persist"
-    engine = mgr.get_engine(sid, agent="cowork", workspace=str(tmp_path))
+    port = mgr.get_engine(sid, agent="cowork", workspace=str(tmp_path))
+    engine = port.engine
     assert callable(engine.compaction_settings)  # live Settings getter is wired
     assert engine.compaction_settings()["threshold_pct"] == 0.8
 
@@ -251,11 +252,11 @@ def test_compaction_state_survives_save_and_rebuild(tmp_path):
     engine.compaction_state = CompactionState(
         boundary_index=3, summary_text="the gist", working_state="", user_messages=["u"]
     )
-    mgr.save(sid, engine)
-    mgr._engines.pop(sid)
+    mgr.save(sid, port)
+    mgr._runtimes.pop(sid)
 
     rebuilt = mgr.get_engine(sid, agent="cowork", workspace=str(tmp_path))
-    assert rebuilt.compaction_state == engine.compaction_state
+    assert rebuilt.compaction_dict() == engine.compaction_state.as_dict()
 
 
 def test_compacting_signal_precedes_the_compacted_marker(tmp_path):

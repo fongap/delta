@@ -44,7 +44,7 @@ def build_explorer_engine(
     workspace: str | Path,
     provider: Any,
     model: str,
-    model_settings: Optional[dict[str, Any]] = None,
+    model_settings: dict[str, Any] | None = None,
     max_iterations: int = _CHILD_MAX_ITERATIONS,
 ) -> TurnEngine:
     """A child engine with the Code agent's read-only tools and a fresh context."""
@@ -81,7 +81,7 @@ def explorer_tools(
     workspace: str | Path,
     provider: Any,
     model: str,
-    model_settings: Optional[dict[str, Any]] = None,
+    model_settings: dict[str, Any] | None = None,
 ) -> list:
     def explore(task: str) -> dict:
         """Delegate a broad, read-only research task to a subagent with its own fresh

@@ -94,7 +94,9 @@ def test_reasoning_effort_survives_turn_save_disconnect_and_reload(tmp_path, mon
     )
     listed = {row["session_id"]: row for row in reloaded.list_sessions()}
     assert listed["reasoning-persist"]["reasoning_effort"] == "low"
-    assert reloaded.get_engine("reasoning-persist").model_settings["reasoning_effort"] == "low"
+    assert (
+        reloaded.get_engine("reasoning-persist").reasoning_effort == "low"
+    )  # port projection over model_settings
 
 
 def test_chat_completions_openai_shape(tmp_path):
@@ -433,8 +435,8 @@ def test_ws_events_use_strict_v1_envelope(tmp_path):
 
 
 def test_ws_rejects_oversized_message(tmp_path):
-    from coworker.server import app as app_mod
     from coworker.attachments import MAX_ATTACHMENTS
+    from coworker.server import app as app_mod
 
     client = _client(tmp_path, [_text("eight accepted"), _text("normal")])
     with client.websocket_connect("/ws/session/big") as ws:
@@ -583,14 +585,15 @@ def test_ws_allows_only_one_inflight_turn_per_session(tmp_path):
 
     assert "input_rejected" in types
     assert provider.max_active == 1
-    engine = manager._engines["serialized"]
+    engine = manager._runtimes["serialized"].engine
     user_messages = [m for m in engine.messages if m.get("role") == "user"]
     assert [m["content"] for m in user_messages] == ["first"]
 
 
 def test_ws_rate_limits_inbound_frames(tmp_path):
-    from coworker.server import app as app_mod
     from starlette.websockets import WebSocketDisconnect
+
+    from coworker.server import app as app_mod
 
     client = _client(tmp_path, [])
     with pytest.raises(WebSocketDisconnect):
@@ -718,8 +721,9 @@ def test_ws_allows_webview_origin(tmp_path):
 
 
 def test_sidecar_token_gates_rest_and_websockets(tmp_path, monkeypatch):
-    from coworker.mcp.config import global_mcp_path
     from starlette.websockets import WebSocketDisconnect as WSD
+
+    from coworker.mcp.config import global_mcp_path
 
     monkeypatch.setenv("COWORKER_API_TOKEN", "a" * 64)
     manager = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
@@ -867,7 +871,7 @@ def test_workspace_command_trust_controls_live_engine(tmp_path):
         assert policy["required"] is True
         assert policy["requested_commands"] == ["pytest"]
 
-        engine = manager._engines["trust"]
+        engine = manager._runtimes["trust"].engine
         before = engine.permissions.evaluate(
             "run_shell", {"command": "pytest -q"}, None
         )
@@ -1101,7 +1105,7 @@ def test_ws_first_message_binds_then_midsession_switch_persists_notice(tmp_path)
         ws.send_json({"type": "user_message", "text": "switched now"})
         _drain(ws)
     mgr = client.app.state.manager
-    engine = mgr._engines["model-per-msg"]
+    engine = mgr._runtimes["model-per-msg"].engine
     assert engine.model == "kimi:kimi-k2.6"
     # The marker is persisted between the turns; the provider never sees it.
     messages = client.get("/v1/sessions/model-per-msg/messages").json()["messages"]

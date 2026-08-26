@@ -15,7 +15,7 @@ from .permissions import Mode
 from .secrets import state_dir
 
 
-def main(argv: Optional[list[str]] = None) -> None:
+def main(argv: list[str] | None = None) -> None:
     cfg = load_config()
     parser = argparse.ArgumentParser(
         prog="openworker", description="Agent coworker (TUI)."

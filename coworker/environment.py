@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Optional
 
 
-def _git(workspace: Path, *args: str) -> Optional[str]:
+def _git(workspace: Path, *args: str) -> str | None:
     try:
         out = subprocess.run(
             ["git", "-C", str(workspace), *args],

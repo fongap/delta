@@ -125,7 +125,7 @@ def _synthesized_items(message: dict[str, Any]) -> list[dict[str, Any]]:
 
 def convert_messages(
     messages: list[dict[str, Any]],
-) -> tuple[Optional[str], list[dict[str, Any]]]:
+) -> tuple[str | None, list[dict[str, Any]]]:
     """Canonical OpenAI-chat history → (`instructions`, Responses `input` items).
 
     Leading system messages join into `instructions`; a stray mid-thread system message
@@ -171,7 +171,7 @@ def convert_messages(
     return ("\n\n".join(system_parts) or None), items
 
 
-def convert_tools(tools: Optional[list[dict[str, Any]]]) -> list[dict[str, Any]]:
+def convert_tools(tools: list[dict[str, Any]] | None) -> list[dict[str, Any]]:
     """OpenAI chat function schemas → Responses FLAT tool entries (no nested `function`)."""
     converted: list[dict[str, Any]] = []
     for tool in tools or []:
@@ -287,7 +287,7 @@ class OpenAIResponsesProvider(ProviderClient):
         client: Any = None,
         *,
         default_model: str = "",
-        api_key: Optional[str] = None,
+        api_key: str | None = None,
         secrets: Any = None,
     ):
         # Same deferred-client contract as OpenAIProvider: built lazily so an engine can be
@@ -318,7 +318,7 @@ class OpenAIResponsesProvider(ProviderClient):
         *,
         model: str,
         messages: list[dict[str, Any]],
-        tools: Optional[list[dict[str, Any]]],
+        tools: list[dict[str, Any]] | None,
         settings: dict[str, Any],
     ) -> dict[str, Any]:
         instructions, items = convert_messages(messages)
@@ -357,7 +357,7 @@ class OpenAIResponsesProvider(ProviderClient):
         *,
         model: str,
         messages: list[dict[str, Any]],
-        tools: Optional[list[dict[str, Any]]] = None,
+        tools: list[dict[str, Any]] | None = None,
         **settings: Any,
     ) -> AssistantTurn:
         kwargs = self._request_kwargs(
@@ -374,7 +374,7 @@ class OpenAIResponsesProvider(ProviderClient):
         *,
         model: str,
         messages: list[dict[str, Any]],
-        tools: Optional[list[dict[str, Any]]] = None,
+        tools: list[dict[str, Any]] | None = None,
         **settings: Any,
     ):
         kwargs = self._request_kwargs(
@@ -385,7 +385,7 @@ class OpenAIResponsesProvider(ProviderClient):
 
         text_parts: list[str] = []
         reasoning_parts: list[str] = []
-        final: Optional[Any] = None
+        final: Any | None = None
         for event in events:
             kind = getattr(event, "type", None)
             if kind == "response.output_text.delta":

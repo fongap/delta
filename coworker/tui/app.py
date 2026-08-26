@@ -16,9 +16,9 @@ from textual.screen import ModalScreen
 from textual.widgets import Button, Footer, Header, Input, Label, RichLog, Static
 
 from ..agent import build_code_engine
+from ..conversations import ConversationStore
 from ..engine import ApprovalOutcome, PermissionRequest
 from ..events import Event, EventType
-from ..conversations import ConversationStore
 from ..memory import MemoryStore
 from ..permissions import Mode
 from ..providers import ProviderClient
@@ -84,13 +84,13 @@ class CoworkerApp(App):
         workspace: str | Path,
         model: str = "",
         mode: Mode = Mode.INTERACTIVE,
-        provider: Optional[ProviderClient] = None,
-        memory_store: Optional[MemoryStore] = None,
+        provider: ProviderClient | None = None,
+        memory_store: MemoryStore | None = None,
         memory_off: bool = False,
         user_rules: str = "",
-        session_store: Optional[ConversationStore] = None,
-        session_id: Optional[str] = None,
-        resume_messages: Optional[list[dict]] = None,
+        session_store: ConversationStore | None = None,
+        session_id: str | None = None,
+        resume_messages: list[dict] | None = None,
     ) -> None:
         super().__init__()
         self.workspace = Path(workspace).expanduser().resolve()

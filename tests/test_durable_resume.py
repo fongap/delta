@@ -50,7 +50,7 @@ async def _run_until_pending(mgr, sid, engine):
         await task
     except asyncio.CancelledError:
         pass
-    mgr._engines.pop(sid, None)
+    mgr._runtimes.pop(sid, None)
     mgr.mark_idle(sid)
     return pend[0]
 

@@ -10,6 +10,11 @@ only, no APPEND-to-Sent afterwards — so a failure can never leave "delivered b
 failed" state that tempts a retry into double-sending (Gmail saves to Sent server-side).
 """
 
+# pyright: reportFunctionMemberAccess=false
+# (tool-builder module: attaches aisuite's dynamic metadata attributes
+# (__aisuite_tool_metadata__ / __coworker_schema__) to plain functions —
+# the framework's plugin protocol, not a type error.)
+
 from __future__ import annotations
 
 import email as email_lib
@@ -19,7 +24,7 @@ import smtplib
 import ssl
 from dataclasses import dataclass
 from email.header import decode_header
-from email.message import EmailMessage
+from email.message import EmailMessage, Message
 from email.utils import formataddr, make_msgid
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -163,7 +168,7 @@ def _strip_html(html: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", text).strip()
 
 
-def _decode_payload(part: email_lib.message.Message) -> str:
+def _decode_payload(part: Message) -> str:
     payload = part.get_payload(decode=True)
     if not payload:
         return ""
@@ -174,7 +179,7 @@ def _decode_payload(part: email_lib.message.Message) -> str:
         return payload.decode("utf-8", errors="replace")
 
 
-def extract_text_body(msg: email_lib.message.Message) -> str:
+def extract_text_body(msg: Message) -> str:
     """Best text rendering of a message: prefer text/plain, fall back to stripped HTML."""
     candidates = msg.walk() if msg.is_multipart() else [msg]
     plain, html = "", ""
@@ -193,8 +198,8 @@ def extract_text_body(msg: email_lib.message.Message) -> str:
 
 
 def list_attachment_parts(
-    msg: email_lib.message.Message,
-) -> list[tuple[str, email_lib.message.Message]]:
+    msg: Message,
+) -> list[tuple[str, Message]]:
     out = []
     if not msg.is_multipart():
         return out
@@ -291,7 +296,7 @@ def _select_readonly(imap: imaplib.IMAP4, folder: str) -> Optional[str]:
 
 def _fetch_message(
     imap: imaplib.IMAP4, uid: str
-) -> Optional[email_lib.message.Message]:
+) -> Optional[Message]:
     status, data = imap.uid("FETCH", uid, "(BODY.PEEK[])")
     if status != "OK" or not data or not isinstance(data[0], tuple):
         return None

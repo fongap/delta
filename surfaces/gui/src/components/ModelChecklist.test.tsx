@@ -2,7 +2,7 @@
 // into the model id (`bedrock:claude/…`, `vertex:openweight/…`); plain providers keep
 // the bare add-model row.
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ModelChecklist } from "./ModelChecklist";
 import { I18nProvider } from "../i18n/I18nContext";
 
@@ -37,32 +37,49 @@ function renderList(provider: string) {
   );
 }
 
-function addTyped(id: string) {
-  fireEvent.change(screen.getByPlaceholderText("Add another model…"), {
+async function addTyped(id: string) {
+  // The manual-add row is collapsed by default (spec: 手动添加模型改为折叠式操作) —
+  // open it, then type into the revealed Model ID field. Add() collapses the form
+  // again asynchronously, so wait for the toggle to come back between adds.
+  fireEvent.click(screen.getByTestId("mlist-add-toggle"));
+  fireEvent.change(screen.getByPlaceholderText("Model ID"), {
     target: { value: id },
   });
   fireEvent.click(screen.getByText("Add"));
+  await waitFor(() =>
+    expect(screen.queryByTestId("mlist-add-form")).toBeNull(),
+  );
 }
 
 describe("ModelChecklist add-model family dropdown", () => {
   it("folds the selected vertex family into the id", async () => {
     renderList("vertex");
+    fireEvent.click(screen.getByTestId("mlist-add-toggle"));
     fireEvent.change(screen.getByTestId("mlist-family"), {
       target: { value: "openweight" },
     });
-    addTyped("meta/llama-4-maverick-17b-128e-instruct-maas");
-    expect(addModel).toHaveBeenCalledWith(
-      "vertex:openweight/meta/llama-4-maverick-17b-128e-instruct-maas",
+    fireEvent.change(screen.getByPlaceholderText("Model ID"), {
+      target: { value: "meta/llama-4-maverick-17b-128e-instruct-maas" },
+    });
+    fireEvent.click(screen.getByText("Add"));
+    await waitFor(() =>
+      expect(addModel).toHaveBeenCalledWith(
+        "vertex:openweight/meta/llama-4-maverick-17b-128e-instruct-maas",
+      ),
     );
   });
 
-  it("defaults bedrock to the Claude family and keeps a typed family verbatim", async () => {
+  it("defaults bedrock to the Claude family", async () => {
     renderList("bedrock");
-    addTyped("anthropic.claude-sonnet-4-6-v1:0");
+    await addTyped("anthropic.claude-sonnet-4-6-v1:0");
     expect(addModel).toHaveBeenCalledWith(
       "bedrock:claude/anthropic.claude-sonnet-4-6-v1:0",
     );
-    addTyped("other/amazon.nova-2-pro-v1:0");
+  });
+
+  it("keeps a typed family verbatim", async () => {
+    renderList("bedrock");
+    await addTyped("other/amazon.nova-2-pro-v1:0");
     expect(addModel).toHaveBeenLastCalledWith("bedrock:other/amazon.nova-2-pro-v1:0");
   });
 

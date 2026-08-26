@@ -9,8 +9,6 @@ from __future__ import annotations
 import subprocess
 from types import SimpleNamespace
 
-import pytest
-
 from coworker.tools.files import file_tools
 from coworker.tools.git import git_tools
 from coworker.tools.search import _py_grep, search_tools
@@ -112,7 +110,7 @@ def test_read_file_numbers_lines(tmp_path):
     (tmp_path / "a.py").write_text("one\ntwo\nthree\n", encoding="utf-8")
     read_file = file_tools(str(tmp_path))[0]
     out = read_file(path="a.py")
-    assert out["total_lines"] == 3
+    assert out["has_more"] is False  # the whole (small) file fit — nothing left
     assert out["start_line"] == 1 and out["end_line"] == 3
     assert out["content"].splitlines()[0].endswith("1\tone")
     assert "note" not in out  # nothing left to read
@@ -125,7 +123,7 @@ def test_read_file_windows_and_tells_how_to_continue(tmp_path):
     read_file = file_tools(str(tmp_path))[0]
     out = read_file(path="big.txt", start_line=5, max_lines=10)
     assert out["start_line"] == 5 and out["end_line"] == 14
-    assert out["total_lines"] == 50
+    assert out["has_more"] is True
     assert "line5" in out["content"] and "line15" not in out["content"]
     assert "start_line=15" in out["note"]
 

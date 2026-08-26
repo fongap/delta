@@ -3,10 +3,10 @@
 import asyncio
 import json
 
-from coworker.inbox import InboxStore
-from coworker.interactions import Button, buttons_for, decode, encode
 from coworker.connectors.base import InteractionEvent
 from coworker.connectors.senders import _slack_blocks
+from coworker.inbox import InboxStore
+from coworker.interactions import Button, buttons_for, decode, encode
 from coworker.providers import ModelCapabilities, ProviderClient
 from coworker.server.manager import SessionManager
 

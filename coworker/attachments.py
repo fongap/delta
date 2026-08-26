@@ -29,7 +29,7 @@ def _is_data_pdf(url: Any) -> bool:
 
 
 def build_user_content(
-    text: Optional[str], attachments: Optional[list[dict]] = None
+    text: str | None, attachments: list[dict] | None = None
 ) -> Any:
     """Return `str` (no attachments) or a list of OpenAI content-parts (with attachments).
 

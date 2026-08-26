@@ -25,7 +25,7 @@ from .base import (
 from .capabilities import capabilities_for
 
 
-def resolve_api_key(secrets: Any = None) -> Optional[str]:
+def resolve_api_key(secrets: Any = None) -> str | None:
     """Resolve the OpenAI API key: env `OPENAI_API_KEY` first, else the SecretStore
     `provider:openai` profile (`{api_key}`). Lets a Tauri-launched sidecar — which does NOT
     inherit the shell env — still find a key the user entered in Settings. The value never
@@ -58,7 +58,7 @@ def _pin_reasoning_effort(kwargs: dict[str, Any]) -> None:
         kwargs.setdefault("reasoning_effort", "none")
 
 
-def _delta_reasoning(obj: Any) -> Optional[str]:
+def _delta_reasoning(obj: Any) -> str | None:
     """Thinking text off a delta/message: `reasoning_content` (DeepSeek, GLM, Kimi, and
     most compat vendors) or `reasoning` (xAI, OpenRouter). Extra response fields survive
     the OpenAI SDK's models (extra="allow"), so plain getattr sees them."""
@@ -106,7 +106,7 @@ def _param_fix_retry(kwargs: dict[str, Any], exc: Exception) -> dict[str, Any]:
     raise exc
 
 
-def _usage_from(usage: Any) -> Optional[TokenUsage]:
+def _usage_from(usage: Any) -> TokenUsage | None:
     """chat.completions usage → normalized counts. `prompt_tokens` INCLUDES cached
     tokens, so the cached share is subtracted into `cache_read`; no write-side split
     exists on this API shape."""
@@ -128,8 +128,8 @@ class OpenAIProvider(ProviderClient):
         client: Any = None,
         *,
         default_model: str = "",
-        api_key: Optional[str] = None,
-        base_url: Optional[str] = None,
+        api_key: str | None = None,
+        base_url: str | None = None,
         secrets: Any = None,
     ):
         # The SDK client is built lazily on first use, NOT at construction. This lets an engine
@@ -169,7 +169,7 @@ class OpenAIProvider(ProviderClient):
         *,
         model: str,
         messages: list[dict[str, Any]],
-        tools: Optional[list[dict[str, Any]]] = None,
+        tools: list[dict[str, Any]] | None = None,
         **settings: Any,
     ) -> AssistantTurn:
         kwargs: dict[str, Any] = {
@@ -213,7 +213,7 @@ class OpenAIProvider(ProviderClient):
         *,
         model: str,
         messages: list[dict[str, Any]],
-        tools: Optional[list[dict[str, Any]]] = None,
+        tools: list[dict[str, Any]] | None = None,
         **settings: Any,
     ):
         kwargs: dict[str, Any] = {
@@ -234,7 +234,7 @@ class OpenAIProvider(ProviderClient):
         reasoning_parts: list[str] = []
         tool_accum: dict[int, dict[str, str]] = {}
         finish_reason = None
-        usage: Optional[TokenUsage] = None
+        usage: TokenUsage | None = None
 
         # Up to two param-fix retries: effort and max_tokens can BOTH need fixing.
         for _ in range(2):
@@ -277,6 +277,19 @@ class OpenAIProvider(ProviderClient):
                             acc["args"] += fn.arguments
             if getattr(choice, "finish_reason", None):
                 finish_reason = choice.finish_reason
+
+        # A compliant OpenAI-compatible stream ALWAYS terminates with a
+        # finish_reason chunk followed by [DONE]. A stream that ends without any
+        # finish_reason was truncated in flight (pseudo-streaming relays, dropped
+        # connections, gateway kills) — surface that instead of silently presenting
+        # a two-character fragment as the finished answer (owner-hit 2026-08-26:
+        # custom OpenAI-compatible provider answered "你是谁" with "我是").
+        if finish_reason is None:
+            got = "".join(text_parts)
+            raise RuntimeError(
+                "上游流式响应被截断（未收到完成标记）— the upstream closed the stream "
+                f"before completion after {len(got)} chars; please retry."
+            )
 
         tool_calls = []
         for index in sorted(tool_accum):
@@ -357,11 +370,11 @@ def _coerce_param(raw: str) -> Any:
 
 
 def _maybe_salvage_tool_calls(
-    text: Optional[str],
+    text: str | None,
     tool_calls: list[ToolCall],
     *,
-    tools: Optional[list[dict[str, Any]]],
-) -> tuple[Optional[str], list[ToolCall]]:
+    tools: list[dict[str, Any]] | None,
+) -> tuple[str | None, list[ToolCall]]:
     """If the model returned tool calls as text, convert them. Returns (text, tool_calls):
     on success the salvaged calls replace `tool_calls` and `text` is cleared."""
     if tool_calls or not tools or not text:
@@ -373,15 +386,15 @@ def _maybe_salvage_tool_calls(
 
 
 def _tool_index(
-    tools: Optional[list[dict[str, Any]]],
-) -> tuple[Optional[set[str]], dict[str, Optional[str]]]:
+    tools: list[dict[str, Any]] | None,
+) -> tuple[set[str] | None, dict[str, str | None]]:
     """(known tool names, {name: sole-parameter-name}) from OpenAI tool schemas. The sole-param
     map lets us map a bare `toolname [args]` to `{param: args}` when a tool has one parameter.
     """
     if not tools:
         return None, {}
     names: set[str] = set()
-    single: dict[str, Optional[str]] = {}
+    single: dict[str, str | None] = {}
     for t in tools:
         fn = (t or {}).get("function") or {}
         name = fn.get("name")
@@ -405,7 +418,7 @@ def _loads(s: str) -> Any:
         return None
 
 
-def _extract_balanced(text: str, start: int) -> Optional[str]:
+def _extract_balanced(text: str, start: int) -> str | None:
     """Return the balanced `{…}`/`[…]` substring beginning at `text[start]` (string-aware), or
     None if it doesn't close — so nested braces/brackets are handled correctly."""
     open_ch = text[start]
@@ -447,7 +460,7 @@ def _iter_top_objects(text: str):
         i += 1
 
 
-def _call_from_dict(d: Any, names: Optional[set[str]]) -> Optional[ToolCall]:
+def _call_from_dict(d: Any, names: set[str] | None) -> ToolCall | None:
     """Build a ToolCall from a `{"name","arguments"}` dict, or None if it isn't one / the name
     isn't a known tool."""
     if not isinstance(d, dict):
@@ -477,7 +490,7 @@ def _renumber(calls: list[ToolCall]) -> list[ToolCall]:
 
 
 def _salvage_tool_calls_from_text(
-    content: str, tools: Optional[list[dict[str, Any]]] = None
+    content: str, tools: list[dict[str, Any]] | None = None
 ) -> list[ToolCall]:
     """Best-effort recovery of tool calls embedded in assistant text. Tries, in order:
     1. `<tool_call>…</tool_call>` blocks (anywhere, balanced); 2. embedded `{"name","arguments"}`

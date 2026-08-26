@@ -10,8 +10,8 @@ from .tools import scheduling_tools
 __all__ = [
     "Schedule",
     "ScheduledTask",
-    "TaskRun",
     "Scheduler",
+    "TaskRun",
     "TaskStore",
     "compute_next_run",
     "scheduling_tools",

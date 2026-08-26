@@ -16,7 +16,7 @@ from typing import Callable, Optional
 
 from .base import SendResult
 
-Sender = Callable[[str, str, str, Optional[str]], SendResult]
+Sender = Callable[[str, str, str, str | None], SendResult]
 
 _TIMEOUT = 30.0
 
@@ -28,7 +28,7 @@ def _slack_api_base() -> str:
 
 
 def _send_telegram(
-    token: str, chat_id: str, text: str, thread_id: Optional[str] = None
+    token: str, chat_id: str, text: str, thread_id: str | None = None
 ) -> SendResult:
     import httpx
 
@@ -56,7 +56,7 @@ def _send_telegram(
 
 
 def _send_slack(
-    token: str, chat_id: str, text: str, thread_id: Optional[str] = None
+    token: str, chat_id: str, text: str, thread_id: str | None = None
 ) -> SendResult:
     import httpx
 
@@ -109,7 +109,7 @@ def _slack_blocks(text: str, buttons) -> list[dict]:
 
 
 def _send_slack_interactive(
-    token: str, chat_id: str, text: str, buttons, thread_id: Optional[str] = None
+    token: str, chat_id: str, text: str, buttons, thread_id: str | None = None
 ) -> SendResult:
     import httpx
 
@@ -147,18 +147,18 @@ DEFAULT_SENDERS: dict[str, Sender] = {
 # -- file upload (§34 / UX-016) --------------------------------------------------------
 # A FileSender is (token, chat_id, thread_id, filename, data, title, comment) -> SendResult.
 FileSender = Callable[
-    [str, str, Optional[str], str, bytes, Optional[str], Optional[str]], SendResult
+    [str, str, str | None, str, bytes, str | None, str | None], SendResult
 ]
 
 
 def _send_slack_file(
     token: str,
     chat_id: str,
-    thread_id: Optional[str],
+    thread_id: str | None,
     filename: str,
     data: bytes,
-    title: Optional[str] = None,
-    comment: Optional[str] = None,
+    title: str | None = None,
+    comment: str | None = None,
 ) -> SendResult:
     """files_upload_v2 (the only non-deprecated path): reserve an upload URL, PUT the
     bytes, then complete into the channel/thread. Slack renders its own previews for

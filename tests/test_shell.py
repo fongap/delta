@@ -216,6 +216,43 @@ def test_background_spawn_reports_pid_and_detach(executor):
     assert detached["detach"] is True
 
 
+# -- process-event observer (Run Ledger integration) --------------------------------
+
+def test_process_events_reported_to_sink(executor):
+    """Spawn + kill facts flow to the attached sink — the hook the manager uses to
+    land them in the run ledger (docs/run-ledger-adr.md §2b)."""
+    events = []
+    executor.process_event_sink = events.append
+    reg = ToolRegistry()
+    reg.register_all(shell_tools(executor))
+    started = reg.execute(
+        "run_shell", {"command": ECHO_THEN_SLEEP, "run_in_background": True}
+    )
+    _wait_until_started(reg, started["task_id"])
+    reg.execute("shell_task_kill", {"task_id": started["task_id"]})
+
+    spawned = [e for e in events if e["event"] == "process.spawned"]
+    killed = [e for e in events if e["event"] == "process.killed"]
+    assert spawned and killed
+    assert spawned[0]["task_id"] == started["task_id"]
+    assert spawned[0]["pid"] == started["pid"]
+    assert spawned[0]["detach"] is False
+    assert killed[0]["task_id"] == started["task_id"]
+
+
+def test_process_sink_errors_never_break_execution(executor):
+    def broken(_event):
+        raise RuntimeError("bookkeeping exploded")
+
+    executor.process_event_sink = broken
+    reg = ToolRegistry()
+    reg.register_all(shell_tools(executor))
+    started = reg.execute(
+        "run_shell", {"command": QUICK_ECHO, "run_in_background": True}
+    )
+    assert started["status"] == "running"
+
+
 def test_managed_task_killed_on_shutdown(tmp_path):
     ex = LocalExecutor(cwd=tmp_path, default_timeout=10)
     try:

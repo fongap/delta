@@ -64,6 +64,8 @@ export function localizeVerifyMsg(msg: string | undefined, t: (k: string, v?: Re
 }
 
 type Translate = (key: string, vars?: Record<string, string | number>, fallback?: string) => string;
+// Section header style — mirrors ManageTabs' SEC_H (kept local to avoid a circular import).
+const SEC_H = "text-[11px] uppercase tracking-[0.05em] text-faint font-semibold";
 const FIELD_KEYS: Record<string, string> = {
   base_url: "serverAddress",
   region: "awsRegion",
@@ -704,11 +706,11 @@ export function ProviderForm({
 }) {
   const { t } = useI18n();
   const { info, sel } = ps;
+  const [showSecret, setShowSecret] = useState(false);
   const label = "block text-[12px] text-muted mt-3 mb-1";
   const input =
     "w-full px-3 py-2 rounded-lg border bg-panel text-[13.5px] outline-none focus:border-accent";
   const fieldsAll = info?.fields || [];
-  const keyed = fieldsAll.some((x) => x.secret);
   // Cloud providers declare a segmented auth-method choice; the selected method's
   // credential fields render inside a panel with its own Test & save footer.
   const choice = fieldsAll.find((f) => f.choices && f.choices.length);
@@ -721,64 +723,43 @@ export function ProviderForm({
           Object.entries(f.show_when).every(([k, v]) => (ps.fields[k] || "") === v),
       )
     : [];
-  // Without a choice control, Test lives next to the required secret (the API key), or
-  // the first field for keyless providers (Ollama's Detect).
-  const requiredSecret = fieldsAll.find((x) => x.secret && x.required);
-  const testKey = requiredSecret ? requiredSecret.key : fieldsAll[0]?.key;
   if (ps.creating) return <CustomCreateForm ps={ps} tp={tp} />;
   if (!sel) return null;
 
-  const fieldRow = (f: ProviderFieldT, testable: boolean) => (
-    <div key={f.key}>
-      <label className={label}>{info?.custom ? fieldLabel(f, t) : f.label}</label>
-      <div className="flex gap-2">
-        <div className="relative flex-1 min-w-0">
-          <input
-            className={input + (ps.savedState && testable ? " border-ok pr-32" : " border-line")}
-            type={f.secret ? "password" : "text"}
-            placeholder={f.secret && ps.credentialed && !ps.dirty ? "••••••••" : f.placeholder}
-            value={ps.fields[f.key] || ""}
-            data-testid={`${tp}-field-${f.key}`}
-            onChange={(e) => ps.setFieldValue(f.key, e.target.value)}
-            onBlur={f.secret ? undefined : () => void ps.saveField(f.key)}
-          />
-          {ps.fieldSaved === f.key && (
-            <span
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-medium text-ok bg-okSoft rounded-full px-2 py-0.5 pointer-events-none"
-              data-testid={`${tp}-field-saved-${f.key}`}
-            >
-              ✓ {t("common.saved", undefined, "Saved")}
-            </span>
-          )}
-          {/* §39: state lives IN the field — no status lines below. */}
-          {ps.savedState && testable && (
-            <span
-              className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-medium text-ok bg-okSoft rounded-full px-2 py-0.5 pointer-events-none"
-              data-testid={`${tp}-saved-pill`}
-            >
-              {info?.needs_key ? (
-                <>✓ {t("providers.testedAndSaved", undefined, "Tested & saved")}</>
-              ) : (
-                <>✓ {t("providers.detected", undefined, "Detected")}</>
-              )}
-            </span>
-          )}
-        </div>
-        {testable && (
+  const fieldRow = (f: ProviderFieldT) => (
+    <div key={f.key} className="mb-3 last:mb-0">
+      <label className={label}>{fieldLabel(f, t)}</label>
+      <div className="relative">
+        <input
+          className={input + " border-line" + (f.secret ? " pr-10" : "")}
+          type={f.secret && !showSecret ? "password" : "text"}
+          placeholder={f.secret && ps.credentialed && !ps.dirty ? "••••••••" : f.placeholder}
+          value={ps.fields[f.key] || ""}
+          data-testid={`${tp}-field-${f.key}`}
+          onChange={(e) => ps.setFieldValue(f.key, e.target.value)}
+          onBlur={f.secret ? undefined : () => void ps.saveField(f.key)}
+        />
+        {f.secret && (ps.fields[f.key] || ps.credentialed) && (
           <button
-            className="px-4 rounded-lg border border-line text-[13px] font-medium text-ink hover:border-lineStrong shrink-0 disabled:opacity-40"
-            onClick={() => ps.runTestAndSave()}
-            disabled={
-              ps.verify.state === "testing" ||
-              (info?.needs_key && !ps.secretFilled && !ps.credentialed)
-            }
-            data-testid={`${tp}-test`}
+            type="button"
+            className="absolute right-2 top-1/2 -translate-y-1/2 text-[13px] text-muted hover:text-ink"
+            onClick={() => setShowSecret((s) => !s)}
+            aria-label={showSecret ? t("providers.hideKey", undefined, "Hide key") : t("providers.showKey", undefined, "Show key")}
+            data-testid={`${tp}-toggle-secret`}
           >
-            {ps.verify.state === "testing" ? "…" : info?.needs_key ? t("common.test", undefined, "Test") : t("providers.detect", undefined, "Detect")}
+            {showSecret ? "🙈" : "👁"}
           </button>
         )}
       </div>
-      {f.help && <p className="text-[11.5px] text-faint mt-1">{info?.custom ? fieldHelp(f, t) : f.help}</p>}
+      {ps.fieldSaved === f.key && (
+        <span
+          className="text-[11.5px] text-ok mt-0.5 block"
+          data-testid={`${tp}-field-saved-${f.key}`}
+        >
+          {t("common.saved", undefined, "Saved")}
+        </span>
+      )}
+      {f.help && <p className="text-[11.5px] text-faint mt-1">{fieldHelp(f, t)}</p>}
     </div>
   );
 
@@ -798,43 +779,69 @@ export function ProviderForm({
               {t(`providers.protocols.${info.protocol}`, undefined, info.blurb || info.protocol || "")}
             </span>
           )}
-          {info ? ps.statusFor(info) : null}
         </span>
       </div>
-      {info?.custom && (
-        <p className="text-[11.5px] text-faint mt-1">
-          {t(
-            "providers.aliasReadOnly",
-            undefined,
-            "The alias is the model routing prefix and cannot be renamed. Delete and recreate this provider to change it.",
-          )}
-        </p>
-      )}
       {info?.blurb && !info.custom && (
         <p className="text-[11.5px] text-faint mt-1">
           {t("providers." + info.name + ".blurb", undefined, info.blurb)}
         </p>
       )}
 
-      {fieldsAll
-        .filter(
-          (f) =>
-            !f.show_when &&
-            !(f.choices && f.choices.length) &&
-            !(f.key === "base_url" && keyed),
-        )
-        .map((f) => fieldRow(f, !choice && f.key === testKey))}
+      <div className={"mt-5 mb-2 " + SEC_H}>{t("providers.sectionBasic", undefined, "Basic settings")}</div>
+
+      <div className="rounded-xl border border-line bg-panel p-4">
+      {/* Identity is fixed at creation: the alias IS the model routing prefix. Rendered
+          read-only under its honest name (路由标识) — "服务名称" implied it was editable. */}
+      {info?.custom && (
+        <>
+          <div className="mb-3">
+            <label className={label}>{t("providers.routeId", undefined, "Routing prefix")}</label>
+            <input
+              className={input + " border-line opacity-60"}
+              value={info.alias || info.name}
+              readOnly
+              data-testid={`${tp}-name`}
+            />
+            <p className="text-[11.5px] text-faint mt-1">
+              {t(
+                "providers.routeIdNote",
+                { alias: info.alias || info.name },
+                "Fixed after creation. This provider's models are named \"{alias}:<model>\".",
+              )}
+            </p>
+          </div>
+          <div className="mb-3">
+            <label className={label}>{t("providers.apiProtocol", undefined, "API protocol")}</label>
+            <input
+              className={input + " border-line opacity-60"}
+              value={t(`providers.protocols.${info.protocol}`, undefined, info.protocol || "")}
+              readOnly
+              data-testid={`${tp}-protocol-display`}
+            />
+          </div>
+        </>
+      )}
+
+      {/* Connection fields in decision order: where to connect (base_url) before the
+          credentials for it (api_key) — the address is what the user knows first. */}
+      {[
+        ...fieldsAll.filter((f) => f.key === "base_url"),
+        ...fieldsAll.filter(
+          (f) => f.key !== "base_url" && !f.secret && !f.show_when && !(f.choices && f.choices.length),
+        ),
+        ...fieldsAll.filter((f) => f.secret && !f.show_when && !(f.choices && f.choices.length)),
+      ].map((f) => fieldRow(f))}
 
       {/* Auth-method segmented control + the selected method's panel (owner call
           2026-07-26): one joined track, then a soft inset card holding only that
           method's description, fields, and its own Test & save footer. */}
       {choice && (
         <div>
-          <label className={label}>{info?.custom ? fieldLabel(choice, t) : choice.label}</label>
+          <label className={label}>{fieldLabel(choice, t)}</label>
           <div
             className="inline-flex gap-0.5 rounded-[10px] border border-line bg-line/40 p-[3px]"
             role="radiogroup"
-            aria-label={info?.custom ? fieldLabel(choice, t) : choice.label}
+            aria-label={fieldLabel(choice, t)}
           >
             {(choice.choices || []).map((c) => {
               const active = method === c.value;
@@ -876,64 +883,8 @@ export function ProviderForm({
                 <span className="font-sans text-[11px] text-faint">⧉</span>
               </button>
             )}
-            {methodFields.map((f) => fieldRow(f, false))}
-            <div className="mt-3.5 flex items-center justify-between gap-3 border-t border-line pt-3">
-              {ps.savedState ? (
-                <span className="text-[11.5px] font-medium text-ok" data-testid={`${tp}-saved-pill`}>
-                  ✓ {t("providers.testedAndSaved", undefined, "Tested & saved")}
-                </span>
-              ) : (
-                <span className="text-[11.5px] text-faint">{t("providers.checkThenSaves", undefined, "Runs one read-only check, then saves.")}</span>
-              )}
-              <button
-                className="shrink-0 rounded-lg border border-accent bg-accent px-4 py-1.5 text-[13px] font-medium text-onAccent hover:brightness-105 disabled:opacity-40"
-                onClick={() => ps.runTestAndSave()}
-                disabled={ps.verify.state === "testing"}
-                data-testid={`${tp}-test`}
-              >
-                {ps.verify.state === "testing" ? "…" : <>✓ {t("providers.testAndSave", undefined, "Test & save")}</>}
-              </button>
-            </div>
+            {methodFields.map((f) => fieldRow(f))}
           </div>
-        </div>
-      )}
-
-      {/* Saved custom providers: pull the live model list from this server (the create
-          form has its own Fetch; the edit view used to offer no way to re-fetch). */}
-      {info?.custom && (
-        <div className="mt-4 rounded-xl border border-line bg-paper/60 px-4 py-3 flex items-center gap-3">
-          <div className="min-w-0 flex-1">
-            <div className="text-[13px] font-medium">
-              {t("providers.fetchModels", undefined, "Fetch models")}
-            </div>
-            <div className="text-[11.5px] text-faint mt-0.5">
-              {t(
-                "providers.fetchModelsSub",
-                undefined,
-                "Pull the model list from this server, then pick a default.",
-              )}
-            </div>
-            {ps.fetchMsg && (
-              <div
-                className={
-                  "mt-1.5 text-[12px] " +
-                  (ps.fetchMsg.state === "ok" ? "text-ok" : "text-warnInk")
-                }
-                data-testid={`${tp}-fetch-msg`}
-              >
-                {ps.fetchMsg.text}
-              </div>
-            )}
-            <FetchedModelChips ps={ps} />
-          </div>
-          <button
-            className="shrink-0 rounded-lg border border-line px-4 py-1.5 text-[13px] font-medium text-ink hover:border-lineStrong disabled:opacity-40"
-            onClick={() => void ps.fetchCustomModels()}
-            disabled={ps.fetching}
-            data-testid={`${tp}-fetch`}
-          >
-            {ps.fetching ? "…" : t("providers.fetchModels", undefined, "Fetch models")}
-          </button>
         </div>
       )}
 
@@ -963,53 +914,41 @@ export function ProviderForm({
         </p>
       )}
 
-      {/* Custom endpoint (keyed providers only): a quiet disclosure BELOW the key help,
-          with enough separation to read as its own advanced row — no explainer copy
-          (owner calls 2026-07-18 + 2026-07-19). */}
-      {(() => {
-        const keyed = (info?.fields || []).some((x) => x.secret);
-        const ep = keyed ? (info?.fields || []).find((f) => f.key === "base_url") : undefined;
-        if (!ep) return null;
-        if (!ps.showEndpoint)
-          return (
-            <button
-              className="block self-start text-[12.5px] text-muted hover:text-ink mt-4"
-              onClick={() => ps.setShowEndpoint(true)}
-              data-testid={`${tp}-endpoint-link`}
-            >
-              {t("providers.customEndpoint", undefined, "Custom endpoint ⌄")}
-            </button>
-          );
-        return (
-          <div className="mt-4">
-            <label className={label}>{ep.label}</label>
-            <div className="relative">
-              <input
-                className={input + " border-line"}
-                type="text"
-                placeholder={ep.placeholder}
-                value={ps.fields[ep.key] || ""}
-                data-testid={`${tp}-field-${ep.key}`}
-                onChange={(e) => ps.setFieldValue(ep.key, e.target.value)}
-                onBlur={() => void ps.saveField(ep.key)}
-              />
-              {ps.fieldSaved === ep.key && (
-                <span
-                  className="absolute right-2 top-1/2 -translate-y-1/2 text-[11px] font-medium text-ok bg-okSoft rounded-full px-2 py-0.5 pointer-events-none"
-                  data-testid={`${tp}-field-saved-${ep.key}`}
-                >
-                  ✓ {t("common.saved", undefined, "Saved")}
+      {/* Test connection: one secondary action covering the WHOLE provider config
+          (protocol + base_url + key), with an explicit status line — ● Connected /
+          ● Failed + the server's reason. Replaces the old per-field inline Test and
+          the permanent "✓ saved" pill. */}
+      <div className="mt-4 flex items-center gap-3" data-testid={`${tp}-test-connection`}>
+        <button
+          className="btn-secondary shrink-0"
+          onClick={() => ps.runTestAndSave()}
+          disabled={
+            ps.verify.state === "testing" ||
+            (info?.needs_key && !ps.secretFilled && !ps.credentialed)
+          }
+          data-testid={`${tp}-test`}
+        >
+          {ps.verify.state === "testing" ? "…" : t("providers.testConnection", undefined, "Test connection")}
+        </button>
+        {ps.verify.state === "error" ? (
+          <span className="flex items-start gap-1.5 text-[12.5px] text-warnInk min-w-0" data-testid={`${tp}-conn-status`}>
+            <span className="mt-[6px] h-[7px] w-[7px] rounded-full bg-warnInk shrink-0" />
+            <span className="min-w-0">
+              {t("providers.connFail", undefined, "Connection failed")}
+              {ps.verify.msg ? (
+                <span className="block text-[11.5px] text-faint truncate">
+                  {localizeVerifyMsg(ps.verify.msg, t)}
                 </span>
-              )}
-            </div>
-            {ep.help && <p className="text-[11.5px] text-faint mt-1">{ep.help}</p>}
-          </div>
-        );
-      })()}
-
-      {/* Error line: fixed height so failures never reflow the form. */}
-      <div className="mt-3 min-h-[19px] text-[12.5px]">
-        {ps.verify.state === "error" && <span className="text-warnInk">{localizeVerifyMsg(ps.verify.msg, t)}</span>}
+              ) : null}
+            </span>
+          </span>
+        ) : ps.verify.state === "ok" || (info?.configured && info.needs_key) || (!info?.needs_key && sel != null && ps.keylessOk.has(sel)) ? (
+          <span className="flex items-center gap-1.5 text-[12.5px] text-ok" data-testid={`${tp}-conn-status`}>
+            <span className="h-[7px] w-[7px] rounded-full bg-ok" />
+            {t("providers.connOk", undefined, "Connected")}
+          </span>
+        ) : null}
+      </div>
       </div>
       {footer}
     </div>

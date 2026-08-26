@@ -27,14 +27,14 @@ class Scheduler:
         runner: Runner,
         *,
         tick_seconds: float = 30.0,
-        extra_tick: Optional[Callable[[], Awaitable[None]]] = None,
+        extra_tick: Callable[[], Awaitable[None]] | None = None,
     ) -> None:
         self.store = store
         self.runner = runner
         self.tick_seconds = tick_seconds
         # An extra per-tick coroutine (self-wake resumption: resume sessions whose wakes are due).
         self.extra_tick = extra_tick
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._running_ids: set[str] = set()  # overlap guard
         self._spawned: set[asyncio.Task] = set()  # keep spawned runs referenced
 
@@ -97,14 +97,14 @@ class Scheduler:
             except Exception:
                 logger.exception("scheduler extra_tick (wake resume) failed")
 
-    async def _run_claimed(self, task: ScheduledTask, *, trigger: str) -> Optional[TaskRun]:
+    async def _run_claimed(self, task: ScheduledTask, *, trigger: str) -> TaskRun | None:
         """Execute a task whose overlap guard was already claimed by _tick."""
         try:
             return await self._execute(task, trigger=trigger)
         finally:
             self._running_ids.discard(task.id)
 
-    async def run_task(self, task: ScheduledTask, *, trigger: str) -> Optional[TaskRun]:
+    async def run_task(self, task: ScheduledTask, *, trigger: str) -> TaskRun | None:
         if task.id in self._running_ids:  # skip-on-overlap
             logger.info("skipping %s — previous run still going", task.id)
             return None
@@ -114,7 +114,7 @@ class Scheduler:
         finally:
             self._running_ids.discard(task.id)
 
-    async def _execute(self, task: ScheduledTask, *, trigger: str) -> Optional[TaskRun]:
+    async def _execute(self, task: ScheduledTask, *, trigger: str) -> TaskRun | None:
         try:
             run = await self.runner(task, trigger)
         except Exception as exc:

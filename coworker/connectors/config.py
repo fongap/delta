@@ -58,12 +58,12 @@ def is_authorized(settings: ConnectorSettings, source: SessionSource) -> bool:
     return bool(uid) and uid in settings.allowed_users
 
 
-def _csv(value: Optional[str]) -> set[str]:
+def _csv(value: str | None) -> set[str]:
     return {p.strip() for p in (value or "").split(",") if p.strip()}
 
 
 def load_settings(
-    secrets: Optional[SecretStore] = None,
+    secrets: SecretStore | None = None,
 ) -> dict[str, ConnectorSettings]:
     """Per-platform settings from the SecretStore profile + env overrides.
 

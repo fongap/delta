@@ -5,6 +5,7 @@ from __future__ import annotations
 import sqlite3
 
 import aisuite as ai
+
 from coworker.conversations import ConversationStore
 from coworker.memory import (
     INDEX_THRESHOLD_CHARS,

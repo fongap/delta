@@ -17,12 +17,12 @@ from __future__ import annotations
 from typing import Optional
 
 
-def qualify(team_id: Optional[str], channel: str) -> str:
+def qualify(team_id: str | None, channel: str) -> str:
     """Build a team-qualified chat_id, or the bare channel when no team."""
     return f"{team_id}/{channel}" if team_id else channel
 
 
-def split(chat_id: str) -> tuple[Optional[str], str]:
+def split(chat_id: str) -> tuple[str | None, str]:
     """`'T…/C…' -> ('T…', 'C…')`; a bare `'C…' -> (None, 'C…')`.
 
     Only the first `/` splits (channel ids never contain one), so this is

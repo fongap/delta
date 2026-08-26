@@ -5,6 +5,11 @@ a file came to be the way it is before changing it. Read-only; no commit/push he
 forbids those without explicit ask, and they'd go through run_shell anyway).
 """
 
+# pyright: reportFunctionMemberAccess=false
+# (tool-builder module: attaches aisuite's dynamic metadata attributes
+# (__aisuite_tool_metadata__ / __coworker_schema__) to plain functions —
+# the framework's plugin protocol, not a type error.)
+
 from __future__ import annotations
 
 import subprocess
@@ -43,7 +48,7 @@ _SCHEMA = {
 def git_tools(workspace: str) -> list:
     root = str(Path(workspace).resolve())
 
-    def git_log(path: Optional[str] = None, max_count: int = 20) -> dict[str, Any]:
+    def git_log(path: str | None = None, max_count: int = 20) -> dict[str, Any]:
         n = max_count if isinstance(max_count, int) and max_count > 0 else 20
         n = min(n, 200)
         cmd = [

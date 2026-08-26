@@ -24,11 +24,11 @@ class MemoryItem:
     id: int
     scope: Scope
     content: str
-    key: Optional[str] = None
-    summary: Optional[str] = None
-    workspace: Optional[str] = None
-    session_id: Optional[str] = None
-    created_at: Optional[str] = None
+    key: str | None = None
+    summary: str | None = None
+    workspace: str | None = None
+    session_id: str | None = None
+    created_at: str | None = None
 
 
 class MemoryStore(ABC):
@@ -38,34 +38,34 @@ class MemoryStore(ABC):
         content: str,
         *,
         scope: Scope = Scope.WORKSPACE,
-        key: Optional[str] = None,
-        summary: Optional[str] = None,
-        workspace: Optional[str] = None,
-        session_id: Optional[str] = None,
+        key: str | None = None,
+        summary: str | None = None,
+        workspace: str | None = None,
+        session_id: str | None = None,
     ) -> MemoryItem: ...
 
     @abstractmethod
-    def get(self, item_id: int) -> Optional[MemoryItem]: ...
+    def get(self, item_id: int) -> MemoryItem | None: ...
 
     @abstractmethod
     def list(
         self,
         *,
-        scope: Optional[Scope] = None,
-        workspace: Optional[str] = None,
-        session_id: Optional[str] = None,
+        scope: Scope | None = None,
+        workspace: str | None = None,
+        session_id: str | None = None,
     ) -> list[MemoryItem]: ...
 
     @abstractmethod
     def update(
-        self, item_id: int, content: str, *, summary: Optional[str] = None
-    ) -> Optional[MemoryItem]: ...
+        self, item_id: int, content: str, *, summary: str | None = None
+    ) -> MemoryItem | None: ...
 
     @abstractmethod
     def delete(self, item_id: int) -> bool: ...
 
     @abstractmethod
-    def delete_all(self, *, scope: Optional[Scope] = None) -> int: ...
+    def delete_all(self, *, scope: Scope | None = None) -> int: ...
 
 
 # MEMORY-SPEC §7: below this rendered size, every memory is injected in full; above it,

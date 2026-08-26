@@ -37,7 +37,7 @@ MAX_REDIRECTS = 5
 _CGNAT = ipaddress.ip_network("100.64.0.0/10")
 
 
-def _blocked_reason(ip: ipaddress._BaseAddress) -> Optional[str]:
+def _blocked_reason(ip: ipaddress._BaseAddress) -> str | None:
     if ip.is_loopback:
         return "loopback"
     if ip.is_link_local:
@@ -53,7 +53,7 @@ def _blocked_reason(ip: ipaddress._BaseAddress) -> Optional[str]:
     return None
 
 
-def _vet(url: str) -> tuple[Optional[str], Optional[str]]:
+def _vet(url: str) -> tuple[str | None, str | None]:
     """(refusal reason, address to pin the connection to).
 
     The reason is None when the URL may be fetched. The address is None for literal-IP
@@ -83,7 +83,7 @@ def _vet(url: str) -> tuple[Optional[str], Optional[str]]:
     except OSError as exc:
         return f"could not resolve {host}: {exc}", None
 
-    pin: Optional[str] = None
+    pin: str | None = None
     for info in infos:
         raw = info[4][0]
         try:
@@ -102,7 +102,7 @@ def _vet(url: str) -> tuple[Optional[str], Optional[str]]:
     return None, pin
 
 
-def check_url(url: str) -> Optional[str]:
+def check_url(url: str) -> str | None:
     """None if the URL may be fetched, else a human-readable refusal reason.
 
     Resolves the host and rejects when *any* answer lands in a blocked range, so a name

@@ -32,7 +32,7 @@ from ._jsonstate import load_json_state, save_json_state
 class PersonaConnectionStore:
     """``{persona_id: {connector: bool}}`` — the per-persona default on/off for each connector."""
 
-    def __init__(self, path: Optional[str | Path] = None) -> None:
+    def __init__(self, path: str | Path | None = None) -> None:
         self.path = Path(path) if path else None
         self._lock = threading.Lock()
         self._rows: dict[str, dict[str, bool]] = {}
@@ -101,7 +101,7 @@ class SessionConnectionStore:
     """``{session_id: {connector: bool}}`` — per-session overrides only; an absent entry means the
     session inherits the persona default."""
 
-    def __init__(self, path: Optional[str | Path] = None) -> None:
+    def __init__(self, path: str | Path | None = None) -> None:
         self.path = Path(path) if path else None
         self._lock = threading.Lock()
         self._rows: dict[str, dict[str, bool]] = {}

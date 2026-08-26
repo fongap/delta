@@ -9,93 +9,65 @@ from __future__ import annotations
 
 import asyncio
 import json
-import logging
 import os
 import re
-import shutil
-import subprocess
 import time
 from pathlib import Path
 from typing import Any, Optional
 
-from ..agent import build_engine
-from ..agents import get_agent
+from ..audit import AuditStore
+from ..automation import Scheduler, TaskStore
 from ..connections import (
     PersonaConnectionStore,
     SessionConnectionStore,
-    effective as effective_connections,
 )
-from ..inbox import InboxStore, args_preview
-from ..inbox_routing import InboxRouting
-from ..personas import PersonaRegistry
-from ..personas.registry import set_registry as set_persona_registry
-from ..selfwake import WakeStore
-from ..mentions import MentionSessionStore
-from ..subscriptions import ChannelBuffer, SubscriptionStore
-from ..unrouted import UnroutedStore
-from ..unattended import UnattendedRegistry
-from ..audit import AuditStore
-from ..ledger import RunEventLedger
-from ..config import load_config, workspace_allowed_commands
-from ..conversations import ConversationStore, title_from
-from ..engine import ApprovalOutcome, Approver, TurnEngine
-from ..runtime import TurnEngineAdapter
-from ..roots import RootDir
-from ..workspace_trust import WorkspaceTrustStore
-from ..automation import Schedule, ScheduledTask, Scheduler, TaskRun, TaskStore
 from ..connectors import (
     Gateway,
-    MessageSource,
-    connect_connector,
-    connector_list,
-    disconnect_connector,
-    experimental_enabled,
-    load_settings,
-    make_adapter,
-    set_experimental_enabled,
-    slack_split,
-    update_connector_tools,
-)
-from ..connectors.browser_automation import (
-    browser_close_session,
-    browser_state,
-    browser_take_screenshot,
 )
 from ..connectors.parked import ParkedStore
+from ..conversations import ConversationStore
+from ..inbox import InboxStore
+from ..inbox_routing import InboxRouting
+from ..ledger import RunEventLedger
 from ..mcp import (
     MCPManager,
-    build_callables,
-    delete_global_server,
-    load_mcp_servers,
-    patch_global_server,
-    put_global_server,
-    read_global,
 )
-from ..memory import MemorySettingsStore, MemoryStore, Scope, SQLiteMemoryStore
+from ..memory import MemorySettingsStore, MemoryStore, SQLiteMemoryStore
+from ..mentions import MentionSessionStore
 from ..permissions import Mode
-from ..agents import list_agents as _list_agents
+from ..personas import PersonaRegistry
+from ..personas.registry import set_registry as set_persona_registry
 from ..providers import (
     ProviderClient,
     ProviderRouter,
-    descriptor_configured,
     fetch_provider_models,
     get_descriptor,
-    is_custom_provider,
-    provider_descriptors,
     register_custom_provider,
-    unregister_custom_provider,
-    verify_provider_key,
 )
+from ..runtime import RuntimePort
 from ..secrets import SecretStore, state_dir
-from ..sessions import SessionRecord
+from ..selfwake import WakeStore
 from ..skills import (
     SessionSkillStore,
-    SkillLoader,
     SkillStore,
-    effective_skills,
 )
-from .contracts import runtime_event_v1
+from ..subscriptions import ChannelBuffer, SubscriptionStore
+from ..unattended import UnattendedRegistry
+from ..unrouted import UnroutedStore
+from ..workspace_trust import WorkspaceTrustStore
+from .manager_artifacts import ArtifactsBrowserAuditMixin
+from .manager_automations import AutomationsMixin
+from .manager_connections import ConnectionsMixin
+from .manager_events import EventsMixin
+from .manager_gateway import GatewayInboundMixin
+from .manager_inbox import InboxApprovalsMixin
+from .manager_mcp_connectors import McpConnectorsMixin
+from .manager_providers import ProvidersSettingsMixin
+from .manager_sessions import SessionsMixin
+from .manager_skills_memory import SkillsMemoryMixin
 
+# Re-exported helpers the rest of the application layer imports from the manager
+# package (kept here for backward-compatible import paths; see tests + mixins).
 from .manager_support import (
     _SCOPES,
     _SLACK_TS_RE,
@@ -103,7 +75,6 @@ from .manager_support import (
     _artifact_kind,
     _epoch,
     _git_branch,
-    _grants_of,
     _inbound_epoch,
     _last_assistant_text,
     _parse_inbox_json,
@@ -111,18 +82,8 @@ from .manager_support import (
     _redact,
     logger,
 )
-
 from .manager_workspace import WorkspaceTrustMixin
-from .manager_sessions import SessionsMixin
-from .manager_events import EventsMixin
-from .manager_mcp_connectors import McpConnectorsMixin
-from .manager_connections import ConnectionsMixin
-from .manager_inbox import InboxApprovalsMixin
-from .manager_gateway import GatewayInboundMixin
-from .manager_automations import AutomationsMixin
-from .manager_artifacts import ArtifactsBrowserAuditMixin
-from .manager_providers import ProvidersSettingsMixin
-from .manager_skills_memory import SkillsMemoryMixin
+
 
 class SessionManager(
     WorkspaceTrustMixin,
@@ -140,11 +101,11 @@ class SessionManager(
     def __init__(
         self,
         *,
-        workspace: Optional[str | Path] = None,  # default/seed workspace (e.g. --cwd)
-        data_dir: Optional[str | Path] = None,
+        workspace: str | Path | None = None,  # default/seed workspace (e.g. --cwd)
+        data_dir: str | Path | None = None,
         model: str = "",
         mode: Mode = Mode.INTERACTIVE,
-        provider: Optional[ProviderClient] = None,
+        provider: ProviderClient | None = None,
     ) -> None:
         self.default_workspace = (
             str(Path(workspace).expanduser().resolve()) if workspace else None
@@ -171,7 +132,7 @@ class SessionManager(
         self.session_store.canonicalize_workspaces()  # collapse /tmp vs /private/tmp etc.
         if self.default_workspace:
             self.session_store.touch_workspace(self.default_workspace)
-        self._engines: dict[str, TurnEngine] = {}
+        self._runtimes: dict[str, RuntimePort] = {}
         self._running_sessions: set[str] = (
             set()
         )  # sessions with an in-flight turn (busy)
@@ -193,7 +154,7 @@ class SessionManager(
         # feeds list_mcp's status so the GUI can show "authorizing…" and failures.
         self._mcp_authorizing: set[str] = set()
         self._mcp_errors: dict[str, str] = {}
-        self.gateway: Optional[Gateway] = None
+        self.gateway: Gateway | None = None
         self._data_base = base
         # Desktop/UI prefs (default model, onboarding state) — not secrets; a plain JSON file.
         self._prefs = self._load_prefs()
@@ -284,20 +245,15 @@ class SessionManager(
         await self.scheduler.stop()
         await self.stop_gateway()
         await self.mcp.aclose()
-        for engine in self._engines.values():
-            executor = getattr(engine, "executor", None)
-            if executor is not None:
-                try:
-                    # App shutdown kills each session's managed background tasks;
-                    # detached (detach=true) tasks survive by design.
-                    executor.shutdown()
-                except Exception:
-                    pass
+        for runtime in self._runtimes.values():
+            # App shutdown kills each session's managed background tasks;
+            # detached (detach=true) tasks survive by design.
+            runtime.shutdown_executor()
         self.audit_store.close()
 
 
     def fetch_models(
-        self, alias: str, fields: Optional[dict[str, Any]], timeout: float = 10.0
+        self, alias: str, fields: dict[str, Any] | None, timeout: float = 10.0
     ) -> dict[str, Any]:
         """Fetch the model list for a custom provider alias, then auto-add each id by prefix
         as `alias:{model_id}` (idempotent — already-present ids are skipped)."""

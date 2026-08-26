@@ -79,7 +79,7 @@ class MCPManager:
         return (await self.ensure(server)).tools
 
     async def call(
-        self, name: str, tool: str, arguments: Optional[dict[str, Any]]
+        self, name: str, tool: str, arguments: dict[str, Any] | None
     ) -> Any:
         conn = self._conns.get(name)
         if conn is None:

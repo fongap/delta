@@ -47,10 +47,10 @@ class SQLiteMemoryStore(MemoryStore):
         content: str,
         *,
         scope: Scope = Scope.WORKSPACE,
-        key: Optional[str] = None,
-        summary: Optional[str] = None,
-        workspace: Optional[str] = None,
-        session_id: Optional[str] = None,
+        key: str | None = None,
+        summary: str | None = None,
+        workspace: str | None = None,
+        session_id: str | None = None,
     ) -> MemoryItem:
         scope = Scope(scope)
         with self._lock:
@@ -64,7 +64,7 @@ class SQLiteMemoryStore(MemoryStore):
         assert item is not None
         return item
 
-    def get(self, item_id: int) -> Optional[MemoryItem]:
+    def get(self, item_id: int) -> MemoryItem | None:
         with self._lock:
             row = self._conn.execute(
                 "SELECT * FROM memories WHERE id = ?", (item_id,)
@@ -74,9 +74,9 @@ class SQLiteMemoryStore(MemoryStore):
     def list(
         self,
         *,
-        scope: Optional[Scope] = None,
-        workspace: Optional[str] = None,
-        session_id: Optional[str] = None,
+        scope: Scope | None = None,
+        workspace: str | None = None,
+        session_id: str | None = None,
     ) -> list[MemoryItem]:
         query = "SELECT * FROM memories WHERE 1 = 1"
         params: list[object] = []
@@ -95,8 +95,8 @@ class SQLiteMemoryStore(MemoryStore):
         return [_row_to_item(row) for row in rows]
 
     def update(
-        self, item_id: int, content: str, *, summary: Optional[str] = None
-    ) -> Optional[MemoryItem]:
+        self, item_id: int, content: str, *, summary: str | None = None
+    ) -> MemoryItem | None:
         with self._lock:
             if summary is not None:
                 self._conn.execute(
@@ -116,7 +116,7 @@ class SQLiteMemoryStore(MemoryStore):
             self._conn.commit()
         return cursor.rowcount > 0
 
-    def delete_all(self, *, scope: Optional[Scope] = None) -> int:
+    def delete_all(self, *, scope: Scope | None = None) -> int:
         """Delete every memory (optionally one scope). Returns the number removed."""
         with self._lock:
             if scope is not None:

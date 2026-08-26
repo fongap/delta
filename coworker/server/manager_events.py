@@ -7,7 +7,9 @@ mixin inheritance so behavior is unchanged.
 from __future__ import annotations
 
 from typing import Any, Optional
+
 from .contracts import runtime_event_v1
+
 
 class EventsMixin:
 

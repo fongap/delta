@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 from coworker.config import load_config
 
 
@@ -93,6 +91,30 @@ def test_workspace_trust_is_canonical_and_user_owned(tmp_path):
 
     store.path.write_text("[]")
     assert store.list() == []
+
+
+    store.path.write_text("[]")
+    assert store.list() == []
+
+
+def test_workspace_trust_marks_acl_degradation(tmp_path, monkeypatch):
+    """The trust file shares the SecretStore's best-effort private write; a failed
+    hardening must leave a visible marker (cleared by a later verified write) —
+    never degrade silently."""
+    from coworker import workspace_trust as wt
+
+    store = wt.WorkspaceTrustStore(tmp_path / "state" / "workspace_trust.json")
+    real = tmp_path / "ws"
+    real.mkdir()
+
+    monkeypatch.setattr(wt, "verify_user_restricted", lambda p: False)
+    store.set_trusted(real, True)
+    assert store.acl_unprotected()
+    assert store._acl_marker_path().is_file()
+
+    monkeypatch.setattr(wt, "verify_user_restricted", lambda p: True)
+    store.set_trusted(real, True)  # a later verified write clears the marker
+    assert not store.acl_unprotected()
 
 
 def test_build_engine_honors_explicit_empty_command_allowlist(tmp_path):
