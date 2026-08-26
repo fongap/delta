@@ -159,7 +159,10 @@ jobs:
       # lint debt is cleaned up; raise it deliberately (with a comment) after a
       # reviewed change that adds noise. Baselines were re-measured at the pinned
       # versions above (ruff 0.11.13 / pyright 1.1.397) and lowered from the prior
-      # 467 / 572 to the actual current counts.
+      # 467 / 572 to the actual current counts. NOTE: pyright is platform-sensitive —
+      # the Windows-only `tzdata; sys_platform == 'win32'` conditional imports parse
+      # differently on the Linux runner, so the CI (Linux) count (581) is higher than
+      # a Windows measurement (570); the baseline uses the CI Linux count.
       - name: Ruff full-scan (baseline gate — 192)
         env:
           RUFF_BASELINE: "192"
@@ -173,9 +176,9 @@ jobs:
           if count > baseline:
               raise SystemExit(f"ruff findings {count} > baseline {baseline} — clean up or raise the baseline deliberately")
           PY
-      - name: Pyright (baseline gate — 570)
+      - name: Pyright (baseline gate — 581)
         env:
-          PYRIGHT_BASELINE: "570"
+          PYRIGHT_BASELINE: "581"
         run: |
           RUN=$(pyright coworker 2>/dev/null || true)
           echo "$RUN" | tail -1
