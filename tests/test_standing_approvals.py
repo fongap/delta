@@ -11,11 +11,11 @@ import asyncio
 
 import aisuite as ai
 
-from coworker.automation import Schedule, ScheduledTask, Scheduler, TaskRun, TaskStore
-from coworker.automation.models import grant_entries, rule_entry, rule_parts
-from coworker.automation.tools import scheduling_tools
-from coworker.engine import ApprovalOutcome, PermissionRequest
-from coworker.permissions import Mode, PermissionEngine, standing_rule_candidate
+from delta.automation import Schedule, ScheduledTask, Scheduler, TaskRun, TaskStore
+from delta.automation.models import grant_entries, rule_entry, rule_parts
+from delta.automation.tools import scheduling_tools
+from delta.engine import ApprovalOutcome, PermissionRequest
+from delta.permissions import Mode, PermissionEngine, standing_rule_candidate
 
 
 class _Meta:
@@ -35,7 +35,7 @@ def _task(**kw) -> ScheduledTask:
 
 
 def _provider():
-    from coworker.providers import AssistantTurn, ModelCapabilities, ProviderClient
+    from delta.providers import AssistantTurn, ModelCapabilities, ProviderClient
 
     class _P(ProviderClient):
         def complete(self, *, model, messages, tools=None, **settings):
@@ -173,7 +173,7 @@ def test_create_tool_stores_write_grants(tmp_path):
     )
     create = next(t for t in tools if t.__name__ == "create_scheduled_task")
     # The schema advertises the field to the agent.
-    props = create.__coworker_schema__["function"]["parameters"]["properties"]
+    props = create.__delta_schema__["function"]["parameters"]["properties"]
     assert "permissions" in props
     res = create(
         title="Weekly digest",
@@ -191,7 +191,7 @@ def test_create_tool_stores_write_grants(tmp_path):
     update = next(t for t in tools if t.__name__ == "update_scheduled_task")
     assert (
         "permissions"
-        not in update.__coworker_schema__["function"]["parameters"]["properties"]
+        not in update.__delta_schema__["function"]["parameters"]["properties"]
     )
 
 
@@ -214,9 +214,9 @@ def test_task_for_run_session(tmp_path):
 
 
 async def test_scheduled_approver_parks_and_mints(tmp_path, monkeypatch):
-    from coworker.server.manager import SessionManager
+    from delta.server.manager import SessionManager
 
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     ws = tmp_path / "ws"
     ws.mkdir()
     manager = SessionManager(data_dir=tmp_path / "data", provider=_provider())
@@ -268,9 +268,9 @@ async def test_scheduled_approver_parks_and_mints(tmp_path, monkeypatch):
 
 
 async def test_scheduled_approver_name_allows_and_denies(tmp_path, monkeypatch):
-    from coworker.server.manager import SessionManager
+    from delta.server.manager import SessionManager
 
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     ws = tmp_path / "ws"
     ws.mkdir()
     manager = SessionManager(data_dir=tmp_path / "data", provider=_provider())
@@ -305,9 +305,9 @@ async def test_scheduled_approver_name_allows_and_denies(tmp_path, monkeypatch):
 
 
 def test_mint_task_rule_validates(tmp_path, monkeypatch):
-    from coworker.server.manager import SessionManager
+    from delta.server.manager import SessionManager
 
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     manager = SessionManager(data_dir=tmp_path / "data", provider=_provider())
     task = _task()
     manager.task_store.save(task)
@@ -336,9 +336,9 @@ def test_mint_task_rule_validates(tmp_path, monkeypatch):
 
 
 def test_get_engine_seeds_run_session_rules(tmp_path, monkeypatch):
-    from coworker.server.manager import SessionManager
+    from delta.server.manager import SessionManager
 
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     ws = tmp_path / "ws"
     ws.mkdir()
     manager = SessionManager(data_dir=tmp_path / "data", provider=_provider())
@@ -359,9 +359,9 @@ def test_get_engine_seeds_run_session_rules(tmp_path, monkeypatch):
 
 
 def test_create_automation_grants_and_revoke(tmp_path, monkeypatch):
-    from coworker.server.manager import SessionManager
+    from delta.server.manager import SessionManager
 
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     manager = SessionManager(data_dir=tmp_path / "data", provider=_provider())
     res = manager.create_automation(
         {
@@ -427,15 +427,15 @@ async def test_blocked_run_does_not_stall_other_tasks(tmp_path):
 
 
 def test_engine_events_carry_standing_context(tmp_path):
-    from coworker.engine import TurnEngine
-    from coworker.events import EventType
-    from coworker.providers import (
+    from delta.engine import TurnEngine
+    from delta.events import EventType
+    from delta.providers import (
         AssistantTurn,
         ModelCapabilities,
         ProviderClient,
         ToolCall,
     )
-    from coworker.tools import ToolRegistry
+    from delta.tools import ToolRegistry
 
     def send_message(target: str, text: str):
         return {"ok": True}
@@ -447,7 +447,7 @@ def test_engine_events_carry_standing_context(tmp_path):
         capabilities=["messaging"],
         requires_approval=True,
     )
-    send_message.__coworker_schema__ = {
+    send_message.__delta_schema__ = {
         "type": "function",
         "function": {
             "name": "send_message",

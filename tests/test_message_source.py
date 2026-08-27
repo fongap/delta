@@ -9,13 +9,13 @@ import asyncio
 
 from fastapi.testclient import TestClient
 
-from coworker.connectors.base import MessageEvent, MessageSource, SessionSource
-from coworker.engine import TurnEngine
-from coworker.permissions import PermissionEngine
-from coworker.providers import AssistantTurn, ModelCapabilities, ProviderClient
-from coworker.server import create_app
-from coworker.server.manager import SessionManager
-from coworker.tools import ToolRegistry
+from delta.connectors.base import MessageEvent, MessageSource, SessionSource
+from delta.engine import TurnEngine
+from delta.permissions import PermissionEngine
+from delta.providers import AssistantTurn, ModelCapabilities, ProviderClient
+from delta.server import create_app
+from delta.server.manager import SessionManager
+from delta.tools import ToolRegistry
 
 
 class CapturingProvider(ProviderClient):
@@ -46,7 +46,7 @@ def _channel_event(text="deploy failed", chat_id="C1"):
             chat_id=chat_id,
             user_id="U1",
             user_name="Bob",
-            chat_name="#ocw-test",
+            chat_name="#delta-test",
             chat_type="channel",
         ),
         message_id="1700000001.000001",
@@ -98,7 +98,7 @@ def test_inbound_builds_message_source(tmp_path, monkeypatch):
         "connector": "slack",
         "kind": "channel",
         "channel_id": "C1",
-        "channel_name": "#ocw-test",
+        "channel_name": "#delta-test",
         "sender_id": "U1",
         "sender_name": "Bob",
         "ts": float("1700000001.000001"),
@@ -125,7 +125,7 @@ def test_message_source_persisted_and_stripped(tmp_path):
 
     # persisted WITH the display-only source sidecar
     assert last_user["source"]["connector"] == "slack"
-    assert last_user["source"]["channel_name"] == "#ocw-test"
+    assert last_user["source"]["channel_name"] == "#delta-test"
     assert last_user["source"]["sender_name"] == "Bob"
     assert last_user["source"]["text"] == "deploy failed"  # raw message on the card
     # the model-facing content stays the FRAMED text (raw message is NOT the content)
@@ -181,7 +181,7 @@ def test_tool_display_sidecar_is_agent_invisible(tmp_path):
     """`_display` on a tool result (e.g. gmail filter-hidden counts) mirrors the
     `source` contract: lifted onto the message for the GUI, audited as a rule+count
     row, and stripped from every provider feed — the agent sees no tombstone."""
-    from coworker.providers.base import ToolCall
+    from delta.providers.base import ToolCall
 
     audits: list[dict] = []
     engine = TurnEngine(
@@ -235,7 +235,7 @@ def test_turn_start_carries_source(tmp_path):
     source = starts[0]["payload"]["source"]
     assert source["connector"] == "slack"
     assert source["kind"] == "channel"
-    assert source["channel_name"] == "#ocw-test"
+    assert source["channel_name"] == "#delta-test"
     assert source["text"] == "deploy failed"
 
 

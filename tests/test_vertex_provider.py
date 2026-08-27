@@ -6,9 +6,9 @@ from typing import Any, Optional
 
 import pytest
 
-from coworker.providers import capabilities_for
-from coworker.providers.base import AssistantTurn, ProviderClient, StreamChunk
-from coworker.providers.vertex_provider import VertexProvider, load_credentials
+from delta.providers import capabilities_for
+from delta.providers.base import AssistantTurn, ProviderClient, StreamChunk
+from delta.providers.vertex_provider import VertexProvider, load_credentials
 
 # -- family dispatch ----------------------------------------------------------------
 
@@ -148,7 +148,7 @@ def test_vertex_capabilities_from_matrix_and_fallback():
 
 
 def test_vertex_descriptor_and_builder():
-    from coworker.providers.registry import build_provider_client, get_descriptor
+    from delta.providers.registry import build_provider_client, get_descriptor
 
     d = get_descriptor("vertex")
     assert d is not None and d.needs_key
@@ -172,7 +172,7 @@ def test_vertex_descriptor_and_builder():
     assert by_key["vertex_api_key"].show_when == {"auth_method": "api_key"}
     assert by_key["service_account_json"].secret and by_key["vertex_api_key"].secret
 
-    from coworker.providers.matrix import models_for_provider
+    from delta.providers.matrix import models_for_provider
 
     assert d.recommended_model in models_for_provider("vertex")
 
@@ -231,7 +231,7 @@ def test_api_key_method_builds_express_gemini_client(monkeypatch):
         project="proj", location="us-east5", auth_method="api_key", api_key="AQ.k"
     )
     sub = p._family_client("gemini")
-    from coworker.providers import GeminiProvider
+    from delta.providers import GeminiProvider
 
     assert isinstance(sub, GeminiProvider)
     assert captured == {"vertexai": True, "api_key": "AQ.k"}
@@ -240,7 +240,7 @@ def test_api_key_method_builds_express_gemini_client(monkeypatch):
 def test_verify_vertex_api_key_method(monkeypatch):
     import httpx
 
-    from coworker.providers.registry import verify_provider_key
+    from delta.providers.registry import verify_provider_key
 
     out = verify_provider_key(
         "vertex",
@@ -279,7 +279,7 @@ def test_verify_vertex_api_key_method(monkeypatch):
 
 
 def test_verify_vertex_service_account_requires_json():
-    from coworker.providers.registry import verify_provider_key
+    from delta.providers.registry import verify_provider_key
 
     out = verify_provider_key(
         "vertex",
@@ -289,7 +289,7 @@ def test_verify_vertex_service_account_requires_json():
 
 
 def test_vertex_configured_needs_project_and_location():
-    from coworker.providers.registry import descriptor_configured, get_descriptor
+    from delta.providers.registry import descriptor_configured, get_descriptor
 
     d = get_descriptor("vertex")
     assert not descriptor_configured(d, {})
@@ -298,7 +298,7 @@ def test_vertex_configured_needs_project_and_location():
 
 
 def test_router_routes_vertex_ids():
-    from coworker.providers.router import ProviderRouter
+    from delta.providers.router import ProviderRouter
 
     router = ProviderRouter.__new__(ProviderRouter)
     model = "vertex:openweight/meta/llama-4-maverick-17b-128e-instruct-maas"
@@ -314,7 +314,7 @@ def test_router_routes_vertex_ids():
 def _patch_verify(monkeypatch, creds: Any, status_code: int | None):
     import httpx
 
-    import coworker.providers.vertex_provider as vp
+    import delta.providers.vertex_provider as vp
 
     monkeypatch.setattr(vp, "load_credentials", lambda raw: creds)
     captured: dict = {}
@@ -335,7 +335,7 @@ def _patch_verify(monkeypatch, creds: Any, status_code: int | None):
 
 
 def test_verify_vertex_ok(monkeypatch):
-    from coworker.providers.registry import verify_provider_key
+    from delta.providers.registry import verify_provider_key
 
     creds = _FakeCreds()
     captured = _patch_verify(monkeypatch, creds, 200)
@@ -350,7 +350,7 @@ def test_verify_vertex_ok(monkeypatch):
 
 
 def test_verify_vertex_maps_permission_errors(monkeypatch):
-    from coworker.providers.registry import verify_provider_key
+    from delta.providers.registry import verify_provider_key
 
     _patch_verify(monkeypatch, _FakeCreds(), 403)
     out = verify_provider_key(

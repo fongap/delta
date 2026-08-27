@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 
-from coworker.inbox import InboxStore, inbox_approver
-from coworker.unattended import UnattendedRegistry
+from delta.inbox import InboxStore, inbox_approver
+from delta.unattended import UnattendedRegistry
 
 
 def test_toggle_and_persist(tmp_path):
@@ -28,7 +28,7 @@ def test_unattended_session_routes_to_inbox(tmp_path):
         unattended.set("s1", True)
         assert unattended.is_unattended("s1")
 
-        from coworker.engine import ApprovalOutcome, PermissionRequest
+        from delta.engine import ApprovalOutcome, PermissionRequest
 
         approver = inbox_approver(inbox, "s1")
 

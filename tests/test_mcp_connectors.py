@@ -10,20 +10,20 @@ from __future__ import annotations
 import asyncio
 from types import SimpleNamespace
 
-from coworker.connectors.descriptors import list_descriptors
-from coworker.connectors.setup import (
+from delta.connectors.descriptors import list_descriptors
+from delta.connectors.setup import (
     connector_list,
     disconnect_connector,
     update_connector_tools,
 )
-from coworker.connectors.tool_defs import mcp_pinned_tools, mcp_tool_defs, tool_dicts
-from coworker.mcp.config import put_global_server, read_global
-from coworker.secrets import SecretStore
-from coworker.server.manager import SessionManager
+from delta.connectors.tool_defs import mcp_pinned_tools, mcp_tool_defs, tool_dicts
+from delta.mcp.config import put_global_server, read_global
+from delta.secrets import SecretStore
+from delta.server.manager import SessionManager
 
 
 def _state(tmp_path, monkeypatch):
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     (tmp_path / "state").mkdir(parents=True, exist_ok=True)
 
 
@@ -236,7 +236,7 @@ def test_stale_token_reauth_never_opens_a_browser_mid_turn(tmp_path, monkeypatch
     wrapped in an ExceptionGroup by the anyio transport): the session skips the
     server and the failure is recorded — owner-hit 2026-07-20: an Atlassian
     authorize page opened at app LAUNCH from a background session start."""
-    from coworker.mcp import oauth as mcp_oauth
+    from delta.mcp import oauth as mcp_oauth
 
     _state(tmp_path, monkeypatch)
     manager = SessionManager(data_dir=tmp_path / "data")
@@ -262,7 +262,7 @@ def test_non_interactive_auth_wiring_refuses_the_browser():
     and is_auth_required() finds the marker bare, wrapped, or chained."""
     import pytest
 
-    from coworker.mcp import oauth as mcp_oauth
+    from delta.mcp import oauth as mcp_oauth
 
     with pytest.raises(mcp_oauth.InteractiveAuthRequired):
         asyncio.run(mcp_oauth._refuse_browser("https://vendor/authorize?x=1"))

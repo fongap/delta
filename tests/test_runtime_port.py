@@ -7,7 +7,7 @@ import asyncio
 
 import pytest
 
-from coworker.runtime import RuntimePort, TurnEngineAdapter
+from delta.runtime import RuntimePort, TurnEngineAdapter
 
 
 class FakeEngine:

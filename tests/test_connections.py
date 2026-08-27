@@ -11,17 +11,17 @@ from pathlib import Path
 
 import pytest
 
-from coworker.connections import (
+from delta.connections import (
     PersonaConnectionStore,
     SessionConnectionStore,
     effective,
 )
-from coworker.connectors.base import MessageEvent, SessionSource
-from coworker.personas import registry as persona_registry
-from coworker.personas.manifest import load_manifest_file
-from coworker.providers import ModelCapabilities, ProviderClient
-from coworker.server.manager import SessionManager
-from coworker.sessions import SessionRecord
+from delta.connectors.base import MessageEvent, SessionSource
+from delta.personas import registry as persona_registry
+from delta.personas.manifest import load_manifest_file
+from delta.providers import ModelCapabilities, ProviderClient
+from delta.server.manager import SessionManager
+from delta.sessions import SessionRecord
 
 
 @pytest.fixture(autouse=True)
@@ -29,11 +29,11 @@ def _isolate_state_dir(tmp_path, monkeypatch):
     """Isolate the global state/secret dir for every test here.
 
     The `SessionManager` tests build a real `SecretStore()`, which defaults to the developer's
-    global state dir (`~/.config/coworker`) unless `COWORKER_STATE_DIR` is set — so without this a
+    global state dir (`~/.config/delta`) unless `DELTA_STATE_DIR` is set — so without this a
     test's `secrets.put("github:default", …)` would write a fake token into the real secret store.
     Pin it at a throwaway dir. (Harmless for the pure store/resolver tests that use explicit paths.)
     """
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
 
 
 class ScriptedProvider(ProviderClient):

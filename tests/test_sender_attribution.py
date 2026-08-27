@@ -1,14 +1,14 @@
 """P1 sender attribution (2026-07-14): outbound Slack posts carry "[<installer>] " so
-channels shared by several OpenWorker users can tell whose coworker is speaking.
+channels shared by several OpenWorker users can tell whose delta is speaking.
 Identity = the managed install's authed_user (plumbed broker → form-POST → team
 profile), name resolved once via users.info and cached. Attribution never blocks a
 send; manual installs (no authed_user) and DMs stay bare."""
 
-from coworker.connectors import attribution
-from coworker.connectors.base import SendResult
-from coworker.connectors.setup import managed_connect_slack_install
-from coworker.connectors.tools import make_send_file_tool, make_send_message_tool
-from coworker.secrets import SecretStore
+from delta.connectors import attribution
+from delta.connectors.base import SendResult
+from delta.connectors.setup import managed_connect_slack_install
+from delta.connectors.tools import make_send_file_tool, make_send_message_tool
+from delta.secrets import SecretStore
 
 
 def _secrets(tmp_path, **team_extra) -> SecretStore:

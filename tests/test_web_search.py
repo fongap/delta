@@ -8,14 +8,14 @@ from __future__ import annotations
 
 import pytest
 
-from coworker.secrets import SecretStore
-from coworker.web import (
+from delta.secrets import SecretStore
+from delta.web import (
     SearchResult,
     build_provider,
     make_web_search_tool,
     provider_names,
 )
-from coworker.web.providers import (
+from delta.web.providers import (
     BraveProvider,
     DuckDuckGoProvider,
     TavilyProvider,
@@ -46,7 +46,7 @@ def test_tool_returns_results():
     assert fake.calls == [("anthropic", 3)]
     # metadata + schema for the registry
     assert tool.__aisuite_tool_metadata__.category == "web"
-    assert tool.__coworker_schema__["function"]["name"] == "web_search"
+    assert tool.__delta_schema__["function"]["name"] == "web_search"
 
 
 def test_tool_clamps_max_results():
@@ -91,7 +91,7 @@ def test_tool_surfaces_missing_key_error(tmp_path):
 
 
 def test_resolve_provider_from_secretstore(tmp_path):
-    from coworker.web import resolve_provider
+    from delta.web import resolve_provider
 
     secrets = SecretStore(tmp_path / "secrets.json")
     secrets.put("web_search:default", {"provider": "tavily", "api_key": "tvly-123"})
@@ -102,10 +102,10 @@ def test_resolve_provider_from_secretstore(tmp_path):
 def test_web_search_rest(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
-    from coworker.server.app import create_app
-    from coworker.server.manager import SessionManager
+    from delta.server.app import create_app
+    from delta.server.manager import SessionManager
 
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     client = TestClient(create_app(SessionManager(data_dir=tmp_path / "data")))
 
     assert client.get("/v1/web-search").json()["provider"] == "duckduckgo"
@@ -126,8 +126,8 @@ def test_web_search_rest(tmp_path, monkeypatch):
 
 
 def test_engine_registers_web_search(tmp_path):
-    from coworker.agent import build_engine
-    from coworker.agents import chat_agent
+    from delta.agent import build_engine
+    from delta.agents import chat_agent
 
     eng = build_engine(
         agent=chat_agent(),
@@ -139,16 +139,16 @@ def test_engine_registers_web_search(tmp_path):
 
 class _StubProvider:
     def complete(self, **_kw):
-        from coworker.providers import AssistantTurn
+        from delta.providers import AssistantTurn
 
         return AssistantTurn()
 
     def capabilities(self, _model):
-        from coworker.providers.base import ModelCapabilities
+        from delta.providers.base import ModelCapabilities
 
         return ModelCapabilities()
 
     def stream(self, **_kw):
-        from coworker.providers.base import StreamChunk
+        from delta.providers.base import StreamChunk
 
         yield StreamChunk(turn=self.complete())

@@ -3,12 +3,12 @@
 import asyncio
 import json
 
-from coworker.connectors.base import InteractionEvent
-from coworker.connectors.senders import _slack_blocks
-from coworker.inbox import InboxStore
-from coworker.interactions import Button, buttons_for, decode, encode
-from coworker.providers import ModelCapabilities, ProviderClient
-from coworker.server.manager import SessionManager
+from delta.connectors.base import InteractionEvent
+from delta.connectors.senders import _slack_blocks
+from delta.inbox import InboxStore
+from delta.interactions import Button, buttons_for, decode, encode
+from delta.providers import ModelCapabilities, ProviderClient
+from delta.server.manager import SessionManager
 
 
 class ScriptedProvider(ProviderClient):
@@ -53,7 +53,7 @@ def test_slack_blocks_shape():
     els = blocks[1]["elements"]
     assert [e["text"]["text"] for e in els] == ["Approve", "Deny"]
     assert [e["value"] for e in els] == ["v1", "v2"]
-    assert [e["action_id"] for e in els] == ["ocw_0", "ocw_1"]
+    assert [e["action_id"] for e in els] == ["delta_0", "delta_1"]
     # no buttons → just the section, no actions block
     assert len(_slack_blocks("hi", [])) == 1
 

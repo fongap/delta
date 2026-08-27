@@ -12,11 +12,11 @@ import re
 
 import httpx
 
-from coworker.connectors.adapters import SlackAdapter
-from coworker.connectors.base import InteractionEvent, MessageEvent
-from coworker.connectors.config import ConnectorSettings
-from coworker.connectors.gateway import Gateway
-from coworker.interactions import Button
+from delta.connectors.adapters import SlackAdapter
+from delta.connectors.base import InteractionEvent, MessageEvent
+from delta.connectors.config import ConnectorSettings
+from delta.connectors.gateway import Gateway
+from delta.interactions import Button
 
 
 def _allow_all() -> dict[str, ConnectorSettings]:
@@ -140,10 +140,10 @@ async def test_send_and_send_interactive_recorded(fake_slack):
     assert blocks[0]["type"] == "section"
     elements = blocks[1]["elements"]
     assert [e["value"] for e in elements] == ["v1", "v2"]
-    assert [e["action_id"] for e in elements] == ["ocw_0", "ocw_1"]
+    assert [e["action_id"] for e in elements] == ["delta_0", "delta_1"]
 
 
-# 4. An `ocw_*` button click → adapter action handler → gateway interaction handler
+# 4. An `delta_*` button click → adapter action handler → gateway interaction handler
 #    (Gateway._on_interaction).
 async def test_interaction_reaches_gateway_handler(fake_slack):
     fake_slack.add_channel("C1", "general")
@@ -166,7 +166,7 @@ async def test_interaction_reaches_gateway_handler(fake_slack):
             user="U1",
             username="alice",
             message_ts="1700000001.000001",
-            action_id="ocw_0",
+            action_id="delta_0",
             value="item-id|allow",
         )
         await asyncio.wait_for(fired.wait(), timeout=5)
@@ -229,7 +229,7 @@ async def test_real_bolt_dispatches_both_envelope_shapes(fake_slack):
         seen["event"] = event
         event_fired.set()
 
-    @app.action(re.compile(r"^ocw_"))
+    @app.action(re.compile(r"^delta_"))
     async def _on_action(ack, body):
         await ack()
         seen["action"] = body
@@ -253,12 +253,12 @@ async def test_real_bolt_dispatches_both_envelope_shapes(fake_slack):
             user="U1",
             username="alice",
             message_ts="1700000001.000001",
-            action_id="ocw_0",
+            action_id="delta_0",
             value="guard-value",
         )
         await asyncio.wait_for(action_fired.wait(), timeout=5)
         assert seen["action"]["type"] == "block_actions"
-        assert seen["action"]["actions"][0]["action_id"] == "ocw_0"
+        assert seen["action"]["actions"][0]["action_id"] == "delta_0"
         assert seen["action"]["actions"][0]["value"] == "guard-value"
     finally:
         await handler.close_async()

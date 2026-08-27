@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from coworker.agent import build_engine
-from coworker.agents import AgentContext, chat_agent, code_agent, get_agent
-from coworker.providers import ModelCapabilities
-from coworker.skills import SkillLoader, skill_catalog_text, skill_tools
-from coworker.tools import ToolRegistry
-from coworker.tools.shell import LocalExecutor
-from coworker.tools.todo import TodoList
+from delta.agent import build_engine
+from delta.agents import AgentContext, chat_agent, code_agent, get_agent
+from delta.providers import ModelCapabilities
+from delta.skills import SkillLoader, skill_catalog_text, skill_tools
+from delta.tools import ToolRegistry
+from delta.tools.shell import LocalExecutor
+from delta.tools.todo import TodoList
 
 
 class _Stub:

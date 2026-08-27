@@ -8,10 +8,10 @@ connected (auth="none"), so effective-set assertions use subsets, not exact equa
 
 from fastapi.testclient import TestClient
 
-from coworker.providers import ModelCapabilities, ProviderClient
-from coworker.server import create_app
-from coworker.server.manager import SessionManager
-from coworker.sessions import SessionRecord
+from delta.providers import ModelCapabilities, ProviderClient
+from delta.server import create_app
+from delta.server.manager import SessionManager
+from delta.sessions import SessionRecord
 
 
 class ScriptedProvider(ProviderClient):
@@ -28,7 +28,7 @@ class ScriptedProvider(ProviderClient):
 def _mgr(tmp_path, monkeypatch) -> SessionManager:
     # Isolate the SecretStore (which is otherwise the machine-global state dir) so a connector the
     # developer happens to have connected locally can't leak into "is it connected?" assertions.
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     return SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
 
 
@@ -64,7 +64,7 @@ def test_persona_detail_endpoint(tmp_path, monkeypatch):
     detail = client.get("/v1/personas/ops").json()
     # identity + capabilities (from the manifest/entry)
     assert detail["id"] == "ops"
-    assert detail["name"] == "Ops Coworker"
+    assert detail["name"] == "Ops Delta"
     assert detail["enabled"] is False  # non-default personas ship disabled (opt-in)
     assert (
         detail["workspace"] == "deliverable"

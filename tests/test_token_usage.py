@@ -11,21 +11,21 @@ from types import SimpleNamespace
 
 import aisuite as ai
 
-from coworker.engine import TurnEngine
-from coworker.events import EventType
-from coworker.permissions import PermissionEngine
-from coworker.providers import (
+from delta.engine import TurnEngine
+from delta.events import EventType
+from delta.permissions import PermissionEngine
+from delta.providers import (
     AssistantTurn,
     ModelCapabilities,
     ProviderClient,
 )
-from coworker.providers.anthropic_provider import AnthropicProvider
-from coworker.providers.base import TokenUsage
-from coworker.providers.bedrock_provider import _BedrockConverseClient
-from coworker.providers.gemini_provider import GeminiProvider
-from coworker.providers.matrix import model_context_windows
-from coworker.providers.openai_provider import OpenAIProvider
-from coworker.tools import ToolRegistry
+from delta.providers.anthropic_provider import AnthropicProvider
+from delta.providers.base import TokenUsage
+from delta.providers.bedrock_provider import _BedrockConverseClient
+from delta.providers.gemini_provider import GeminiProvider
+from delta.providers.matrix import model_context_windows
+from delta.providers.openai_provider import OpenAIProvider
+from delta.tools import ToolRegistry
 
 
 def _final_turn(chunks):

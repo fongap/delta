@@ -8,7 +8,7 @@ import subprocess
 import sys
 import time
 
-from coworker.secrets import SecretStore
+from delta.secrets import SecretStore
 
 
 def test_put_get_round_trip(tmp_path):
@@ -98,7 +98,7 @@ def test_acl_verification_failure_marks_degraded_without_raising(tmp_path, monke
     below would never clear the marker. Simulate the Windows shell: the icacls APPLY call
     succeeds (no raise), leaving the mocked `_windows_acl_ok` as the sole verify oracle.
     The real Windows path (test_secrets_file_is_restricted) still exercises live icacls."""
-    import coworker.secrets as secrets_mod
+    import delta.secrets as secrets_mod
 
     def _fake_icacls_apply(args, *a, **kw):
         # The apply call (`icacls <path> /inheritance:r /grant:r ...`) must not raise on

@@ -3,10 +3,10 @@ matrix, both families' flagships as defaults, and friendly errors when an accoun
 use them (GPT-5.6 rolls out per-organization; quota/credits can run out on any model).
 """
 
-from coworker.config import Config
-from coworker.providers.errors import friendly_model_error
-from coworker.providers.matrix import MATRIX, models_for_provider
-from coworker.providers.registry import get_descriptor
+from delta.config import Config
+from delta.providers.errors import friendly_model_error
+from delta.providers.matrix import MATRIX, models_for_provider
+from delta.providers.registry import get_descriptor
 
 
 def test_new_flagships_in_matrix_with_labels():

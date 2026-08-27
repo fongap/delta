@@ -12,17 +12,17 @@ import pytest
 from fastapi.testclient import TestClient
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
-from coworker.mcp import oauth as mcp_oauth
-from coworker.mcp.config import load_mcp_servers
-from coworker.secrets import SecretStore
-from coworker.server.app import create_app
-from coworker.server.manager import SessionManager
+from delta.mcp import oauth as mcp_oauth
+from delta.mcp.config import load_mcp_servers
+from delta.secrets import SecretStore
+from delta.server.app import create_app
+from delta.server.manager import SessionManager
 
 GRANOLA = {"type": "http", "url": "https://mcp.granola.ai/mcp", "auth": "oauth"}
 
 
 def _state(tmp_path, monkeypatch, servers=None):
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     path = tmp_path / "state" / "mcp.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({"mcpServers": servers or {}}), encoding="utf-8")

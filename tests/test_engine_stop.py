@@ -8,17 +8,17 @@ from __future__ import annotations
 import asyncio
 import time
 
-from coworker.engine import ApprovalOutcome, TurnEngine
-from coworker.events import EventType
-from coworker.permissions import PermissionEngine
-from coworker.providers import (
+from delta.engine import ApprovalOutcome, TurnEngine
+from delta.events import EventType
+from delta.permissions import PermissionEngine
+from delta.providers import (
     AssistantTurn,
     ModelCapabilities,
     ProviderClient,
     StreamChunk,
     ToolCall,
 )
-from coworker.tools import ToolRegistry
+from delta.tools import ToolRegistry
 
 
 class EndlessStreamProvider(ProviderClient):

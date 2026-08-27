@@ -12,12 +12,12 @@ from pathlib import Path
 import aisuite as ai
 import pytest
 
-from coworker.engine import TurnEngine
-from coworker.events import EventType
-from coworker.permissions import PermissionEngine
-from coworker.providers import AssistantTurn, ToolCall
-from coworker.roots import RootDir, normalize_roots, render_context
-from coworker.tools import ToolRegistry
+from delta.engine import TurnEngine
+from delta.events import EventType
+from delta.permissions import PermissionEngine
+from delta.providers import AssistantTurn, ToolCall
+from delta.roots import RootDir, normalize_roots, render_context
+from delta.tools import ToolRegistry
 
 
 def _bare_engine(**kw):
@@ -177,8 +177,8 @@ def test_outbound_messages_noop_without_provider():
 
 
 def _cowork_manager(tmp_path):
-    from coworker.providers import ModelCapabilities, ProviderClient
-    from coworker.server import SessionManager
+    from delta.providers import ModelCapabilities, ProviderClient
+    from delta.server import SessionManager
 
     class _Provider(ProviderClient):
         def complete(self, *, model, messages, tools=None, **s):

@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from coworker.compaction import (
+from delta.compaction import (
     DEFAULT_CAP_TOKENS,
     DEFAULT_CONTEXT_WINDOW,
     CompactionState,
@@ -69,7 +69,7 @@ def tool_turn(name, args, result):
 
 def convo(turns=6, bulk=2000):
     """system + N user/assistant turns with bulky assistant text."""
-    msgs = [{"role": "system", "content": "You are a coworker."}]
+    msgs = [{"role": "system", "content": "You are a delta."}]
     for i in range(turns):
         msgs.append(user(f"request {i}"))
         msgs.append(assistant(f"answer {i} " + "x" * bulk))
@@ -317,7 +317,7 @@ def test_is_context_overflow():
 def test_user_messages_capped_across_repeated_compactions():
     # The mechanical user-message list must not grow forever — newest _USER_MESSAGES_MAX
     # survive, the rest stay counted so the block's "omitted" note is honest.
-    from coworker.compaction import _USER_MESSAGES_MAX
+    from delta.compaction import _USER_MESSAGES_MAX
 
     msgs = [{"role": "system", "content": "s"}]
     for i in range(120):
