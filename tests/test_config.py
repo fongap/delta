@@ -164,12 +164,12 @@ def test_build_engine_respects_max_iterations(tmp_path):
 
 
 def test_cloud_endpoints_default_to_production():
-    """A fresh install must work without a hand-edited config.toml. An empty
-    relay default shipped once as "connected but relay OFF" on every machine
-    but the developer's — the managed install succeeded (HTTPS via broker)
-    while inbound relaying silently never started."""
+    """A fresh install is local-first: no cloud traffic and no relaying until the user
+    opts in. The base URL is the default sign-in endpoint (an address — nothing is sent
+    until sign-in); the managed relay is DEFAULT-EMPTY so inbound relaying is OFF out of
+    the box (empty ⇒ relay disabled; the user enables it explicitly or via sign-in)."""
     from coworker.config import Config
 
     cfg = Config()
     assert cfg.cloud_base_url == "https://api.openworker.com"
-    assert cfg.cloud_relay_ws_url.startswith("wss://")
+    assert cfg.cloud_relay_ws_url == ""

@@ -376,7 +376,12 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
     setVerify({ state: "testing" });
     const create = await createCustomProvider(aliasTrim, protoId, fields)
       .catch(() => ({ ok: false, error: "unreachable" }));
-    if (!create.ok) {
+    // Idempotent: a prior Fetch in create mode already registered the alias (and stored its
+    // key), so a second create returns "provider already exists". Treat that as success and
+    // fall through to verify — the alias is real, so verify resolves it. Without this, the
+    // post-Fetch Create & save dead-ends on an error for work the Fetch already completed.
+    const alreadyExists = !create.ok && /^provider already exists:/.test(create.error || "");
+    if (!create.ok && !alreadyExists) {
       setVerify({ state: "error", msg: create.error || "couldn't verify" });
       return false;
     }
@@ -432,11 +437,11 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
     setFetchedModels(res.models ?? []);
     const n = res.added?.length ?? 0;
     // Create mode: Fetch already registered the alias AND stored its key (the registration
-    // POST carries the fields), so creation is complete here. Collapse the draft — leaving
-    // it open dead-ends on a disabled Create & save while the card claims "save to finish"
-    // (owner catch: no exit from the post-Fetch state). Keep the confirmation message.
-    const wasCreate = !sel;
-    if (wasCreate) resetCreateForm();
+    // POST carries the fields), so creation is complete. Keep the form OPEN with the success
+    // message + fetched-model chips so the user can pick a default model, then close it
+    // explicitly when done. Resetting here used to wipe fetchedModels/fetchMsg the instant
+    // they were set (the model list was lost before it could render); runCustomCreate is
+    // idempotent for "already exists" so the post-Fetch Create & save never dead-ends.
     setFetchMsg({
       state: "ok",
       text: n > 0
@@ -675,10 +680,10 @@ export function ProviderCards({
               <span className="block text-[11.5px] text-faint truncate">
                 {t(`providers.protocols.${p.protocol}`, undefined, p.blurb || p.protocol || "")}
                 {" · "}
-                {p.name === ps.alias.trim() && ps.fetchedModels.length
-                  ? t("providers.verifiedPendingSave", undefined, "Verified · save to finish")
-                  : p.configured
-                    ? t("providers.saved", undefined, "Saved")
+                {p.configured
+                  ? t("providers.saved", undefined, "Saved")
+                  : p.name === ps.alias.trim() && ps.fetchedModels.length
+                    ? t("providers.verifiedPendingSave", undefined, "Verified · save to finish")
                     : t("providers.pendingSave", undefined, "Not saved")}
               </span>
             ) : (

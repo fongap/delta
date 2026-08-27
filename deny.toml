@@ -1,0 +1,41 @@
+# cargo-deny policy for Delta.
+#
+# Posture: `vulnerability` and `unmaintained` are DENIED by default. The ONLY
+# exceptions below are specific *informational* "unmaintained" advisories that
+# Delta inherits from the Tauri 2 / GTK3 / rust-unic dependency graph (mostly the
+# Linux desktop shell and the URL/IDNA stack). No advisory with an actual
+# vulnerability is ever ignored, the unmaintained gate stays strict for anything
+# not listed, and there is no blanket `ignore = ["*"]`. These exceptions are
+# reviewed and must be removed when an upstream/maintained replacement lands.
+
+[advisories]
+# `vulnerability` is always denied by cargo-deny (not configurable as a key in 0.20);
+# `unmaintained` scopes the unmaintained gate across the WHOLE graph (all crates,
+# transitive included) so nothing unmainted slips through unlisted.
+unmaintained = "all"
+ignore = [
+    # --- gtk-rs GTK3 bindings, transitive via Tauri 2 (Linux desktop shell) ---
+    # webkit2gtk / gdk-sys / glib-sys / pango / cairo-sys / atk-sys and friends.
+    # Tauri 2 pins this stack; there is no maintained alternative the app can
+    # adopt without replacing the Linux webview backend. Informational only.
+    { id = "RUSTSEC-2024-0411", reason = "gtk-rs GTK3 binding, transitive via Tauri 2 (Linux); unmaintained upstream, no maintained alternative in Tauri 2 yet" },
+    { id = "RUSTSEC-2024-0412", reason = "gtk-rs GTK3 binding, transitive via Tauri 2 (Linux); unmaintained upstream, no maintained alternative in Tauri 2 yet" },
+    { id = "RUSTSEC-2024-0413", reason = "gtk-rs GTK3 binding, transitive via Tauri 2 (Linux); unmaintained upstream, no maintained alternative in Tauri 2 yet" },
+    { id = "RUSTSEC-2024-0414", reason = "gtk-rs GTK3 binding, transitive via Tauri 2 (Linux); unmaintained upstream, no maintained alternative in Tauri 2 yet" },
+    { id = "RUSTSEC-2024-0415", reason = "gtk-rs GTK3 binding, transitive via Tauri 2 (Linux); unmaintained upstream, no maintained alternative in Tauri 2 yet" },
+    { id = "RUSTSEC-2024-0416", reason = "gtk-rs GTK3 binding, transitive via Tauri 2 (Linux); unmaintained upstream, no maintained alternative in Tauri 2 yet" },
+    { id = "RUSTSEC-2024-0417", reason = "gtk-rs GTK3 binding, transitive via Tauri 2 (Linux); unmaintained upstream, no maintained alternative in Tauri 2 yet" },
+    { id = "RUSTSEC-2024-0418", reason = "gtk-rs GTK3 binding, transitive via Tauri 2 (Linux); unmaintained upstream, no maintained alternative in Tauri 2 yet" },
+    { id = "RUSTSEC-2024-0419", reason = "gtk-rs GTK3 binding, transitive via Tauri 2 (Linux); unmaintained upstream, no maintained alternative in Tauri 2 yet" },
+    { id = "RUSTSEC-2024-0420", reason = "gtk-rs GTK3 binding, transitive via Tauri 2 (Linux); unmaintained upstream, no maintained alternative in Tauri 2 yet" },
+    # --- rust-unic family, transitive via the URL/IDNA stack (reqwest/url/idna) ---
+    # unmaintained upstream (open-i18n/rust-unic). icu_properties is the successor
+    # but is not a drop-in for the pinned graph. Informational only.
+    { id = "RUSTSEC-2025-0075", reason = "unic-char-range 0.9.0, rust-unic family via URL/IDNA; unmaintained upstream, no drop-in yet" },
+    { id = "RUSTSEC-2025-0080", reason = "unic-common 0.9.0, rust-unic family via URL/IDNA; unmaintained upstream, no drop-in yet" },
+    { id = "RUSTSEC-2025-0081", reason = "unic-char-property 0.9.0, rust-unic family via URL/IDNA; unmaintained upstream, no drop-in yet" },
+    { id = "RUSTSEC-2025-0098", reason = "unic-ucd-version 0.9.0, rust-unic family via URL/IDNA; unmaintained upstream, no drop-in yet" },
+    { id = "RUSTSEC-2025-0100", reason = "unic-ucd-ident 0.9.0, rust-unic family via URL/IDNA; unmaintained upstream, no drop-in yet" },
+    # --- proc-macro-error, build-time proc-macro helper in the Tauri build graph ---
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error 1.0.4, transitive build dep; unmaintained (2y), no vulnerability" },
+]

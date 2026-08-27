@@ -89,12 +89,30 @@ def test_delete(tmp_path):
 
 def test_acl_verification_failure_marks_degraded_without_raising(tmp_path, monkeypatch):
     """When ACL hardening can't be verified, saving must still succeed but the degraded
-    state must be persisted (marker file) so callers/UI can surface it."""
+    state must be persisted (marker file) so callers/UI can surface it.
+
+    The Windows ACL path runs `icacls` to APPLY the restriction then `_windows_acl_ok`
+    to VERIFY it. On a Linux runner `icacls` doesn't exist, so the apply `subprocess.run`
+    raises FileNotFoundError and `_restrict_to_user` returns False via its `except OSError`
+    branch — WITHOUT ever reaching the mocked `_windows_acl_ok`, so the "verified" write
+    below would never clear the marker. Simulate the Windows shell: the icacls APPLY call
+    succeeds (no raise), leaving the mocked `_windows_acl_ok` as the sole verify oracle.
+    The real Windows path (test_secrets_file_is_restricted) still exercises live icacls."""
     import coworker.secrets as secrets_mod
+
+    def _fake_icacls_apply(args, *a, **kw):
+        # The apply call (`icacls <path> /inheritance:r /grant:r ...`) must not raise on
+        # Linux; return a clean CompletedProcess so the verify oracle controls the outcome.
+        return subprocess.CompletedProcess(args=args, returncode=0, stdout="", stderr="")
 
     path = tmp_path / "secrets.json"
     store = SecretStore(path)
     monkeypatch.setattr(secrets_mod, "_IS_WINDOWS", True)
+    # Linux runners have no USERNAME env (they use USER); the Windows branch reads it
+    # before any icacls call, so without it _restrict_to_user returns False early and
+    # the apply/verify mocks below never run. Simulate the Windows shell's env too.
+    monkeypatch.setenv("USERNAME", "testuser")
+    monkeypatch.setattr(secrets_mod.subprocess, "run", _fake_icacls_apply)
     monkeypatch.setattr(secrets_mod, "_windows_acl_ok", lambda p: False)
     store.put("x", {"a": 1})  # must not raise
     assert store.get("x") == {"a": 1}

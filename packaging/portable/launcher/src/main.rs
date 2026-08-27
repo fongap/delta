@@ -20,6 +20,9 @@ use std::process::{Command, Stdio};
 use std::os::windows::process::CommandExt;
 
 /// CREATE_NO_WINDOW — the app is a GUI binary; never let a console flash.
+/// Only defined on Windows: the only use site is behind #[cfg(windows)], so a bare
+/// `const` would be dead code (and fail clippy -D warnings) on Linux/macOS builds.
+#[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 fn main() {

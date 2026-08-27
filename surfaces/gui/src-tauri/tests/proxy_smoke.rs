@@ -69,7 +69,7 @@ async fn exchange(target_port: u16, request: &str) -> Vec<u8> {
         .expect("connect to proxy");
     client.write_all(request.as_bytes()).await.unwrap();
     let mut response = Vec::new();
-    let _ = tokio::time::timeout(Duration::from_secs(5), async {
+    tokio::time::timeout(Duration::from_secs(5), async {
         let _ = client.read_to_end(&mut response).await;
     })
     .await
@@ -163,7 +163,9 @@ async fn websocket_relay_rewrites_subprotocol_and_strips_it_from_response() {
     let head_text = String::from_utf8_lossy(&head).into_owned();
     assert!(head_text.starts_with("HTTP/1.1 101"), "{head_text}");
     assert!(
-        !head_text.to_ascii_lowercase().contains("sec-websocket-protocol"),
+        !head_text
+            .to_ascii_lowercase()
+            .contains("sec-websocket-protocol"),
         "selected subprotocol leaked downstream:\n{head_text}"
     );
 

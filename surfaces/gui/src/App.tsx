@@ -53,6 +53,7 @@ import { addTurnUsage, emptyUsage, usageFromMessages } from "./usage";
 import { streamMode } from "./streamGate";
 import { InboxItemCard } from "./components/InboxItemCard";
 import { isTauri, platformOS, startWindowDrag } from "./tauri";
+import { shouldShowOverlay } from "./overlay";
 import { Icon } from "./components/Icon";
 import { Sidebar } from "./components/Sidebar";
 import { Composer } from "./components/Composer";
@@ -1257,7 +1258,7 @@ export function App() {
   // Overlay layout is macOS-ONLY: Windows/Linux keep the native title bar, so the mac
   // compensations (traffic-light insets, lowered top strips) must not apply there —
   // they rendered as misalignments under Windows' native bar (caught 2026-07-21).
-  const overlay = (desktop && platformOS() === "macos") || simOverlay;
+  const overlay = shouldShowOverlay(desktop, platformOS(), simOverlay);
   const beginWindowDrag = (event: PointerEvent) => {
     if (!desktop || event.button !== 0) return;
     startWindowDrag();

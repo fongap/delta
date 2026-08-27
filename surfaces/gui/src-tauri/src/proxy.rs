@@ -112,14 +112,9 @@ pub fn start_proxy(target_port: u16, token: String) -> io::Result<u16> {
     let port = listener.local_addr()?.port();
     let config = Arc::new(ProxyConfig { target_port, token });
     proxy_runtime().spawn(async move {
-        loop {
-            match listener.accept().await {
-                Ok((socket, _)) => {
-                    let config = Arc::clone(&config);
-                    tokio::spawn(handle_connection(socket, config));
-                }
-                Err(_) => break,
-            }
+        while let Ok((socket, _)) = listener.accept().await {
+            let config = Arc::clone(&config);
+            tokio::spawn(handle_connection(socket, config));
         }
     });
     Ok(port)
@@ -215,9 +210,7 @@ async fn relay_websocket(
         head.method, head.target, config.target_port
     );
     for (name, value) in &head.headers {
-        if HOP_BY_HOP.contains(&name.as_str())
-            || name == "sec-websocket-protocol"
-            || name == "host"
+        if HOP_BY_HOP.contains(&name.as_str()) || name == "sec-websocket-protocol" || name == "host"
         {
             continue;
         }
@@ -332,7 +325,11 @@ fn strip_header_line(head: &[u8], name: &str) -> Vec<u8> {
     out
 }
 
-async fn write_simple_response(stream: &mut TcpStream, status: u16, reason: &str) -> io::Result<()> {
+async fn write_simple_response(
+    stream: &mut TcpStream,
+    status: u16,
+    reason: &str,
+) -> io::Result<()> {
     let body = format!("{status} {reason}");
     let response = format!(
         "HTTP/1.1 {status} {reason}\r\ncontent-type: text/plain\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
@@ -431,7 +428,9 @@ mod tests {
         assert!(!origin_allowed(Some("http://127.0.0.1.evil.example")));
         assert!(!origin_allowed(Some("http://tauri.localhost.evil.example")));
         // Wrong scheme / lookalike hosts on the tauri origin.
-        assert!(!origin_allowed(Some("https://tauri.localhost.evil.example")));
+        assert!(!origin_allowed(Some(
+            "https://tauri.localhost.evil.example"
+        )));
         assert!(!origin_allowed(Some("file://localhost")));
         // Malformed ports.
         assert!(!origin_allowed(Some("http://localhost:")));
