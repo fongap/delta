@@ -119,9 +119,9 @@ export function ModelsTab() {
             onClick={() => setCreateToggle(!createOpen)}
           >
             <Icon name="chevronDown" size={14} className={"text-faint shrink-0 transition-transform" + (createOpen ? "" : " -rotate-90")} />
-            <span className="text-[15px] font-semibold flex-1">{t("providers.customProviderCard")}</span>
+            <span className="text-[20px] font-semibold leading-[28px] flex-1">{t("providers.customProviderCard")}</span>
           </button>
-          <p className="text-[12px] text-muted mt-0.5 leading-relaxed">
+          <p className="text-[14px] font-normal text-muted mt-1 leading-[22px]">
             {t("providers.customProviderCardSub")}
           </p>
           {createOpen && (

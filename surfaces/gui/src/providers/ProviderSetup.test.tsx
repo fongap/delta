@@ -125,7 +125,7 @@ describe("ProviderForm auth-method choice", () => {
 describe("CustomCreateForm header shows the alias", () => {
   it("renders the generic title until an alias is typed", () => {
     render(wrap(<CustomCreateForm ps={makePs({})} tp="t" inline />));
-    expect(screen.getByTestId("t-custom-title").textContent).toContain("Add custom provider");
+    expect(screen.getByTestId("t-custom-title").textContent).toContain("Add provider");
   });
 
   it("renders the live alias name at the top when set", () => {

@@ -995,8 +995,8 @@ export function FetchedModelChips({ ps }: { ps: ProviderSetupState }) {
 export function CustomCreateForm({ ps, tp, inline = false }: { ps: ProviderSetupState; tp: string; inline?: boolean }) {
   const { t } = useI18n();
   const proto = ps.protoDef;
-  const label = "block text-[12px] text-muted mt-3 mb-1";
-  const input = "w-full px-3 py-2 rounded-lg border bg-panel text-[13.5px] outline-none focus:border-accent";
+  const label = "block text-[14px] font-medium text-muted mt-3 mb-1";
+  const input = "w-full px-3 py-2 rounded-lg border bg-panel text-[15px] font-normal outline-none focus:border-accent";
   const fieldsAll = proto?.fields || [];
   const choice = fieldsAll.find((f) => f.choices && f.choices.length);
   const method = choice ? ps.fields[choice.key] || choice.default || "" : "";
@@ -1024,7 +1024,7 @@ export function CustomCreateForm({ ps, tp, inline = false }: { ps: ProviderSetup
         data-testid={`${tp}-field-${f.key}`}
         onChange={(e) => ps.setFieldValue(f.key, e.target.value)}
       />
-      {f.help && <p className="text-[11.5px] text-faint mt-1">{fieldHelp(f, t)}</p>}
+      {f.help && <p className="text-[13px] font-normal text-faint mt-1">{fieldHelp(f, t)}</p>}
     </div>
   );
 
@@ -1042,12 +1042,16 @@ export function CustomCreateForm({ ps, tp, inline = false }: { ps: ProviderSetup
         <ProviderMark name={proto?.id || "custom"} title={proto?.title || "Custom"} size={36} />
         <span className="min-w-0">
           <span
-            className="block text-[15px] font-semibold leading-tight truncate"
+            className="block text-[16px] font-semibold leading-[24px] truncate"
             data-testid={`${tp}-custom-title`}
           >
-            {ps.alias.trim() || t("providers.addCustomProvider", undefined, "Add custom provider")}
+            {ps.alias.trim() || t("providers.addCustomProvider", undefined, "Add provider")}
           </span>
-          {proto && <span className="block text-[11.5px] text-faint truncate">{t(`providers.protocols.${proto.id}`, undefined, proto.title)}</span>}
+          {proto && (
+            <span className="block text-[14px] font-normal text-faint truncate">
+              {t("providers.customProviderFormSub", undefined, "Configure an OpenAI-compatible or native-protocol service")}
+            </span>
+          )}
         </span>
       </div>
 
