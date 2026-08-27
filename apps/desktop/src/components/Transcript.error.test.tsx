@@ -50,4 +50,43 @@ describe("provider error and retry presentation", () => {
     expect(screen.getByText("Interrupted.")).toBeTruthy();
     expect(screen.queryByText("Provider temporarily unavailable. You can retry.")).toBeNull();
   });
+
+  it("merges consecutive provider errors into one notice with a retry count", () => {
+    const onRetry = vi.fn();
+    const err = (text: string) => ({ kind: "notice", tone: "warn", text, retriable: true }) as const;
+    render(
+      <I18nProvider locale="en-US">
+        <Transcript
+          items={[err("Error: boom 1"), err("Error: boom 2"), err("Error: boom 3")]}
+          running={false}
+          onApprove={() => {}}
+          onRetry={onRetry}
+        />
+      </I18nProvider>,
+    );
+    // One block, not three: a single summary + one "retried" suffix.
+    expect(screen.getAllByText(/Provider temporarily unavailable/)).toHaveLength(1);
+    expect(screen.getByText(/retried 2×/)).toBeTruthy();
+    // The latest raw error stays expandable; the single retry action still works.
+    fireEvent.click(screen.getByText("Show details"));
+    expect(screen.getByText(/boom 3/)).toBeTruthy();
+    fireEvent.click(screen.getByTestId("notice-retry"));
+    expect(onRetry).toHaveBeenCalledOnce();
+  });
+
+  it("renders model-switch markers as compact runtime events", () => {
+    render(
+      <I18nProvider locale="en-US">
+        <Transcript
+          items={[
+            { kind: "notice", tone: "info", text: "Model switched to FongAI:pro", modelSwitchModel: "FongAI:pro" },
+          ]}
+          running={false}
+          onApprove={() => {}}
+        />
+      </I18nProvider>,
+    );
+    const el = screen.getByText("Switched to FongAI:pro");
+    expect(el.className).toContain("notice-event");
+  });
 });

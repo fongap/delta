@@ -129,6 +129,13 @@ export function ModelChecklist({
               {t("models.defaultCannotHide", undefined, "Pick a new default model before hiding this one.")}
             </div>
           )}
+          {/* One shared column header (使用 | 模型 | 默认) instead of repeating the
+              "默认" label on every row; aria-hidden — the inputs carry real labels. */}
+          <div className="mlist-head" aria-hidden="true">
+            <span>{t("models.colUse", undefined, "Use")}</span>
+            <span>{t("models.colModel", undefined, "Model")}</span>
+            <span>{t("models.defaultLabel", undefined, "Default")}</span>
+          </div>
           {rows.map((id) => {
             const isDefault = id === defaultModel;
             return (
@@ -152,9 +159,6 @@ export function ModelChecklist({
                     onChange={() => makeDefault(id)}
                     aria-label={t("models.defaultAria", undefined, "Use as the default model")}
                   />
-                  <span className="mlist-default-label">
-                    {t("models.defaultLabel", undefined, "Default")}
-                  </span>
                 </label>
               </div>
             );

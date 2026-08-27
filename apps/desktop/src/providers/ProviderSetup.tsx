@@ -712,7 +712,7 @@ export function ProviderForm({
   const { t } = useI18n();
   const { info, sel } = ps;
   const [showSecret, setShowSecret] = useState(false);
-  const label = "block text-[12px] text-muted mt-3 mb-1";
+  const label = "block text-[12.5px] font-medium text-muted mt-3 mb-1";
   const input =
     "w-full px-3 py-2 rounded-lg border bg-panel text-[13.5px] outline-none focus:border-accent";
   const fieldsAll = info?.fields || [];
@@ -769,7 +769,7 @@ export function ProviderForm({
   );
 
   return (
-    <div>
+    <div className="max-w-[620px]">
       <button className="text-[12.5px] text-muted hover:text-ink" onClick={ps.backToGallery} data-testid={`${tp}-back`}>
         ‹ {t("providers.allProviders", undefined, "All providers")}
       </button>
@@ -995,8 +995,10 @@ export function FetchedModelChips({ ps }: { ps: ProviderSetupState }) {
 export function CustomCreateForm({ ps, tp, inline = false }: { ps: ProviderSetupState; tp: string; inline?: boolean }) {
   const { t } = useI18n();
   const proto = ps.protoDef;
-  const label = "block text-[14px] font-medium text-muted mt-3 mb-1";
-  const input = "w-full px-3 py-2 rounded-lg border bg-panel text-[15px] font-normal outline-none focus:border-accent";
+  // ~10–15% tighter than the edit path's rhythm (mt-2.5 between fields, py-1.5 inputs)
+  // so the four-step form reads compact without feeling crowded.
+  const label = "block text-[12.5px] font-medium text-muted mt-2.5 mb-1";
+  const input = "w-full px-3 py-1.5 rounded-lg border bg-panel text-[13.5px] font-normal outline-none focus:border-accent";
   const fieldsAll = proto?.fields || [];
   const choice = fieldsAll.find((f) => f.choices && f.choices.length);
   const method = choice ? ps.fields[choice.key] || choice.default || "" : "";
@@ -1024,12 +1026,12 @@ export function CustomCreateForm({ ps, tp, inline = false }: { ps: ProviderSetup
         data-testid={`${tp}-field-${f.key}`}
         onChange={(e) => ps.setFieldValue(f.key, e.target.value)}
       />
-      {f.help && <p className="text-[13px] font-normal text-faint mt-1">{fieldHelp(f, t)}</p>}
+      {f.help && <p className="text-[11.5px] text-faint mt-1">{fieldHelp(f, t)}</p>}
     </div>
   );
 
   return (
-    <div>
+    <div className="max-w-[620px]">
       {!inline && (
         <button className="text-[12.5px] text-muted hover:text-ink" onClick={ps.backToGallery} data-testid={`${tp}-back`}>
           ‹ {t("providers.allProviders", undefined, "All providers")}
@@ -1042,13 +1044,13 @@ export function CustomCreateForm({ ps, tp, inline = false }: { ps: ProviderSetup
         <ProviderMark name={proto?.id || "custom"} title={proto?.title || "Custom"} size={36} />
         <span className="min-w-0">
           <span
-            className="block text-[16px] font-semibold leading-[24px] truncate"
+            className="block text-[14px] font-semibold leading-[20px] truncate"
             data-testid={`${tp}-custom-title`}
           >
             {ps.alias.trim() || t("providers.addCustomProvider", undefined, "Add provider")}
           </span>
           {proto && (
-            <span className="block text-[14px] font-normal text-faint truncate">
+            <span className="block text-[13px] font-normal text-faint truncate">
               {t("providers.customProviderFormSub", undefined, "Configure an OpenAI-compatible or native-protocol service")}
             </span>
           )}
@@ -1075,7 +1077,8 @@ export function CustomCreateForm({ ps, tp, inline = false }: { ps: ProviderSetup
         <div className="text-[13px] text-muted mt-4">{t("providers.noProtocols", undefined, "No protocols available.")}</div>
       )}
 
-      {/* The alias is the routing prefix — `alias:{model}` is how its models are named. */}
+      {/* The alias is the routing prefix — `alias:{model}` is how its models are named.
+          The rule lives HERE as field help (it's the one place the user needs it). */}
       <div>
         <label className={label}>{t("providers.alias", undefined, "Alias")}</label>
         <input
@@ -1086,6 +1089,9 @@ export function CustomCreateForm({ ps, tp, inline = false }: { ps: ProviderSetup
           data-testid={`${tp}-alias`}
           onChange={(e) => ps.setAlias(e.target.value)}
         />
+        <p className="text-[11.5px] text-faint mt-1">
+          {t("providers.prefixAutoNote", { alias: ps.alias.trim() || "alias" }, "Models are auto-added with the “{alias}:” prefix.")}
+        </p>
       </div>
 
       <div>
@@ -1104,9 +1110,15 @@ export function CustomCreateForm({ ps, tp, inline = false }: { ps: ProviderSetup
         </select>
       </div>
 
-      {fieldsAll
-        .filter((f) => !f.show_when && !(f.choices && f.choices.length))
-        .map((f) => row(f))}
+      {/* Decision order mirrors the edit path: where to connect (base_url) before the
+          credentials for it (api_key) — the address is what the user knows first. */}
+      {[
+        ...fieldsAll.filter((f) => f.key === "base_url"),
+        ...fieldsAll.filter(
+          (f) => f.key !== "base_url" && !f.secret && !f.show_when && !(f.choices && f.choices.length),
+        ),
+        ...fieldsAll.filter((f) => f.secret && !f.show_when && !(f.choices && f.choices.length)),
+      ].map((f) => row(f))}
 
       {/* Fallback API Key + Base URL: when the protocol's field definitions haven't
           loaded yet (or the endpoint failed), still show the two most common fields
@@ -1115,19 +1127,6 @@ export function CustomCreateForm({ ps, tp, inline = false }: { ps: ProviderSetup
           is never empty. Only shows when no secret field was already rendered above. */}
       {fieldsAll.filter((f) => f.secret).length === 0 && !ps.protocolsLoading && (
         <>
-          <div>
-            <label className={label}>
-              {t("providers.apiKey", undefined, "API Key")}
-            </label>
-            <input
-              className={input + " border-line"}
-              type="password"
-              placeholder="sk-…"
-              value={ps.fields["api_key"] || ""}
-              data-testid={`${tp}-field-api_key-fallback`}
-              onChange={(e) => ps.setFieldValue("api_key", e.target.value)}
-            />
-          </div>
           <div>
             <label className={label}>
               {t("providers.baseUrl", undefined, "Base URL")}
@@ -1139,6 +1138,19 @@ export function CustomCreateForm({ ps, tp, inline = false }: { ps: ProviderSetup
               value={ps.fields["base_url"] || ""}
               data-testid={`${tp}-field-base_url-fallback`}
               onChange={(e) => ps.setFieldValue("base_url", e.target.value)}
+            />
+          </div>
+          <div>
+            <label className={label}>
+              {t("providers.apiKey", undefined, "API Key")}
+            </label>
+            <input
+              className={input + " border-line"}
+              type="password"
+              placeholder="sk-…"
+              value={ps.fields["api_key"] || ""}
+              data-testid={`${tp}-field-api_key-fallback`}
+              onChange={(e) => ps.setFieldValue("api_key", e.target.value)}
             />
           </div>
         </>
@@ -1187,13 +1199,16 @@ export function CustomCreateForm({ ps, tp, inline = false }: { ps: ProviderSetup
         </div>
       )}
 
-      <div className="mt-3.5 flex items-center justify-between gap-3 border-t border-line pt-3">
-        <span className="text-[11.5px] text-faint">
+      {/* Full footer: plain-language note on top, actions right-aligned below —
+          Fetch models is the secondary action (pull from the provider), Create & save
+          the primary. Status / error / success messages render directly below. */}
+      <div className="mt-4 border-t border-line pt-3" data-testid={`${tp}-create-footer`}>
+        <p className="text-[11.5px] text-faint">
           {t("providers.checkThenSaves", undefined, "Runs one read-only check, then saves.")}
-        </span>
-        <div className="flex items-center gap-2">
+        </p>
+        <div className="mt-2.5 flex items-center justify-end gap-2">
           <button
-            className="shrink-0 rounded-lg border border-line px-4 py-1.5 text-[13px] font-medium text-ink hover:border-lineStrong disabled:opacity-40"
+            className="btn-secondary shrink-0"
             onClick={() => void ps.fetchCustomModels()}
             disabled={busy || !ps.alias.trim()}
             data-testid={`${tp}-fetch`}
@@ -1201,18 +1216,15 @@ export function CustomCreateForm({ ps, tp, inline = false }: { ps: ProviderSetup
             {ps.fetching ? "…" : t("providers.fetchModels", undefined, "Fetch models")}
           </button>
           <button
-            className="shrink-0 rounded-lg border border-accent bg-accent px-4 py-1.5 text-[13px] font-medium text-onAccent hover:brightness-105 disabled:opacity-40"
+            className="btn-primary shrink-0"
             onClick={() => void ps.runCustomCreate()}
             disabled={busy || !createReady}
             data-testid={`${tp}-create-save`}
           >
-            {ps.verify.state === "testing" ? "…" : <>✓ {t("providers.createAndSave", undefined, "Create & save")}</>}
+            {ps.verify.state === "testing" ? "…" : t("providers.createAndSave", undefined, "Create & save")}
           </button>
         </div>
       </div>
-      <p className="text-[11.5px] text-faint mt-1">
-        {t("providers.prefixAutoNote", { alias: ps.alias.trim() || "alias" }, "Models are auto-added with the “{alias}:” prefix.")}
-      </p>
 
       {ps.fetchMsg && (
         <p
