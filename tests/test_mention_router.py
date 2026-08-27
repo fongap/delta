@@ -1,21 +1,21 @@
 """The Slack mention router (UX-DECISIONS §31).
 
 @ocw tagged in a channel is the PRIMARY entry point: with no subscribed session, a
-per-thread coworker session spawns (visible in the sidebar, thread-scoped standing
+per-thread delta session spawns (visible in the sidebar, thread-scoped standing
 send_message grant); follow-up tags in the same thread steer the same session. A
-channel with a user-connected (subscribed) coworker overrides the router — it must
+channel with a user-connected (subscribed) delta overrides the router — it must
 answer tags itself. Untagged channel traffic stays judgement-only (silence default).
 """
 
 import asyncio
 import sqlite3
 
-from coworker.connectors.adapters import slack_event_to_event
-from coworker.connectors.base import MessageEvent, SessionSource
-from coworker.conversations import ConversationStore
-from coworker.providers import AssistantTurn, ModelCapabilities, ProviderClient
-from coworker.server.manager import SessionManager
-from coworker.sessions import SessionRecord
+from delta.connectors.adapters import slack_event_to_event
+from delta.connectors.base import MessageEvent, SessionSource
+from delta.conversations import ConversationStore
+from delta.providers import AssistantTurn, ModelCapabilities, ProviderClient
+from delta.server.manager import SessionManager
+from delta.sessions import SessionRecord
 
 
 class CapturingProvider(ProviderClient):
@@ -174,14 +174,14 @@ def test_distinct_thread_spawns_distinct_session(tmp_path, monkeypatch):
     assert len(mgr.list_sessions()) == 2
 
 
-def test_subscribed_coworker_overrides_router(tmp_path, monkeypatch):
+def test_subscribed_delta_overrides_router(tmp_path, monkeypatch):
     mgr = _mgr(tmp_path)
     captured = _capture_deliveries(mgr, monkeypatch)
     mgr.subscriptions.subscribe("sA", "slack:C1")
 
     asyncio.run(mgr._dispatch_inbound(_mention_event()))
 
-    # Delivered to the connected coworker with must-respond framing + the thread target…
+    # Delivered to the connected delta with must-respond framing + the thread target…
     assert len(captured) == 1
     sid, message, _ = captured[0]
     assert sid == "sA"
@@ -269,7 +269,7 @@ def test_set_origin_round_trips_and_survives_saves(tmp_path):
 
 def test_origin_columns_migrate_on_old_db(tmp_path):
     """A pre-§31 database (no origin columns) upgrades in place on open."""
-    db = tmp_path / "coworker.db"
+    db = tmp_path / "delta.db"
     conn = sqlite3.connect(db)
     conn.execute(
         "CREATE TABLE sessions (session_id TEXT PRIMARY KEY, workspace TEXT, model TEXT, "

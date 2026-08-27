@@ -2,15 +2,15 @@
 
 from __future__ import annotations
 
-from coworker.permissions import Mode
-from coworker.providers import (
+from delta.permissions import Mode
+from delta.providers import (
     AssistantTurn,
     ModelCapabilities,
     ProviderClient,
     ToolCall,
 )
-from coworker.tools import ToolRegistry
-from coworker.tools.subagent import build_explorer_engine, explorer_tools
+from delta.tools import ToolRegistry
+from delta.tools.subagent import build_explorer_engine, explorer_tools
 
 
 def _text_turn(text):
@@ -109,9 +109,9 @@ def test_explore_flags_partial_report_on_iteration_rail(tmp_path):
 
 
 def test_code_engine_registers_explore_chat_does_not(tmp_path):
-    from coworker.agent import build_engine
-    from coworker.agents import code_agent
-    from coworker.agents.chat import chat_agent
+    from delta.agent import build_engine
+    from delta.agents import code_agent
+    from delta.agents.chat import chat_agent
 
     class _Stub:
         def complete(self, **kwargs):  # pragma: no cover

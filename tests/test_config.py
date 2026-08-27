@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from coworker.config import load_config
+from delta.config import load_config
 
 
 def test_defaults_when_no_files(tmp_path):
@@ -17,8 +17,8 @@ def test_global_and_workspace_override(tmp_path):
     g = tmp_path / "global.toml"
     g.write_text('model = "gpt-4o"\nmax_iterations = 20\nport = 9000\n')
     ws = tmp_path / "ws"
-    (ws / ".coworker").mkdir(parents=True)
-    (ws / ".coworker" / "config.toml").write_text(
+    (ws / ".delta").mkdir(parents=True)
+    (ws / ".delta" / "config.toml").write_text(
         'max_iterations = 30\nmode = "plan"\n'
     )
 
@@ -35,8 +35,8 @@ def test_workspace_cannot_grant_its_own_permissions(tmp_path):
         'allowed_commands = ["git status"]\nauto_allow = ["write_file"]\n'
     )
     ws = tmp_path / "ws"
-    (ws / ".coworker").mkdir(parents=True)
-    (ws / ".coworker" / "config.toml").write_text(
+    (ws / ".delta").mkdir(parents=True)
+    (ws / ".delta" / "config.toml").write_text(
         'allowed_commands = ["python3"]\nauto_allow = ["run_shell"]\n'
     )
 
@@ -51,8 +51,8 @@ def test_trusted_workspace_adds_its_command_allowances_only(tmp_path):
         'allowed_commands = ["git status"]\nauto_allow = ["write_file"]\n'
     )
     ws = tmp_path / "ws"
-    (ws / ".coworker").mkdir(parents=True)
-    (ws / ".coworker" / "config.toml").write_text(
+    (ws / ".delta").mkdir(parents=True)
+    (ws / ".delta" / "config.toml").write_text(
         'allowed_commands = ["pytest", "git status"]\n'
         'auto_allow = ["run_shell"]\n'
     )
@@ -65,7 +65,7 @@ def test_trusted_workspace_adds_its_command_allowances_only(tmp_path):
 def test_workspace_trust_is_canonical_and_user_owned(tmp_path):
     import pytest
 
-    from coworker.workspace_trust import WorkspaceTrustStore
+    from delta.workspace_trust import WorkspaceTrustStore
 
     real = tmp_path / "real"
     real.mkdir()
@@ -101,7 +101,7 @@ def test_workspace_trust_marks_acl_degradation(tmp_path, monkeypatch):
     """The trust file shares the SecretStore's best-effort private write; a failed
     hardening must leave a visible marker (cleared by a later verified write) —
     never degrade silently."""
-    from coworker import workspace_trust as wt
+    from delta import workspace_trust as wt
 
     store = wt.WorkspaceTrustStore(tmp_path / "state" / "workspace_trust.json")
     real = tmp_path / "ws"
@@ -118,8 +118,8 @@ def test_workspace_trust_marks_acl_degradation(tmp_path, monkeypatch):
 
 
 def test_build_engine_honors_explicit_empty_command_allowlist(tmp_path):
-    from coworker.agent import build_code_engine
-    from coworker.config import global_config_path
+    from delta.agent import build_code_engine
+    from delta.config import global_config_path
 
     global_config_path().parent.mkdir(parents=True)
     global_config_path().write_text('allowed_commands = ["pytest"]\n')
@@ -144,10 +144,10 @@ def test_build_engine_honors_explicit_empty_command_allowlist(tmp_path):
 
 
 def test_build_engine_respects_max_iterations(tmp_path):
-    (tmp_path / ".coworker").mkdir()
-    (tmp_path / ".coworker" / "config.toml").write_text("max_iterations = 3\n")
+    (tmp_path / ".delta").mkdir()
+    (tmp_path / ".delta" / "config.toml").write_text("max_iterations = 3\n")
 
-    from coworker.agent import build_code_engine
+    from delta.agent import build_code_engine
 
     class _Stub:
         def complete(self, **k):  # pragma: no cover
@@ -168,7 +168,7 @@ def test_cloud_endpoints_default_to_production():
     opts in. The base URL is the default sign-in endpoint (an address — nothing is sent
     until sign-in); the managed relay is DEFAULT-EMPTY so inbound relaying is OFF out of
     the box (empty ⇒ relay disabled; the user enables it explicitly or via sign-in)."""
-    from coworker.config import Config
+    from delta.config import Config
 
     cfg = Config()
     assert cfg.cloud_base_url == "https://api.openworker.com"

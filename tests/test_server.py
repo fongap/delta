@@ -5,14 +5,14 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from coworker.providers import (
+from delta.providers import (
     AssistantTurn,
     ModelCapabilities,
     ProviderClient,
     ToolCall,
 )
-from coworker.server import SessionManager, create_app
-from coworker.sessions import SessionRecord
+from delta.server import SessionManager, create_app
+from delta.sessions import SessionRecord
 
 
 class ScriptedProvider(ProviderClient):
@@ -57,7 +57,7 @@ def test_health_advertises_ui_runtime_contract(tmp_path):
 
 def test_reasoning_effort_survives_turn_save_disconnect_and_reload(tmp_path, monkeypatch):
     """PATCH on a fresh connected session applies to the first request and every later save."""
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
 
     class RecordingProvider(ScriptedProvider):
         def __init__(self):
@@ -130,7 +130,7 @@ def test_agents_and_memory_rest(tmp_path):
 
 
 def test_disable_persona_archives_its_sessions(tmp_path):
-    """Disable = "put this coworker and its history away": the persona's real sessions are
+    """Disable = "put this delta and its history away": the persona's real sessions are
     archived atomically server-side (so its sidebar section disappears with it), internal
     __run__ threads and other personas are untouched, and re-enable never unarchives."""
     manager = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
@@ -411,7 +411,7 @@ def test_ws_simple_turn(tmp_path):
 
 
 def test_ws_events_use_strict_v1_envelope(tmp_path):
-    from coworker.server.contracts import EventEnvelopeV1
+    from delta.server.contracts import EventEnvelopeV1
 
     client = _client(tmp_path, [_text("contract reply")])
     with client.websocket_connect("/ws/session/contract-s1") as ws:
@@ -435,8 +435,8 @@ def test_ws_events_use_strict_v1_envelope(tmp_path):
 
 
 def test_ws_rejects_oversized_message(tmp_path):
-    from coworker.attachments import MAX_ATTACHMENTS
-    from coworker.server import app as app_mod
+    from delta.attachments import MAX_ATTACHMENTS
+    from delta.server import app as app_mod
 
     client = _client(tmp_path, [_text("eight accepted"), _text("normal")])
     with client.websocket_connect("/ws/session/big") as ws:
@@ -593,7 +593,7 @@ def test_ws_allows_only_one_inflight_turn_per_session(tmp_path):
 def test_ws_rate_limits_inbound_frames(tmp_path):
     from starlette.websockets import WebSocketDisconnect
 
-    from coworker.server import app as app_mod
+    from delta.server import app as app_mod
 
     client = _client(tmp_path, [])
     with pytest.raises(WebSocketDisconnect):
@@ -611,7 +611,7 @@ def test_server_sets_explicit_websocket_frame_limit(tmp_path, monkeypatch):
     import sys
     from types import SimpleNamespace
 
-    from coworker.server import run as server_run
+    from delta.server import run as server_run
 
     seen = {}
     fake_app = object()
@@ -634,13 +634,13 @@ def test_server_sets_explicit_websocket_frame_limit(tmp_path, monkeypatch):
 def test_standalone_server_token_file_is_user_only(tmp_path, monkeypatch):
     import os
 
-    from coworker.server import run as server_run
+    from delta.server import run as server_run
 
-    monkeypatch.delenv("COWORKER_API_TOKEN", raising=False)
+    monkeypatch.delenv("DELTA_API_TOKEN", raising=False)
     path = server_run._ensure_api_token(9876)
     try:
-        assert path == tmp_path / "coworker-state" / "sidecar-9876.token"
-        assert path.read_text().strip() == os.environ["COWORKER_API_TOKEN"]
+        assert path == tmp_path / "delta-state" / "sidecar-9876.token"
+        assert path.read_text().strip() == os.environ["DELTA_API_TOKEN"]
         assert len(path.read_text().strip()) == 64
         if os.name == "posix":
             # os.chmod(0o600) is a no-op on Windows (the token file gets an icacls
@@ -648,7 +648,7 @@ def test_standalone_server_token_file_is_user_only(tmp_path, monkeypatch):
             assert (path.stat().st_mode & 0o777) == 0o600
     finally:
         path.unlink(missing_ok=True)
-        os.environ.pop("COWORKER_API_TOKEN", None)
+        os.environ.pop("DELTA_API_TOKEN", None)
 
 
 def test_ws_error_persists_notice_and_retry_reruns(tmp_path):
@@ -723,9 +723,9 @@ def test_ws_allows_webview_origin(tmp_path):
 def test_sidecar_token_gates_rest_and_websockets(tmp_path, monkeypatch):
     from starlette.websockets import WebSocketDisconnect as WSD
 
-    from coworker.mcp.config import global_mcp_path
+    from delta.mcp.config import global_mcp_path
 
-    monkeypatch.setenv("COWORKER_API_TOKEN", "a" * 64)
+    monkeypatch.setenv("DELTA_API_TOKEN", "a" * 64)
     manager = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
     client = TestClient(create_app(manager))
 
@@ -739,10 +739,10 @@ def test_sidecar_token_gates_rest_and_websockets(tmp_path, monkeypatch):
         "retriable": False,
     }
     assert client.get(
-        "/v1/sessions", headers={"X-OpenWorker-Token": "wrong"}
+        "/v1/sessions", headers={"X-Delta-Token": "wrong"}
     ).status_code == 401
 
-    headers = {"X-OpenWorker-Token": "a" * 64}
+    headers = {"X-Delta-Token": "a" * 64}
     assert client.get("/v1/health", headers=headers).json()[
         "default_workspace"
     ] == str(tmp_path.resolve())
@@ -761,15 +761,15 @@ def test_sidecar_token_gates_rest_and_websockets(tmp_path, monkeypatch):
     assert denied.value.code == 1008
 
     with client.websocket_connect(
-        "/ws/session/authed", subprotocols=["openworker", "a" * 64]
+        "/ws/session/authed", subprotocols=["delta", "a" * 64]
     ) as ws:
-        assert ws.accepted_subprotocol == "openworker"
+        assert ws.accepted_subprotocol == "delta"
         assert ws.receive_json()["type"] == "ready"
 
     with client.websocket_connect(
-        "/ws/events", subprotocols=["openworker", "a" * 64]
+        "/ws/events", subprotocols=["delta", "a" * 64]
     ) as ws:
-        assert ws.accepted_subprotocol == "openworker"
+        assert ws.accepted_subprotocol == "delta"
 
     # Redirect callbacks remain tokenless, then enforce their own signed state.
     assert client.get(
@@ -854,8 +854,8 @@ def test_workspace_command_trust_controls_live_engine(tmp_path):
     from urllib.parse import quote
 
     proj = tmp_path / "trusted-project"
-    (proj / ".coworker").mkdir(parents=True)
-    (proj / ".coworker" / "config.toml").write_text(
+    (proj / ".delta").mkdir(parents=True)
+    (proj / ".delta" / "config.toml").write_text(
         'allowed_commands = ["pytest"]\nauto_allow = ["write_file"]\n'
     )
     manager = SessionManager(
@@ -932,7 +932,7 @@ def test_workspace_command_trust_controls_live_engine(tmp_path):
 def test_recent_workspaces_exclude_scratch_dirs(tmp_path):
     # Scratch dirs get touched like any workspace, but must never show up as
     # "recent projects" in the folder gate (owner call, 2026-07-03).
-    from coworker.server.manager import SessionManager
+    from delta.server.manager import SessionManager
 
     proj = tmp_path / "real-project"
     proj.mkdir()
@@ -951,8 +951,8 @@ def test_delete_session_removes_its_scratch_dir_only(tmp_path):
     # 2026-07-03) — but NEVER a real project folder the user picked.
     from pathlib import Path
 
-    from coworker.server.manager import SessionManager
-    from coworker.sessions import SessionRecord
+    from delta.server.manager import SessionManager
+    from delta.sessions import SessionRecord
 
     mgr = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
     mgr._prefs["scratch_base"] = str(tmp_path / "scratch")

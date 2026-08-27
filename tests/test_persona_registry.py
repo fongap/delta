@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from coworker.personas.registry import DEFAULT_PERSONA_ID, PersonaRegistry
+from delta.personas.registry import DEFAULT_PERSONA_ID, PersonaRegistry
 
 
 def _reg(tmp_path) -> PersonaRegistry:

@@ -2,10 +2,10 @@
 channel NAMES resolve to addresses in send_message/send_file ("post Hi to #general" must
 just work when Slack is connected — owner repro 2026-07-14)."""
 
-from coworker.connectors.base import SendResult
-from coworker.connectors.tool_defs import TOOL_DEFS, approval_for_tool
-from coworker.connectors.tools import make_send_file_tool, make_send_message_tool
-from coworker.secrets import SecretStore
+from delta.connectors.base import SendResult
+from delta.connectors.tool_defs import TOOL_DEFS, approval_for_tool
+from delta.connectors.tools import make_send_file_tool, make_send_message_tool
+from delta.secrets import SecretStore
 
 
 # -- connector reads never gate ---------------------------------------------------------
@@ -19,7 +19,7 @@ def test_registry_kinds_are_exhaustive_and_drive_approval():
 
 
 def test_integration_tools_reads_are_free_writes_gate(tmp_path):
-    from coworker.connectors.integration_tools import make_integration_tools
+    from delta.connectors.integration_tools import make_integration_tools
 
     tools = {
         t.__name__: t
@@ -39,7 +39,7 @@ def test_integration_tools_reads_are_free_writes_gate(tmp_path):
 
 
 def test_browser_automation_reads_are_free_interactions_gate():
-    from coworker.connectors.browser_automation import make_browser_automation_tools
+    from delta.connectors.browser_automation import make_browser_automation_tools
 
     tools = {t.__name__: t for t in make_browser_automation_tools()}
     assert (
@@ -69,7 +69,7 @@ def _record_sender(record: list):
 
 
 def _fake_roster(monkeypatch, channels_by_team: dict):
-    from coworker.connectors import slack_directory
+    from delta.connectors import slack_directory
 
     calls: list = []
 
@@ -92,7 +92,7 @@ def test_channel_name_resolves_to_team_qualified_address(tmp_path, monkeypatch):
             "T1": [
                 {
                     "id": "C9",
-                    "name": "all-openworker",
+                    "name": "all-delta",
                     "is_private": False,
                     "is_member": True,
                 }
@@ -102,7 +102,7 @@ def test_channel_name_resolves_to_team_qualified_address(tmp_path, monkeypatch):
     record: list = []
     tool = make_send_message_tool(secrets, senders=_record_sender(record))
 
-    out = tool("slack:#all-openworker", "Hi")
+    out = tool("slack:#all-delta", "Hi")
     assert out["ok"] is True
     assert record[0]["chat_id"] == "T1/C9"
     assert (
@@ -111,8 +111,8 @@ def test_channel_name_resolves_to_team_qualified_address(tmp_path, monkeypatch):
 
 
 def test_bare_channel_names_coerce_to_slack(tmp_path, monkeypatch):
-    """The owner's exact transcript: the model sent target='all-openworker' and
-    '#all-openworker' — no 'slack:' prefix — and got 'invalid target'. Bare names
+    """The owner's exact transcript: the model sent target='all-delta' and
+    '#all-delta' — no 'slack:' prefix — and got 'invalid target'. Bare names
     are Slack-shaped and must resolve."""
     secrets = _secrets_with_team(tmp_path)
     _fake_roster(
@@ -121,7 +121,7 @@ def test_bare_channel_names_coerce_to_slack(tmp_path, monkeypatch):
             "T1": [
                 {
                     "id": "C9",
-                    "name": "all-openworker",
+                    "name": "all-delta",
                     "is_private": False,
                     "is_member": True,
                 }
@@ -131,8 +131,8 @@ def test_bare_channel_names_coerce_to_slack(tmp_path, monkeypatch):
     record: list = []
     tool = make_send_message_tool(secrets, senders=_record_sender(record))
 
-    assert tool("all-openworker", "Hi")["ok"] is True
-    assert tool("#all-openworker", "Hi")["ok"] is True
+    assert tool("all-delta", "Hi")["ok"] is True
+    assert tool("#all-delta", "Hi")["ok"] is True
     assert all(r["chat_id"] == "T1/C9" and r["token"] == "xoxb-t1" for r in record)
 
     # Garbage that is neither an address nor a Slack-shaped name still errors clearly.

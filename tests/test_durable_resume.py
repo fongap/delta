@@ -3,13 +3,13 @@ continues — rebuilt from the persisted thread, with no live await."""
 
 import asyncio
 
-from coworker.providers import (
+from delta.providers import (
     AssistantTurn,
     ModelCapabilities,
     ProviderClient,
     ToolCall,
 )
-from coworker.server.manager import SessionManager
+from delta.server.manager import SessionManager
 
 
 class ScriptedProvider(ProviderClient):

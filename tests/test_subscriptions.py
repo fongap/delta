@@ -4,10 +4,10 @@ import asyncio
 
 import pytest
 
-from coworker.connectors.base import MessageEvent, SessionSource
-from coworker.providers import ModelCapabilities, ProviderClient
-from coworker.server.manager import SessionManager
-from coworker.subscriptions import (
+from delta.connectors.base import MessageEvent, SessionSource
+from delta.providers import ModelCapabilities, ProviderClient
+from delta.server.manager import SessionManager
+from delta.subscriptions import (
     ChannelBuffer,
     SubscriptionStore,
     resolve_channel,
@@ -47,7 +47,7 @@ def test_resolve_channel():
 def test_subscribe_rejects_bare_channel_names(tmp_path):
     from fastapi.testclient import TestClient
 
-    from coworker.server import create_app
+    from delta.server import create_app
 
     mgr = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
     client = TestClient(create_app(mgr))
@@ -188,7 +188,7 @@ def test_dispatch_fans_out_to_subscribers(tmp_path, monkeypatch):
 def test_subscriptions_endpoint_and_collision(tmp_path):
     from fastapi.testclient import TestClient
 
-    from coworker.server import create_app
+    from delta.server import create_app
 
     mgr = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
     mgr.subscriptions.subscribe("s1", "slack:C1")
@@ -208,7 +208,7 @@ def test_subscriptions_endpoint_and_collision(tmp_path):
 def test_subscribe_unsubscribe_and_recent_endpoints(tmp_path):
     from fastapi.testclient import TestClient
 
-    from coworker.server import create_app
+    from delta.server import create_app
 
     mgr = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
     mgr.channel_buffer.record("slack:C9", "bob", "deploy failed")  # seeds the picker
@@ -237,7 +237,7 @@ def test_unauthorized_messages_park_and_resolve(tmp_path, monkeypatch):
     """§19: an allow-list drop PARKS the message; resolving it can dismiss, allow the sender,
     or allow AND deliver the original message through the normal inbound path (no re-send).
     """
-    from coworker.connectors import Gateway
+    from delta.connectors import Gateway
 
     mgr = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
     _connect_slack(mgr)
@@ -250,7 +250,7 @@ def test_unauthorized_messages_park_and_resolve(tmp_path, monkeypatch):
     mgr.subscriptions.subscribe("sA", "slack:C1")
 
     # A gateway with an empty allow-list drops the message — into the parked store.
-    from coworker.connectors.config import ConnectorSettings
+    from delta.connectors.config import ConnectorSettings
 
     gw = Gateway(
         secrets=mgr.secrets,
@@ -303,7 +303,7 @@ def test_unauthorized_messages_park_and_resolve(tmp_path, monkeypatch):
 
 
 def test_parked_store_persists_and_caps(tmp_path):
-    from coworker.connectors.parked import ParkedStore
+    from delta.connectors.parked import ParkedStore
 
     path = tmp_path / "parked.json"
     store = ParkedStore(path, cap=2)

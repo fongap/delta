@@ -7,14 +7,14 @@ from __future__ import annotations
 
 import pytest
 
-from coworker.connectors import accounts, descriptors
-from coworker.connectors.descriptors import ConnectorDescriptor, Field, ValidationResult
-from coworker.connectors.setup import (
+from delta.connectors import accounts, descriptors
+from delta.connectors.descriptors import ConnectorDescriptor, Field, ValidationResult
+from delta.connectors.setup import (
     connect_connector,
     connector_list,
     disconnect_connector,
 )
-from coworker.secrets import SecretStore
+from delta.secrets import SecretStore
 
 
 def _fake_descriptor(name="acmeapp", account_field="project_id", managed=False):
@@ -151,9 +151,9 @@ def test_generic_account_routes(acme, secrets, tmp_path, monkeypatch):
     account-patterned connectors and refuse everything else."""
     from fastapi.testclient import TestClient
 
-    from coworker.providers import ModelCapabilities, ProviderClient
-    from coworker.server.app import create_app
-    from coworker.server.manager import SessionManager
+    from delta.providers import ModelCapabilities, ProviderClient
+    from delta.server.app import create_app
+    from delta.server.manager import SessionManager
 
     class _Provider(ProviderClient):
         def complete(self, *, model, messages, tools=None, **settings):
@@ -162,7 +162,7 @@ def test_generic_account_routes(acme, secrets, tmp_path, monkeypatch):
         def capabilities(self, model):
             return ModelCapabilities()
 
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     manager = SessionManager(workspace=tmp_path, provider=_Provider())
     accounts.add_account(manager.secrets, "acmeapp", "p1", {"api_key": "k1"})
     accounts.add_account(manager.secrets, "acmeapp", "p2", {"api_key": "k2"})

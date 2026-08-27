@@ -8,11 +8,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from coworker.server.manager import SessionManager
+from delta.server.manager import SessionManager
 
 
 def _manager(tmp_path, monkeypatch) -> SessionManager:
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     return SessionManager(data_dir=tmp_path / "data")
 
 

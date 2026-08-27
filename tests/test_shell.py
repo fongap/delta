@@ -12,9 +12,9 @@ import time
 
 import pytest
 
-from coworker.permissions import PermissionEngine
-from coworker.tools import ToolRegistry
-from coworker.tools.shell import LocalExecutor, shell_tools
+from delta.permissions import PermissionEngine
+from delta.tools import ToolRegistry
+from delta.tools.shell import LocalExecutor, shell_tools
 
 _WIN = sys.platform == "win32"
 

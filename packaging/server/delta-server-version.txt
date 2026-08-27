@@ -1,0 +1,39 @@
+# UTF-8
+#
+# VS_VERSION_INFO version resource for the bundled sidecar (delta-server.exe).
+#
+# Windows Task Manager displays FileDescription for windowless background processes
+# (falling back to the filename only when no version info exists). Without this the
+# sidecar showed as a bare "delta-server.exe" — now its background role reads "Delta Server".
+# Task Manager process-tree grouping is heuristic and is not controlled by this metadata.
+VSVersionInfo(
+  ffi=FixedFileInfo(
+    filevers=(0, 2, 2, 0),
+    prodvers=(0, 2, 2, 0),
+    mask=0x3F,
+    flags=0x0,
+    OS=0x40004,
+    fileType=0x1,
+    subtype=0x0,
+    date=(0, 0),
+  ),
+  kids=[
+    StringFileInfo(
+      [
+        StringTable(
+          '040904B0',
+          [
+            StringStruct('CompanyName', 'Delta'),
+            StringStruct('FileDescription', 'Delta Server'),
+            StringStruct('FileVersion', '0.2.2'),
+            StringStruct('InternalName', 'delta-server'),
+            StringStruct('OriginalFilename', 'delta-server.exe'),
+            StringStruct('ProductName', 'Delta'),
+            StringStruct('ProductVersion', '0.2.2'),
+          ]
+        )
+      ]
+    ),
+    VarFileInfo([VarStruct('Translation', [0x409, 1200])])
+  ]
+)

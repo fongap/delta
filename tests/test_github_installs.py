@@ -14,14 +14,14 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from coworker import cloud
-from coworker.connectors import github_installs
-from coworker.connectors.base import MessageEvent
-from coworker.connectors.config import is_authorized, load_settings
-from coworker.connectors.github_relay import GitHubRelayAdapter, split_thread
-from coworker.connectors.relay_client import RelayHub, SlackRelayAdapter
-from coworker.secrets import SecretStore
-from coworker.server import SessionManager, create_app
+from delta import cloud
+from delta.connectors import github_installs
+from delta.connectors.base import MessageEvent
+from delta.connectors.config import is_authorized, load_settings
+from delta.connectors.github_relay import GitHubRelayAdapter, split_thread
+from delta.connectors.relay_client import RelayHub, SlackRelayAdapter
+from delta.secrets import SecretStore
+from delta.server import SessionManager, create_app
 
 
 @pytest.fixture(autouse=True)
@@ -33,7 +33,7 @@ def _fresh_token_cache():
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     manager = SessionManager(workspace=tmp_path)
     app = create_app(manager)
     with TestClient(app) as c:
@@ -141,7 +141,7 @@ def test_disconnect_last_installation_never_resurrects_manual_pat(client, monkey
 
 
 def test_github_settings_carry_per_installation_allowlists(tmp_path, monkeypatch):
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     secrets = SecretStore()
     github_installs.managed_connect_install(secrets, _install_form("101"))
     secrets.put(
@@ -363,8 +363,8 @@ def _stub_broker_mint(monkeypatch, tokens: list[str]):
 
 
 def test_token_client_caches_and_force_remints(tmp_path, monkeypatch):
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
-    from coworker.config import load_config
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
+    from delta.config import load_config
 
     secrets = SecretStore()
     calls = _stub_broker_mint(monkeypatch, ["ghs_first", "ghs_second"])
@@ -386,7 +386,7 @@ def test_token_client_caches_and_force_remints(tmp_path, monkeypatch):
 
 
 def _capture_requests(monkeypatch):
-    from coworker.connectors import integration_tools
+    from delta.connectors import integration_tools
 
     seen: list[dict] = []
 
@@ -399,14 +399,14 @@ def _capture_requests(monkeypatch):
 
 
 def _tool(secrets, name):
-    from coworker.connectors.integration_tools import make_integration_tools
+    from delta.connectors.integration_tools import make_integration_tools
 
     tools = make_integration_tools(secrets)
     return next(t for t in tools if t.__name__ == name)
 
 
 def test_manual_pat_path_untouched(tmp_path, monkeypatch):
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     secrets = SecretStore()
     secrets.put("github:default", {"type": "token", "token": "ghp_manual"})
     seen = _capture_requests(monkeypatch)
@@ -417,7 +417,7 @@ def test_manual_pat_path_untouched(tmp_path, monkeypatch):
 
 
 def test_managed_tools_use_minted_token_by_owner(tmp_path, monkeypatch):
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     secrets = SecretStore()
     github_installs.managed_connect_install(secrets, _install_form("101"))
     github_installs.managed_connect_install(
@@ -441,8 +441,8 @@ def test_managed_tools_use_minted_token_by_owner(tmp_path, monkeypatch):
 
 
 def test_managed_401_reminted_once(tmp_path, monkeypatch):
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
-    from coworker.connectors import integration_tools
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
+    from delta.connectors import integration_tools
 
     secrets = SecretStore()
     github_installs.managed_connect_install(secrets, _install_form("101"))
@@ -461,7 +461,7 @@ def test_managed_401_reminted_once(tmp_path, monkeypatch):
 
 
 def test_review_event_validated(tmp_path, monkeypatch):
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     secrets = SecretStore()
     out = _tool(secrets, "github_review")("acme", "site", 5, "MERGE")
     assert "event must be" in out["error"]
@@ -471,8 +471,8 @@ def test_review_event_validated(tmp_path, monkeypatch):
 
 
 def test_list_commits_filters_and_trims(tmp_path, monkeypatch):
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
-    from coworker.connectors import integration_tools
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
+    from delta.connectors import integration_tools
 
     secrets = SecretStore()
     secrets.put("github:default", {"type": "token", "token": "ghp_x"})
@@ -543,8 +543,8 @@ def _origin(tmp_path):
 
 
 def _clone_tools(secrets, tmp_path):
-    from coworker.connectors.integration_tools import make_integration_tools
-    from coworker.roots import RootDir
+    from delta.connectors.integration_tools import make_integration_tools
+    from delta.roots import RootDir
 
     granted = tmp_path / "granted"
     granted.mkdir(exist_ok=True)
@@ -556,7 +556,7 @@ def _clone_tools(secrets, tmp_path):
 def test_clone_pull_roundtrip_and_no_token_at_rest(tmp_path, monkeypatch, _origin):
     """Clone into the granted root, then pull a new upstream commit. The
     minted-token header must never persist anywhere in the clone."""
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("GITHUB_GIT_URL", f"file://{_origin['base']}")
     secrets = SecretStore()
     github_installs.managed_connect_install(secrets, _install_form("101"))
@@ -586,7 +586,7 @@ def test_clone_pull_roundtrip_and_no_token_at_rest(tmp_path, monkeypatch, _origi
 
 
 def test_clone_refuses_paths_outside_granted_roots(tmp_path, monkeypatch, _origin):
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("GITHUB_GIT_URL", f"file://{_origin['base']}")
     secrets = SecretStore()
     _granted, tools = _clone_tools(secrets, tmp_path)
@@ -596,7 +596,7 @@ def test_clone_refuses_paths_outside_granted_roots(tmp_path, monkeypatch, _origi
     assert not (tmp_path / "elsewhere").exists()
 
     # and with no writable root at all 鈫?a clear error, no filesystem writes
-    from coworker.connectors.integration_tools import make_integration_tools
+    from delta.connectors.integration_tools import make_integration_tools
 
     bare_tools = {t.__name__: t for t in make_integration_tools(secrets, roots=[])}
     out = bare_tools["github_clone"]("acme", "site")
@@ -604,7 +604,7 @@ def test_clone_refuses_paths_outside_granted_roots(tmp_path, monkeypatch, _origi
 
 
 def test_clone_refuses_non_empty_target(tmp_path, monkeypatch, _origin):
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("GITHUB_GIT_URL", f"file://{_origin['base']}")
     secrets = SecretStore()
     granted, tools = _clone_tools(secrets, tmp_path)

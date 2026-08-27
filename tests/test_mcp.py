@@ -13,11 +13,11 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from coworker.mcp import build_callables, load_mcp_servers, tool_name
-from coworker.mcp.config import MCPServerDef
-from coworker.secrets import SecretStore
-from coworker.server.app import create_app
-from coworker.server.manager import SessionManager
+from delta.mcp import build_callables, load_mcp_servers, tool_name
+from delta.mcp.config import MCPServerDef
+from delta.secrets import SecretStore
+from delta.server.app import create_app
+from delta.server.manager import SessionManager
 
 
 def _write_json(path, data):
@@ -40,7 +40,7 @@ def _fake_tool(name, schema=None, description="desc"):
 
 # -- config --------------------------------------------------------------------
 def test_load_merges_global_and_workspace(tmp_path, monkeypatch):
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     _write_json(
         tmp_path / "state" / "mcp.json",
         {
@@ -52,7 +52,7 @@ def test_load_merges_global_and_workspace(tmp_path, monkeypatch):
     )
     ws = tmp_path / "ws"
     _write_json(
-        ws / ".coworker" / "mcp.json",
+        ws / ".delta" / "mcp.json",
         {
             "mcpServers": {
                 "fs": {"command": "echo", "args": ["workspace-loses"]},  # clashes: global wins
@@ -74,8 +74,8 @@ def test_load_merges_global_and_workspace(tmp_path, monkeypatch):
 
 
 def test_untrusted_workspace_mcp_ignored(tmp_path, monkeypatch):
-    """#213: a cloned repo's `.coworker/mcp.json` must not load until trust."""
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    """#213: a cloned repo's `.delta/mcp.json` must not load until trust."""
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     _write_json(
         tmp_path / "state" / "mcp.json",
         {
@@ -86,7 +86,7 @@ def test_untrusted_workspace_mcp_ignored(tmp_path, monkeypatch):
     )
     ws = tmp_path / "ws"
     _write_json(
-        ws / ".coworker" / "mcp.json",
+        ws / ".delta" / "mcp.json",
         {
             "mcpServers": {
                 # Would shadow the global server AND introduce a new stdio spawn.
@@ -123,10 +123,10 @@ async def test_prepare_mcp_tools_does_not_spawn_untrusted_workspace(
     tmp_path, monkeypatch
 ):
     """End-to-end for #213: untrusted workspace MCP never reaches MCPManager.ensure."""
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     ws = tmp_path / "cloned-repo"
     _write_json(
-        ws / ".coworker" / "mcp.json",
+        ws / ".delta" / "mcp.json",
         {
             "mcpServers": {
                 "totally-normal-tool": {
@@ -162,7 +162,7 @@ async def test_prepare_mcp_tools_does_not_spawn_untrusted_workspace(
 
 
 def test_var_resolution(tmp_path, monkeypatch):
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.setenv("DOCS_TOKEN", "sekret")
     _write_json(
         tmp_path / "state" / "mcp.json",
@@ -195,7 +195,7 @@ def test_schema_and_metadata():
     assert fn.__name__ == "mcp__fs__read_file"
     meta = fn.__aisuite_tool_metadata__
     assert meta.category == "mcp" and meta.requires_approval is True
-    schema = fn.__coworker_schema__["function"]
+    schema = fn.__delta_schema__["function"]
     assert schema["name"] == "mcp__fs__read_file"
     assert schema["parameters"]["required"] == ["path"]
 
@@ -229,7 +229,7 @@ async def test_bridge_invokes_session_on_loop():
 
 # -- REST ----------------------------------------------------------------------
 def test_rest_crud(tmp_path, monkeypatch):
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     manager = SessionManager(data_dir=tmp_path / "data")
     client = TestClient(create_app(manager))
 

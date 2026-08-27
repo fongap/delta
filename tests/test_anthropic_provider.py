@@ -8,8 +8,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from coworker.providers import AnthropicProvider, capabilities_for
-from coworker.providers.anthropic_provider import (
+from delta.providers import AnthropicProvider, capabilities_for
+from delta.providers.anthropic_provider import (
     DEFAULT_MAX_TOKENS,
     convert_messages,
     convert_tools,
@@ -457,7 +457,7 @@ def test_stream_passes_stream_flag():
 
 
 def test_registry_builds_native_anthropic_provider():
-    from coworker.providers.registry import build_provider_client
+    from delta.providers.registry import build_provider_client
 
     provider = build_provider_client("anthropic", {"api_key": "sk-ant-x"}, None)
     assert isinstance(provider, AnthropicProvider)
@@ -467,7 +467,7 @@ def test_registry_builds_native_anthropic_provider():
 
 
 def test_resolve_api_key_env_then_secrets(monkeypatch):
-    from coworker.providers.anthropic_provider import resolve_api_key
+    from delta.providers.anthropic_provider import resolve_api_key
 
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-env")
     assert resolve_api_key() == "sk-ant-env"
@@ -648,8 +648,8 @@ def test_convert_replays_thinking_blocks_ahead_of_tool_use():
 def test_thinking_defaults_on_with_hidden_profile_override():
     """No user-facing setting (owner call 2026-07-23): thinking is ON by default; the
     profile's thinking_budget stays a hidden override, 0 = off."""
-    from coworker.providers.anthropic_provider import DEFAULT_THINKING_BUDGET
-    from coworker.providers.registry import build_provider_client
+    from delta.providers.anthropic_provider import DEFAULT_THINKING_BUDGET
+    from delta.providers.registry import build_provider_client
 
     assert build_provider_client("anthropic", {}, None).thinking_budget == DEFAULT_THINKING_BUDGET
     assert build_provider_client("anthropic", {"thinking_budget": "2048"}, None).thinking_budget == 2048

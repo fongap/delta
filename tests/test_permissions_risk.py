@@ -10,8 +10,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from coworker.permissions import Mode, PermissionEngine
-from coworker.risk import RiskClass, classify, is_consequential
+from delta.permissions import Mode, PermissionEngine
+from delta.risk import RiskClass, classify, is_consequential
 
 EXTERNAL_META = SimpleNamespace(requires_approval=True, category="connector")
 PLAIN_META = SimpleNamespace(requires_approval=False)
@@ -134,7 +134,7 @@ def test_allowlist_prefix_is_argv_boundary(tmp_path):
 def test_shell_commands_not_auto_allowed_by_default(tmp_path):
     # There is no generally safe executable: these examples cover code execution,
     # environment disclosure, reads outside the workspace, and helper execution.
-    from coworker.config import DEFAULT_ALLOWED_COMMANDS
+    from delta.config import DEFAULT_ALLOWED_COMMANDS
 
     eng = PermissionEngine(
         workspace_root=tmp_path, allowed_commands=list(DEFAULT_ALLOWED_COMMANDS)
@@ -143,7 +143,7 @@ def test_shell_commands_not_auto_allowed_by_default(tmp_path):
         "python3 -c 'import os'",
         "pytest /tmp/attacker_test.py",
         "find . -exec sh -c 'echo arbitrary' {} +",
-        "cat ~/.config/coworker/secrets.json",
+        "cat ~/.config/delta/secrets.json",
         "echo $OPENAI_API_KEY",
         "git status",
     ):

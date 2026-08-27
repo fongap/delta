@@ -8,10 +8,10 @@ import json
 
 from test_durable_resume import ScriptedProvider, _run_until_pending, _text, _tool
 
-from coworker.inbox import InboxItem, InboxStore
-from coworker.interactions import buttons_for, decode
-from coworker.server.manager import SessionManager
-from coworker.tools.ask import (
+from delta.inbox import InboxItem, InboxStore
+from delta.interactions import buttons_for, decode
+from delta.server.manager import SessionManager
+from delta.tools.ask import (
     MAX_GROUPED_QUESTIONS,
     answer_result,
     ask_user_tool,
@@ -25,7 +25,7 @@ from coworker.tools.ask import (
 
 
 def test_schema_advertises_rich_options_and_grouped_questions():
-    fn = ask_user_tool().__coworker_schema__["function"]
+    fn = ask_user_tool().__delta_schema__["function"]
     assert fn["name"] == "ask_user"
     props = fn["parameters"]["properties"]
     # options: string-or-object union, object requires `label`

@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from coworker.providers import detect_provider, verify_provider_key
+from delta.providers import detect_provider, verify_provider_key
 
 
 # -- detect_provider ------------------------------------------------------------
@@ -122,7 +122,7 @@ def _patch_get_json(monkeypatch, status=200, payload=None, capture=None, raise_e
 
 
 def test_fetch_openai_compatible_uses_alias_endpoint(monkeypatch):
-    from coworker.providers import (
+    from delta.providers import (
         fetch_provider_models,
         register_custom_provider,
         unregister_custom_provider,
@@ -148,7 +148,7 @@ def test_fetch_openai_compatible_uses_alias_endpoint(monkeypatch):
 
 
 def test_fetch_custom_anthropic_protocol_headers(monkeypatch):
-    from coworker.providers import (
+    from delta.providers import (
         fetch_provider_models,
         register_custom_provider,
         unregister_custom_provider,
@@ -172,7 +172,7 @@ def test_fetch_custom_anthropic_protocol_headers(monkeypatch):
 
 
 def test_fetch_custom_ollama_is_keyless(monkeypatch):
-    from coworker.providers import (
+    from delta.providers import (
         fetch_provider_models,
         register_custom_provider,
         unregister_custom_provider,
@@ -195,7 +195,7 @@ def test_fetch_custom_ollama_is_keyless(monkeypatch):
 
 
 def test_fetch_bad_key_is_clean(monkeypatch):
-    from coworker.providers import (
+    from delta.providers import (
         fetch_provider_models,
         register_custom_provider,
         unregister_custom_provider,
@@ -213,7 +213,7 @@ def test_fetch_bad_key_is_clean(monkeypatch):
 
 
 def test_fetch_bedrock_is_unsupported(monkeypatch):
-    from coworker.providers import (
+    from delta.providers import (
         fetch_provider_models,
         register_custom_provider,
         unregister_custom_provider,
