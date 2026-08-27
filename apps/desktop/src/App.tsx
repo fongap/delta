@@ -751,8 +751,18 @@ export function App() {
         case "model_changed":
           // Mid-session switch (server-applied): update the header fact and drop the
           // persisted marker into the live transcript (replay renders it from history).
+          // `modelSwitchModel` mirrors the replay path so the notice localizes at render
+          // in both the live and the reloaded view (raw d.text stays on the item).
           if (d.model) setModel(d.model);
-          setItems((p) => [...p, { kind: "notice", tone: "info", text: d.text || "Model switched" }]);
+          setItems((p) => [
+            ...p,
+            {
+              kind: "notice",
+              tone: "info",
+              text: d.text || "Model switched",
+              ...(d.model ? { modelSwitchModel: String(d.model) } : {}),
+            },
+          ]);
           break;
         case "memory_saved":
           // §5.1 save notice — inline in the transcript, where the user is already
@@ -1342,7 +1352,7 @@ export function App() {
             <button
               className="text-[12px] text-faint px-0.5"
               data-testid="toast-dismiss"
-              title="Dismiss"
+              title={tr("common.dismiss")}
               onClick={() => setRunToast(null)}
             >
               ✕
@@ -1370,7 +1380,7 @@ export function App() {
           onClick={toggleNav}
           onMouseEnter={() => setNavPeek(true)}
           title="Show sidebar (⌘B)"
-          aria-label="Show sidebar"
+          aria-label={tr("common.showSidebar")}
         >
           <Icon name="sidebar" size={16} />
         </button>
@@ -1485,7 +1495,7 @@ export function App() {
                 <button
                   className="topbar-icon-btn"
                   onClick={toggleNav}
-                  aria-label="Show sidebar"
+                  aria-label={tr("common.showSidebar")}
                   title="Show sidebar (⌘B)"
                 >
                   <Icon name="sidebar" size={16} />
@@ -1523,10 +1533,10 @@ export function App() {
                 className="topbar-artifacts-btn"
                 onPointerDown={(e) => e.stopPropagation()}
                 onClick={() => setRailHidden(false)}
-                title="Show files this conversation produced"
+                title={tr("artifacts.panelHint")}
               >
                 <Icon name="file" size={14} />
-                <span>Artifacts</span>
+                <span>{tr("artifacts.title")}</span>
                 <span className="topbar-artifacts-count">{artifactCount}</span>
               </button>
             )}
@@ -1591,7 +1601,7 @@ export function App() {
                     <h1 className="greeting">{agent === "chat" ? tr("sessionIntro.greeting") : "Let's build something."}</h1>
                     {needsWorkspace(agent) && (
                       <div className="suggestions">
-                        <div className="suggest-head">Try a task</div>
+                        <div className="suggest-head">{tr("app.tryATask")}</div>
                         {SUGGESTIONS.map((s, i) => (
                           <div className="suggest" key={i} onClick={() => workspace && send(s.text)}>
                             <span className="ico">{s.ico}</span>
@@ -1637,7 +1647,6 @@ export function App() {
                   {streaming && streamMode(streaming, items, running) === "answer" && (
                     <div className="transcript">
                       <div className="bubble-assistant">
-                        <div className="who">assistant</div>
                         <Markdown text={streaming} />
                         <span className="stream-cursor">▍</span>
                       </div>
@@ -1653,12 +1662,12 @@ export function App() {
             {!following && (running || !!streaming) && (
               <div className="relative h-0 z-10">
                 <button
-                  className="absolute bottom-3 left-1/2 -translate-x-1/2 flex items-center gap-1.5 px-3 py-1.5 rounded-full border border-line bg-panel shadow-md text-[12px] text-muted hover:text-ink cursor-pointer whitespace-nowrap"
+                  className="absolute bottom-2.5 left-1/2 -translate-x-1/2 flex items-center gap-1 px-2.5 py-1 rounded-full border border-line bg-panel shadow-sm text-[12px] text-muted hover:text-ink cursor-pointer whitespace-nowrap"
                   data-testid="jump-to-latest"
                   onClick={followLatest}
                 >
                   <Icon name="chevronDown" size={13} />
-                  Jump to latest
+                  {tr("transcript.jumpToLatest")}
                 </button>
               </div>
             )}

@@ -27,3 +27,6 @@ releases/
 
 # Local portable release build output (generated; carries user DBs/logs/prefs)
 packaging/release/
+
+# Local ruff linter cache
+.ruff_cache/

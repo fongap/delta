@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { ApprovalDecision, Item } from "../types";
 import { shortArgs } from "./ApprovalCard";
-import { humanizeAsk, humanizeTool, type HumanLine } from "../humanize";
+import { humanizeAsk, humanizeTool, resolveHumanLine, type HumanLine } from "../humanize";
 import { Markdown } from "./Markdown";
 import { ConnectorMessageCard } from "./ConnectorMessageCard";
 import { Icon } from "./Icon";
@@ -90,22 +90,56 @@ function BubbleMeta({
 // Reasoning-model thinking text (model-layer roadmap item 4): a quiet disclosure —
 // collapsed by default, the trace one click away. `live` = still streaming (pulsing label);
 // App renders that variant above the transcript, this one rides a finalized assistant item.
+// Server-side notices persist raw English markers ("Interrupted.", "Context compacted",
+// "Stopped: max iterations reached.", "Error: …", "Model switched to …"). The wire and
+// history format stays untouched; the known markers localize at render — the same
+// pattern as localizeVerifyMsg in ProviderSetup. Unknown text passes through verbatim
+// (audit information is never rewritten).
+export function localizeNoticeText(
+  text: string,
+  t: (key: string, vars?: Record<string, string | number>, fallback?: string) => string,
+): string {
+  if (text === "Interrupted.") return t("transcript.interrupted", undefined, "Interrupted.");
+  if (text === "Stopped: max iterations reached.")
+    return t("transcript.maxIterations", undefined, "Stopped: max iterations reached.");
+  if (text.startsWith("Context compacted"))
+    return t("transcript.contextCompacted", undefined, text);
+  if (text === "That message was rejected.")
+    return t("transcript.rejected", undefined, "That message was rejected.");
+  if (text === "Model switched") return t("transcript.modelSwitched", undefined, "Model switched");
+  const switched = text.match(/^Model switched to (.+)$/);
+  if (switched)
+    return t("transcript.modelSwitchedTo", { model: switched[1] }, `Model switched to ${switched[1]}`);
+  if (text.startsWith("Error: "))
+    return (
+      t("transcript.errorPrefix", undefined, "Error: ") +
+      text.slice("Error: ".length)
+    );
+  return text;
+}
+
 /** Error/warn notice with view-then-collapse behavior: born expanded so the error is
     readable immediately, auto-collapses to a one-line summary after a few idle seconds
     (a long raw API dump used to sit in the transcript forever), and re-expands on click.
-    Hovering pauses the collapse — actively reading it counts as "not yet viewed". */
+    Hovering pauses the collapse — actively reading it counts as "not yet viewed".
+    Hierarchy: the reason is the message, Retry is the action, technical details the
+    weak disclosure. `repeatCount` > 1 collapses N identical consecutive failures into
+    this one notice with a "retried N-1 times" suffix (display merge only — every
+    error stays in the item history/audit). */
 function CollapsibleNotice({
   text,
   providerError,
   showRetry,
   retrying,
   onRetry,
+  repeatCount = 1,
 }: {
   text: string;
   providerError?: boolean;
   showRetry?: boolean;
   retrying?: boolean;
   onRetry?: () => void;
+  repeatCount?: number;
 }) {
   const { t } = useI18n();
   const [expanded, setExpanded] = useState(false);
@@ -126,11 +160,12 @@ function CollapsibleNotice({
         undefined,
         "Provider temporarily unavailable. You can retry.",
       )
-    : firstLine;
+    : localizeNoticeText(firstLine, t);
   const hasDetails = providerError || text.includes("\n") || text.length > 140;
+  const retried = repeatCount - 1;
   return (
     <div
-      className={"notice warn" + (expanded ? " expanded" : "")}
+      className={"notice notice-error" + (expanded ? " expanded" : "")}
       onMouseEnter={() => {
         hoverRef.current = true;
       }}
@@ -138,23 +173,47 @@ function CollapsibleNotice({
         hoverRef.current = false;
       }}
     >
-      <span>{summary}</span>
-      {retrying && (
-        <span className="text-muted ml-2" data-testid="notice-retrying">
-          {t("transcript.retrying", undefined, "Retrying…")}
+      <span className="notice-error-line">
+        <span className="min-w-0">
+          {summary}
+          {retried > 0 && (
+            <span className="text-faint">
+              {" · "}
+              {t("transcript.errorRetried", { n: retried }, `retried ${retried}×`)}
+            </span>
+          )}
         </span>
-      )}
-      {hasDetails && (
-        <button
-          type="button"
-          className="text-faint ml-1 hover:text-ink"
-          onClick={() => setExpanded((current) => !current)}
-        >
-          {expanded
-            ? t("transcript.errorHide", undefined, "Hide details")
-            : t("transcript.errorShow", undefined, "Show details")}
-        </button>
-      )}
+        {retrying && (
+          <span className="text-faint text-[11px] shrink-0" data-testid="notice-retrying">
+            {t("transcript.retrying", undefined, "Retrying…")}
+          </span>
+        )}
+        <span className="ml-auto flex items-center gap-2 shrink-0">
+          {hasDetails && (
+            <button
+              type="button"
+              className="text-[11px] text-faint hover:text-muted"
+              onClick={() => setExpanded((current) => !current)}
+            >
+              {expanded
+                ? t("transcript.errorHide", undefined, "Hide details")
+                : t("transcript.errorShow", undefined, "Show details")}
+            </button>
+          )}
+          {showRetry && (
+            <button
+              className="btn"
+              data-testid="notice-retry"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRetry?.();
+              }}
+            >
+              {t("transcript.retry", undefined, "Retry")}
+            </button>
+          )}
+        </span>
+      </span>
       {expanded && hasDetails && (
         <div className="mt-2 rounded-md border border-line bg-paper/70 p-2 text-left text-[11.5px] font-mono whitespace-pre-wrap break-all">
           <div>{text}</div>
@@ -171,18 +230,6 @@ function CollapsibleNotice({
               : t("transcript.copyDetails", undefined, "Copy details")}
           </button>
         </div>
-      )}
-      {showRetry && (
-        <button
-          className="btn ml-2"
-          data-testid="notice-retry"
-          onClick={(e) => {
-            e.stopPropagation();
-            onRetry?.();
-          }}
-        >
-          {t("transcript.retry", undefined, "Retry")}
-        </button>
       )}
     </div>
   );
@@ -283,11 +330,13 @@ function ApprovalChip({ resolved }: { resolved: ApprovalDecision | undefined }) 
 }
 
 function LineText({ line }: { line: HumanLine }) {
+  const { t } = useI18n();
+  const r = resolveHumanLine(line, t);
   return (
     <span className="min-w-0 text-[13px] leading-relaxed">
-      <span className="text-muted">{line.pre}</span>
-      {line.obj && <span className="text-ink">{line.obj}</span>}
-      {line.post && <span className="text-muted">{line.post}</span>}
+      <span className="text-muted">{r.pre}</span>
+      {r.obj && <span className="text-ink">{r.obj}</span>}
+      {r.post && <span className="text-muted">{r.post}</span>}
     </span>
   );
 }
@@ -520,6 +569,9 @@ export function Transcript({ items, running, streamingText, onRetry, onUndoMemor
   flush(!!running);
 
   const lastTurnIndex = blocks.reduce((acc, b, i) => ("turn" in b ? i : acc), -1);
+  // A block holding one retriable warn notice (a failed provider attempt).
+  const isErrNotice = (b: (typeof blocks)[number]): b is { item: Extract<Item, { kind: "notice" }>; i: number } =>
+    "item" in b && b.item.kind === "notice" && b.item.tone === "warn" && !!b.item.retriable;
   return (
     <div className="transcript">
       {blocks.map((block, bi) => {
@@ -616,28 +668,44 @@ export function Transcript({ items, running, streamingText, onRetry, onUndoMemor
                 </div>
               </div>
             );
-          case "notice":
-            // Errors/warnings get the view-then-collapse treatment (a raw API dump used
-            // to sit expanded in the transcript forever); info notices stay as-is.
-            if (item.tone === "warn")
+          case "notice": {
+            // Provider errors MERGE (display-level only): N consecutive retriable warn
+            // notices are N failed attempts (auto-retry or manual) and used to slice the
+            // transcript into repeated large blocks. One notice + a retried-N suffix now;
+            // every raw error stays in the item history/audit and the latest stays
+            // expandable here. Merge runs break on any other block (user/turn/info…).
+            if (item.tone === "warn" && item.retriable) {
+              if (bi > 0 && isErrNotice(blocks[bi - 1])) return null; // absorbed above
+              let end = bi;
+              while (end + 1 < blocks.length && isErrNotice(blocks[end + 1])) end++;
+              const last = blocks[end] as { item: Extract<Item, { kind: "notice" }>; i: number };
+              const anchor = retryAnchor(items);
+              const anchorInRun = anchor >= block.i && anchor <= last.i;
               return (
                 <CollapsibleNotice
                   key={bi}
-                  text={item.text}
-                  providerError={!!item.retriable}
-                  showRetry={item.retriable && !running && !!onRetry && block.i === retryAnchor(items)}
-                  retrying={item.retriable && running && block.i === retryAnchor(items)}
+                  text={last.item.text}
+                  providerError
+                  repeatCount={end - bi + 1}
+                  showRetry={anchorInRun && !running && !!onRetry}
+                  retrying={anchorInRun && running}
                   onRetry={onRetry}
                 />
               );
+            }
+            // Errors/warnings get the view-then-collapse treatment (a raw API dump used
+            // to sit expanded in the transcript forever).
+            if (item.tone === "warn") return <CollapsibleNotice key={bi} text={item.text} />;
+            // Info notices are runtime events (model switch, compaction divider): quiet,
+            // centered, compact — never chat-content weight.
             return (
-              <div className="notice" key={bi}>
+              <div className="notice notice-event" key={bi}>
                 {item.modelSwitchModel
                   ? t("transcript.modelSwitchedTo", { model: item.modelSwitchModel }, `Model switched to ${item.modelSwitchModel}`) +
                     (item.modelSwitchImageWarning
                       ? " — " + t("transcript.modelSwitchImageWarning", undefined, "earlier images can't be read by this model")
                       : "")
-                  : item.text}
+                  : localizeNoticeText(item.text, t)}
                 {item.retriable && !running && onRetry && block.i === retryAnchor(items) && (
                   <button className="btn ml-2" data-testid="notice-retry" onClick={onRetry}>
                     {t("transcript.retry", undefined, "Retry")}
@@ -645,6 +713,7 @@ export function Transcript({ items, running, streamingText, onRetry, onUndoMemor
                 )}
               </div>
             );
+          }
           // §5.1 save notice: quiet, inline, and it STAYS — the user reads it in place
           // and can undo whenever they get to it.
           case "memory":

@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { ApprovalDecision, Item } from "../types";
-import { humanizeApprovalTitle, type HumanLine } from "../humanize";
+import { humanizeApprovalTitle, resolveHumanLine, type HumanLine } from "../humanize";
 import { Icon } from "./Icon";
 import { useI18n } from "../i18n/I18nContext";
 
@@ -87,11 +87,13 @@ function permissionLines(args: any): PermissionLine[] {
 }
 
 export function TitleText({ line }: { line: HumanLine }) {
+  const { t } = useI18n();
+  const r = resolveHumanLine(line, t);
   return (
     <span className="approval-title">
-      {line.pre}
-      {line.obj && <b>{line.obj}</b>}
-      {line.post}
+      {r.pre}
+      {r.obj && <b>{r.obj}</b>}
+      {r.post}
     </span>
   );
 }

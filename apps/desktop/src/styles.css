@@ -410,6 +410,17 @@ body {
 
 .notice { font-size: 13px; color: var(--muted); text-align: center; }
 .notice.warn { color: var(--accent); }
+/* Runtime events (model switch, compaction divider): quiet centered lines, not chat
+   content — smaller, fainter, and pulled in against the transcript's 20px gap so a
+   stream of switches stays compact instead of claiming full message rows. */
+.notice-event { font-size: 11.5px; color: var(--faint); }
+/* Error notice hierarchy: the reason is the message (left), Retry the action and
+   technical details the weak disclosure (right). Same quiet accent as before — no
+   big alert block, no strong warning color. */
+.notice-error { color: var(--accent); }
+.notice-error-line { display: flex; align-items: center; gap: 8px; text-align: left; }
+.transcript > .notice { margin-block: -5px; }
+.transcript > .notice-event { margin-block: -7px; }
 
 /* approval */
 .approval {
@@ -890,23 +901,25 @@ button.btn.danger { color: var(--accent); }
 .seg button { font: inherit; font-size: 12.5px; padding: 5px 14px; border: none; border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer; }
 .seg button.active { background: var(--accent-soft); color: var(--ink); }
 
-/* Model checklist (Onboarding + Configure Models): compact 44px rows.
-   checkbox = shown in the picker (display) · radio = default for new sessions. */
-.mlist { display: flex; flex-direction: column; gap: 1px; margin: 6px 0 4px; }
+/* Model checklist (Onboarding + Configure Models): stable three-column grid rows
+   (使用 | 模型 | 默认) so the checkbox, name, and default radio read as one line.
+   checkbox = shown in the picker (display) · radio = default for new sessions.
+   The list is width-capped so the two controls never drift to the card edges. */
+.mlist { display: flex; flex-direction: column; gap: 1px; margin: 6px 0 4px; max-width: 560px; }
+.mlist-head, .mlist-row {
+  display: grid; grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center; gap: 8px; padding: 0 8px;
+}
+.mlist-head { min-height: 22px; font-size: 11px; font-weight: 600; letter-spacing: 0.05em; text-transform: uppercase; color: var(--faint); }
 .mlist-row {
-  display: flex; align-items: center; gap: 8px; padding: 0 8px; height: 44px;
-  border-radius: 8px;
+  height: 34px; border-radius: 8px;
 }
 .mlist-row:hover { background: var(--panel); }
-.mlist-main { display: flex; align-items: center; gap: 9px; flex: 1; min-width: 0; cursor: pointer; }
+.mlist-main { display: contents; cursor: pointer; }
 .mlist-main input, .mlist-default-radio input { accent-color: var(--accent); margin: 0; cursor: pointer; }
 .mlist-name { font-size: 13.5px; color: var(--ink); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .mlist-row.off .mlist-name { color: var(--muted); }
-.mlist-default-radio {
-  display: flex; align-items: center; gap: 6px; cursor: pointer; flex: none;
-  font-size: 12px; color: var(--muted);
-}
-.mlist-default-radio input:checked + .mlist-default-label { color: var(--ink); font-weight: 500; }
+.mlist-default-radio { display: flex; align-items: center; cursor: pointer; flex: none; }
 .mlist-note {
   font-size: 12px; color: var(--warn-ink, #b45309); background: var(--warn-soft, rgba(180, 83, 9, 0.08));
   border-radius: 8px; padding: 6px 10px; margin: 2px 0;
@@ -946,6 +959,7 @@ button.btn-secondary:disabled { opacity: 0.4; cursor: default; }
 
 button.btn-primary { font: inherit; font-size: 13px; padding: 8px 16px; border-radius: 9px; border: 1px solid var(--accent); background: var(--accent); color: var(--on-accent); cursor: pointer; align-self: flex-start; }
 button.btn-primary:hover { filter: brightness(1.05); }
+button.btn-primary:disabled { opacity: 0.4; cursor: default; }
 button.link { font: inherit; font-size: 12.5px; background: none; border: none; color: var(--muted); cursor: pointer; padding: 0; }
 button.link:hover { color: var(--ink); }
 button.link.danger:hover { color: var(--accent); }

@@ -119,9 +119,9 @@ export function ModelsTab() {
             onClick={() => setCreateToggle(!createOpen)}
           >
             <Icon name="chevronDown" size={14} className={"text-faint shrink-0 transition-transform" + (createOpen ? "" : " -rotate-90")} />
-            <span className="text-[20px] font-semibold leading-[28px] flex-1">{t("providers.customProviderCard")}</span>
+            <span className="text-[15px] font-semibold leading-[22px] flex-1">{t("providers.customProviderCard")}</span>
           </button>
-          <p className="text-[14px] font-normal text-muted mt-1 leading-[22px]">
+          <p className="text-[13px] font-normal text-muted mt-1 leading-[20px]">
             {t("providers.customProviderCardSub")}
           </p>
           {createOpen && (
@@ -150,7 +150,9 @@ export function ModelsTab() {
         <div className="mt-6">
           <div className="rounded-xl border border-line bg-panel p-4" data-testid="set-models-card">
             <div className="flex items-center justify-between gap-3 mb-1.5">
-              <div className={SEC_H}>{t("models.title")}</div>
+              {/* Section title — one tier above a field label, matching the
+                  custom-provider card title (15px semibold). */}
+              <div className="text-[15px] font-semibold leading-[22px]">{t("models.title")}</div>
               {info.custom && (
                 <button
                   className="btn-secondary sm shrink-0"
