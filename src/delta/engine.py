@@ -21,6 +21,12 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 
 from . import compaction as _compaction
 from . import gateway
+from .identity import (
+    IDENTITY_CLAUSE,
+    answer as identity_answer,
+    display_model_name,
+    match_identity,
+)
 from .events import Event, EventType
 from .permissions import Mode, PermissionEngine
 from .providers import AssistantTurn, ProviderClient, ToolCall
@@ -111,7 +117,13 @@ class TurnEngine:
         if instructions and not (
             self.messages and self.messages[0].get("role") == "system"
         ):
-            self.messages.insert(0, {"role": "system", "content": instructions})
+            self.messages.insert(
+                0,
+                {
+                    "role": "system",
+                    "content": instructions + "\n\n" + IDENTITY_CLAUSE,
+                },
+            )
         self._cancel = asyncio.Event()
         # Each pending steering message: (text, optional MessageSource sidecar dict).
         self._steering: list[tuple[str, dict[str, Any] | None]] = []
@@ -175,6 +187,19 @@ class TurnEngine:
         # literal "/skill …" line for the transcript, while `content` carries the model-facing
         # framing. `ts` (unix seconds, stamped on every appended message) is the same kind of
         # sidecar.
+        # Identity-class questions ("你是谁" / "who are you" / "什么模型驱动你" / …) are answered
+        # locally without a model call, so the underlying LLM never claims a foreign product
+        # identity. Only a plain string that is *entirely* an identity question trips this
+        # (match_identity is whole-message anchored), so attachments and normal questions fall
+        # through to the model untouched.
+        if isinstance(user_input, str):
+            kind = match_identity(user_input)
+            if kind:
+                async for event in self._run_identity(
+                    user_input, kind, source=source, display=display
+                ):
+                    yield event
+                return
         message: dict[str, Any] = {
             "role": "user",
             "content": user_input,
@@ -195,6 +220,43 @@ class TurnEngine:
         async for event in self._loop():
             yield event
 
+    async def _run_identity(
+        self,
+        user_input: str,
+        kind: str,
+        *,
+        source: dict[str, Any] | None = None,
+        display: str | None = None,
+    ) -> AsyncIterator[Event]:
+        """Answer an identity question locally (no model call). Mirrors a streamed text
+        turn's event sequence (TURN_START → ASSISTANT_DELTA → ASSISTANT_MESSAGE →
+        TURN_END) and persists both the user's question and the answer, so the
+        transcript and history stay consistent. The model name comes from the live
+        ``self.model`` (the actual model that would have driven the turn), never guessed.
+        """
+        message: dict[str, Any] = {
+            "role": "user",
+            "content": user_input,
+            "ts": time.time(),
+        }
+        if source is not None:
+            message["source"] = source
+        if display is not None:
+            message["_display"] = display
+        self.messages.append(message)
+        self._cancel.clear()
+        data: dict[str, Any] = {"input": user_input}
+        if source is not None:
+            data["source"] = source
+        if display is not None:
+            data["display"] = display
+        yield Event(EventType.TURN_START, data)
+        text = identity_answer(kind, display_model_name(self.model))
+        self.messages.append(_assistant_message(AssistantTurn(text=text), model=self.model))
+        yield Event(EventType.ASSISTANT_DELTA, {"text": text})
+        yield Event(EventType.ASSISTANT_MESSAGE, {"text": text, "tool_calls": []})
+        yield Event(EventType.TURN_END, {"status": "completed", "iterations": 0})
+
     def switch_model(self, model: str) -> str | None:
         """Rebind the session's model mid-conversation (roadmap item 3). History is
         canonical OpenAI shape and every provider converts per call, so the switch is just
@@ -208,9 +270,7 @@ class TurnEngine:
         self.model = model
         if not had_history:
             return None
-        from .providers.matrix import model_labels
-
-        text = f"Model switched to {model_labels().get(model, model)}"
+        text = f"Model switched to {display_model_name(model)}"
         try:
             caps = self.provider.capabilities(model)
         except Exception:
