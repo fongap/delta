@@ -22,7 +22,7 @@ test("mid-session model switch shows the marker and later turns use the new mode
   await page.locator(".dd-item").filter({ hasText: "GPT-5.5" }).click();
 
   // The switch marker lands in the transcript…
-  await expect(page.getByText(/Model switched to gpt-5.5/).first()).toBeVisible();
+  await expect(page.getByText(/Switched to gpt-5.5/).first()).toBeVisible();
 
   // …and the next message carries the new model (the fixture echoes it back).
   await box.fill("after the switch");
