@@ -268,7 +268,7 @@ function buildRows(items: TurnItem[]): TurnRow[] {
   return rows;
 }
 
-function approvalChip(resolved: ApprovalDecision | undefined) {
+function ApprovalChip({ resolved }: { resolved: ApprovalDecision | undefined }) {
   const { t } = useI18n();
   if (resolved === "deny")
     return <span className="text-[10.5px] px-1.5 rounded-full bg-dangerSoft text-danger shrink-0">{t("approval.chipDeclined", undefined, "✕ declined")}</span>;
@@ -312,7 +312,7 @@ function StepRow({ tool, approval }: { tool: ToolItem; approval?: ApprovalItem }
               : humanizeTool(tool.name, tool.args)
           }
         />
-        {approval && approvalChip(approval.resolved)}
+        {approval && <ApprovalChip resolved={approval.resolved} />}
         {!!tool.standingRule && (
           <span
             className="text-[10.5px] px-1.5 rounded-full bg-tealSoft text-tealInk shrink-0"
@@ -424,7 +424,7 @@ function TurnGroup({
               <div className="flex items-baseline gap-2 px-2 py-0.5" key={i} data-testid="turn-ask">
                 <span className={"w-3.5 text-center text-[10px] shrink-0 " + (row.approval.resolved === "deny" ? "text-danger" : "text-ok")}>●</span>
                 <LineText line={humanizeAsk(row.approval.name, row.approval.args)} />
-                {approvalChip(row.approval.resolved)}
+                <ApprovalChip resolved={row.approval.resolved} />
               </div>
             ) : (
               <StepRow tool={row.tool} approval={row.approval} key={i} />
