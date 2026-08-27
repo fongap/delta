@@ -1,4 +1,4 @@
-# App CI — the coworker Python suite, the GUI unit tests, and the hermetic
+# App CI — the delta Python suite, the GUI unit tests, and the hermetic
 # Playwright e2e suite (mocked /v1 + WS; no model or network needed).
 #
 # Supply-chain hardening (P2):
@@ -61,21 +61,21 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: surfaces/gui/package-lock.json
+          cache-dependency-path: apps/desktop/package-lock.json
       - name: npm ci
-        working-directory: surfaces/gui
+        working-directory: apps/desktop
         run: npm ci
       - name: Dependency advisories (npm audit)
-        working-directory: surfaces/gui
+        working-directory: apps/desktop
         run: npm audit --omit=dev --audit-level=high
       - name: Typecheck
-        working-directory: surfaces/gui
+        working-directory: apps/desktop
         run: npx tsc --noEmit
       - name: Runtime contract fixtures
-        working-directory: surfaces/gui
+        working-directory: apps/desktop
         run: npx vitest run src/api.contract.test.ts src/runtime-contract.test.ts src/api.auth.test.ts
       - name: Unit tests
-        working-directory: surfaces/gui
+        working-directory: apps/desktop
         run: npm test
 
   gui-e2e:
@@ -88,15 +88,15 @@ jobs:
         with:
           node-version: 20
           cache: npm
-          cache-dependency-path: surfaces/gui/package-lock.json
+          cache-dependency-path: apps/desktop/package-lock.json
       - name: npm ci
-        working-directory: surfaces/gui
+        working-directory: apps/desktop
         run: npm ci
       - name: Install Playwright browsers
-        working-directory: surfaces/gui
+        working-directory: apps/desktop
         run: npx playwright install --with-deps chromium
       - name: e2e
-        working-directory: surfaces/gui
+        working-directory: apps/desktop
         run: npm run e2e
 
   python-advisories:
@@ -128,7 +128,7 @@ jobs:
       - name: Install cargo-deny
         run: cargo install cargo-deny --locked
       - name: Advisories (Tauri app)
-        working-directory: surfaces/gui/src-tauri
+        working-directory: apps/desktop/src-tauri
         run: cargo deny check advisories
       - name: Advisories (portable launcher)
         working-directory: packaging/portable/launcher
@@ -152,7 +152,7 @@ jobs:
           pip install ruff==0.11.13 pyright==1.1.397
           pip install -e ".[messaging]"
       - name: Ruff (blocking — runtime-breaking classes only)
-        run: ruff check coworker tests --select E9,F63,F7,F82
+        run: ruff check src/delta tests --select E9,F63,F7,F82
       # Full-scan + pyright run as BASELINE REGRESSION gates: they may have unfixed
       # findings, but the count must never grow past the committed baseline (CI fails
       # only on a regression, not on a pre-existing finding). Lower the baseline as
@@ -167,7 +167,7 @@ jobs:
         env:
           RUFF_BASELINE: "192"
         run: |
-          RUN=$(ruff check coworker tests --output-format=json || true)
+          RUN=$(ruff check src/delta tests --output-format=json || true)
           COUNT=$(python -c "import json,sys; print(len(json.loads('$RUN')))" 2>/dev/null || python -c "import json,sys; print(len(json.load(sys.stdin)))" <<<"$RUN")
           echo "ruff findings: $COUNT (baseline $RUFF_BASELINE)"
           python - "$COUNT" "$RUFF_BASELINE" <<'PY'
@@ -180,7 +180,7 @@ jobs:
         env:
           PYRIGHT_BASELINE: "581"
         run: |
-          RUN=$(pyright coworker 2>/dev/null || true)
+          RUN=$(pyright src/delta 2>/dev/null || true)
           echo "$RUN" | tail -1
           COUNT=$(echo "$RUN" | grep -oE '[0-9]+ errors?' | grep -oE '[0-9]+' || echo 0)
           echo "pyright errors: $COUNT (baseline $PYRIGHT_BASELINE)"
@@ -202,7 +202,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - workspace: surfaces/gui/src-tauri
+          - workspace: apps/desktop/src-tauri
             tauri-deps: true
           - workspace: packaging/portable/launcher
             tauri-deps: false
@@ -218,14 +218,14 @@ jobs:
         run: |
           sudo apt-get update
           # webkit/gtk for the Tauri shell + libasound2-dev for ALSA (src-tauri pulls
-          # the local ocw-stt crate -> cpal -> alsa-sys, whose build.rs needs asound.h).
+          # the local delta-stt crate -> cpal -> alsa-sys, whose build.rs needs asound.h).
           sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libasound2-dev
       - name: Stub the sidecar binary for codegen
         if: ${{ matrix.tauri-deps }}
         # tauri-build's codegen checks that `binaries/sidecar` exists; the real binary
         # is built by packaging/build_portable.ps1 at release time, so CI touches an
         # empty placeholder so fmt/check/clippy/test can run against the shell crate.
-        run: mkdir -p surfaces/gui/src-tauri/binaries && touch surfaces/gui/src-tauri/binaries/sidecar
+        run: mkdir -p apps/desktop/src-tauri/binaries && touch apps/desktop/src-tauri/binaries/sidecar
       # v2
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
         with:

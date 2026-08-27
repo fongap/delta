@@ -51,9 +51,9 @@ fn run() -> Result<(), String> {
         .env("DELTA_PORTABLE_ROOT", &root)
         .env("DELTA_DATA_DIR", &data_dir)
         // The single source of truth override for BOTH the Rust shell (lib.rs) and the
-        // Python server (coworker/secrets.state_dir()) → every store, pref, log, DB and
+        // Python server (src/delta/secrets.state_dir()) → every store, pref, log, DB and
         // secret lands under Data, never %APPDATA%.
-        .env("COWORKER_STATE_DIR", &data_dir)
+        .env("DELTA_STATE_DIR", &data_dir)
         // Best-effort WebView2 profile redirect. wry may pin its own data folder (in which
         // case this is ignored and WebView2 stays in its default location — reported as a
         // known limitation); when honored, the browser profile moves with the portable.

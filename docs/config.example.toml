@@ -1,6 +1,6 @@
-# coworker config — copy to one of:
-#   ~/.config/coworker/config.toml          (global)
-#   <your-project>/.coworker/config.toml    (per-workspace, overrides global)
+# delta config — copy to one of:
+#   ~/.config/delta/config.toml          (global)
+#   <your-project>/.delta/config.toml    (per-workspace, overrides global)
 #
 # All keys are optional; unset keys fall back to built-in defaults.
 

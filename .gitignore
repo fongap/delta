@@ -10,8 +10,8 @@ dist/
 *.log
 
 # Build outputs (packaging staging and local release artifacts)
-surfaces/gui/src-tauri/binaries/
-surfaces/gui/src-tauri/target/release/bundle/
+apps/desktop/src-tauri/binaries/
+apps/desktop/src-tauri/target/release/bundle/
 packaging/build/
 packaging/portable/target/
 releases/
