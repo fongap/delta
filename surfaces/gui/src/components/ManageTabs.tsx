@@ -97,7 +97,11 @@ export function ModelsTab() {
     // "你的服务商" first once any custom provider exists; the create form then collapses
     // into an expandable card (null = undecided → expanded only while nothing is saved).
     const hasCustom = ps.orderedCustom.length > 0;
-    const createOpen = createToggle ?? !hasCustom;
+    // Keep the create form expanded while a Fetch just returned models (the user is
+    // still picking a default); otherwise hasCustom flips true the instant Fetch
+    // registers the alias and the form auto-collapses, hiding the fetched-model chips
+    // the user just saw. An explicit toggle (createToggle) still wins.
+    const createOpen = createToggle ?? (!hasCustom || ps.fetchedModels.length > 0);
     return (
       <div>
         {hasCustom && (
