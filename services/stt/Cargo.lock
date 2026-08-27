@@ -251,6 +251,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0c87e182de0887fd5361989c677c4e8f5000cd9491d6d563161a8f3a5519fc7f"
 
 [[package]]
+name = "delta-stt"
+version = "0.1.0"
+dependencies = [
+ "cpal",
+ "serde",
+ "sha2",
+ "ureq",
+ "whisper-rs",
+]
+
+[[package]]
 name = "digest"
 version = "0.10.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -730,17 +741,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6c8bb09a4a2b1d668170cfe0a7d5bc103f8999fb316c98099b6a9939c9f2e79d"
 dependencies = [
  "cc",
-]
-
-[[package]]
-name = "delta-stt"
-version = "0.1.0"
-dependencies = [
- "cpal",
- "serde",
- "sha2",
- "ureq",
- "whisper-rs",
 ]
 
 [[package]]
