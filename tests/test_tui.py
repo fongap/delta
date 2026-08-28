@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from coworker.providers import (
+from delta.providers import (
     AssistantTurn,
     ModelCapabilities,
     ProviderClient,
     ToolCall,
 )
-from coworker.tui.app import CoworkerApp
+from delta.tui.app import DeltaApp
 
 
 def _text_turn(text):
@@ -45,7 +45,7 @@ async def _submit(pilot, text):
 
 @pytest.mark.asyncio
 async def test_tui_boots_and_renders_turn(tmp_path):
-    app = CoworkerApp(
+    app = DeltaApp(
         workspace=tmp_path,
         provider=_ScriptedProvider([_text_turn("hi, I am the agent")]),
     )
@@ -56,7 +56,7 @@ async def test_tui_boots_and_renders_turn(tmp_path):
 
 @pytest.mark.asyncio
 async def test_tui_approval_then_write(tmp_path):
-    app = CoworkerApp(
+    app = DeltaApp(
         workspace=tmp_path,
         provider=_ScriptedProvider(
             [

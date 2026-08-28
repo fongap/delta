@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from coworker.selfwake import WakeStore, selfwake_tools
+from delta.selfwake import WakeStore, selfwake_tools
 
 
 def _now():

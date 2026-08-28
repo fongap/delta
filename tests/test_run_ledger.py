@@ -10,8 +10,8 @@ import asyncio
 
 import pytest
 
-from coworker.ledger import RunEventLedger
-from coworker.runtime import RuntimePort, TurnEngineAdapter
+from delta.ledger import RunEventLedger
+from delta.runtime import RuntimePort, TurnEngineAdapter
 
 
 class FakeEngine:
@@ -126,7 +126,7 @@ async def test_concurrent_runs_get_distinct_chains(tmp_path):
 # -- run scope + process events (spawn/kill land in the run's chain) -------------
 
 def test_run_scope_is_empty_outside_a_turn():
-    from coworker import runscope
+    from delta import runscope
 
     assert runscope.current() is None
     token = runscope.set_current("run-x", "sess-1")
@@ -139,7 +139,7 @@ def test_run_scope_is_empty_outside_a_turn():
 
 @pytest.mark.asyncio
 async def test_scope_is_visible_inside_the_driven_turn_and_reset_after(tmp_path):
-    from coworker import runscope
+    from delta import runscope
 
     led = RunEventLedger(tmp_path / "events.db")
     seen_in_turn = []
@@ -168,8 +168,8 @@ async def test_process_spawn_kill_events_land_in_the_run_chain(tmp_path):
     """Background spawn + kill facts reported while a turn is driven become durable
     process events attributed to the run that caused them (the manager's recorder
     reads the ambient run scope) — no signature threading through build_engine."""
-    from coworker import runscope
-    from coworker.sanitize import sanitize_payload
+    from delta import runscope
+    from delta.sanitize import sanitize_payload
 
     led = RunEventLedger(tmp_path / "events.db")
 

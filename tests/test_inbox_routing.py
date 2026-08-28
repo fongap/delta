@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from coworker.inbox import InboxStore
-from coworker.inbox_routing import (
+from delta.inbox import InboxStore
+from delta.inbox_routing import (
     DEFAULT_INBOX,
     InboxRouting,
     deliver,
@@ -13,7 +13,7 @@ from coworker.inbox_routing import (
 
 def test_route_precedence(tmp_path):
     r = InboxRouting(tmp_path / "routing.json")
-    r.set_binding("ops", channel="slack", target="#ops-coworker")
+    r.set_binding("ops", channel="slack", target="#ops-delta")
     r.set_persona_default("ops", "ops")
     # Persona default applies...
     assert r.route_for("s1", "ops") == "ops"
@@ -82,7 +82,7 @@ def test_reply_without_token_is_ignored(tmp_path):
     assert resolve_from_reply("random chatter", store.resolve) is None
 
 
-def test_inbound_legacy_ocw_token_still_resolves(tmp_path):
+def test_inbound_legacy_delta_token_still_resolves(tmp_path):
     """Replies to messages sent BEFORE the @OpenWorker rename carry [ocw:…] — must keep working."""
     store = InboxStore(tmp_path / "inbox.json")
     item = store.add_approval("s1", "Deploy?", inbox="ops")

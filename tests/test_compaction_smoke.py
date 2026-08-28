@@ -7,9 +7,9 @@ the live-model smoke (which needs a configured provider key)."""
 import asyncio
 import json
 
-from coworker.providers import AssistantTurn, ModelCapabilities, ProviderClient
-from coworker.providers.base import TokenUsage
-from coworker.server.manager import SessionManager
+from delta.providers import AssistantTurn, ModelCapabilities, ProviderClient
+from delta.providers.base import TokenUsage
+from delta.server.manager import SessionManager
 
 BULK = "analysis paragraph " * 400  # ~7.6k chars (~1.9k tokens) per turn → triggers by turn 2
 
@@ -23,7 +23,7 @@ class LongSessionProvider(ProviderClient):
         self.summary_prompts: list[str] = []
 
     def complete(self, *, model, messages, tools=None, **settings):
-        if messages and "compacting an AI coworker" in str(
+        if messages and "compacting an AI delta" in str(
             messages[0].get("content", "")
         ):
             self.summary_prompts.append(str(messages[1]["content"]))

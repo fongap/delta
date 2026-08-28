@@ -6,18 +6,18 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from coworker.server import SessionManager, create_app
+from delta.server import SessionManager, create_app
 
 
 def _allow_managed_state(state: str = "s") -> None:
-    from coworker import cloud
+    from delta import cloud
 
     cloud._pending_managed_states[state] = cloud._now()
 
 
 @pytest.fixture
 def client(tmp_path, monkeypatch):
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     manager = SessionManager(workspace=tmp_path)
     app = create_app(manager)
     with TestClient(app) as c:
@@ -132,7 +132,7 @@ def test_disconnect_works_signed_out(client):
 
 SALES_MANIFEST = """---
 id: sales
-name: Sales Coworker
+name: Sales Delta
 icon: chart
 tagline: t
 family: knowledge
@@ -140,13 +140,13 @@ workspace: deliverable
 tools: [files, search, todo]
 description: d
 ---
-You are the Sales Coworker."""
+You are the Sales Delta."""
 
 
 def _stub_gallery(monkeypatch, markdown=SALES_MANIFEST, *, hash_ok=True):
     import hashlib
 
-    from coworker import cloud
+    from delta import cloud
 
     digest = "sha256:" + hashlib.sha256(markdown.encode()).hexdigest()
     manifest = {
@@ -182,7 +182,7 @@ def test_gallery_install_rejects_hash_mismatch(client, monkeypatch):
 
 
 def test_gallery_install_requires_sign_in(client, monkeypatch):
-    from coworker import cloud
+    from delta import cloud
 
     monkeypatch.setattr(cloud, "gallery_manifest", lambda s, c, slug: None)
     body = client.post("/v1/personas/install", json={"gallery_slug": "sales"}).json()

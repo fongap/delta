@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from coworker.providers import resolve_api_key
-from coworker.secrets import SecretStore
+from delta.providers import resolve_api_key
+from delta.secrets import SecretStore
 
 
 def test_resolve_api_key_prefers_env(monkeypatch, tmp_path):
@@ -31,11 +31,11 @@ def test_resolve_api_key_falls_back_to_store(monkeypatch, tmp_path):
 def test_settings_rest_roundtrip(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
-    from coworker.server.app import create_app
-    from coworker.server.manager import SessionManager
+    from delta.server.app import create_app
+    from delta.server.manager import SessionManager
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     manager = SessionManager(data_dir=tmp_path / "data")
     client = TestClient(create_app(manager))
 
@@ -73,10 +73,10 @@ def test_settings_rest_roundtrip(tmp_path, monkeypatch):
 def test_default_model_and_onboarding_persist(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
-    from coworker.server.app import create_app
-    from coworker.server.manager import SessionManager
+    from delta.server.app import create_app
+    from delta.server.manager import SessionManager
 
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     data_dir = tmp_path / "data"
     client = TestClient(create_app(SessionManager(data_dir=data_dir)))
 
@@ -106,10 +106,10 @@ def test_default_model_and_onboarding_persist(tmp_path, monkeypatch):
 def test_nav_layout_setting_roundtrips(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
-    from coworker.server.app import create_app
-    from coworker.server.manager import SessionManager
+    from delta.server.app import create_app
+    from delta.server.manager import SessionManager
 
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     data_dir = tmp_path / "data"
     client = TestClient(create_app(SessionManager(data_dir=data_dir)))
 
@@ -135,10 +135,10 @@ def test_nav_layout_setting_roundtrips(tmp_path, monkeypatch):
 def test_language_setting_roundtrips(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
-    from coworker.server.app import create_app
-    from coworker.server.manager import SessionManager
+    from delta.server.app import create_app
+    from delta.server.manager import SessionManager
 
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     data_dir = tmp_path / "data"
     client = TestClient(create_app(SessionManager(data_dir=data_dir)))
 
@@ -163,17 +163,17 @@ def test_language_setting_roundtrips(tmp_path, monkeypatch):
 def test_scratch_base_setting_persists_and_drives_provisioning(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
-    from coworker.server.app import create_app
-    from coworker.server.manager import SessionManager
+    from delta.server.app import create_app
+    from delta.server.manager import SessionManager
 
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     data_dir = tmp_path / "data"
     client = TestClient(create_app(SessionManager(data_dir=data_dir)))
 
     # defaults to ~/Delta
     assert client.get("/v1/settings").json()["scratch_base"] == "~/Delta"
 
-    base = tmp_path / "my coworker files"
+    base = tmp_path / "my delta files"
     resp = client.post("/v1/settings/scratch-base", json={"path": str(base)}).json()
     assert resp["ok"] is True and resp["scratch_base"] == str(base)
     assert base.is_dir()  # created on set
@@ -192,10 +192,10 @@ def test_scratch_base_setting_persists_and_drives_provisioning(tmp_path, monkeyp
 def test_ollama_models_gated_on_liveness(tmp_path, monkeypatch):
     """`ollama:*` entries show only while a local Ollama answers — keyless must not mean
     always-present (a stray ollama:<junk> pref would otherwise render forever)."""
-    from coworker.server.manager import SessionManager
+    from delta.server.manager import SessionManager
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     manager = SessionManager(data_dir=tmp_path / "data")
     manager.add_model("ollama:llama3.3")
 

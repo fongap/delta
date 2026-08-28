@@ -16,7 +16,7 @@ slack_bolt stack driven by FakeSlack (no network, no tokens, no Slack app consol
 4. Mute Slack for the session -> a further channel post does NOT wake it (but is still buffered).
 5. `GET /v1/sessions/{id}/connections` `attention` == the persona's unconnected recommends count.
 
-State is fully isolated: `COWORKER_STATE_DIR` redirects the SecretStore and the manager's data
+State is fully isolated: `DELTA_STATE_DIR` redirects the SecretStore and the manager's data
 dir lives under `tmp_path`, so the machine-global secrets/config are never touched.
 """
 
@@ -27,16 +27,16 @@ import time
 
 from fastapi.testclient import TestClient
 
-from coworker.interactions import decode
-from coworker.providers import (
+from delta.interactions import decode
+from delta.providers import (
     AssistantTurn,
     ModelCapabilities,
     ProviderClient,
     ToolCall,
 )
-from coworker.server import create_app
-from coworker.server.manager import SessionManager
-from coworker.sessions import SessionRecord
+from delta.server import create_app
+from delta.server.manager import SessionManager
+from delta.sessions import SessionRecord
 
 SID = "incident"
 CHANNEL = "C_OPS"
@@ -90,11 +90,11 @@ def _find_card(outbound):
 
 
 def _approve_button(card):
-    """The first action button (`ocw_0` = Approve) of a mirrored approval card."""
+    """The first action button (`delta_0` = Approve) of a mirrored approval card."""
     for block in card.get("blocks") or []:
         if block.get("type") == "actions":
             for el in block.get("elements") or []:
-                if el.get("action_id") == "ocw_0":
+                if el.get("action_id") == "delta_0":
                     return el
     return None
 
@@ -113,8 +113,8 @@ def _find_reply(outbound, channel, text):
 
 async def test_ui_refresh_cross_cutting_e2e(fake_slack, tmp_path, monkeypatch):
     # Isolate the SecretStore (machine-global otherwise) so "is slack connected?" is decided only
-    # by what this test writes; the manager's own data dir lives under tmp_path/.coworker.
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    # by what this test writes; the manager's own data dir lives under tmp_path/.delta.
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
 
     ws = tmp_path / "ops_ws"
     ws.mkdir()
@@ -313,5 +313,5 @@ async def test_ui_refresh_cross_cutting_e2e(fake_slack, tmp_path, monkeypatch):
         await mgr.aclose()
 
     # State-dir isolation held: the SecretStore resolved to the tmp_path-scoped path, never the
-    # machine-global ~/.config/coworker (so this run cannot mutate the real secrets hash).
+    # machine-global ~/.config/delta (so this run cannot mutate the real secrets hash).
     assert str(tmp_path) in str(mgr.secrets.path)

@@ -7,13 +7,13 @@ from __future__ import annotations
 
 import pytest
 
-from coworker.connectors import slack_directory
-from coworker.secrets import SecretStore
+from delta.connectors import slack_directory
+from delta.secrets import SecretStore
 
 
 @pytest.fixture
 def secrets(tmp_path, monkeypatch):
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     store = SecretStore()
     store.put("slack:team:T1", {"bot_token": "xoxb-t1", "team_id": "T1"})
     store.put("slack:default", {"bot_token": "xoxb-manual"})
@@ -121,9 +121,9 @@ def test_unconnected_workspace_and_api_error(secrets, monkeypatch):
 def test_allow_with_name_seeds_people_directory(tmp_path, monkeypatch):
     """A directory pick lands on the allow-list AND the chip shows the display
     name immediately — no first message needed."""
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
-    from coworker.providers import ModelCapabilities, ProviderClient
-    from coworker.server.manager import SessionManager
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
+    from delta.providers import ModelCapabilities, ProviderClient
+    from delta.server.manager import SessionManager
 
     class _Provider(ProviderClient):
         def complete(self, *, model, messages, tools=None, **settings):

@@ -3,9 +3,9 @@ requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "coworker"
+name = "delta"
 version = "0.2.2"
-description = "Agent coworker platform — provider-agnostic agentic coworker runtime"
+description = "Agent delta platform — provider-agnostic agentic delta runtime"
 requires-python = ">=3.11"
 dependencies = [
     "openai==3.2.0",
@@ -50,16 +50,16 @@ browser = ["playwright>=1.44"]
 bedrock = ["boto3==1.43.73"]
 
 [project.scripts]
-openworker = "coworker.cli:main"
-delta-server = "coworker.server.run:main"
-openworker-connectors = "coworker.connectors.cli:main"
+delta = "delta.cli:main"
+delta-server = "delta.server.run:main"
+delta-connectors = "delta.connectors.cli:main"
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["coworker*"]
+where = ["src"]
+include = ["delta*"]
 
 [tool.setuptools.package-data]
-coworker = ["personas/builtin/*.md"]
+delta = ["personas/builtin/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

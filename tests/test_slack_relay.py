@@ -8,14 +8,14 @@ import asyncio
 
 import pytest
 
-from coworker.connectors import relay_client
-from coworker.connectors.adapters import make_adapter
-from coworker.connectors.base import InteractionEvent, MessageEvent
-from coworker.connectors.config import ConnectorSettings, load_settings
-from coworker.connectors.relay_client import SlackRelayAdapter
-from coworker.connectors.slack_addr import qualify, split
-from coworker.connectors.tools import make_send_message_tool
-from coworker.secrets import SecretStore
+from delta.connectors import relay_client
+from delta.connectors.adapters import make_adapter
+from delta.connectors.base import InteractionEvent, MessageEvent
+from delta.connectors.config import ConnectorSettings, load_settings
+from delta.connectors.relay_client import SlackRelayAdapter
+from delta.connectors.slack_addr import qualify, split
+from delta.connectors.tools import make_send_message_tool
+from delta.secrets import SecretStore
 
 
 @pytest.fixture(autouse=True)
@@ -147,7 +147,7 @@ async def test_relay_resolves_names_and_mentions(monkeypatch):
             }
             return {"ok": True, "user": names.get(params["user"], {})}
         if method == "conversations.info":
-            return {"ok": True, "channel": {"name": "ocw-test"}}
+            return {"ok": True, "channel": {"name": "delta-test"}}
         return None
 
     monkeypatch.setattr(adapter, "_slack_get", fake_get)
@@ -165,7 +165,7 @@ async def test_relay_resolves_names_and_mentions(monkeypatch):
 
     ev = events[0]
     assert ev.source.user_name == "Rohit"  # not U_ALICE
-    assert ev.source.chat_name == "ocw-test"  # not C1
+    assert ev.source.chat_name == "delta-test"  # not C1
     assert ev.text == "@ocw hey bot"  # <@UBOT1> rewritten
 
 
@@ -337,7 +337,7 @@ async def test_relay_send_selects_per_team_token(monkeypatch):
 
     def fake_send(token, chat_id, text, thread_id=None):
         captured.update(token=token, chat_id=chat_id, text=text)
-        from coworker.connectors.base import SendResult
+        from delta.connectors.base import SendResult
 
         return SendResult(True, message_id="ts1")
 
@@ -361,7 +361,7 @@ def test_send_message_tool_per_team_and_default_token():
 
     def fake_slack(token, chat_id, text, thread_id):
         calls.append((token, chat_id))
-        from coworker.connectors.base import SendResult
+        from delta.connectors.base import SendResult
 
         return SendResult(True, message_id="ts")
 
@@ -390,7 +390,7 @@ def test_make_adapter_relay_mode_builds_relay_client():
 
 
 def test_make_adapter_socket_mode_builds_socket_adapter():
-    from coworker.connectors.adapters import SlackAdapter
+    from delta.connectors.adapters import SlackAdapter
 
     adapter = make_adapter("slack", {"bot_token": "xoxb", "app_token": "xapp"})
     assert isinstance(adapter, SlackAdapter)

@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from coworker.personas.loading import consent_summary
-from coworker.personas.manifest import ManifestError, parse_manifest
-from coworker.personas.registry import PersonaRegistry
+from delta.personas.loading import consent_summary
+from delta.personas.manifest import ManifestError, parse_manifest
+from delta.personas.registry import PersonaRegistry
 
 THIRD_PARTY = """---
 id: acme-ops
-name: Acme Ops Coworker
+name: Acme Ops Delta
 icon: ops
 tagline: Acme's ops worker
 family: knowledge
@@ -21,7 +21,7 @@ mcp: [acme-pager]
 recommended_models: [anthropic:claude-opus-4-8]
 default_permission_mode: interactive
 ---
-You are Acme's ops coworker.
+You are Acme's ops delta.
 """
 
 

@@ -4,9 +4,9 @@ plus the gateway's recently-seen senders (each flagged authorized), and allow/di
 
 from fastapi.testclient import TestClient
 
-from coworker.providers import ModelCapabilities, ProviderClient
-from coworker.server import create_app
-from coworker.server.manager import SessionManager
+from delta.providers import ModelCapabilities, ProviderClient
+from delta.server import create_app
+from delta.server.manager import SessionManager
 
 
 class ScriptedProvider(ProviderClient):

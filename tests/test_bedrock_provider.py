@@ -6,9 +6,9 @@ from typing import Any, Optional
 
 import pytest
 
-from coworker.providers import capabilities_for
-from coworker.providers.base import AssistantTurn, ProviderClient, StreamChunk
-from coworker.providers.bedrock_provider import (
+from delta.providers import capabilities_for
+from delta.providers.base import AssistantTurn, ProviderClient, StreamChunk
+from delta.providers.bedrock_provider import (
     BedrockProvider,
     _BedrockConverseClient,
     _session_kwargs,
@@ -291,7 +291,7 @@ def test_family_dispatch():
 def test_claude_family_builds_native_anthropic_over_bedrock(monkeypatch):
     from anthropic import AnthropicBedrock
 
-    from coworker.providers import AnthropicProvider
+    from delta.providers import AnthropicProvider
 
     monkeypatch.delenv("AWS_BEARER_TOKEN_BEDROCK", raising=False)
     p = BedrockProvider(region="us-east-1", profile_name="work")
@@ -343,7 +343,7 @@ def test_converse_client_publishes_api_key_as_bearer_env(monkeypatch):
 
     import boto3
 
-    from coworker.providers.bedrock_provider import _BedrockConverseClient
+    from delta.providers.bedrock_provider import _BedrockConverseClient
 
     monkeypatch.delenv("AWS_BEARER_TOKEN_BEDROCK", raising=False)
 
@@ -376,7 +376,7 @@ def test_bedrock_capabilities_from_matrix_and_fallback():
 
 
 def test_router_prefix_survives_bedrock_version_colons():
-    from coworker.providers.router import ProviderRouter
+    from delta.providers.router import ProviderRouter
 
     router = ProviderRouter.__new__(ProviderRouter)
     model = "bedrock:claude/anthropic.claude-sonnet-4-6-v1:0"
@@ -388,7 +388,7 @@ def test_router_prefix_survives_bedrock_version_colons():
 
 
 def test_bedrock_descriptor_and_builder():
-    from coworker.providers.registry import build_provider_client, get_descriptor
+    from delta.providers.registry import build_provider_client, get_descriptor
 
     d = get_descriptor("bedrock")
     assert d is not None and d.needs_key
@@ -416,7 +416,7 @@ def test_bedrock_descriptor_and_builder():
     assert by_key["region"].show_when is None
     assert by_key["region"].to_dict()["choices"] == []
     # Recommended model is curated in the matrix (set_provider's auto-add depends on it).
-    from coworker.providers.matrix import models_for_provider
+    from delta.providers.matrix import models_for_provider
 
     assert d.recommended_model in models_for_provider("bedrock")
 
@@ -428,7 +428,7 @@ def test_bedrock_descriptor_and_builder():
 
 
 def test_bedrock_configured_needs_region_only():
-    from coworker.providers.registry import descriptor_configured, get_descriptor
+    from delta.providers.registry import descriptor_configured, get_descriptor
 
     d = get_descriptor("bedrock")
     assert not descriptor_configured(d, {})
@@ -437,7 +437,7 @@ def test_bedrock_configured_needs_region_only():
 
 
 def test_single_key_providers_keep_api_key_configured_semantics(monkeypatch):
-    from coworker.providers.registry import descriptor_configured, get_descriptor
+    from delta.providers.registry import descriptor_configured, get_descriptor
 
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     d = get_descriptor("anthropic")
@@ -476,7 +476,7 @@ def _patch_session(monkeypatch, control: Any, captured: dict):
 
 
 def test_verify_bedrock_ok(monkeypatch):
-    from coworker.providers.registry import verify_provider_key
+    from delta.providers.registry import verify_provider_key
 
     captured: dict = {}
     _patch_session(monkeypatch, _FakeBedrockControl(), captured)
@@ -491,7 +491,7 @@ def test_verify_bedrock_ok(monkeypatch):
 
 
 def test_verify_bedrock_per_method_required_fields(monkeypatch):
-    from coworker.providers.registry import verify_provider_key
+    from delta.providers.registry import verify_provider_key
 
     monkeypatch.delenv("AWS_BEARER_TOKEN_BEDROCK", raising=False)
     out = verify_provider_key(
@@ -514,7 +514,7 @@ def test_verify_bedrock_per_method_required_fields(monkeypatch):
 
 
 def test_verify_bedrock_ignores_other_methods_stale_fields(monkeypatch):
-    from coworker.providers.registry import verify_provider_key
+    from delta.providers.registry import verify_provider_key
 
     monkeypatch.delenv("AWS_BEARER_TOKEN_BEDROCK", raising=False)
     captured: dict = {}
@@ -539,7 +539,7 @@ def test_verify_bedrock_ignores_other_methods_stale_fields(monkeypatch):
 def test_verify_bedrock_api_key_rides_the_bearer_env(monkeypatch):
     import os
 
-    from coworker.providers.registry import verify_provider_key
+    from delta.providers.registry import verify_provider_key
 
     monkeypatch.delenv("AWS_BEARER_TOKEN_BEDROCK", raising=False)
     captured: dict = {}
@@ -555,7 +555,7 @@ def test_verify_bedrock_api_key_rides_the_bearer_env(monkeypatch):
 def test_verify_bedrock_maps_client_errors(monkeypatch):
     from botocore.exceptions import ClientError
 
-    from coworker.providers.registry import verify_provider_key
+    from delta.providers.registry import verify_provider_key
 
     denied = ClientError(
         {"Error": {"Code": "AccessDeniedException", "Message": "no"}},

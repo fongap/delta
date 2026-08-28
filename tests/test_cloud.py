@@ -13,19 +13,19 @@ import urllib.parse
 
 import pytest
 
-from coworker import cloud
-from coworker.config import Config
-from coworker.connectors.setup import (
+from delta import cloud
+from delta.config import Config
+from delta.connectors.setup import (
     connect_connector,
     connector_list,
     managed_connect_connector,
 )
-from coworker.secrets import SecretStore
+from delta.secrets import SecretStore
 
 
 @pytest.fixture
 def secrets(tmp_path, monkeypatch):
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     return SecretStore(path=tmp_path / "state" / "secrets.json")
 
 
@@ -52,7 +52,7 @@ class FakeResponse:
 
 
 def test_begin_login_builds_pkce_authorize_url(config, monkeypatch):
-    monkeypatch.delenv("COWORKER_PORT", raising=False)
+    monkeypatch.delenv("DELTA_PORT", raising=False)
     out = cloud.begin_login(config)
     url = out["authorize_url"]
     assert url.startswith("https://tenant.auth0.test/authorize?")
@@ -67,7 +67,7 @@ def test_begin_login_builds_pkce_authorize_url(config, monkeypatch):
 
 
 def test_begin_login_state_carries_the_actually_bound_port(config, monkeypatch):
-    monkeypatch.setenv("COWORKER_PORT", "52341")
+    monkeypatch.setenv("DELTA_PORT", "52341")
     out = cloud.begin_login(config)
     assert out["state"].endswith(".52341")
 
@@ -223,7 +223,7 @@ def test_every_managed_connector_has_a_provider_mapping():
     """A managed=True descriptor without a PROVIDER_FOR_CONNECTOR entry ships a
     dead one-click button ("X has no managed OAuth path") — outlook did exactly
     that. Wire the map in the same change that flips a connector to managed."""
-    from coworker.connectors.descriptors import DESCRIPTORS
+    from delta.connectors.descriptors import DESCRIPTORS
 
     managed = {d.name for d in DESCRIPTORS if d.managed}
     unmapped = managed - set(cloud.PROVIDER_FOR_CONNECTOR)
@@ -272,11 +272,11 @@ def test_managed_connect_rejected_for_unmanaged_connector(secrets):
 
 def test_managed_connect_redirect_follows_actual_port(secrets, config, monkeypatch):
     """The loopback redirect must target the sidecar's real bound port
-    (COWORKER_PORT), not config.port — the packaged app runs on a random port,
+    (DELTA_PORT), not config.port — the packaged app runs on a random port,
     so an 8765 redirect would hit the wrong (or no) process."""
     secrets.put(cloud.CLOUD_AUTH_PROFILE, {"access_token": "at", "enabled": True})
     monkeypatch.setattr(cloud, "fresh_access_token", lambda *a, **k: "at")
-    monkeypatch.setenv("COWORKER_PORT", "52854")  # e.g. what free_port() picked
+    monkeypatch.setenv("DELTA_PORT", "52854")  # e.g. what free_port() picked
 
     seen = {}
 
@@ -432,7 +432,7 @@ def test_emit_is_content_free_and_hashes_session_id(secrets, config, monkeypatch
     assert ok
     assert sent["url"] == "https://cloud.test/v1/telemetry/events"
     body = sent["body"]
-    assert body["event"] == "coworker_session_created"
+    assert body["event"] == "delta_session_created"
     assert body["install_id"].startswith("ins_")
     assert "sess-secret-id" not in str(body)  # raw id never leaves the device
     assert body["session"]["session_id_hash"].startswith("sha256:")
@@ -450,7 +450,7 @@ def test_emit_is_content_free_and_hashes_session_id(secrets, config, monkeypatch
 def test_gallery_detail_derives_capabilities_locally(secrets, config, monkeypatch):
     manifest_md = """---
 id: sales
-name: Sales Coworker
+name: Sales Delta
 tools: [files, search, todo]
 messaging: true
 connectors: true
@@ -460,7 +460,7 @@ recommends:
     reason: read deals
     tier: core
 ---
-You are the Sales Coworker."""
+You are the Sales Delta."""
 
     def fake_get(s, c, path):
         if path.endswith("/manifest"):
@@ -471,7 +471,7 @@ You are the Sales Coworker."""
             }
         return {
             "slug": "sales",
-            "name": "Sales Coworker",
+            "name": "Sales Delta",
             "pitch_markdown": "**pitch**",
         }
 

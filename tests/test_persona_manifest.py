@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from coworker.personas.manifest import ManifestError, parse_manifest
+from delta.personas.manifest import ManifestError, parse_manifest
 
 VALID = """---
 id: demo
-name: Demo Coworker
+name: Demo Delta
 icon: demo
 tagline: A demo
 family: knowledge
@@ -19,24 +19,24 @@ connectors: true
 recommended_models: [anthropic:claude-opus-4-8]
 default_permission_mode: interactive
 ---
-You are a demo coworker. Do helpful things.
+You are a demo delta. Do helpful things.
 """
 
 
 def test_parse_valid():
     m = parse_manifest(VALID)
-    assert m.id == "demo" and m.name == "Demo Coworker"
+    assert m.id == "demo" and m.name == "Demo Delta"
     assert m.tools == ["files", "search", "shell", "todo"]
     assert m.family == "knowledge" and m.workspace == "deliverable"
     assert m.messaging is True and m.connectors is True
     assert m.recommended_models == ["anthropic:claude-opus-4-8"]
     assert m.needs_workspace is True
-    assert m.system_prompt.startswith("You are a demo coworker")
+    assert m.system_prompt.startswith("You are a demo delta")
 
 
 def test_to_agent_carries_traits_and_tools(tmp_path):
-    from coworker.agents.base import AgentContext
-    from coworker.tools.todo import TodoList
+    from delta.agents.base import AgentContext
+    from delta.tools.todo import TodoList
 
     agent = parse_manifest(VALID).to_agent()
     assert agent.name == "demo" and agent.family == "knowledge"

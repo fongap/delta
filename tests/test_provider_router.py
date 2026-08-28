@@ -5,7 +5,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
-from coworker.providers import (
+from delta.providers import (
     AssistantTurn,
     ModelCapabilities,
     OpenAIProvider,
@@ -14,8 +14,8 @@ from coworker.providers import (
     StreamChunk,
     capabilities_for,
 )
-from coworker.providers.openai_provider import _salvage_tool_calls_from_text
-from coworker.providers.registry import _normalize_ollama_url, build_provider_client
+from delta.providers.openai_provider import _salvage_tool_calls_from_text
+from delta.providers.registry import _normalize_ollama_url, build_provider_client
 
 
 # -- base_url passthrough -------------------------------------------------------
@@ -98,7 +98,7 @@ def _patch_build(monkeypatch):
         state["latest"][name] = rec
         return rec
 
-    monkeypatch.setattr("coworker.providers.router.build_provider_client", fake_build)
+    monkeypatch.setattr("delta.providers.router.build_provider_client", fake_build)
     return state
 
 
@@ -291,8 +291,8 @@ def test_complete_salvages_only_when_tools_requested():
 
 # -- manager get/set_provider ---------------------------------------------------
 def test_manager_provider_config(tmp_path, monkeypatch):
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
-    from coworker.server.manager import SessionManager
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
+    from delta.server.manager import SessionManager
 
     mgr = SessionManager(data_dir=tmp_path)
     assert isinstance(mgr.provider, ProviderRouter)
@@ -314,13 +314,13 @@ def test_manager_curated_models(tmp_path, monkeypatch):
     """No seed list: the picker is the curated matrix filtered to key-holding providers,
     plus user-added custom ids. A fresh install shows only the (not-yet-usable) default.
     """
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
-    from coworker.providers.registry import provider_descriptors
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
+    from delta.providers.registry import provider_descriptors
 
     for d in provider_descriptors():  # ambient dev-shell keys must not leak in
         if d.env_key:
             monkeypatch.delenv(d.env_key, raising=False)
-    from coworker.server.manager import SessionManager
+    from delta.server.manager import SessionManager
 
     # `ollama:*` selectability is an HTTP probe of a local server; pin it so this test
     # covers picker mechanics only (the probe itself is covered by
@@ -366,8 +366,8 @@ def test_manager_curated_models(tmp_path, monkeypatch):
 
 
 def test_set_provider_auto_adds_recommended_when_pulled(tmp_path, monkeypatch):
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
-    from coworker.server.manager import SessionManager
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
+    from delta.server.manager import SessionManager
 
     mgr = SessionManager(data_dir=tmp_path)
     monkeypatch.setattr(  # pretend the recommended model is pulled
@@ -381,8 +381,8 @@ def test_set_provider_auto_adds_recommended_when_pulled(tmp_path, monkeypatch):
 
 
 def test_set_provider_skips_recommended_when_not_pulled(tmp_path, monkeypatch):
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
-    from coworker.server.manager import SessionManager
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
+    from delta.server.manager import SessionManager
 
     mgr = SessionManager(data_dir=tmp_path)
     monkeypatch.setattr(mgr, "_suggested_models", lambda name: [])  # nothing pulled
@@ -392,7 +392,7 @@ def test_set_provider_skips_recommended_when_not_pulled(tmp_path, monkeypatch):
 
 # -- custom-provider registration / routing / persistence ------------------------
 def _with_custom(alias="mygw", protocol="openai-compatible"):
-    from coworker.providers.registry import (
+    from delta.providers.registry import (
         register_custom_provider,
         unregister_custom_provider,
     )
@@ -402,10 +402,10 @@ def _with_custom(alias="mygw", protocol="openai-compatible"):
 
 
 def test_custom_descriptor_resolves_and_routes():
-    from coworker.providers import ProviderRouter, build_provider_client, get_descriptor
-    from coworker.providers.base import ProviderClient
-    from coworker.providers.openai_provider import OpenAIProvider
-    from coworker.providers.registry import unregister_custom_provider
+    from delta.providers import ProviderRouter, build_provider_client, get_descriptor
+    from delta.providers.base import ProviderClient
+    from delta.providers.openai_provider import OpenAIProvider
+    from delta.providers.registry import unregister_custom_provider
 
     cleanup = _with_custom()
     try:
@@ -432,8 +432,8 @@ def test_custom_descriptor_resolves_and_routes():
 
 
 def test_custom_descriptor_protocol_fields():
-    from coworker.providers import get_descriptor
-    from coworker.providers.registry import unregister_custom_provider
+    from delta.providers import get_descriptor
+    from delta.providers.registry import unregister_custom_provider
 
     cleanup = _with_custom(alias="local", protocol="ollama")
     try:
@@ -446,8 +446,8 @@ def test_custom_descriptor_protocol_fields():
 
 
 def test_custom_aliases_with_same_protocol_keep_distinct_titles():
-    from coworker.providers import get_descriptor
-    from coworker.providers.registry import (
+    from delta.providers import get_descriptor
+    from delta.providers.registry import (
         register_custom_provider,
         unregister_custom_provider,
     )
@@ -466,7 +466,7 @@ def test_custom_aliases_with_same_protocol_keep_distinct_titles():
 def test_custom_registration_validates():
     import pytest
 
-    from coworker.providers.registry import (
+    from delta.providers.registry import (
         _valid_alias,
         register_custom_provider,
         unregister_custom_provider,
@@ -475,7 +475,7 @@ def test_custom_registration_validates():
     assert not _valid_alias("") and not _valid_alias("has space") and not _valid_alias(".dot")
     assert _valid_alias("my-api_2")
 
-    from coworker.providers import register_custom_provider as reg
+    from delta.providers import register_custom_provider as reg
 
     reg("mygw", "openai-compatible")
     try:
@@ -490,8 +490,8 @@ def test_custom_registration_validates():
 def test_custom_provider_roundtrip(tmp_path, monkeypatch):
     """create_custom_provider persists alias→protocol to prefs so `alias:model` still
     routes after a fresh SessionManager (restart) re-hydrates the registry."""
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
-    from coworker.server.manager import SessionManager
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
+    from delta.server.manager import SessionManager
 
     mgr = SessionManager(data_dir=tmp_path)
     res = mgr.create_custom_provider(
@@ -518,8 +518,8 @@ def test_custom_provider_roundtrip(tmp_path, monkeypatch):
 
 
 def test_custom_provider_rejects_builtin_collision(tmp_path, monkeypatch):
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
-    from coworker.server.manager import SessionManager
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
+    from delta.server.manager import SessionManager
 
     mgr = SessionManager(data_dir=tmp_path)
     res = mgr.create_custom_provider("openai", "openai-compatible", {})
@@ -528,8 +528,8 @@ def test_custom_provider_rejects_builtin_collision(tmp_path, monkeypatch):
 
 
 def test_custom_provider_rejects_bad_protocol(tmp_path, monkeypatch):
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
-    from coworker.server.manager import SessionManager
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
+    from delta.server.manager import SessionManager
 
     mgr = SessionManager(data_dir=tmp_path)
     res = mgr.create_custom_provider("mygw", "no-such", {})
@@ -537,8 +537,8 @@ def test_custom_provider_rejects_bad_protocol(tmp_path, monkeypatch):
 
 
 def test_remove_custom_provider_drops_models(tmp_path, monkeypatch):
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
-    from coworker.server.manager import SessionManager
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
+    from delta.server.manager import SessionManager
 
     mgr = SessionManager(data_dir=tmp_path)
     mgr.create_custom_provider("mygw", "openai-compatible", {"base_url": "https://x/v1"})
@@ -556,17 +556,17 @@ def test_remove_custom_provider_drops_models(tmp_path, monkeypatch):
 
 def test_fetch_models_auto_adds_by_prefix(tmp_path, monkeypatch):
     """fetch_models probes the alias endpoint then auto-adds `alias:{id}` (idempotent)."""
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
 
     def fake_fetch(name, profile, secrets, timeout=10.0):
         # only the probe function is faked — the add-to-picker logic stays real
         models = ["gpt-4o", "embedding-3"] if name == "mygw" else []
         return {"ok": True, "models": models}
 
-    from coworker.providers import fetch_provider_models
-    from coworker.server.manager import SessionManager
+    from delta.providers import fetch_provider_models
+    from delta.server.manager import SessionManager
 
-    monkeypatch.setattr("coworker.server.manager.fetch_provider_models", fake_fetch)
+    monkeypatch.setattr("delta.server.manager.fetch_provider_models", fake_fetch)
     mgr = SessionManager(data_dir=tmp_path)
     mgr.create_custom_provider("mygw", "openai-compatible", {"base_url": "https://x/v1"})
 
@@ -582,8 +582,8 @@ def test_fetch_models_auto_adds_by_prefix(tmp_path, monkeypatch):
 
 
 def test_fetch_models_rejects_unknown(tmp_path, monkeypatch):
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
-    from coworker.server.manager import SessionManager
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
+    from delta.server.manager import SessionManager
 
     mgr = SessionManager(data_dir=tmp_path)
     assert mgr.fetch_models("nope", {})["ok"] is False
@@ -592,8 +592,8 @@ def test_fetch_models_rejects_unknown(tmp_path, monkeypatch):
 def test_provider_builders(monkeypatch):
     import pytest
 
-    from coworker.providers import AnthropicProvider, GeminiProvider
-    from coworker.providers.registry import build_provider_client
+    from delta.providers import AnthropicProvider, GeminiProvider
+    from delta.providers.registry import build_provider_client
 
     # anthropic and gemini are native: key resolution deferred to first call
     p = build_provider_client("anthropic", {"api_key": "sk-ant-x"}, None)
@@ -611,7 +611,7 @@ def test_provider_builders(monkeypatch):
 
     # OpenAI custom endpoint (Azure /openai/v1, OpenRouter, vLLM, …) passes through and
     # keeps Chat Completions; a blank endpoint means stock OpenAI → the Responses API.
-    from coworker.providers import OpenAIResponsesProvider
+    from delta.providers import OpenAIResponsesProvider
 
     o = build_provider_client(
         "openai", {"base_url": "https://my.azure.example/openai/v1"}, None
@@ -629,10 +629,10 @@ def test_anthropic_gemini_capabilities():
 
 
 def test_anthropic_gemini_provider_config(tmp_path, monkeypatch):
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
-    from coworker.server.manager import SessionManager
+    from delta.server.manager import SessionManager
 
     mgr = SessionManager(data_dir=tmp_path)
     provs = {p["name"]: p for p in mgr.get_providers()}
@@ -656,10 +656,10 @@ def test_anthropic_gemini_provider_config(tmp_path, monkeypatch):
 
 
 def test_first_configured_provider_wins_default(tmp_path, monkeypatch):
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     for var in ("OPENAI_API_KEY", "ANTHROPIC_API_KEY", "GEMINI_API_KEY"):
         monkeypatch.delenv(var, raising=False)
-    from coworker.server.manager import SessionManager
+    from delta.server.manager import SessionManager
 
     mgr = SessionManager(data_dir=tmp_path)
     assert mgr.model == ""  # fresh install: no preset vendor/model default
@@ -674,8 +674,8 @@ def test_first_configured_provider_wins_default(tmp_path, monkeypatch):
 
 
 def test_surface_visibility(tmp_path, monkeypatch):
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
-    from coworker.server.manager import SessionManager
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
+    from delta.server.manager import SessionManager
 
     mgr = SessionManager(data_dir=tmp_path)
     # default: Cowork only
@@ -700,8 +700,8 @@ def test_surface_visibility(tmp_path, monkeypatch):
 
 
 def test_provider_suggested_models(tmp_path, monkeypatch):
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
-    from coworker.server.manager import SessionManager
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
+    from delta.server.manager import SessionManager
 
     mgr = SessionManager(data_dir=tmp_path)
     provs = {p["name"]: p for p in mgr.get_providers()}
@@ -738,10 +738,10 @@ def test_router_on_use_failures_never_break_the_call():
 def test_manager_key_hygiene_stamps(tmp_path, monkeypatch):
     """set_provider stamps key_set_at; _note_provider_use records (throttled) last_used_at;
     get_providers exposes both for the Settings pane."""
-    monkeypatch.setenv("COWORKER_STATE_DIR", str(tmp_path / "state"))
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     from datetime import date
 
-    from coworker.server.manager import SessionManager
+    from delta.server.manager import SessionManager
 
     mgr = SessionManager(data_dir=tmp_path)
     mgr.set_provider("deepseek", {"api_key": "ds-key"})
