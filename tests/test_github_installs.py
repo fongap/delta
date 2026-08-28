@@ -386,7 +386,8 @@ def test_token_client_caches_and_force_remints(tmp_path, monkeypatch):
 
 
 def _capture_requests(monkeypatch):
-    from delta.connectors import integration_tools
+    # GitHub tools resolve `_request` in integration_github (extracted from integration_tools).
+    from delta.connectors import integration_github
 
     seen: list[dict] = []
 
@@ -394,7 +395,7 @@ def _capture_requests(monkeypatch):
         seen.append({"method": method, "url": url, "headers": headers or {}})
         return {"ok": True, "data": {"items": []}}
 
-    monkeypatch.setattr(integration_tools, "_request", fake_request)
+    monkeypatch.setattr(integration_github, "_request", fake_request)
     return seen
 
 
@@ -442,7 +443,7 @@ def test_managed_tools_use_minted_token_by_owner(tmp_path, monkeypatch):
 
 def test_managed_401_reminted_once(tmp_path, monkeypatch):
     monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
-    from delta.connectors import integration_tools
+    from delta.connectors import integration_github
 
     secrets = SecretStore()
     github_installs.managed_connect_install(secrets, _install_form("101"))
@@ -453,7 +454,7 @@ def test_managed_401_reminted_once(tmp_path, monkeypatch):
         lambda s, c, iid, *, force=False: minted.append(force) or "ghs_x",
     )
     responses = iter([{"error": "HTTP 401"}, {"ok": True, "data": {}}])
-    monkeypatch.setattr(integration_tools, "_request", lambda *a, **k: next(responses))
+    monkeypatch.setattr(integration_github, "_request", lambda *a, **k: next(responses))
 
     out = _tool(secrets, "github_review")("acme", "site", 5, "APPROVE")
     assert out["ok"] is True
@@ -472,7 +473,7 @@ def test_review_event_validated(tmp_path, monkeypatch):
 
 def test_list_commits_filters_and_trims(tmp_path, monkeypatch):
     monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
-    from delta.connectors import integration_tools
+    from delta.connectors import integration_github
 
     secrets = SecretStore()
     secrets.put("github:default", {"type": "token", "token": "ghp_x"})
@@ -494,7 +495,7 @@ def test_list_commits_filters_and_trims(tmp_path, monkeypatch):
             ],
         }
 
-    monkeypatch.setattr(integration_tools, "_request", fake_request)
+    monkeypatch.setattr(integration_github, "_request", fake_request)
     out = _tool(secrets, "github_list_commits")(
         "acme",
         "site",
