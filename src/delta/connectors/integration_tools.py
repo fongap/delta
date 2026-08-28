@@ -50,6 +50,27 @@ from .integration_github import (
     _github_headers,
     _run_git,
 )
+from .integration_auth import (
+    _atlassian_base,
+    _basic_auth,
+    _bearer_headers,
+    _gitlab_api,
+    _google_headers,
+    _graph_headers,
+    _qbo_base,
+)
+
+
+def _linear_gql(api_key: str, query: str, variables: dict[str, Any]) -> dict[str, Any]:
+    """Linear GraphQL request. Kept here (not with the pure header builders) because it
+    calls ``_request``, which sits on the center catch-all test seam — moving it would
+    strand the patch points in test_connectors.py that target ``integration_tools._request``."""
+    return _request(
+        "POST",
+        "https://api.linear.app/graphql",
+        headers={"Authorization": api_key, "Content-Type": "application/json"},
+        json={"query": query, "variables": variables},
+    )
 
 
 def _profile(
@@ -279,54 +300,6 @@ def _gmail_is_hidden(
             ):
                 return True
     return False
-
-
-def _google_headers(token: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-
-
-def _graph_headers(token: str) -> dict[str, str]:
-    return {
-        "Authorization": f"Bearer {token}",
-        "Accept": "application/json",
-        "Content-Type": "application/json",
-    }
-
-
-def _basic_auth(email: str, token: str) -> tuple[str, str]:
-    return (email, token)
-
-
-def _atlassian_base(profile: dict[str, Any]) -> str:
-    return str(profile.get("base_url", "")).rstrip("/")
-
-
-def _bearer_headers(token: str) -> dict[str, str]:
-    return {"Authorization": f"Bearer {token}", "Accept": "application/json"}
-
-
-def _gitlab_api(profile: dict[str, Any]) -> str:
-    base = str(profile.get("base_url") or "https://gitlab.com").rstrip("/")
-    return f"{base}/api/v4"
-
-
-def _linear_gql(api_key: str, query: str, variables: dict[str, Any]) -> dict[str, Any]:
-    return _request(
-        "POST",
-        "https://api.linear.app/graphql",
-        headers={"Authorization": api_key, "Content-Type": "application/json"},
-        json={"query": query, "variables": variables},
-    )
-
-
-def _qbo_base(profile: dict[str, Any]) -> str:
-    env = str(profile.get("environment", "")).lower()
-    host = (
-        "sandbox-quickbooks.api.intuit.com"
-        if env.startswith("sand")
-        else "quickbooks.api.intuit.com"
-    )
-    return f"https://{host}/v3/company/{profile['realm_id']}"
 
 
 def make_integration_tools(
