@@ -9,6 +9,11 @@ Pure mechanical move: each function's body is identical to what lived in integra
 and the factory re-imports them by the same names, so no behavior changes.
 """
 
+# pyright: reportFunctionMemberAccess=false
+# (tool-builder plumbing: _attach stamps aisuite's dynamic metadata attributes
+# (__aisuite_tool_metadata__ / __delta_schema__) onto plain functions —
+# the framework's plugin protocol, not a type error.)
+
 from __future__ import annotations
 
 import re
