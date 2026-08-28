@@ -17,17 +17,13 @@ import datetime as _dt
 import json
 import re
 from email.message import EmailMessage
-from html.parser import HTMLParser
 from typing import Any, Callable, Optional
 from urllib.parse import quote
 
-import aisuite as ai
-
 from ..secrets import SecretStore
-from ..web.guard import get_checked
 from .browser_automation import make_browser_automation_tools
 from .email_tools import make_email_tools
-from .tool_defs import approval_for_tool, connector_for_tool
+from .tool_defs import connector_for_tool
 
 # Vendor-agnostic tool plumbing (metadata/schema/HTTP/html) lives in integration_helpers;
 # the closures below resolve them through these names exactly as they did as module functions.
@@ -35,19 +31,14 @@ from .integration_helpers import (
     _attach,
     _clamp,
     _html_to_text,
-    _meta,
     _now_ms,
     _request,
     _schema,
-    _TextExtractor,
 )
 from .integration_github import (
-    _github_auth,
-    _github_base,
     _github_call,
     _github_git_auth_args,
     _github_git_base,
-    _github_headers,
     _run_git,
 )
 from .integration_auth import (

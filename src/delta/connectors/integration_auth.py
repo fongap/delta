@@ -1,16 +1,14 @@
 """Auth/header builders for the non-GitHub connector families.
 
-Split out of ``integration_tools.py``: these small helpers build request headers, base URLs,
-and the Linear GraphQL request for the Google/Microsoft/Atlassian/GitLab/QuickBooks connector
-tools. They are pure (or call ``_request`` directly), with no state, so the tool factory
-re-imports them by the same names and behavior is unchanged.
+Split out of ``integration_tools.py``: these small pure helpers build request headers and
+base URLs for the Google/Microsoft/Atlassian/GitLab/QuickBooks connector tools. They carry
+no state and never issue HTTP themselves, so the tool factory re-imports them by the same
+names and behavior is unchanged.
 """
 
 from __future__ import annotations
 
 from typing import Any
-
-from .integration_helpers import _request
 
 
 def _google_headers(token: str) -> dict[str, str]:
