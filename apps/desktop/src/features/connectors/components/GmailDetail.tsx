@@ -5,12 +5,12 @@ import {
   setGmailDefaultAccount,
   setGmailFilters,
   type GmailAccount,
-} from "../../api";
-import { ConnectorBadge } from "../../connectors/ConnectorIcon";
+} from "../../../api";
+import { ConnectorBadge } from "../ConnectorIcon";
 import type { DetailProps } from "./ConnectorsSection";
 import { ToolsDisclosure } from "./ToolsDisclosure";
 import { FOOT, GRP, GRP_H, PILL_ACCENT, ROW, TAG_ACCENT, TAG_WARN, XBTN } from "./ui";
-import { useI18n } from "../../i18n/I18nContext";
+import { useI18n } from "../../../i18n/I18nContext";
 
 // The Gmail detail page (UX-DECISIONS §21): connected mailboxes (multi-account,
 // Default badge, per-account disconnect) + "Never show agents" privacy filters.

@@ -15,8 +15,8 @@
 
 import { useState, type CSSProperties } from "react";
 import type { MessageSource } from "../api";
-import { ConnectorBadge, hexToRgba, NEUTRAL } from "../connectors/ConnectorIcon";
-import { resolveConnector } from "../connectors/registry";
+import { ConnectorBadge, hexToRgba, NEUTRAL } from "../features/connectors/ConnectorIcon";
+import { resolveConnector } from "../features/connectors/registry";
 
 /** Coarse relative time from epoch seconds: "just now" / "5m ago" / "2h ago" / "3d ago" / a date. */
 function relativeTime(tsSeconds: number): string {

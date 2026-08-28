@@ -10,7 +10,7 @@ import {
   type Connector,
   type RecentChannel,
 } from "../api";
-import { ConnectorBadge } from "../connectors/ConnectorIcon";
+import { ConnectorBadge } from "../features/connectors/ConnectorIcon";
 import { ChannelPicker } from "./SubscriptionsChip";
 import { SelectMenu } from "./SelectMenu";
 import { useI18n } from "../i18n/I18nContext";

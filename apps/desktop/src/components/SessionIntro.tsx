@@ -1,8 +1,8 @@
 import { useEffect, useState } from "react";
 import { getConnectors, getSessionConnections } from "../api";
 import type { Attachment } from "../types";
-import { ConnectorIcon } from "../connectors/ConnectorIcon";
-import { indexConnectors, visualFor, type ConnectorMap } from "../connectors/visuals";
+import { ConnectorIcon } from "../features/connectors/ConnectorIcon";
+import { indexConnectors, visualFor, type ConnectorMap } from "../features/connectors/visuals";
 import { useRoots } from "../useRoots";
 import { AddFolderForm } from "./AddFolderForm";
 import { useI18n } from "../i18n/I18nContext";

@@ -51,7 +51,7 @@ jobs:
       - name: Test
         run: pytest tests -q
 
-  gui-unit:
+  desktop-unit:
     runs-on: ubuntu-latest
     steps:
       # v4
@@ -78,7 +78,7 @@ jobs:
         working-directory: apps/desktop
         run: npm test
 
-  gui-e2e:
+  desktop-e2e:
     runs-on: ubuntu-latest
     steps:
       # v4
@@ -242,3 +242,79 @@ jobs:
       - name: Test
         working-directory: ${{ matrix.workspace }}
         run: cargo test
+
+  layout-check:
+    # Structural guard: the repository layout is frozen (see
+    # docs/architecture/repository-layout.md). This job fails if a forbidden
+    # top-level directory reappears or if a migrated legacy OpenWork runtime key
+    # sneaks back into source. Keep this check stable and path-independent — it
+    # must never become a GitHub Required Check that changes name on a rename.
+    runs-on: ubuntu-latest
+    steps:
+      # v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      - name: Forbidden top-level directories
+        run: |
+          set -uo pipefail
+          for d in surfaces crates coworker assets; do
+            if [ -d "$d" ]; then
+              echo "::error::Forbidden top-level directory '$d' present (see docs/architecture/repository-layout.md)"
+              exit 1
+            fi
+          done
+          echo "no forbidden top-level directories"
+      - name: Legacy OpenWork runtime keys
+        run: |
+          set -uo pipefail
+          # The legacy localStorage key 'openwork-theme' and event 'openwork:theme-pref'
+          # were migrated to delta-theme / delta:theme-pref. Block their return in any
+          # runtime source tree — EXCEPT the two files that are *required* to keep the
+          # legacy key: the backward-compat migration in apps/desktop/src/theme.ts and its
+          # pre-paint mirrors (apps/desktop/index.html, apps/desktop/src-tauri/src/lib.rs)
+          # read the old key once to migrate it. Those are legitimately excepted, exactly
+          # like the provenance allow-list in docs/CHANGELOG/UPSTREAM.md. Any NEW reference
+          # elsewhere fails the build.
+          if grep -rn "openwork-theme\|openwork:theme-pref" apps src services tests scripts \
+              --include='*.ts' --include='*.tsx' --include='*.html' --include='*.rs' \
+              --include='*.py' --include='*.js' --include='*.json' --include='*.css' 2>/dev/null \
+              | grep -v 'apps/desktop/src/theme.ts' \
+              | grep -v 'apps/desktop/index.html' \
+              | grep -v 'apps/desktop/src-tauri/src/lib.rs'; then
+            echo "::error::Legacy OpenWork theme runtime key found in source; must use delta-theme / delta:theme-pref"
+            exit 1
+          fi
+          echo "no legacy OpenWork theme keys"
+
+  ci-required:
+    # Stable single gate for the main branch Ruleset. The Ruleset requires ONLY this
+    # job, so a directory rename that changes a matrix check name can never strand a
+    # Required Check. This job faithfully reflects the real checks: success only when
+    # every listed job succeeded; any failure, cancellation, or unexpected skip fails.
+    if: always()
+    runs-on: ubuntu-latest
+    needs:
+      - pytest
+      - pytest-windows
+      - desktop-unit
+      - desktop-e2e
+      - static
+      - python-advisories
+      - rust-advisories
+      - rust
+      - layout-check
+    steps:
+      - name: Evaluate required checks
+        env:
+          NEEDS_JSON: ${{ toJson(needs) }}
+        run: |
+          python - <<'PY'
+          import json, os, sys
+          results = json.loads(os.environ["NEEDS_JSON"])
+          failures = {k: v["result"] for k, v in results.items() if v["result"] != "success"}
+          if failures:
+              print("ci-required blocked by checks that did not succeed:")
+              for k, r in failures.items():
+                  print(f"  {k}: {r}")
+              sys.exit(1)
+          print("all required checks passed")
+          PY

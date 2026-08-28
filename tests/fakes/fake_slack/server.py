@@ -32,7 +32,7 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route, WebSocketRoute
 from starlette.websockets import WebSocket, WebSocketDisconnect
 
-logger = logging.getLogger("delta.testing.fake_slack")
+logger = logging.getLogger("tests.fakes.fake_slack")
 
 # Fake identities — stable so tests can assert on them.
 BOT_USER_ID = "U_BOT"

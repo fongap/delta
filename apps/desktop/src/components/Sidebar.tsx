@@ -20,7 +20,7 @@ import {
 } from "../api";
 import type { SessionInfo } from "../types";
 import { isProjectScoped, shortPersonaName } from "../personaScope";
-import { ConnectorIcon } from "../connectors/ConnectorIcon";
+import { ConnectorIcon } from "../features/connectors/ConnectorIcon";
 import { Icon, type IconName } from "./Icon";
 import { PersonaGlyph, personaGlyph } from "./personaIcon";
 import { SearchModal } from "./SearchModal";

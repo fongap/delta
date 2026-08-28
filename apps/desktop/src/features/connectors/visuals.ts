@@ -7,7 +7,7 @@
 // table. Unknown refs fall back to the ref as a registry logo id (mcp → the mcp glyph) with a neutral
 // color — exactly the registry's FALLBACK behaviour.
 
-import type { Connector } from "../api";
+import type { Connector } from "../../api";
 import type { ConnectorVisual } from "./ConnectorIcon";
 
 export type ConnectorMap = Record<string, Connector>;

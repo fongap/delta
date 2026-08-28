@@ -1,0 +1,52 @@
+# Dependabot configuration for the Delta monorepo.
+# Ecosystems are scoped to directories that actually exist in this repo.
+
+version: 2
+updates:
+  # GitHub Actions — a single group to avoid one PR per workflow.
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      github-actions:
+        patterns: ["*"]
+    open-pull-requests-limit: 10
+
+  # Desktop GUI (npm) — group production deps; dev deps update separately.
+  - package-ecosystem: "npm"
+    directory: "/apps/desktop"
+    schedule:
+      interval: "weekly"
+    groups:
+      npm-production:
+        dependency-type: "production"
+      npm-development:
+        dependency-type: "development"
+    open-pull-requests-limit: 10
+
+  # Python runtime (pip) — group production deps; dev deps update separately.
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    groups:
+      pip-production:
+        dependency-type: "production"
+      pip-development:
+        dependency-type: "development"
+    open-pull-requests-limit: 10
+
+  # Desktop Tauri (cargo).
+  - package-ecosystem: "cargo"
+    directory: "/apps/desktop/src-tauri"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10
+
+  # Portable launcher (cargo).
+  - package-ecosystem: "cargo"
+    directory: "/packaging/portable/launcher"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 10

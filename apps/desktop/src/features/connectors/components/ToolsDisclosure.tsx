@@ -1,6 +1,6 @@
-import { updateConnectorTools, type Connector } from "../../api";
+import { updateConnectorTools, type Connector } from "../../../api";
 import { GRP, ROW, TAG_QUIET, TAG_WARN } from "./ui";
-import { useI18n } from "../../i18n/I18nContext";
+import { useI18n } from "../../../i18n/I18nContext";
 
 // Collapsed-by-default Tools group, shared by every connector detail page
 // (UX-DECISIONS §21): the lever exists everywhere but stays quiet — expanding

@@ -15,14 +15,14 @@ import {
   type SlackStatus,
   type SlackWorkspace,
   type Subscription,
-} from "../../api";
-import { ConnectorBadge } from "../../connectors/ConnectorIcon";
+} from "../../../api";
+import { ConnectorBadge } from "../ConnectorIcon";
 import { AddConnectionModal } from "./AddConnectionModal";
 import type { DetailProps } from "./ConnectorsSection";
 import { SlackHowItWorks } from "./SlackHowItWorks";
 import { ToolsDisclosure } from "./ToolsDisclosure";
 import { FOOT, GRP, GRP_H, PILL_ACCENT, PILL_LINE, ROW, TAG_WARN, XBTN } from "./ui";
-import { useI18n } from "../../i18n/I18nContext";
+import { useI18n } from "../../../i18n/I18nContext";
 
 // The Slack detail page (UX-DECISIONS §21): one group per connected workspace —
 // People (allow-list) · Waiting (parked senders) · Listening (session ↔ channel) ·

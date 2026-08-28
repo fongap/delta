@@ -24,7 +24,7 @@ import {
   type McpServer,
   type ModelSettings,
 } from "../api";
-import { CloudSignInInline, CloudStatusPending } from "./connectors/CloudSignIn";
+import { CloudSignInInline, CloudStatusPending } from "../features/connectors/components/CloudSignIn";
 import { ModelChecklist } from "./ModelChecklist";
 import { CustomCreateForm, ProviderCards, ProviderForm, useProviderSetup } from "../providers/ProviderSetup";
 import { Toggle } from "./Toggle";

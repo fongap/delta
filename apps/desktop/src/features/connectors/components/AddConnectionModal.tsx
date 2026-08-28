@@ -6,12 +6,12 @@ import {
   getConnectors,
   type CloudStatus,
   type Connector,
-} from "../../api";
-import { ConnectorBadge } from "../../connectors/ConnectorIcon";
-import { ConnectSetup } from "../ManageTabs";
+} from "../../../api";
+import { ConnectorBadge } from "../ConnectorIcon";
+import { ConnectSetup } from "../../../components/ManageTabs";
 import { CloudSignInInline, CloudStatusPending } from "./CloudSignIn";
 import { PILL_ACCENT, PILL_LINE, TAG_ACCENT } from "./ui";
-import { useI18n } from "../../i18n/I18nContext";
+import { useI18n } from "../../../i18n/I18nContext";
 
 // The ONE place a connection gets added (UX-DECISIONS §21): the detail page's header
 // button (or the list's Connect pill) opens this sheet. Connectors with two connect

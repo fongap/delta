@@ -8,7 +8,7 @@ import {
   type CloudStatus,
   type Connector,
 } from "../api";
-import { ConnectorBadge } from "../connectors/ConnectorIcon";
+import { ConnectorBadge } from "../features/connectors/ConnectorIcon";
 import { CustomCreateForm, ProviderCards, ProviderForm, useProviderSetup } from "../providers/ProviderSetup";
 import { Spinner } from "./AutomationQuickstart";
 import { useI18n } from "../i18n/I18nContext";

@@ -15,7 +15,7 @@ import {
 } from "../api";
 import { openExternal } from "../tauri";
 import { useI18n } from "../i18n/I18nContext";
-import { PROVIDER_LOGOS, providerRank } from "./logos";
+import { PROVIDER_LOGOS, providerRank } from "./providerLogos";
 
 // The provider gallery ⇄ key form, shared by Onboarding step 1 (§39) and
 // Settings ▸ Models (UX-021) so the two can never drift apart visually. The hook

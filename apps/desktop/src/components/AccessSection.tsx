@@ -26,8 +26,8 @@ import {
   type SessionConnections,
   type Subscription,
 } from "../api";
-import { ConnectorBadge } from "../connectors/ConnectorIcon";
-import { indexConnectors, labelFor, visualFor, type ConnectorMap } from "../connectors/visuals";
+import { ConnectorBadge } from "../features/connectors/ConnectorIcon";
+import { indexConnectors, labelFor, visualFor, type ConnectorMap } from "../features/connectors/visuals";
 import { baseName } from "../paths";
 import { useRoots } from "../useRoots";
 import { AddFolderForm } from "./AddFolderForm";

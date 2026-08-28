@@ -4,13 +4,13 @@ import {
   disconnectAccount,
   setDefaultAccount,
   type AccountRow,
-} from "../../api";
-import { ConnectorBadge } from "../../connectors/ConnectorIcon";
-import { ConnectSetup } from "../ManageTabs";
+} from "../../../api";
+import { ConnectorBadge } from "../ConnectorIcon";
+import { ConnectSetup } from "../../../components/ManageTabs";
 import type { DetailProps } from "./ConnectorsSection";
 import { ToolsDisclosure } from "./ToolsDisclosure";
 import { FOOT, GRP, GRP_H, PILL_ACCENT, ROW, TAG_ACCENT, XBTN } from "./ui";
-import { useI18n } from "../../i18n/I18nContext";
+import { useI18n } from "../../../i18n/I18nContext";
 
 // The generic detail page for multi-account connectors on the accounts layer
 // (Notion, Attio, PostHog, Mixpanel, Amplitude, Apollo, Hunter — batch 2).

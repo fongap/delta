@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { getConnectors } from "../api";
 import { McpTab } from "./ManageTabs";
-import { ConnectorsSection } from "./connectors/ConnectorsSection";
+import { ConnectorsSection } from "../features/connectors/components/ConnectorsSection";
 import { Icon } from "./Icon";
 import { useI18n, type TranslationKey } from "../i18n/I18nContext";
 
