@@ -7,17 +7,46 @@ import { isTauri, setNativeTheme, followSystemTheme } from "./tauri";
 
 export type ThemePref = "light" | "dark" | "auto";
 
-const KEY = "openwork-theme";
-const PREF_EVENT = "openwork:theme-pref";
+// Canonical key. The legacy "openwork-theme" / "openwork:theme-pref" pair was migrated to
+// the Delta-branded keys below; readThemePref still honors a stored legacy value (writing it
+// into the canonical key once) so existing users keep their preference.
+const KEY = "delta-theme";
+const LEGACY_KEY = "openwork-theme";
+const PREF_EVENT = "delta:theme-pref";
 const media = window.matchMedia?.("(prefers-color-scheme: dark)");
 
-export function getThemePref(): ThemePref {
+/** Read the stored preference, migrating a legacy "openwork-theme" value if present. */
+function readThemePref(): ThemePref {
+  let v = null;
   try {
-    const v = localStorage.getItem(KEY);
-    return v === "light" || v === "dark" ? v : "auto";
+    v = localStorage.getItem(KEY);
   } catch {
     return "auto";
   }
+  if (v === "light" || v === "dark") return v;
+  if (v === null) {
+    // No canonical value yet — fall back to the legacy key, and migrate it forward.
+    let legacy = null;
+    try {
+      legacy = localStorage.getItem(LEGACY_KEY);
+    } catch {
+      legacy = null;
+    }
+    if (legacy === "light" || legacy === "dark") {
+      try {
+        localStorage.setItem(KEY, legacy);
+        localStorage.removeItem(LEGACY_KEY);
+      } catch {
+        /* private mode etc. — value still applies for this session */
+      }
+      return legacy;
+    }
+  }
+  return "auto";
+}
+
+export function getThemePref(): ThemePref {
+  return readThemePref();
 }
 
 function apply(pref: ThemePref) {

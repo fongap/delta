@@ -1,6 +1,6 @@
 """FakeSlack — a local, controllable Slack test double (Web API + Socket Mode).
 
-See :mod:`delta.testing.fake_slack.server` and ``platform/docs/FAKE-SLACK-SPEC.md``.
+See :mod:`tests.fakes.fake_slack.server` and ``platform/docs/FAKE-SLACK-SPEC.md``.
 """
 
 from __future__ import annotations

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { announceCloudChanged, cloudLogin, waitForCloudSignIn } from "../../api";
-import { useI18n } from "../../i18n/I18nContext";
+import { announceCloudChanged, cloudLogin, waitForCloudSignIn } from "../../../api";
+import { useI18n } from "../../../i18n/I18nContext";
 
 // The signed-out state of every one-click pane: a REAL sign-in button, not a
 // hint pointing at another page. Sign-in completes in the system browser; this

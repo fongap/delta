@@ -5,10 +5,19 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>Delta</title>
     <!-- Resolve the theme before first paint (no white flash for dark users).
-         Must match src/theme.ts: key "openwork-theme", absent/invalid = auto = follow macOS. -->
+         Must match src/theme.ts: key "delta-theme" (legacy "openwork-theme" read and
+         migrated once), absent/invalid = auto = follow macOS. -->
     <script>
       try {
-        var t = localStorage.getItem("openwork-theme");
+        var t = localStorage.getItem("delta-theme");
+        if (t !== "light" && t !== "dark") {
+          var legacy = localStorage.getItem("openwork-theme");
+          if (legacy === "light" || legacy === "dark") {
+            localStorage.setItem("delta-theme", legacy);
+            localStorage.removeItem("openwork-theme");
+            t = legacy;
+          }
+        }
         var dark = t === "dark" || (t !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
         document.documentElement.dataset.theme = dark ? "dark" : "light";
       } catch (e) {}

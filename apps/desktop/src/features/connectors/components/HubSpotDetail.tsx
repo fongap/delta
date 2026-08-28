@@ -4,13 +4,13 @@ import {
   setHubSpotDefaultPortal,
   setHubSpotHiddenFields,
   type HubSpotPortal,
-} from "../../api";
-import { ConnectorBadge } from "../../connectors/ConnectorIcon";
+} from "../../../api";
+import { ConnectorBadge } from "../ConnectorIcon";
 import { AddConnectionModal } from "./AddConnectionModal";
 import type { DetailProps } from "./ConnectorsSection";
 import { ToolsDisclosure } from "./ToolsDisclosure";
 import { FOOT, GRP, GRP_H, PILL_ACCENT, ROW, TAG_ACCENT, TAG_QUIET, TAG_WARN, XBTN } from "./ui";
-import { useI18n } from "../../i18n/I18nContext";
+import { useI18n } from "../../../i18n/I18nContext";
 
 // The HubSpot detail page (UX-DECISIONS §21): connected portals (multi-portal,
 // Default/Sandbox tags, the consent tier granted at connect) + Access & privacy

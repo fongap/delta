@@ -3,7 +3,7 @@
 `fake_slack` boots the in-process FakeSlack harness on an ephemeral port and points the Slack
 adapter at it via `SLACK_API_URL`, so the real `SlackAdapter` / `slack_bolt` stack runs
 end-to-end with no network, tokens, or the Slack app console. See
-`delta.testing.fake_slack` and `platform/docs/FAKE-SLACK-SPEC.md`.
+`tests/fakes/fake_slack` and `platform/docs/FAKE-SLACK-SPEC.md`.
 """
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from __future__ import annotations
 import pytest
 import pytest_asyncio
 
-from delta.testing.fake_slack import FakeSlack
+from fakes.fake_slack import FakeSlack
 
 
 @pytest.fixture(autouse=True)

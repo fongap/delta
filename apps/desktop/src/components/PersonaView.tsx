@@ -16,12 +16,12 @@ import {
   setPersonaEnabled,
   type PersonaDetail,
 } from "../api";
-import { ConnectorBadge } from "../connectors/ConnectorIcon";
+import { ConnectorBadge } from "../features/connectors/ConnectorIcon";
 import { fullPersonaName, shortPersonaName } from "../personaScope";
 import { Icon } from "./Icon";
 import { PersonaGlyph } from "./personaIcon";
 import { Toggle } from "./Toggle";
-import { indexConnectors, labelFor, visualFor, type ConnectorMap } from "../connectors/visuals";
+import { indexConnectors, labelFor, visualFor, type ConnectorMap } from "../features/connectors/visuals";
 import { useI18n } from "../i18n/I18nContext";
 
 // Shared section-heading + tag + button utility strings (mock parity).

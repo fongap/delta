@@ -7,9 +7,9 @@ import {
   type CloudStatus,
   type Connector,
   type SlackStatus,
-} from "../../api";
-import { ConnectorBadge } from "../../connectors/ConnectorIcon";
-import { AllowlistBlock, ConnectorTools, ListeningSessionsBlock, UnauthorizedBlock } from "../ManageTabs";
+} from "../../../api";
+import { ConnectorBadge } from "../ConnectorIcon";
+import { AllowlistBlock, ConnectorTools, ListeningSessionsBlock, UnauthorizedBlock } from "../../../components/ManageTabs";
 import { AccountsDetail } from "./AccountsDetail";
 import { AvailableDetail } from "./AvailableDetail";
 import { CalendarDetail } from "./CalendarDetail";
@@ -19,7 +19,7 @@ import { GmailDetail } from "./GmailDetail";
 import { HubSpotDetail } from "./HubSpotDetail";
 import { SlackDetail } from "./SlackDetail";
 import { GRP } from "./ui";
-import { useI18n } from "../../i18n/I18nContext";
+import { useI18n } from "../../../i18n/I18nContext";
 
 // Connectors surface = LIST ⇄ per-connector DETAIL SUBPAGE (UX-DECISIONS §21). The
 // Integrations sub-nav never grows per-connector items; detail pages live behind a

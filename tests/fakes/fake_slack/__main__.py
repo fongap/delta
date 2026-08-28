@@ -1,6 +1,6 @@
 """Standalone FakeSlack runner — drive the live dev app against a fake Slack.
 
-    python -m delta.testing.fake_slack --port 8910
+    python -m tests.fakes.fake_slack --port 8910
 
 Prints the ``SLACK_API_URL`` to export plus curl examples for the control API, then serves
 until interrupted. Point the dev server at it by exporting ``SLACK_API_URL`` before starting
@@ -17,7 +17,7 @@ from .server import FakeSlack
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(prog="delta.testing.fake_slack")
+    parser = argparse.ArgumentParser(prog="tests.fakes.fake_slack")
     parser.add_argument(
         "--port", type=int, default=8910, help="port to bind (default 8910)"
     )

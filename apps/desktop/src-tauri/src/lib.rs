@@ -339,8 +339,9 @@ fn follow_system_theme(window: tauri::WebviewWindow) -> bool {
 /// loaded — potentially after the first frame — which left a light Windows title-bar flash for
 /// dark users before setNativeTheme landed. This script runs at document-start (before the HTML
 /// is parsed or painted, via the same initialization_script channel as the sidecar endpoints)
-/// and mirrors theme.ts's resolution (localStorage pref + prefers-color-scheme, absent/invalid =
-/// auto) so the native window chrome matches from the very first frame. `window.__TAURI__` is
+/// and mirrors theme.ts's resolution (localStorage pref "delta-theme", legacy "openwork-theme"
+/// read and migrated once, prefers-color-scheme fallback, absent/invalid = auto) so the native
+/// window chrome matches from the very first frame. `window.__TAURI__` is
 /// available here: withGlobalTauri's bundle is injected as an initialization script ahead of user
 /// ones (see tauri/src/manager/webview.rs). Fire-and-forget — theme.ts re-applies after load,
 /// so this is only the pre-paint head start and needs no error handling.
@@ -348,7 +349,15 @@ const NATIVE_THEME_SCRIPT: &str = r#"
 if (window.__TAURI__) {
   (async () => {
     try {
-      var t = localStorage.getItem("openwork-theme");
+      var t = localStorage.getItem("delta-theme");
+      if (t !== "light" && t !== "dark") {
+        var legacy = localStorage.getItem("openwork-theme");
+        if (legacy === "light" || legacy === "dark") {
+          localStorage.setItem("delta-theme", legacy);
+          localStorage.removeItem("openwork-theme");
+          t = legacy;
+        }
+      }
       var dark = t === "dark" || (t !== "light" && window.matchMedia("(prefers-color-scheme: dark)").matches);
       await window.__TAURI__.core.invoke("set_native_theme", { dark: dark });
     } catch (e) {}
