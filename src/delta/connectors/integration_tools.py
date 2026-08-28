@@ -29,52 +29,18 @@ from .browser_automation import make_browser_automation_tools
 from .email_tools import make_email_tools
 from .tool_defs import approval_for_tool, connector_for_tool
 
-
-def _meta(
-    name: str, *, approval: bool = False, capabilities: list[str] | None = None
-):
-    return ai.ToolMetadata(
-        name=name,
-        category="connector",
-        risk_level="medium" if approval else "low",
-        capabilities=capabilities or ["integration"],
-        requires_approval=approval,
-    )
-
-
-def _schema(
-    name: str, description: str, properties: dict[str, Any], required: list[str]
-) -> dict[str, Any]:
-    return {
-        "type": "function",
-        "function": {
-            "name": name,
-            "description": description,
-            "parameters": {
-                "type": "object",
-                "properties": properties,
-                "required": required,
-            },
-        },
-    }
-
-
-def _attach(
-    fn: Callable[..., Any],
-    schema: dict[str, Any],
-    *,
-    approval: bool = True,
-    caps: list[str] | None = None,
-):
-    name = schema["function"]["name"]
-    # §36: the tool registry's read/write kind overrides the call-site flag for
-    # registered tools — connector READS never gate. The explicit arg only governs
-    # tools without a registry entry.
-    approval = approval_for_tool(name, default=approval)
-    fn.__delta_schema__ = schema
-    fn.__aisuite_tool_metadata__ = _meta(name, approval=approval, capabilities=caps)
-    fn.__doc__ = schema["function"]["description"]
-    return fn
+# Vendor-agnostic tool plumbing (metadata/schema/HTTP/html) lives in integration_helpers;
+# the closures below resolve them through these names exactly as they did as module functions.
+from .integration_helpers import (
+    _attach,
+    _clamp,
+    _html_to_text,
+    _meta,
+    _now_ms,
+    _request,
+    _schema,
+    _TextExtractor,
+)
 
 
 def _profile(
@@ -206,12 +172,6 @@ def _gcal_profile(
 _HS_NOTE_ASSOC = {"contacts": 202, "companies": 190, "deals": 214, "tickets": 228}
 
 
-def _now_ms() -> int:
-    from time import time
-
-    return int(time() * 1000)
-
-
 def _hubspot_profile(
     secrets: SecretStore, portal: str = ""
 ) -> tuple[str, str, dict[str, str] | None]:
@@ -310,81 +270,6 @@ def _gmail_is_hidden(
             ):
                 return True
     return False
-
-
-def _request(
-    method: str,
-    url: str,
-    *,
-    headers=None,
-    params=None,
-    json=None,
-    auth=None,
-    check_addresses: bool = False,
-) -> dict[str, Any]:
-    """HTTP for the connectors.
-
-    `check_addresses` is for URLs the *model* supplies (browser_read_url). It turns off
-    automatic redirects and walks the chain through the address guard instead, so a public
-    URL cannot 302 into loopback or the metadata endpoint. The vendor endpoints everything
-    else in this module calls are hardcoded, so they skip the guard and its DNS lookup.
-    """
-    try:
-        import httpx
-
-        with httpx.Client(
-            timeout=30.0, follow_redirects=not check_addresses
-        ) as client:
-            if check_addresses:
-                if method.upper() != "GET":
-                    return {"error": "address-checked requests must be GET"}
-                try:
-                    resp = get_checked(client, url)
-                except PermissionError as exc:
-                    return {"error": str(exc)}
-            else:
-                resp = client.request(
-                    method, url, headers=headers, params=params, json=json, auth=auth
-                )
-            ctype = resp.headers.get("content-type", "")
-            data: Any = resp.json() if "json" in ctype.lower() else resp.text
-            if resp.status_code >= 400:
-                return {"error": f"HTTP {resp.status_code}", "details": data}
-            return {"ok": True, "data": data}
-    except Exception as exc:
-        return {"error": str(exc)}
-
-
-class _TextExtractor(HTMLParser):
-    _SKIP = {"script", "style", "noscript", "svg", "head"}
-
-    def __init__(self) -> None:
-        super().__init__()
-        self._skip = 0
-        self.parts: list[str] = []
-
-    def handle_starttag(self, tag: str, attrs: Any) -> None:
-        if tag in self._SKIP:
-            self._skip += 1
-
-    def handle_endtag(self, tag: str) -> None:
-        if tag in self._SKIP and self._skip:
-            self._skip -= 1
-
-    def handle_data(self, data: str) -> None:
-        if not self._skip:
-            text = data.strip()
-            if text:
-                self.parts.append(text)
-
-
-def _html_to_text(html: str) -> str:
-    parser = _TextExtractor()
-    try:
-        parser.feed(html)
-    except Exception:
-        pass
-    return re.sub(r"\n{3,}", "\n\n", "\n".join(parser.parts))
 
 
 def _github_headers(token: str) -> dict[str, str]:
@@ -534,10 +419,6 @@ def _linear_gql(api_key: str, query: str, variables: dict[str, Any]) -> dict[str
         headers={"Authorization": api_key, "Content-Type": "application/json"},
         json={"query": query, "variables": variables},
     )
-
-
-def _clamp(n: Any, default: int = 10, ceiling: int = 20) -> int:
-    return max(1, min(int(n or default), ceiling))
 
 
 def _qbo_base(profile: dict[str, Any]) -> str:
