@@ -17,7 +17,7 @@ import { AddConnectionModal } from "./AddConnectionModal";
 import type { DetailProps } from "./ConnectorsSection";
 import { ToolsDisclosure } from "./ToolsDisclosure";
 import { FOOT, GRP, GRP_H, PILL_ACCENT, PILL_LINE, ROW, TAG_WARN, XBTN } from "./ui";
-import { useI18n } from "../../../i18n/I18nContext";
+import { useI18n } from "@delta/i18n/I18nContext";
 
 // The GitHub detail page (github-relay-spec §8), the Slack page's shape: one
 // group per App INSTALLATION (the allow-list scope) — People (sender logins

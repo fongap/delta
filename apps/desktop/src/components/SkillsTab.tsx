@@ -12,7 +12,7 @@ import {
   type SkillUploadPreview,
 } from "../api";
 import { Icon } from "./Icon";
-import { useI18n } from "../i18n/I18nContext";
+import { useI18n } from "@delta/i18n/I18nContext";
 
 // Settings ▸ Skills (SKILLS-SPEC §5/§6) — the management home: the LIST is the page; every
 // add-surface appears only when summoned from the single "Add skill" menu (the three doors:

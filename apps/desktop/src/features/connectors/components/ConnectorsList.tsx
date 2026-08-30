@@ -3,7 +3,7 @@ import { type CloudStatus, type Connector, type SlackStatus } from "../../../api
 import { ConnectorBadge } from "../ConnectorIcon";
 import { AddConnectionModal } from "./AddConnectionModal";
 import { CHIP_OK, CHIP_OFF, CHIP_WARN, GRP, GRP_H, FOOT, PILL_QUIET, ROW } from "./ui";
-import { useI18n } from "../../../i18n/I18nContext";
+import { useI18n } from "@delta/i18n/I18nContext";
 
 /** The `t` function shape, for the module-level helpers below. */
 type T = (key: string, vars?: Record<string, string | number>) => string;

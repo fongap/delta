@@ -6,11 +6,11 @@ toolset. Ties back to the Phase 0 catalog equivalence."""
 
 from __future__ import annotations
 
-from delta.agents.base import AgentContext
-from delta.agents.code import code_agent
-from delta.agents.cowork import cowork_agent
-from delta.personas.registry import PersonaRegistry
-from delta.tools.todo import TodoList
+from core.agents.base import AgentContext
+from core.agents.code import code_agent
+from core.agents.cowork import cowork_agent
+from core.personas.registry import PersonaRegistry
+from integrations.tools.todo import TodoList
 
 
 def _ctx(tmp_path) -> AgentContext:

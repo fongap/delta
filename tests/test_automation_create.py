@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from delta.server.manager import SessionManager
+from services.server.manager import SessionManager
 
 
 def _manager(tmp_path, monkeypatch) -> SessionManager:

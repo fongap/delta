@@ -10,8 +10,8 @@ Truncation/preview shaping stays with callers; this module only decides what mus
 not persist. Deterministic: same input → same output.
 """
 
-from delta.audit import _sanitize_args
-from delta.sanitize import (
+from core.audit import _sanitize_args
+from packages.sanitize import (
     redact_url_credentials,
     sanitize_payload,
     sanitize_value,
@@ -81,7 +81,7 @@ def test_audit_args_keep_their_tool_specific_rules():
 
 
 def test_ledger_scrubs_on_append_so_callers_cannot_leak(tmp_path):
-    from delta.ledger import RunEventLedger
+    from core.ledger import RunEventLedger
 
     led = RunEventLedger(tmp_path / "events.db")
     row = led.append(

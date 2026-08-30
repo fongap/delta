@@ -9,13 +9,13 @@ from __future__ import annotations
 
 import re
 
-from delta.connectors import connector_list
-from delta.connectors.descriptors import (
+from integrations.connectors import connector_list
+from integrations.connectors.descriptors import (
     ConnectorDescriptor,
     get_descriptor,
     list_descriptors,
 )
-from delta.secrets import SecretStore
+from packages.secrets import SecretStore
 
 _HEX = re.compile(r"^#[0-9a-fA-F]{6}$")
 

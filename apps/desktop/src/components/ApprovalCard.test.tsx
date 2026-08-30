@@ -3,7 +3,7 @@ import { cleanup, fireEvent, render as rtlRender, screen } from "@testing-librar
 import type { ReactElement } from "react";
 import { ApprovalCard } from "./ApprovalCard";
 import { InboxItemCard } from "./InboxItemCard";
-import { I18nProvider } from "../i18n/I18nContext";
+import { I18nProvider } from "@delta/i18n/I18nContext";
 import type { Item } from "../types";
 import type { InboxItem } from "../api";
 

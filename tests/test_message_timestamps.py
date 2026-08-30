@@ -12,16 +12,16 @@ import time
 import aisuite as ai
 from fastapi.testclient import TestClient
 
-from delta.engine import TurnEngine
-from delta.permissions import PermissionEngine
-from delta.providers import (
+from core.engine import TurnEngine
+from core.permissions import PermissionEngine
+from providers import (
     AssistantTurn,
     ModelCapabilities,
     ProviderClient,
     ToolCall,
 )
-from delta.server import SessionManager, create_app
-from delta.tools import ToolRegistry
+from services.server import SessionManager, create_app
+from integrations.tools import ToolRegistry
 
 
 class CapturingProvider(ProviderClient):
@@ -124,8 +124,8 @@ def test_provider_adapters_drop_ts():
     """Defense in depth: the native Anthropic/Gemini payload builders rebuild messages
     from role/content, so a `ts` that somehow slipped past the engine strip still never
     reaches the wire."""
-    from delta.providers.anthropic_provider import convert_messages as to_anthropic
-    from delta.providers.gemini_provider import convert_messages as to_gemini
+    from providers.anthropic_provider import convert_messages as to_anthropic
+    from providers.gemini_provider import convert_messages as to_gemini
 
     history = [
         {"role": "system", "content": "be brief"},

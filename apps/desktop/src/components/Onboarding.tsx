@@ -11,7 +11,7 @@ import {
 import { ConnectorBadge } from "../features/connectors/ConnectorIcon";
 import { CustomCreateForm, ProviderCards, ProviderForm, useProviderSetup } from "../providers/ProviderSetup";
 import { Spinner } from "./AutomationQuickstart";
-import { useI18n } from "../i18n/I18nContext";
+import { useI18n } from "@delta/i18n/I18nContext";
 
 // First-run onboarding (UX-DECISIONS §24 → §29 → §39): model → your tools → go.
 // §39 (owner design, 2026-07-18): step 1 is a PROVIDER GALLERY — 13 real brand
