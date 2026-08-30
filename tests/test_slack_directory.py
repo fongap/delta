@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import pytest
 
-from delta.connectors import slack_directory
-from delta.secrets import SecretStore
+from integrations.connectors import slack_directory
+from packages.secrets import SecretStore
 
 
 @pytest.fixture
@@ -122,8 +122,8 @@ def test_allow_with_name_seeds_people_directory(tmp_path, monkeypatch):
     """A directory pick lands on the allow-list AND the chip shows the display
     name immediately — no first message needed."""
     monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
-    from delta.providers import ModelCapabilities, ProviderClient
-    from delta.server.manager import SessionManager
+    from providers import ModelCapabilities, ProviderClient
+    from services.server.manager import SessionManager
 
     class _Provider(ProviderClient):
         def complete(self, *, model, messages, tools=None, **settings):

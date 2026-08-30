@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { addModel, getSettings, removeModel, setDefaultModel } from "../api";
-import { useI18n } from "../i18n/I18nContext";
+import { useI18n } from "@delta/i18n/I18nContext";
 
 // Cloud-account providers dispatch by a family segment baked into the model id
 // (`bedrock:claude/…`, `vertex:openweight/…`). The add-model row shows a dropdown so

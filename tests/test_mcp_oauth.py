@@ -12,11 +12,11 @@ import pytest
 from fastapi.testclient import TestClient
 from mcp.shared.auth import OAuthClientInformationFull, OAuthToken
 
-from delta.mcp import oauth as mcp_oauth
-from delta.mcp.config import load_mcp_servers
-from delta.secrets import SecretStore
-from delta.server.app import create_app
-from delta.server.manager import SessionManager
+from integrations.mcp import oauth as mcp_oauth
+from integrations.mcp.config import load_mcp_servers
+from packages.secrets import SecretStore
+from services.server.app import create_app
+from services.server.manager import SessionManager
 
 GRANOLA = {"type": "http", "url": "https://mcp.granola.ai/mcp", "auth": "oauth"}
 

@@ -14,14 +14,14 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from delta import cloud
-from delta.connectors import github_installs
-from delta.connectors.base import MessageEvent
-from delta.connectors.config import is_authorized, load_settings
-from delta.connectors.github_relay import GitHubRelayAdapter, split_thread
-from delta.connectors.relay_client import RelayHub, SlackRelayAdapter
-from delta.secrets import SecretStore
-from delta.server import SessionManager, create_app
+from integrations import cloud
+from integrations.connectors import github_installs
+from integrations.connectors.base import MessageEvent
+from integrations.connectors.config import is_authorized, load_settings
+from integrations.connectors.github_relay import GitHubRelayAdapter, split_thread
+from integrations.connectors.relay_client import RelayHub, SlackRelayAdapter
+from packages.secrets import SecretStore
+from services.server import SessionManager, create_app
 
 
 @pytest.fixture(autouse=True)
@@ -364,7 +364,7 @@ def _stub_broker_mint(monkeypatch, tokens: list[str]):
 
 def test_token_client_caches_and_force_remints(tmp_path, monkeypatch):
     monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
-    from delta.config import load_config
+    from packages.config import load_config
 
     secrets = SecretStore()
     calls = _stub_broker_mint(monkeypatch, ["ghs_first", "ghs_second"])
@@ -386,7 +386,8 @@ def test_token_client_caches_and_force_remints(tmp_path, monkeypatch):
 
 
 def _capture_requests(monkeypatch):
-    from delta.connectors import integration_tools
+    # GitHub tools resolve `_request` in integration_github (extracted from integration_tools).
+    from integrations.connectors import integration_github
 
     seen: list[dict] = []
 
@@ -394,12 +395,12 @@ def _capture_requests(monkeypatch):
         seen.append({"method": method, "url": url, "headers": headers or {}})
         return {"ok": True, "data": {"items": []}}
 
-    monkeypatch.setattr(integration_tools, "_request", fake_request)
+    monkeypatch.setattr(integration_github, "_request", fake_request)
     return seen
 
 
 def _tool(secrets, name):
-    from delta.connectors.integration_tools import make_integration_tools
+    from integrations.connectors.integration_tools import make_integration_tools
 
     tools = make_integration_tools(secrets)
     return next(t for t in tools if t.__name__ == name)
@@ -442,7 +443,7 @@ def test_managed_tools_use_minted_token_by_owner(tmp_path, monkeypatch):
 
 def test_managed_401_reminted_once(tmp_path, monkeypatch):
     monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
-    from delta.connectors import integration_tools
+    from integrations.connectors import integration_github
 
     secrets = SecretStore()
     github_installs.managed_connect_install(secrets, _install_form("101"))
@@ -453,7 +454,7 @@ def test_managed_401_reminted_once(tmp_path, monkeypatch):
         lambda s, c, iid, *, force=False: minted.append(force) or "ghs_x",
     )
     responses = iter([{"error": "HTTP 401"}, {"ok": True, "data": {}}])
-    monkeypatch.setattr(integration_tools, "_request", lambda *a, **k: next(responses))
+    monkeypatch.setattr(integration_github, "_request", lambda *a, **k: next(responses))
 
     out = _tool(secrets, "github_review")("acme", "site", 5, "APPROVE")
     assert out["ok"] is True
@@ -472,7 +473,7 @@ def test_review_event_validated(tmp_path, monkeypatch):
 
 def test_list_commits_filters_and_trims(tmp_path, monkeypatch):
     monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
-    from delta.connectors import integration_tools
+    from integrations.connectors import integration_github
 
     secrets = SecretStore()
     secrets.put("github:default", {"type": "token", "token": "ghp_x"})
@@ -494,7 +495,7 @@ def test_list_commits_filters_and_trims(tmp_path, monkeypatch):
             ],
         }
 
-    monkeypatch.setattr(integration_tools, "_request", fake_request)
+    monkeypatch.setattr(integration_github, "_request", fake_request)
     out = _tool(secrets, "github_list_commits")(
         "acme",
         "site",
@@ -543,8 +544,8 @@ def _origin(tmp_path):
 
 
 def _clone_tools(secrets, tmp_path):
-    from delta.connectors.integration_tools import make_integration_tools
-    from delta.roots import RootDir
+    from integrations.connectors.integration_tools import make_integration_tools
+    from core.roots import RootDir
 
     granted = tmp_path / "granted"
     granted.mkdir(exist_ok=True)
@@ -596,7 +597,7 @@ def test_clone_refuses_paths_outside_granted_roots(tmp_path, monkeypatch, _origi
     assert not (tmp_path / "elsewhere").exists()
 
     # and with no writable root at all 鈫?a clear error, no filesystem writes
-    from delta.connectors.integration_tools import make_integration_tools
+    from integrations.connectors.integration_tools import make_integration_tools
 
     bare_tools = {t.__name__: t for t in make_integration_tools(secrets, roots=[])}
     out = bare_tools["github_clone"]("acme", "site")

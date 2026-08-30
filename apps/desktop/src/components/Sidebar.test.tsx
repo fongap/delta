@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { Sidebar } from "./Sidebar";
-import { I18nProvider } from "../i18n/I18nContext";
+import { I18nProvider } from "@delta/i18n/I18nContext";
 import type { SessionInfo } from "../types";
 
 // All Sidebar renders go through the provider so the sidebar's useI18n() calls resolve.

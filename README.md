@@ -58,7 +58,7 @@ Delta 将继续坚持本地优先，逐步完善：
 # 后端
 .venv\Scripts\activate
 pip install -e ".[dev,messaging]"
-uvicorn delta.server.app:app --port 9876
+uvicorn services.server.app:app --port 9876
 
 # 前端
 cd apps\desktop

@@ -4,9 +4,9 @@ import pytest
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from delta.providers import ModelCapabilities, ProviderClient
-from delta.server import SessionManager, create_app
-from delta.server.contracts import (
+from providers import ModelCapabilities, ProviderClient
+from services.server import SessionManager, create_app
+from services.server.contracts import (
     ApprovalDTO,
     ArtifactDTO,
     ErrorEnvelope,
@@ -15,7 +15,7 @@ from delta.server.contracts import (
     ModelDTO,
     SessionDTO,
 )
-from delta.sessions import SessionRecord
+from core.sessions import SessionRecord
 
 
 class NoopProvider(ProviderClient):

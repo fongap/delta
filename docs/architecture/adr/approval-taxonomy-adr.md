@@ -8,7 +8,7 @@
 
 Delta is a general-purpose office agent: one product serving any user's everyday work,
 not a vertical compliance tool. Approvals today are binary and interactive:
-`PermissionEngine` (src/delta/permissions.py) classifies by Mode (chat/read/write-ish),
+`PermissionEngine` (core/permissions.py) classifies by Mode (chat/read/write-ish),
 workspace roots, and a command whitelist; `ApprovalOutcome{ONCE, ALWAYS_TOOL,
 ALWAYS_COMMAND, DENY}` resolves an inline prompt. There is no risk taxonomy, no notion
 of reversible vs irreversible, and no explicit fail-closed rule for missing policy.
@@ -66,7 +66,7 @@ created by the user in Settings; L4 never.
 ## Slice 4b: classification inputs (implemented)
 
 Classification is a deterministic function of four declared inputs, evaluated at the
-Execution Gateway (`src/delta/gateway.py::classify`) before any permission rule runs:
+Execution Gateway (`core/gateway.py::classify`) before any permission rule runs:
 
 1. **Action** — the tool's risk band from registry metadata (`risk_level`,
    `requires_approval`, `category`). This is the base level (L0–L3 banding; high → L3).

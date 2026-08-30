@@ -152,7 +152,7 @@ jobs:
           pip install ruff==0.11.13 pyright==1.1.397
           pip install -e ".[messaging]"
       - name: Ruff (blocking — runtime-breaking classes only)
-        run: ruff check src/delta tests --select E9,F63,F7,F82
+        run: ruff check core providers integrations packages services/server apps/tui tests --select E9,F63,F7,F82
       # Full-scan + pyright run as BASELINE REGRESSION gates: they may have unfixed
       # findings, but the count must never grow past the committed baseline (CI fails
       # only on a regression, not on a pre-existing finding). Lower the baseline as
@@ -167,7 +167,7 @@ jobs:
         env:
           RUFF_BASELINE: "192"
         run: |
-          RUN=$(ruff check src/delta tests --output-format=json || true)
+          RUN=$(ruff check core providers integrations packages services/server apps/tui tests --output-format=json || true)
           COUNT=$(python -c "import json,sys; print(len(json.loads('$RUN')))" 2>/dev/null || python -c "import json,sys; print(len(json.load(sys.stdin)))" <<<"$RUN")
           echo "ruff findings: $COUNT (baseline $RUFF_BASELINE)"
           python - "$COUNT" "$RUFF_BASELINE" <<'PY'
@@ -180,7 +180,7 @@ jobs:
         env:
           PYRIGHT_BASELINE: "581"
         run: |
-          RUN=$(pyright src/delta 2>/dev/null || true)
+          RUN=$(pyright core providers integrations packages services/server apps/tui 2>/dev/null || true)
           echo "$RUN" | tail -1
           COUNT=$(echo "$RUN" | grep -oE '[0-9]+ errors?' | grep -oE '[0-9]+' || echo 0)
           echo "pyright errors: $COUNT (baseline $PYRIGHT_BASELINE)"
@@ -256,7 +256,7 @@ jobs:
       - name: Forbidden top-level directories
         run: |
           set -uo pipefail
-          for d in surfaces crates coworker assets; do
+          for d in surfaces crates coworker assets src stt; do
             if [ -d "$d" ]; then
               echo "::error::Forbidden top-level directory '$d' present (see docs/architecture/repository-layout.md)"
               exit 1

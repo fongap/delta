@@ -5,7 +5,7 @@ from __future__ import annotations
 import subprocess
 import sys
 
-from delta.environment import environment_context
+from core.environment import environment_context
 
 
 def _git_repo(tmp_path):
@@ -57,14 +57,14 @@ class _Stub:
         raise NotImplementedError
 
     def capabilities(self, model):
-        from delta.providers import ModelCapabilities
+        from providers import ModelCapabilities
 
         return ModelCapabilities()
 
 
 def test_build_engine_injects_environment(tmp_path):
-    from delta.agent import build_engine
-    from delta.agents import code_agent
+    from core.agent import build_engine
+    from core.agents import code_agent
 
     engine = build_engine(agent=code_agent(), workspace=tmp_path, provider=_Stub())
     try:

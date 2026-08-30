@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from delta.compaction import (
+from core.compaction import (
     DEFAULT_CAP_TOKENS,
     DEFAULT_CONTEXT_WINDOW,
     CompactionState,
@@ -317,7 +317,7 @@ def test_is_context_overflow():
 def test_user_messages_capped_across_repeated_compactions():
     # The mechanical user-message list must not grow forever — newest _USER_MESSAGES_MAX
     # survive, the rest stay counted so the block's "omitted" note is honest.
-    from delta.compaction import _USER_MESSAGES_MAX
+    from core.compaction import _USER_MESSAGES_MAX
 
     msgs = [{"role": "system", "content": "s"}]
     for i in range(120):

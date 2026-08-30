@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { Item } from "../types";
 import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
-import { useI18n } from "../i18n/I18nContext";
+import { useI18n } from "@delta/i18n/I18nContext";
 
 type PlanItem = Extract<Item, { kind: "planreq" }>;
 

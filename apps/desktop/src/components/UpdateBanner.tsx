@@ -7,7 +7,7 @@ import {
   isTauri,
   type UpdateInfo,
 } from "../tauri";
-import { useI18n } from "../i18n/I18nContext";
+import { useI18n } from "@delta/i18n/I18nContext";
 
 // Auto-update prompt (desktop shell only — the browser build never renders this).
 // P1 2026-08-25: the release pipeline currently publishes only the portable ZIP +

@@ -9,9 +9,9 @@ import zlib
 
 import pytest
 
-from delta import pdf_support
-from delta.providers.base import ModelCapabilities
-from delta.providers.capabilities import capabilities_for
+from core import pdf_support
+from providers.base import ModelCapabilities
+from providers.capabilities import capabilities_for
 
 
 def _blank_pdf_url(pages: int = 3) -> str:
