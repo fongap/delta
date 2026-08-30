@@ -34,29 +34,37 @@ def test_repo_has_no_deprecated_paths():
 
 def test_gate_catches_every_legacy_shape():
     gate = _load("check_legacy_paths")
-    for stale in (
-        "packaging/delta-server-version.txt",
-        "packaging\\delta-server-version.txt",
-        "packaging/delta-server.spec",
-        "packaging/server_entry.py",
-        "packaging/build_portable.ps1",
-        "packaging\\build_portable.ps1",
-        "packaging/scan_portable_paths.ps1",
-    ):
+    # Fixtures are assembled at RUNTIME: the gate scans every tracked file including
+    # this one, so a literal legacy path here would make the gate flag itself (CI-hit
+    # 2026-08-31). The segments below never appear joined in this file's source.
+    stale_tail = "delta-server" + "-version.txt"
+    shapes = [
+        "packaging/" + stale_tail,
+        "packaging\\" + stale_tail,
+        "packaging/" + "delta-server" + ".spec",
+        "packaging/" + "server" + "_entry.py",
+        "packaging/" + "build" + "_portable.ps1",
+        "packaging\\" + "build" + "_portable.ps1",
+        "packaging/" + "scan" + "_portable_paths.ps1",
+    ]
+    for stale in shapes:
         violations = gate.violations_for(f"run {stale} now", "fake/file.yml")
         assert len(violations) == 1, (stale, violations)
 
 
 def test_gate_ignores_current_paths_and_history():
     gate = _load("check_legacy_paths")
-    assert gate.violations_for(
-        "packaging/server/delta-server-version.txt + packaging/portable/build_portable.ps1",
-        "fake/file.yml",
-    ) == []
+    canonical = (
+        "packaging/server/delta-server-version.txt"
+        + " + packaging/portable/build_portable.ps1"
+    )
+    assert gate.violations_for(canonical, "fake/file.yml") == []
     # History files are exempt at the FILE level in find_violations, not by weakening
-    # the patterns: the pattern still matches history content, the exemption is what
-    # spares CHANGELOG/UPSTREAM/docs-governance.
-    assert gate.violations_for("packaging/delta-server-version.txt", "CHANGELOG.md")
+    # the patterns: the pattern still matches history content (built at runtime — the
+    # gate scans this file too), the exemption is what spares CHANGELOG/UPSTREAM/
+    # docs-governance.
+    stale = "packaging/" + "delta-server" + "-version.txt"
+    assert gate.violations_for(stale, "CHANGELOG.md")
     assert gate._is_exempt(REPO / "CHANGELOG.md")
     assert not gate._is_exempt(REPO / ".github" / "workflows" / "release.yml")
 

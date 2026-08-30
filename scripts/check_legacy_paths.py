@@ -3,13 +3,16 @@ during the repository restructure (see docs/architecture/repository-layout.md).
 
 The layout is frozen at the current structure; old hardcoded paths that survive in
 workflows, build scripts, configs, or tests reappear as release-time FileNotFoundErrors
-(owner-hit 2026-08-31: release.yml still read ``packaging/delta-server-version.txt``
-after the file had moved to ``packaging/server/``). This gate makes any return of a
-deprecated path a CI failure instead of a release-night surprise.
+(owner-hit 2026-08-31: release.yml still read the server version file at its OLD
+packaging-root location after the file had moved to packaging/server/). This gate makes
+any return of a deprecated path a CI failure instead of a release-night surprise.
 
 Scope and exemptions, deliberately:
   - Scans every GIT-TRACKED file (git ls-files), so .gitignore'd build output can't
-    noise the result.
+    noise the result — and so this gate's own pattern table and its pytest wrapper are
+    scanned too. Neither may contain a matchable literal legacy path: the patterns are
+    regexes that don't match their own source, and tests must build their fixtures at
+    runtime (keep it that way, or the gate flags itself).
   - Exempts HISTORY files only: CHANGELOG.md, UPSTREAM.md, and docs/governance/** —
     migration records and attribution must keep describing the old paths verbatim.
     Everything else (including docs and tests) must use current paths.
