@@ -23,6 +23,12 @@ from providers.base import (
     ToolCall,
 )
 from providers.capabilities import capabilities_for
+from providers.endpoint import (
+    EndpointCaps,
+    learned_caps,
+    merge as _merge_endpoint_caps,
+    record_rejection,
+)
 
 
 def resolve_api_key(secrets: Any = None) -> str | None:
@@ -131,6 +137,8 @@ class OpenAIProvider(ProviderClient):
         api_key: str | None = None,
         base_url: str | None = None,
         secrets: Any = None,
+        endpoint_caps: EndpointCaps | None = None,
+        endpoint_key: str | None = None,
     ):
         # The SDK client is built lazily on first use, NOT at construction. This lets an engine
         # be assembled before any key exists — the desktop app lets you enter the key in Settings
@@ -146,6 +154,14 @@ class OpenAIProvider(ProviderClient):
         self._base_url = base_url
         self._secrets = secrets
         self.default_model = default_model
+        # Endpoint capability profile (providers/endpoint.py): what THIS server accepts,
+        # so known-unsupported params are never sent (instead of eating a 400 every call).
+        # `endpoint_key` (normally the base_url) keys the learned-facts store.
+        self._endpoint_caps = endpoint_caps
+        self._endpoint_key = endpoint_key
+
+    def _effective_caps(self) -> EndpointCaps:
+        return _merge_endpoint_caps(learned_caps(self._endpoint_key), self._endpoint_caps)
 
     def _ensure_client(self) -> Any:
         if self._client is None:
@@ -216,15 +232,20 @@ class OpenAIProvider(ProviderClient):
         tools: list[dict[str, Any]] | None = None,
         **settings: Any,
     ):
+        # Endpoint profile first: a server known (learned or configured) to reject
+        # stream_options never sees it, instead of paying a failed round trip per call
+        # (v0.3.0 P0). The reactive retry below remains the safety net for the unknowns.
+        caps = self._effective_caps()
         kwargs: dict[str, Any] = {
             "model": model,
             "messages": _strip_foreign_sidecars(messages),
             "stream": True,
-            # Usage on the final chunk (empty `choices`). Compat servers that reject
-            # the option get a one-shot retry without it (_param_fix_retry).
-            "stream_options": {"include_usage": True},
             **settings,
         }
+        if caps.stream_options:
+            # Usage on the final chunk (empty `choices`). Compat servers that reject
+            # the option get a one-shot retry without it (_param_fix_retry).
+            kwargs["stream_options"] = {"include_usage": True}
         if tools:
             kwargs["tools"] = tools
         _pin_reasoning_effort(kwargs)
@@ -242,7 +263,12 @@ class OpenAIProvider(ProviderClient):
                 chunks = client.chat.completions.create(**kwargs)
                 break
             except Exception as exc:
-                kwargs = _param_fix_retry(kwargs, exc)
+                fixed = _param_fix_retry(kwargs, exc)
+                if "stream_options" in kwargs and "stream_options" not in fixed:
+                    # The server told us it doesn't know the usage opt-in: remember it
+                    # for this endpoint so the NEXT call skips the failed attempt.
+                    record_rejection(self._endpoint_key, "stream_options")
+                kwargs = fixed
         else:
             chunks = client.chat.completions.create(**kwargs)
         for chunk in chunks:

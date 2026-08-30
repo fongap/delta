@@ -38,6 +38,11 @@ class Config:
     # In "custom" permission mode, these tools are auto-approved (e.g. file edits)
     # while everything else still asks.
     auto_allow: list[str] = field(default_factory=list)
+    # Per-call tool injection (core/tool_selection.py): "auto" (default) injects only
+    # the tools the current turn plausibly needs — the v0.3.0 P0 payload diet — while
+    # "full" restores always-everything injection (the kill switch if selection ever
+    # misbehaves on a surface).
+    tool_selection: str = "auto"
     host: str = "127.0.0.1"
     port: int = 8765
     # Web search provider: "duckduckgo" (keyless default) | "tavily" | "brave" (need a key).
@@ -65,6 +70,7 @@ _FIELDS = {
     "max_iterations",
     "allowed_commands",
     "auto_allow",
+    "tool_selection",
     "host",
     "port",
     "web_search_provider",

@@ -57,6 +57,18 @@ def estimate_tokens(messages: list[dict[str, Any]]) -> int:
     return total // 4
 
 
+def estimate_tools_tokens(tools: list[dict[str, Any]] | None) -> int:
+    """chars/4 over the serialized tool schemas — tool definitions occupy the context
+    window like message text does, so the budget trigger must count them (v0.3.0 P0:
+    the context budget covers the WHOLE prompt, not just history)."""
+    if not tools:
+        return 0
+    try:
+        return len(json.dumps(tools, default=str)) // 4
+    except (TypeError, ValueError):
+        return 0
+
+
 def trigger_tokens(
     context_window: int | None,
     *,

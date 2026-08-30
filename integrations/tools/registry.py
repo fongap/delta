@@ -20,6 +20,9 @@ class ToolSpec:
     schema: dict[str, Any]  # OpenAI-format function tool schema
     func: Callable[..., Any]
     metadata: Any = None  # aisuite ToolMetadata or None
+    # Injection category (core/tool_selection.py). Unset → resolved by name at
+    # selection time; an explicit value here wins.
+    category: str | None = None
 
 
 class ToolRegistry:
@@ -56,8 +59,13 @@ class ToolRegistry:
     def get(self, name: str) -> ToolSpec | None:
         return self._tools.get(name)
 
-    def schemas(self) -> list[dict[str, Any]]:
-        return [spec.schema for spec in self._tools.values()]
+    def schemas(self, names: list[str] | None = None) -> list[dict[str, Any]]:
+        """Tool schemas for the model call. `names=None` keeps the historical
+        everything-injection; a name list (per-call tool selection) filters to it —
+        unknown names are skipped silently (the registry may have changed)."""
+        if names is None:
+            return [spec.schema for spec in self._tools.values()]
+        return [self._tools[n].schema for n in names if n in self._tools]
 
     def execute(self, name: str, arguments: dict[str, Any] | None = None) -> Any:
         spec = self._tools.get(name)
