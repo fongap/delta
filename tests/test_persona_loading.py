@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from delta.personas.loading import consent_summary
-from delta.personas.manifest import ManifestError, parse_manifest
-from delta.personas.registry import PersonaRegistry
+from core.personas.loading import consent_summary
+from core.personas.manifest import ManifestError, parse_manifest
+from core.personas.registry import PersonaRegistry
 
 THIRD_PARTY = """---
 id: acme-ops

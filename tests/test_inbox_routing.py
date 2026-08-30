@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from delta.inbox import InboxStore
-from delta.inbox_routing import (
+from core.inbox import InboxStore
+from core.inbox_routing import (
     DEFAULT_INBOX,
     InboxRouting,
     deliver,

@@ -4,7 +4,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { ModelChecklist } from "./ModelChecklist";
-import { I18nProvider } from "../i18n/I18nContext";
+import { I18nProvider } from "@delta/i18n/I18nContext";
 
 vi.mock("../api", () => ({
   addModel: vi.fn(async (id: string) => ({ ok: true, models: [id], model: id })),

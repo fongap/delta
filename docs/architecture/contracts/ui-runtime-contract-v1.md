@@ -3,7 +3,7 @@
 ## Status and scope
 
 - Status: implemented for one REST error slice and every current session/app-wide event producer.
-- Backend source of truth: `src/delta/server/contracts.py`.
+- Backend source of truth: `services/server/contracts.py`.
 - Frontend maintained types and strict parsers:
   `apps/desktop/src/runtime-contract.ts`.
 - The contract is additive for unknown fields, but it is single-version: missing required

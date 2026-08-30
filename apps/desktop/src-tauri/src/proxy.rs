@@ -6,7 +6,7 @@
 //! the PROXY endpoints into the WebView. The proxy is the only component that holds the
 //! token; it adds `X-Delta-Token` to every forwarded REST request and rewrites the
 //! WebSocket subprotocol (`["delta", <token>]`) for every upgrade, so the sidecar's
-//! own auth (src/delta/server/app.py `require_sidecar_token` / `_websocket_authenticated`)
+//! own auth (services/server/app.py `require_sidecar_token` / `_websocket_authenticated`)
 //! keeps working unchanged.
 //!
 //! Security gate — Origin allowlist. The proxy binds to loopback, but any web page the
@@ -34,7 +34,7 @@ use tokio::net::{TcpListener, TcpStream};
 const MAX_HEAD_BYTES: usize = 64 * 1024;
 
 /// Hosts allowed in browser `Origin` values — the Tauri webview's own origin(s) plus
-/// localhost dev/browser builds. Mirrors `_ALLOWED_ORIGIN_RE` in src/delta/server/app.py.
+/// localhost dev/browser builds. Mirrors `_ALLOWED_ORIGIN_RE` in services/server/app.py.
 const ALLOWED_ORIGIN_HOSTS: [&str; 3] = ["localhost", "127.0.0.1", "tauri.localhost"];
 
 /// Hop-by-hop headers that must not be forwarded across a proxy hop (RFC 9110 §7.6.1).

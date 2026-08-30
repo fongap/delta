@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { setWorkspaceTrusted, type WorkspaceCommandTrust } from "../api";
-import { useI18n } from "../i18n/I18nContext";
+import { useI18n } from "@delta/i18n/I18nContext";
 
 export function WorkspaceTrustPrompt({
   request,

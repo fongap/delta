@@ -44,10 +44,10 @@ import type {
   WsEvent,
 } from "./types";
 import { isProjectScoped } from "./personaScope";
-import { I18nProvider, useI18n } from "./i18n/I18nContext";
-import { dictionaries, normalizeLocale } from "./i18n/dictionaries";
-import type { Locale } from "./i18n/types";
-import { en, type TranslationKey } from "./i18n/en";
+import { I18nProvider, useI18n } from "@delta/i18n/I18nContext";
+import { dictionaries, normalizeLocale } from "@delta/i18n/dictionaries";
+import type { Locale } from "@delta/i18n/types";
+import { en, type TranslationKey } from "@delta/i18n/en";
 import { itemsFromMessages } from "./itemsFromMessages";
 import { addTurnUsage, emptyUsage, usageFromMessages } from "./usage";
 import { streamMode } from "./streamGate";

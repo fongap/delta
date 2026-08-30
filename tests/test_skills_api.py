@@ -14,8 +14,8 @@ import zipfile
 import pytest
 from fastapi.testclient import TestClient
 
-from delta.providers import AssistantTurn, ModelCapabilities, ProviderClient
-from delta.server import SessionManager, create_app
+from providers import AssistantTurn, ModelCapabilities, ProviderClient
+from services.server import SessionManager, create_app
 
 
 class ScriptedProvider(ProviderClient):
@@ -271,8 +271,8 @@ def test_engine_catalog_respects_settings_disable(tmp_path):
     )
     client.patch("/v1/skills/hidden", json={"enabled": False})
 
-    from delta.agent import build_engine
-    from delta.agents.registry import get_agent
+    from core.agent import build_engine
+    from core.agents.registry import get_agent
 
     engine = build_engine(
         agent=get_agent("chat"),

@@ -8,7 +8,7 @@ import {
   type RecentChannel,
 } from "../api";
 import { Icon } from "./Icon";
-import { useI18n } from "../i18n/I18nContext";
+import { useI18n } from "@delta/i18n/I18nContext";
 
 // A workspace roster hit for the typeahead: type a channel NAME, we resolve the
 // id (conversations.list, cached on the desktop) and compose the address.

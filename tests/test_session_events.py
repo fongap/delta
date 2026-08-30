@@ -4,8 +4,8 @@ its events to every socket viewing that session — delivery itself stays socket
 
 import asyncio
 
-from delta.providers import AssistantTurn, ModelCapabilities, ProviderClient
-from delta.server.manager import SessionManager
+from providers import AssistantTurn, ModelCapabilities, ProviderClient
+from services.server.manager import SessionManager
 
 
 class ScriptedProvider(ProviderClient):
@@ -123,7 +123,7 @@ def test_failed_background_turn_is_parked_not_swallowed(tmp_path):
 def test_unrouted_endpoint(tmp_path):
     from fastapi.testclient import TestClient
 
-    from delta.server import create_app
+    from services.server import create_app
 
     mgr = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
     mgr.unrouted.record("slack:D1", "bob", "hey", reason="no DM session designated")

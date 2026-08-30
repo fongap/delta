@@ -1,0 +1,28 @@
+"""Web search — a keyless DuckDuckGo default + configurable third-party providers."""
+
+from __future__ import annotations
+
+from integrations.web.fetch import make_web_fetch_tool
+from integrations.web.providers import (
+    BraveProvider,
+    DuckDuckGoProvider,
+    SearchResult,
+    TavilyProvider,
+    WebSearchProvider,
+    build_provider,
+    provider_names,
+)
+from integrations.web.tool import make_web_search_tool, resolve_provider
+
+__all__ = [
+    "BraveProvider",
+    "DuckDuckGoProvider",
+    "SearchResult",
+    "TavilyProvider",
+    "WebSearchProvider",
+    "build_provider",
+    "make_web_fetch_tool",
+    "make_web_search_tool",
+    "provider_names",
+    "resolve_provider",
+]
