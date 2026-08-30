@@ -825,6 +825,7 @@ class TurnEngine:
             level,
             workspace_root=self.permissions.workspace_root,
             roots=self.permissions.resolved_roots(),
+            tool_name=tool_call.name,
         )
         allowed = decision.allowed
         reason = decision.reason

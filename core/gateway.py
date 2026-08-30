@@ -28,6 +28,7 @@ network egress is an external effect regardless of what their metadata declares.
 
 from __future__ import annotations
 
+import re
 from enum import IntEnum
 from pathlib import Path
 from typing import Any, Optional
@@ -125,6 +126,50 @@ _SENSITIVE_TOKENS: tuple[str, ...] = (
     "password",
     "secret",
 )
+
+
+# Path-shaped argument names a tool uses to declare its on-disk target, mirroring
+# the PermissionEngine's write-scope list (a renamed argument must not bypass
+# confinement by falling outside either check).
+_PATH_ARGS = ("path", "file_path", "filepath", "file")
+
+# Patch/diff tools carry their targets inside the blob, not in a top-level argument.
+# apply_patch (Codex format) file headers — including the rename target — and the
+# `+++ b/<path>` headers of unified diffs.
+_APPLY_PATCH_FILE = re.compile(r"^\*\*\* (?:Add|Update|Delete) File: (.+)$", re.MULTILINE)
+_APPLY_PATCH_MOVE = re.compile(r"^\*\*\* Move to: (.+)$", re.MULTILINE)
+_UNIFIED_DIFF_FILE = re.compile(r"^\+\+\+ (?:b/)?(.+?)\s*$", re.MULTILINE)
+
+# The blob argument each patch-style write tool carries its targets in.
+_PATCH_BLOB_ARG = {"apply_patch": "patch", "apply_unified_diff": "diff"}
+
+
+def write_paths(tool_name: str, arguments: dict[str, Any] | None) -> tuple[list[str], bool]:
+    """Every filesystem path a write tool would touch, for root scoping/confinement.
+
+    Returns ``(paths, located)``. ``located`` is False when the path can't be determined
+    (a write tool with no declared path argument and no parseable blob header) — the
+    caller must then fail closed to an explicit human decision rather than skip scoping,
+    so an unscoped write can't slip through auto/custom mode.
+    """
+    arguments = arguments or {}
+    for arg in _PATH_ARGS:
+        value = arguments.get(arg)
+        if isinstance(value, str) and value.strip():
+            return [value.strip()], True
+    blob_arg = _PATCH_BLOB_ARG.get(tool_name)
+    if blob_arg is not None:
+        blob = str(arguments.get(blob_arg, ""))
+        if tool_name == "apply_patch":
+            paths = _APPLY_PATCH_FILE.findall(blob) + _APPLY_PATCH_MOVE.findall(blob)
+        else:  # apply_unified_diff
+            paths = [
+                p for p in _UNIFIED_DIFF_FILE.findall(blob) if p and p != "/dev/null"
+            ]
+        return [p.strip() for p in paths], bool(paths)
+    # Unknown write tool (e.g. one promoted to write via a user override): we cannot
+    # locate its target, so it cannot be auto-scoped.
+    return [], False
 
 
 def declared_resources(arguments: dict[str, Any] | None) -> list[str]:
@@ -254,13 +299,33 @@ def enforce_level(level: RiskLevel, decision: Any) -> Any:
 _PATH_ARGS = ("path", "file_path", "filepath", "file")
 
 
-def declared_targets(arguments: dict[str, Any] | None) -> list[str]:
-    """The path-shaped target values this call actually carries."""
+def declared_targets(
+    arguments: dict[str, Any] | None, tool_name: str | None = None
+) -> list[str]:
+    """The path-shaped target values this call actually carries — including paths buried
+    in a patch/diff blob, which confinement must scope just like a plain path argument.
+    Without a tool name, both known blob formats are scanned (conservative: extra
+    extracted paths only ever tighten confinement, never loosen it)."""
     out: list[str] = []
     for name in _PATH_ARGS:
         value = (arguments or {}).get(name)
-        if isinstance(value, str) and value.strip():
+        if isinstance(value, str) and value.strip() and value not in out:
             out.append(value.strip())
+    blob_args: tuple[str, ...]
+    if tool_name in _PATCH_BLOB_ARG:
+        blob_args = (_PATCH_BLOB_ARG[tool_name],)
+    else:
+        blob_args = tuple(_PATCH_BLOB_ARG.values())
+    for blob_arg in blob_args:
+        blob = str((arguments or {}).get(blob_arg, "") or "")
+        if not blob:
+            continue
+        found = _APPLY_PATCH_FILE.findall(blob) + _APPLY_PATCH_MOVE.findall(blob)
+        found += [p for p in _UNIFIED_DIFF_FILE.findall(blob) if p and p != "/dev/null"]
+        for path in found:
+            path = path.strip()
+            if path and path not in out:
+                out.append(path)
     return out
 
 
@@ -271,6 +336,7 @@ def enforce_scope(
     *,
     workspace_root: Path,
     roots: list[tuple[Path, bool]],
+    tool_name: str | None = None,
 ) -> Any:
     """Slice 3 resource guard (mutates + returns `decision`):
 
@@ -289,7 +355,7 @@ def enforce_scope(
     if not getattr(decision, "allowed", False) or level < RiskLevel.L1:
         return decision
 
-    targets = declared_targets(arguments)
+    targets = declared_targets(arguments, tool_name)
     if not targets:
         return decision
 

@@ -425,3 +425,65 @@ def test_audit_store_persists_isolation(tmp_path):
     events = store.list(session_id="s1")
     assert len(events) == 1
     assert events[0]["isolation"] == "checkpoint"
+
+
+# -- write_paths: targets buried in patch/diff blobs ------------------------------
+
+def test_write_paths_extracts_patch_file_headers():
+    from core.gateway import write_paths
+
+    blob = (
+        "*** Begin Patch\n"
+        "*** Add File: src/new.py\n+hi\n"
+        "*** Update File: src/old.py\n@@\n"
+        "*** Delete File: src/gone.py\n"
+        "*** End Patch"
+    )
+    paths, located = write_paths("apply_patch", {"patch": blob})
+    assert located
+    assert sorted(paths) == ["src/gone.py", "src/new.py", "src/old.py"]
+
+
+def test_write_paths_extracts_patch_rename_target():
+    from core.gateway import write_paths
+
+    blob = "*** Begin Patch\n*** Update File: a.py\n*** Move to: b.py\n@@\n*** End Patch"
+    paths, located = write_paths("apply_patch", {"patch": blob})
+    assert located and sorted(paths) == ["a.py", "b.py"]
+
+
+def test_write_paths_extracts_unified_diff_headers():
+    from core.gateway import write_paths
+
+    diff = "--- a/old.py\n+++ b/new.py\n@@ -1 +1 @@\n-x\n+y\n"
+    paths, located = write_paths("apply_unified_diff", {"diff": diff})
+    assert located and "new.py" in paths
+
+
+def test_unparseable_write_blob_fails_closed():
+    from core.gateway import write_paths
+
+    paths, located = write_paths("apply_patch", {"patch": "garbage"})
+    assert not located and paths == []
+
+
+def test_confinement_covers_patch_blob_targets():
+    import tempfile
+    from pathlib import Path
+
+    from core.gateway import RiskLevel, enforce_scope
+
+    class D:
+        allowed = True
+        needs_user = False
+        rule = ""
+        reason = "full access"
+        grant = "blanket"
+
+    with tempfile.TemporaryDirectory() as ws:
+        ws = Path(ws)
+        blob = f"*** Begin Patch\n*** Update File: {ws.parent / 'escape.py'}\n@@\n*** End Patch"
+        d = enforce_scope(
+            D(), {"patch": blob}, RiskLevel.L1, workspace_root=ws, roots=[(ws, True)]
+        )
+        assert not d.allowed and d.needs_user

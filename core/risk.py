@@ -4,7 +4,8 @@ gating (and, later in Phase 2, unattended Inbox routing).
 This replaces the hardcoded ``WRITE_TOOLS`` / ``SHELL_TOOL`` name sets the permission engine
 used to carry inline: risk is now a declared property a single ``classify`` reads.
 
-A tool's *effective* risk = an optional user-local override (Phase 2) ?? the base
+A tool's *effective* risk = an optional user-local override (which may tighten a by-name
+built-in and may relax a metadata-classified plug-in tool) applied over the base
 classification here. Built-in vetted tools are classified by name; anything else falls back
 to its aisuite metadata (``requires_approval`` → external) or is treated as read.
 """
@@ -39,21 +40,37 @@ _BASE: dict[str, RiskClass] = {
     **{name: RiskClass.EGRESS for name in EGRESS_TOOLS},
 }
 
+# How much attention each class demands, for the override-tightening rule in classify().
+# Higher = stricter. WRITE_LOCAL and EXEC are the crown jewels (path scoping / command
+# gating) — an override that downgrades either switches off its structural check at once.
+_STRICTNESS: dict[RiskClass, int] = {
+    RiskClass.READ: 0,
+    RiskClass.EGRESS: 1,
+    RiskClass.EXTERNAL: 2,
+    RiskClass.WRITE_LOCAL: 3,
+    RiskClass.EXEC: 3,
+}
+
 # A user-local override resolver: tool name -> RiskClass (or None to defer to the base).
-# Wired in Phase 2 (mainly to relax MCP's conservative default); always None until then.
 RiskOverrides = Callable[[str], Optional["RiskClass"]]
 
 
 def classify(
     tool_name: str, metadata: Any = None, overrides: RiskOverrides | None = None
 ) -> RiskClass:
-    """Effective risk of a tool call. ``overrides`` (user-local) wins, then the by-name base
-    table, then aisuite metadata (`requires_approval` → external), else read."""
+    """Effective risk of a tool call. A user override may *relax* a metadata-classified
+    tool (the intended use — quieting an over-cautious MCP/plug-in default), but for a
+    built-in tool classified by name it may only ever **tighten**, never loosen:
+    downgrading write_file to read would switch off path scoping AND the read-only gate
+    in one settings line, in every future session. Precedence otherwise: the by-name
+    base table, then aisuite metadata (`requires_approval` → external), else read."""
+    base = _BASE.get(tool_name)
     if overrides is not None:
         ov = overrides(tool_name)
         if ov is not None:
-            return ov
-    base = _BASE.get(tool_name)
+            if base is None or _STRICTNESS[ov] >= _STRICTNESS[base]:
+                return ov
+            # A loosening override on a built-in is ignored: fall through to the base class.
     if base is not None:
         return base
     if bool(getattr(metadata, "requires_approval", False)):
