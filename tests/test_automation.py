@@ -150,6 +150,46 @@ async def test_scheduler_skips_overlapping_run(tmp_path):
     await first
 
 
+async def test_tick_while_run_is_parked_never_redispatches_it(tmp_path):
+    """The overlap guard is claimed at dispatch, not inside the spawned run.
+
+    Regression: a tick's due() snapshot still lists a task whose run is parked on an
+    approval (next_run only advances on completion). If the guard were checked inside the
+    spawn, a run finishing just before the duplicate spawn's first step would clear the
+    guard and the task would run twice. Delta already claims synchronously in _tick
+    before create_task(); this pins that behavior.
+
+    Port of andrewyng/openworker d20dd624bb1514f95dcee99288d61bb402bbabe7 (test only —
+    the code fix was already implemented here)."""
+    store = TaskStore(tmp_path / "auto.db")
+    task = _task(title="parked")
+    store.save(task)
+    store._conn.execute("UPDATE scheduled_tasks SET next_run=1.0 WHERE id=?", (task.id,))
+    store._conn.commit()
+
+    gate = asyncio.Event()
+    started = asyncio.Event()
+    calls = 0
+
+    async def runner(t, trigger):
+        nonlocal calls
+        calls += 1
+        started.set()
+        await gate.wait()
+        return TaskRun(task_id=t.id, status="ok", trigger=trigger)
+
+    sched = Scheduler(store, runner, tick_seconds=9999)
+    await sched._tick(trigger="schedule")  # dispatch; the run parks on the gate
+    await started.wait()
+    gate.set()  # the approval lands...
+    await sched._tick(trigger="schedule")  # ...right as the next tick fires
+    for _ in range(5):
+        await asyncio.sleep(0)  # parked run finishes; any duplicate would start now
+    assert calls == 1
+    assert store.get(task.id).run_count == 1
+    await sched.stop()
+
+
 # -- agent-facing tools --------------------------------------------------------
 def test_create_and_list_tools(tmp_path):
     store = TaskStore(tmp_path / "auto.db")

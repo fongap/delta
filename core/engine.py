@@ -31,6 +31,7 @@ from core.events import Event, EventType
 from core.permissions import Mode, PermissionEngine
 from providers import AssistantTurn, ProviderClient, ToolCall
 from providers.errors import friendly_model_error
+from providers.openai_provider import looks_like_unparsed_tool_call
 from integrations.tools import ToolRegistry
 
 # Stateless message-formatting helpers moved to engine_format; the TurnEngine body resolves
@@ -496,6 +497,29 @@ class TurnEngine:
                 if self._steering:
                     self._inject_steering()
                     continue
+                # The model tried to call a tool and the syntax never parsed — salvage
+                # already had its go. Ending as "completed" here would present a
+                # half-written call as the answer, which is indistinguishable from the
+                # model deciding it was done; the user just sees narration trailing off
+                # into stray tags. Fail loudly on the error path so the UI offers Retry —
+                # this is drift, not a deterministic failure, so retrying the same model
+                # usually works.
+                if looks_like_unparsed_tool_call(
+                    turn.text, self.registry.schemas() or None
+                ):
+                    message = (
+                        f"{self.model} replied with a tool call this endpoint couldn't "
+                        "parse, so the turn was stopped rather than answered from a "
+                        "partial call. Retry, or switch to a larger model — smaller "
+                        "local models drift off the tool-call format, especially with "
+                        "many tools in play."
+                    )
+                    self._append_notice("error", message)
+                    yield Event(
+                        EventType.ERROR,
+                        {"error": message, "error_type": "UnparsedToolCall"},
+                    )
+                    return
                 yield Event(
                     EventType.TURN_END,
                     {"status": "completed", "iterations": iterations},

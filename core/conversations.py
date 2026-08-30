@@ -12,12 +12,25 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sqlite3
 import threading
 from pathlib import Path
 from typing import Optional
 
 from core.sessions import SessionRecord
+
+# A session id becomes a filename (`<id>.jsonl`), so it must be a single, benign path
+# component. Every legitimate id Delta generates is hex or a `__run__`/`__task__`-prefixed
+# hex string, so this charset is a superset of what we generate; it excludes the path
+# separators and dots a client-supplied id would need to escape the store. Session ids
+# arrive from client-controlled surfaces (gateway session routes, REST paths), so without
+# this an id like `../../evil` would write `<base>/evil.jsonl` outside `conversations/`.
+_SAFE_SESSION_ID = re.compile(r"\A[A-Za-z0-9_-]{1,128}\Z")
+
+
+def is_safe_session_id(sid: str) -> bool:
+    return bool(isinstance(sid, str) and _SAFE_SESSION_ID.match(sid))
 
 
 def _load_roots(raw: str | None) -> list[dict]:
@@ -46,6 +59,23 @@ def _display_title(row: sqlite3.Row) -> str | None:
     if row["renamed"]:
         return row["title"]
     return row["auto_title"] or row["title"]
+
+
+def _parse_jsonl(text: str) -> list[dict]:
+    """Parse a .jsonl body tolerantly: skip blank lines and, rather than failing the
+    whole load, skip individual corrupt/truncated lines. An append interrupted mid-write
+    (crash, disk full) leaves one malformed line; a bare `json.loads` would raise and
+    make load() throw on every open — bricking that session on every surface. Keep the
+    recoverable history instead."""
+    messages: list[dict] = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            messages.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return messages
 
 
 def title_from(messages: list[dict]) -> str:
@@ -111,17 +141,120 @@ class ConversationStore:
 
     # -- file helpers -----------------------------------------------------------
     def _file(self, sid: str) -> Path:
-        return self.conv_dir / f"{sid}.jsonl"
+        # Single chokepoint for every conversation-file path. Reject ids that aren't a
+        # safe path component, then confirm the resolved path stays inside conv_dir — so
+        # a crafted id can never read or clobber a file outside the store.
+        if not is_safe_session_id(sid):
+            raise ValueError(f"unsafe session id: {sid!r}")
+        path = (self.conv_dir / f"{sid}.jsonl").resolve()
+        if path.parent != self.conv_dir.resolve():
+            raise ValueError(f"unsafe session id: {sid!r}")
+        return path
 
     def _read_jsonl(self, sid: str) -> list[dict] | None:
         path = self._file(sid)
         if not path.exists():
             return None
-        return [
-            json.loads(line)
-            for line in path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
+        return _parse_jsonl(path.read_text(encoding="utf-8"))
+
+    # -- tool-call/result pairing repair ----------------------------------------
+    @staticmethod
+    def _repair_tool_pairing(messages: list[dict]) -> list[dict]:
+        """Reorder messages so every tool result immediately follows its call.
+
+        Append-only persistence means an interrupted turn can leave a user message
+        between an assistant ``tool_calls`` block and the matching ``tool`` result.
+        Providers reject that ordering (Anthropic 400/2013, OpenAI "tool_call_ids did
+        not have response messages"), making the session permanently unrecoverable.
+
+        This pass:
+        * Moves a real ``tool`` result found later in the thread to sit right after its
+          call.
+        * Synthesises a placeholder result for a call with no matching tool message —
+          but **only** when the thread has moved past the call (i.e. there are messages
+          after the assistant block). A trailing assistant ``tool_calls`` with no result
+          is a pending/interrupted call that the engine will resume; injecting a
+          placeholder there would break durable resume.
+        * Is idempotent — a well-formed thread passes through unchanged.
+        """
+        if not messages:
+            return messages
+
+        # Collect tool_call ids from assistant messages.
+        pending_calls: dict[str, int] = {}  # call_id → index of the assistant msg
+        for i, m in enumerate(messages):
+            if m.get("role") == "assistant" and m.get("tool_calls"):
+                for tc in m["tool_calls"]:
+                    call_id = tc.get("id")
+                    if call_id:
+                        pending_calls[call_id] = i
+
+        if not pending_calls:
+            return messages  # no tool calls at all
+
+        # Find tool results and where they sit relative to their calls.
+        # call_id → index of the tool result message (first one wins)
+        found_results: dict[str, int] = {}
+        for i, m in enumerate(messages):
+            if m.get("role") == "tool":
+                call_id = m.get("tool_call_id")
+                if call_id and call_id in pending_calls and call_id not in found_results:
+                    found_results[call_id] = i
+
+        # A trailing assistant block (the last message in the thread) holds pending
+        # calls the engine will resume — never inject placeholders for those.
+        last_msg_idx = len(messages) - 1
+        trailing_calls = {
+            call_id
+            for call_id, call_idx in pending_calls.items()
+            if call_idx == last_msg_idx
+        }
+
+        # Only act when a result is missing or not immediately after its call.
+        needs_repair = False
+        for call_id, call_idx in pending_calls.items():
+            if call_id in trailing_calls and call_id not in found_results:
+                continue  # pending call — engine will resume
+            if call_id in found_results:
+                if found_results[call_id] != call_idx + 1:
+                    needs_repair = True  # result exists but not immediately after
+            else:
+                needs_repair = True  # no result at all
+        if not needs_repair:
+            return messages  # already well-formed (or only pending calls)
+
+        # Rebuild: after each assistant block emit its tool results, in call order —
+        # moved from their original position, or synthesised when lost.
+        consumed_result_indices: set[int] = set()
+        repaired: list[dict] = []
+
+        for i, m in enumerate(messages):
+            if m.get("role") == "assistant" and m.get("tool_calls"):
+                repaired.append(m)
+                for tc in m["tool_calls"]:
+                    call_id = tc.get("id")
+                    if not call_id:
+                        continue
+                    if call_id in found_results:
+                        result_idx = found_results[call_id]
+                        if result_idx not in consumed_result_indices:
+                            repaired.append(messages[result_idx])
+                            consumed_result_indices.add(result_idx)
+                    elif call_id not in trailing_calls:
+                        repaired.append({
+                            "role": "tool",
+                            "tool_call_id": call_id,
+                            "content": (
+                                '{"error": "tool result was lost during an '
+                                'interrupted turn"}'
+                            ),
+                        })
+            elif i in consumed_result_indices:
+                continue  # already moved this tool result up
+            else:
+                repaired.append(m)
+
+        return repaired
 
     def _count(self, sid: str) -> int:
         """On-disk line count for `sid`, using the cache when it is warm.
@@ -148,6 +281,22 @@ class ConversationStore:
                 f.write(json.dumps(m) + "\n")
         self._known[sid] = self._known.get(sid, 0) + len(messages)
 
+    def _rewrite_jsonl(self, sid: str, messages: list[dict]) -> None:
+        """Atomically replace the session's .jsonl with exactly `messages`. Both callers
+        (the rare save() shrink and revert()) rewrite existing history, so a crash partway
+        through must never truncate the file: write a temp file, close it, then swap in
+        one step — the tmp-then-replace pattern of packages.jsonstate.save_json_state."""
+        path = self._file(sid)
+        tmp = path.with_suffix(".tmp")
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                for m in messages:
+                    f.write(json.dumps(m) + "\n")
+            tmp.replace(path)
+        except BaseException:
+            tmp.unlink(missing_ok=True)  # never leave a scratch file behind
+            raise
+
     def revert(self, sid: str, index: int) -> list[dict]:
         """Drop messages from `index` onward (the user message at `index` and everything
         after), keeping [0, index). Returns the dropped slice so the caller can prefill the
@@ -157,18 +306,11 @@ class ConversationStore:
             path = self._file(sid)
             if not path.exists():
                 return []
-            messages = [
-                json.loads(line)
-                for line in path.read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            ]
+            messages = _parse_jsonl(path.read_text(encoding="utf-8"))
             if index <= 0 or index >= len(messages):
                 return []
             dropped = messages[index:]
-            path.write_text(
-                "".join(json.dumps(m) + "\n" for m in messages[:index]),
-                encoding="utf-8",
-            )
+            self._rewrite_jsonl(sid, messages[:index])
             self._known[sid] = index
             self._conn.execute(
                 "UPDATE sessions SET n_msgs = MAX(0, n_msgs - ?) WHERE session_id = ?",
@@ -231,9 +373,7 @@ class ConversationStore:
             if len(record.messages) > existing:
                 self._append(sid, record.messages[existing:])
             elif len(record.messages) < existing:  # rare; not append-only
-                with open(self._file(sid), "w", encoding="utf-8") as f:
-                    for m in record.messages:
-                        f.write(json.dumps(m) + "\n")
+                self._rewrite_jsonl(sid, record.messages)
                 self._known[sid] = len(record.messages)
 
             title = record.title or title_from(record.messages)
@@ -279,6 +419,10 @@ class ConversationStore:
                 messages = json.loads(row["messages"] or "[]")
             except json.JSONDecodeError:
                 messages = []
+        # Self-heal: ensure every tool result immediately follows its call. An
+        # interrupted turn can persist a user message between an assistant tool_calls
+        # block and its tool result, which providers reject (400).
+        messages = self._repair_tool_pairing(messages)
         return SessionRecord(
             session_id=session_id,
             workspace=row["workspace"],
