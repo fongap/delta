@@ -36,68 +36,10 @@ jobs:
             exit 1
           fi
 
-          python3 <<'PY'
-          import json
-          import os
-          import re
-          import tomllib
-          from pathlib import Path
-
-          def json_version(path: str) -> str:
-              return json.loads(Path(path).read_text(encoding="utf-8"))["version"]
-
-          def toml_version(path: str) -> str:
-              return tomllib.loads(Path(path).read_text(encoding="utf-8"))["package"]["version"]
-
-          def cargo_lock_version(path: str, package: str) -> str:
-              packages = tomllib.loads(Path(path).read_text(encoding="utf-8"))["package"]
-              matches = [item["version"] for item in packages if item["name"] == package]
-              if len(matches) != 1:
-                  raise SystemExit(f"expected exactly one {package!r} package in {path}")
-              return matches[0]
-
-          package_lock = json.loads(Path("apps/desktop/package-lock.json").read_text(encoding="utf-8"))
-          server_version_text = Path("packaging/delta-server-version.txt").read_text(encoding="utf-8")
-          server_version_match = re.search(r"StringStruct\('ProductVersion', '([^']+)'\)", server_version_text)
-          if server_version_match is None:
-              raise SystemExit("packaging/delta-server-version.txt has no ProductVersion")
-
-          versions = {
-              "pyproject.toml": tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"],
-              "apps/desktop/package.json": json_version("apps/desktop/package.json"),
-              "apps/desktop/package-lock.json": package_lock["version"],
-              "apps/desktop/package-lock.json packages root": package_lock["packages"][""]["version"],
-              "apps/desktop/src-tauri/tauri.conf.json": json_version("apps/desktop/src-tauri/tauri.conf.json"),
-              "apps/desktop/src-tauri/Cargo.toml": toml_version("apps/desktop/src-tauri/Cargo.toml"),
-              "apps/desktop/src-tauri/Cargo.lock": cargo_lock_version("apps/desktop/src-tauri/Cargo.lock", "delta-desktop"),
-              "packaging/portable/launcher/Cargo.toml": toml_version("packaging/portable/launcher/Cargo.toml"),
-              "packaging/portable/launcher/Cargo.lock": cargo_lock_version("packaging/portable/launcher/Cargo.lock", "delta-portable-launcher"),
-              "packaging/delta-server-version.txt": server_version_match.group(1),
-          }
-          unique = set(versions.values())
-          if len(unique) != 1:
-              details = ", ".join(f"{path}={version}" for path, version in versions.items())
-              raise SystemExit(f"release versions are inconsistent: {details}")
-
-          version = unique.pop()
-          if not re.fullmatch(r"(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*)", version):
-              raise SystemExit(f"release version must be stable SemVer X.Y.Z, got {version!r}")
-          version_tuple = tuple(int(part) for part in version.split(".")) + (0,)
-          tuple_text = ", ".join(str(part) for part in version_tuple)
-          for field in ("filevers", "prodvers"):
-              if f"{field}=({tuple_text})" not in server_version_text:
-                  raise SystemExit(f"packaging/delta-server-version.txt {field} does not match {version}")
-
-          changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
-          if "## [Unreleased]" not in changelog:
-              raise SystemExit("CHANGELOG.md must keep an [Unreleased] section")
-          if not re.search(rf"^## \[{re.escape(version)}\] - \d{{4}}-\d{{2}}-\d{{2}}$", changelog, re.MULTILINE):
-              raise SystemExit(f"CHANGELOG.md has no release section for {version}")
-
-          with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
-              output.write(f"version={version}\n")
-              output.write(f"tag=v{version}\n")
-          PY
+          # Version-source consistency + CHANGELOG gate, shared with local runs
+          # (scripts/check_release_versions.py — same checks, single source of truth).
+          # Appends version=/tag= to GITHUB_OUTPUT exactly like the previous inline step.
+          python3 scripts/check_release_versions.py --quiet
 
   build-portable:
     needs: prepare
@@ -138,7 +80,7 @@ jobs:
 
       - name: Build Windows portable release
         shell: pwsh
-        run: .\packaging\build_portable.ps1
+        run: .\packaging\portable\build_portable.ps1
 
       - name: Verify portable release assets
         shell: pwsh

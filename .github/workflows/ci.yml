@@ -223,8 +223,9 @@ jobs:
       - name: Stub the sidecar binary for codegen
         if: ${{ matrix.tauri-deps }}
         # tauri-build's codegen checks that `binaries/sidecar` exists; the real binary
-        # is built by packaging/build_portable.ps1 at release time, so CI touches an
-        # empty placeholder so fmt/check/clippy/test can run against the shell crate.
+        # is built by packaging/portable/build_portable.ps1 at release time, so CI
+        # touches an empty placeholder so fmt/check/clippy/test can run against the
+        # shell crate.
         run: mkdir -p apps/desktop/src-tauri/binaries && touch apps/desktop/src-tauri/binaries/sidecar
       # v2
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
@@ -274,7 +275,7 @@ jobs:
           # read the old key once to migrate it. Those are legitimately excepted, exactly
           # like the provenance allow-list in docs/CHANGELOG/UPSTREAM.md. Any NEW reference
           # elsewhere fails the build.
-          if grep -rn "openwork-theme\|openwork:theme-pref" apps src services tests scripts \
+          if grep -rn "openwork-theme\|openwork:theme-pref" apps services tests scripts \
               --include='*.ts' --include='*.tsx' --include='*.html' --include='*.rs' \
               --include='*.py' --include='*.js' --include='*.json' --include='*.css' 2>/dev/null \
               | grep -v 'apps/desktop/src/theme.ts' \
@@ -284,6 +285,14 @@ jobs:
             exit 1
           fi
           echo "no legacy OpenWork theme keys"
+      - name: Deprecated migrated paths
+        run: |
+          set -uo pipefail
+          # Files that moved during the restructure (packaging/server/, packaging/portable/)
+          # must be referenced by their CURRENT path everywhere outside history files
+          # (CHANGELOG/UPSTREAM/docs-governance keep their records verbatim). The script
+          # owns the pattern list — extend it there when a path migrates.
+          python3 scripts/check_legacy_paths.py
 
   ci-required:
     # Stable single gate for the main branch Ruleset. The Ruleset requires ONLY this

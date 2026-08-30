@@ -805,7 +805,7 @@ dependencies = [
 
 [[package]]
 name = "delta-desktop"
-version = "0.2.2"
+version = "0.3.0"
 dependencies = [
  "delta-stt",
  "encoding_rs",
