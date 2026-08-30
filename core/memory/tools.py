@@ -15,7 +15,7 @@ it back. Failures in the callback never fail the write.
 
 from __future__ import annotations
 
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import aisuite as ai
 
@@ -23,7 +23,22 @@ from core.memory.base import MemoryItem, MemoryStore, Scope
 
 _SCOPES = {s.value for s in Scope}
 
-_META = dict(category="memory", risk_level="low", capabilities=["remember"])
+# Risk must describe the real side effect, not a blanket "memory = low":
+# reads are L0, writes are reversible local writes (Undo carries the previous
+# text back), and forget is a consequential local write with no undo — the
+# gateway maps these to L0 / L1 / L2 respectively.
+_META_READ: dict[str, Any] = dict(
+    category="memory", risk_level="low", capabilities=["memory_read"]
+)
+_META_WRITE: dict[str, Any] = dict(
+    category="memory", risk_level="low", capabilities=["remember"]
+)
+_META_FORGET: dict[str, Any] = dict(
+    category="memory",
+    risk_level="low",
+    requires_approval=True,
+    capabilities=["remember"],
+)
 
 
 def memory_tools(
@@ -138,6 +153,8 @@ def memory_tools(
         return {"deleted": False, "error": f"no memory with id {memory_id}"}
 
     return [
-        ai.tool(fn, metadata=ai.ToolMetadata(**_META))
-        for fn in (remember, memory_read, memory_update, memory_forget)
+        ai.tool(remember, metadata=ai.ToolMetadata(**_META_WRITE)),
+        ai.tool(memory_read, metadata=ai.ToolMetadata(**_META_READ)),
+        ai.tool(memory_update, metadata=ai.ToolMetadata(**_META_WRITE)),
+        ai.tool(memory_forget, metadata=ai.ToolMetadata(**_META_FORGET)),
     ]

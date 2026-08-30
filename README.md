@@ -69,7 +69,7 @@ npm run tauri dev
 ### 构建便携包
 
 ```powershell
-# 前置条件：Rust、Node.js、Python 3.10+、.venv 已安装 pyinstaller
+# 前置条件：Rust、Node.js、Python 3.11+、.venv 已安装 pyinstaller
 .\packaging\portable\build_portable.ps1
 # 最终产物仅写入仓库根目录 releases\（ZIP + .sha256）
 ```

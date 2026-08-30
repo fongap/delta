@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "delta"
-version = "0.2.2"
+version = "0.3.0"
 description = "Agent delta platform — provider-agnostic agentic delta runtime"
 requires-python = ">=3.11"
 dependencies = [
@@ -34,8 +34,6 @@ dependencies = [
     # IANA tz database for zoneinfo. Windows ships no system tz db, so without this every
     # named schedule timezone (UTC, Asia/Kolkata, …) silently falls back to local time.
     "tzdata==2026.3; sys_platform == 'win32'",
-    # tomllib landed in the 3.11 stdlib; on the 3.10 floor config.py falls back to tomli.
-    "tomli>=2; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
