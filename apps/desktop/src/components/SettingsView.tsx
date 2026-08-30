@@ -37,8 +37,8 @@ import {
 } from "../tauri";
 import { UPDATER_FEED_PUBLISHED } from "./UpdateBanner";
 import { useThemePref } from "../theme";
-import { useI18n, type TranslationKey } from "../i18n/I18nContext";
-import type { Locale } from "../i18n/types";
+import { useI18n, type TranslationKey } from "@delta/i18n/I18nContext";
+import type { Locale } from "@delta/i18n/types";
 import { Icon } from "./Icon";
 import { PanelHead } from "./IntegrationsView";
 import { ModelsTab } from "./ManageTabs";

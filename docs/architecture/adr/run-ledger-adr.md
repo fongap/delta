@@ -7,7 +7,7 @@
 ## Context
 
 Run state today lives in two disconnected places: the live session transcript
-(`SessionManager` + engine buffers) and a thin audit table (`src/delta/audit.py`,
+(`SessionManager` + engine buffers) and a thin audit table (`core/audit.py`,
 `audit_events`: timestamp/session/tool/approval/args/result_preview — no chaining, no
 run grouping). Recovery exists only as automation durable-resume. Consequences:
 
@@ -45,7 +45,7 @@ Background-process lifecycle (`run_in_background` spawns, `shell_task_kill`, man
 teardown kills) happens deep below the Runtime Adapter, in the executor. Instead of
 threading `run_id` through `build_engine → shell_tools → executor` signatures, the
 adapter publishes the active `(run_id, session_id)` into an ambient context variable
-(`src/delta/runscope.py`) for the duration of each driven turn; `asyncio.to_thread`
+(`core/runscope.py`) for the duration of each driven turn; `asyncio.to_thread`
 copies contexts, so the executor observes the scope with no API changes. The executor
 stays ledger-agnostic: it reports structured facts to an injected sink
 (`process_event_sink`), and the manager decides persistence:

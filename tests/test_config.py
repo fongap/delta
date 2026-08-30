@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from delta.config import load_config
+from packages.config import load_config
 
 
 def test_defaults_when_no_files(tmp_path):
@@ -65,7 +65,7 @@ def test_trusted_workspace_adds_its_command_allowances_only(tmp_path):
 def test_workspace_trust_is_canonical_and_user_owned(tmp_path):
     import pytest
 
-    from delta.workspace_trust import WorkspaceTrustStore
+    from core.workspace_trust import WorkspaceTrustStore
 
     real = tmp_path / "real"
     real.mkdir()
@@ -101,7 +101,7 @@ def test_workspace_trust_marks_acl_degradation(tmp_path, monkeypatch):
     """The trust file shares the SecretStore's best-effort private write; a failed
     hardening must leave a visible marker (cleared by a later verified write) —
     never degrade silently."""
-    from delta import workspace_trust as wt
+    from core import workspace_trust as wt
 
     store = wt.WorkspaceTrustStore(tmp_path / "state" / "workspace_trust.json")
     real = tmp_path / "ws"
@@ -118,8 +118,8 @@ def test_workspace_trust_marks_acl_degradation(tmp_path, monkeypatch):
 
 
 def test_build_engine_honors_explicit_empty_command_allowlist(tmp_path):
-    from delta.agent import build_code_engine
-    from delta.config import global_config_path
+    from core.agent import build_code_engine
+    from packages.config import global_config_path
 
     global_config_path().parent.mkdir(parents=True)
     global_config_path().write_text('allowed_commands = ["pytest"]\n')
@@ -147,7 +147,7 @@ def test_build_engine_respects_max_iterations(tmp_path):
     (tmp_path / ".delta").mkdir()
     (tmp_path / ".delta" / "config.toml").write_text("max_iterations = 3\n")
 
-    from delta.agent import build_code_engine
+    from core.agent import build_code_engine
 
     class _Stub:
         def complete(self, **k):  # pragma: no cover
@@ -168,7 +168,7 @@ def test_cloud_endpoints_default_to_production():
     opts in. The base URL is the default sign-in endpoint (an address — nothing is sent
     until sign-in); the managed relay is DEFAULT-EMPTY so inbound relaying is OFF out of
     the box (empty ⇒ relay disabled; the user enables it explicitly or via sign-in)."""
-    from delta.config import Config
+    from packages.config import Config
 
     cfg = Config()
     assert cfg.cloud_base_url == "https://api.openworker.com"

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
-from delta.providers import (
+from providers import (
     AssistantTurn,
     ModelCapabilities,
     OpenAIProvider,
@@ -292,7 +292,7 @@ COMPAT_VENDORS = {
 
 
 def test_compat_vendor_descriptors_ship_prefilled_endpoints():
-    from delta.providers.registry import get_descriptor
+    from providers.registry import get_descriptor
 
     for name, endpoint in COMPAT_VENDORS.items():
         d = get_descriptor(name)
@@ -305,7 +305,7 @@ def test_compat_vendor_descriptors_ship_prefilled_endpoints():
 
 
 def test_compat_builder_defaults_and_profile_override(monkeypatch):
-    from delta.providers.registry import build_provider_client
+    from providers.registry import build_provider_client
 
     p = build_provider_client("zai", {"api_key": "zk"}, None)
     assert p._base_url == COMPAT_VENDORS["zai"]
@@ -317,7 +317,7 @@ def test_compat_builder_defaults_and_profile_override(monkeypatch):
 
 
 def test_compat_builder_env_key_fallback(monkeypatch):
-    from delta.providers.registry import build_provider_client
+    from providers.registry import build_provider_client
 
     monkeypatch.setenv("DEEPSEEK_API_KEY", "ds-key")
     p = build_provider_client("deepseek", {}, None)
@@ -330,7 +330,7 @@ def test_compat_builder_never_leaks_the_openai_key(monkeypatch):
     a missing vendor key fails fast with a vendor-named error instead."""
     import pytest
 
-    from delta.providers.registry import build_provider_client
+    from providers.registry import build_provider_client
 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-real")
     monkeypatch.delenv("MOONSHOT_API_KEY", raising=False)
@@ -339,7 +339,7 @@ def test_compat_builder_never_leaks_the_openai_key(monkeypatch):
 
 
 def test_compat_models_route_and_get_tool_capabilities():
-    from delta.providers.router import ProviderRouter
+    from providers.router import ProviderRouter
 
     router = ProviderRouter.__new__(
         ProviderRouter
@@ -363,8 +363,8 @@ def test_compat_models_route_and_get_tool_capabilities():
 def test_compat_recommended_models_are_in_the_suggested_lists():
     """set_provider only auto-adds the recommended model if it's in _suggested_models —
     keep the registry and the manager's COMPAT_MODELS table in lockstep."""
-    from delta.providers.registry import get_descriptor
-    from delta.server.manager import SessionManager
+    from providers.registry import get_descriptor
+    from services.server.manager import SessionManager
 
     for name in COMPAT_VENDORS:
         d = get_descriptor(name)
@@ -389,7 +389,7 @@ def test_matrix_answers_capabilities_for_reseller_ids():
 
 
 def test_matrix_labels_and_custom_model_fallback():
-    from delta.providers.matrix import MATRIX, model_labels
+    from providers.matrix import MATRIX, model_labels
 
     labels = model_labels()
     assert labels["together:zai-org/GLM-5.2"] == "GLM-5.2 · via Together"
@@ -406,8 +406,8 @@ def test_matrix_labels_and_custom_model_fallback():
 def test_reseller_descriptors_and_matrix_stay_in_lockstep():
     """Reseller suggested models derive from the matrix, and each descriptor's
     recommended model must be one of them (set_provider's auto-add depends on it)."""
-    from delta.providers.matrix import models_for_provider
-    from delta.providers.registry import get_descriptor
+    from providers.matrix import models_for_provider
+    from providers.registry import get_descriptor
 
     for name in ("together", "fireworks", "openrouter"):
         d = get_descriptor(name)

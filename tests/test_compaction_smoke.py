@@ -7,9 +7,9 @@ the live-model smoke (which needs a configured provider key)."""
 import asyncio
 import json
 
-from delta.providers import AssistantTurn, ModelCapabilities, ProviderClient
-from delta.providers.base import TokenUsage
-from delta.server.manager import SessionManager
+from providers import AssistantTurn, ModelCapabilities, ProviderClient
+from providers.base import TokenUsage
+from services.server.manager import SessionManager
 
 BULK = "analysis paragraph " * 400  # ~7.6k chars (~1.9k tokens) per turn → triggers by turn 2
 

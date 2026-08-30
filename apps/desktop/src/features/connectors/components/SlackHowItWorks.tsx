@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { SlackWorkspace } from "../../../api";
-import { useI18n } from "../../../i18n/I18nContext";
+import { useI18n } from "@delta/i18n/I18nContext";
 
 // UX-027: the post-connect "how mentions reach you" card. A tabbed carousel of
 // animated split-scenes — Slack on the left (pinned to light-Slack colors, so it

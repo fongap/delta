@@ -10,8 +10,8 @@ from __future__ import annotations
 import asyncio
 import time
 
-from delta.providers import AssistantTurn, ModelCapabilities, ProviderClient
-from delta.server.manager import SessionManager
+from providers import AssistantTurn, ModelCapabilities, ProviderClient
+from services.server.manager import SessionManager
 
 
 class TitleAwareProvider(ProviderClient):
