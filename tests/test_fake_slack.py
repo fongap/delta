@@ -12,11 +12,11 @@ import re
 
 import httpx
 
-from delta.connectors.adapters import SlackAdapter
-from delta.connectors.base import InteractionEvent, MessageEvent
-from delta.connectors.config import ConnectorSettings
-from delta.connectors.gateway import Gateway
-from delta.interactions import Button
+from integrations.connectors.adapters import SlackAdapter
+from integrations.connectors.base import InteractionEvent, MessageEvent
+from integrations.connectors.config import ConnectorSettings
+from integrations.connectors.gateway import Gateway
+from core.interactions import Button
 
 
 def _allow_all() -> dict[str, ConnectorSettings]:

@@ -8,10 +8,10 @@ import json
 
 from test_durable_resume import ScriptedProvider, _run_until_pending, _text, _tool
 
-from delta.inbox import InboxItem, InboxStore
-from delta.interactions import buttons_for, decode
-from delta.server.manager import SessionManager
-from delta.tools.ask import (
+from core.inbox import InboxItem, InboxStore
+from core.interactions import buttons_for, decode
+from services.server.manager import SessionManager
+from integrations.tools.ask import (
     MAX_GROUPED_QUESTIONS,
     answer_result,
     ask_user_tool,

@@ -7,12 +7,12 @@ import asyncio
 import httpx
 from fastapi.testclient import TestClient
 
-from delta.connectors import ConnectorSettings, Gateway, TeamAuth
-from delta.connectors.base import InteractionEvent, MessageEvent, SessionSource
-from delta.interactions import encode
-from delta.providers import ModelCapabilities, ProviderClient
-from delta.server import create_app
-from delta.server.manager import SessionManager
+from integrations.connectors import ConnectorSettings, Gateway, TeamAuth
+from integrations.connectors.base import InteractionEvent, MessageEvent, SessionSource
+from core.interactions import encode
+from providers import ModelCapabilities, ProviderClient
+from services.server import create_app
+from services.server.manager import SessionManager
 
 
 class NoTurnsProvider(ProviderClient):

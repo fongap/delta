@@ -22,7 +22,7 @@ import { Icon } from "./Icon";
 import { PersonaGlyph } from "./personaIcon";
 import { Toggle } from "./Toggle";
 import { indexConnectors, labelFor, visualFor, type ConnectorMap } from "../features/connectors/visuals";
-import { useI18n } from "../i18n/I18nContext";
+import { useI18n } from "@delta/i18n/I18nContext";
 
 // Shared section-heading + tag + button utility strings (mock parity).
 const SEC_H = "text-[11px] uppercase tracking-[0.05em] text-faint font-semibold";

@@ -1,67 +1,57 @@
 # Repository Layout
 
-This is the canonical layout for the Delta monorepo. `scripts/layout-check` (or
-the CI `layout-check` job) guards the structure below. There is no "layout v3" —
-this is the only layout.
+Delta is organized by system responsibility. Directory names describe current
+ownership, never an upstream source or a compatibility era.
 
 ## Top-level directories
 
 | Directory | Responsibility |
 | --- | --- |
-| `apps/` | Frontend apps (currently `apps/desktop`, the Tauri GUI). |
-| `services/` | Standalone backend services (currently `services/stt`). |
-| `src/delta/` | The Python runtime package (the engine + CLI + providers + tools). |
-| `tests/` | Python/runtime test suite, fakes, and test-only support. |
-| `resources/` | Canonical non-code assets. `resources/brand/` is the single source of truth for the brand. |
-| `packaging/` | Packaging and distribution (portable launcher, server packaging). |
-| `scripts/` | Developer/CI helper scripts (e.g. `generate_icons.py`, `setup_dev_env.sh`). |
-| `docs/` | Documentation (`architecture/`, config examples, etc.). |
-| `.github/` | CI/CD and repository automation (workflows, Dependabot). |
+| `apps/` | Runnable user-facing applications: the Tauri desktop app and terminal UI. |
+| `core/` | Agent runtime, workflow execution, state, memory, permissions, and personas. |
+| `providers/` | Model-provider protocols, discovery, capability metadata, and routing. |
+| `integrations/` | Connectors, MCP, skills, tools, web access, and managed cloud integration. |
+| `services/` | Independently runnable services: the HTTP API sidecar and local STT service. |
+| `packages/` | Shared configuration, private persistence, sanitization, and cross-app foundations. |
+| `resources/` | Non-code assets; `resources/brand/` is the Delta brand source of truth. |
+| `packaging/` | Portable, desktop-sidecar, and release packaging. |
+| `tests/` | Python/runtime tests and test-only fakes. |
+| `docs/` | Architecture, governance, and development documentation. |
+| `scripts/` | Repository maintenance and validation helpers. |
 
-## Desktop (`apps/desktop`)
+## Boundary rules
 
-- **Feature-based** source: code is organized under `src/features/<feature>/`,
-  with shared, cross-cutting code under `src/shared/`.
-- Tests are **colocated** with the code they cover as `*.test.*` files
-  (e.g. `attach.test.ts` next to `attach.ts`).
-
-## Python runtime (`src/delta/`)
-
-- `src/delta/` is the runtime package. **Test-only support lives in `tests/`,
-  never inside the package.** Do not add `tests/`, `fakes/`, or fixtures into
-  `src/delta/`.
+- `apps/desktop/` owns React UI, Tauri, and desktop platform integration. Its
+  shared localization dependency lives in `packages/i18n/`.
+- `core/` may depend on `providers/`, `integrations/`, and `packages/`, but UI
+  code must not contain core runtime logic.
+- `providers/` owns vendor SDK adaptation only; provider configuration UI stays
+  in `apps/desktop/`.
+- `integrations/` owns external capabilities. Connector presentation stays in
+  the desktop application feature module.
+- `services/server/` is the API boundary used by applications; `services/stt/`
+  remains a standalone local speech-to-text service.
+- Test-only helpers stay under `tests/`; production packages never contain
+  fakes or test fixtures.
 
 ## Tests
 
 | Layer | Location |
 | --- | --- |
 | Python / runtime tests | `tests/` |
-| Frontend unit tests | `apps/desktop/src/**/*.test.*` (colocated) |
+| Frontend unit tests | `apps/desktop/src/**/*.test.*` and `packages/i18n/**/*.test.*` |
 | Frontend e2e | `apps/desktop/tests/` |
 
 ## Resources
 
-- `resources/brand/` is the **single source of truth** for the Delta brand
-  (`delta-logo-512x512.png`).
-- Generated icons trace back to it and live in
-  `apps/desktop/src-tauri/icons/` and `packaging/portable/launcher/icon.ico`.
-- Regenerate/verify them with `scripts/generate_icons.py` (see
-  `resources/brand/MANIFEST.md`).
+- `resources/brand/` is the source of truth for the Delta brand.
+- Generated icons live in `apps/desktop/src-tauri/icons/` and
+  `packaging/portable/launcher/icon.ico`.
+- Regenerate or verify icons with `scripts/generate_icons.py`.
 
-## Forbidden top-level directories
+## Forbidden legacy roots
 
-These top-level directories must **never reappear**:
-
-- `surfaces/`
-- `crates/`
-- `coworker/`
-- `assets/`
-
-  > Note: `apps/desktop/assets/` is a legitimate runtime asset directory — not
-  > the forbidden top-level `assets/`.
-
-Also forbidden as throwaway "don't know where this goes" directories (top-level
-or otherwise): `common/`, `core/`, `misc/`, `helpers/`, `utils/`, `shared/`,
-`base/`, `legacy/`. New code must be placed into an explicit home per the rules
-above; if there is no good home, the layout needs a documented addition, not a
-new catch-all directory.
+The following top-level directories must not reappear: `surfaces/`, `coworker/`,
+`src/`, `stt/`, `assets/`, and `crates/`. Do not add blanket catch-all roots such
+as `common/`, `misc/`, `helpers/`, `utils/`, `shared/`, `base/`, or `legacy/`.
+Each new module must join an explicit responsibility boundary above.

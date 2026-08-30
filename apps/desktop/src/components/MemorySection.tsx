@@ -13,7 +13,7 @@ import {
 import { Icon } from "./Icon";
 import { PanelHead } from "./IntegrationsView";
 import { Toggle } from "./Toggle";
-import { useI18n } from "../i18n/I18nContext";
+import { useI18n } from "@delta/i18n/I18nContext";
 
 // MEMORY-SPEC §5.3: the one memory screen. A plain-language list of remembered facts
 // (edit/delete per row), the on/off toggle, delete-all, and the User Rules textarea —

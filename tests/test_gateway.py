@@ -7,8 +7,8 @@ Behavior contract (docs/approval-taxonomy-adr.md):
 """
 
 
-from delta.audit import AuditStore
-from delta.gateway import (
+from core.audit import AuditStore
+from core.gateway import (
     RiskLevel,
     classify,
     declared_resources,

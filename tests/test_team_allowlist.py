@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from delta.connectors import (
+from integrations.connectors import (
     ConnectorSettings,
     Gateway,
     MessageEvent,
@@ -18,11 +18,11 @@ from delta.connectors import (
     TeamAuth,
     load_settings,
 )
-from delta.connectors.config import is_authorized
-from delta.providers import ModelCapabilities, ProviderClient
-from delta.secrets import SecretStore
-from delta.server import create_app
-from delta.server.manager import SessionManager
+from integrations.connectors.config import is_authorized
+from providers import ModelCapabilities, ProviderClient
+from packages.secrets import SecretStore
+from services.server import create_app
+from services.server.manager import SessionManager
 
 
 class ScriptedProvider(ProviderClient):
@@ -216,7 +216,7 @@ def test_rest_allow_with_team_and_workspaces_field(tmp_path):
 
 # -- installer pre-add on managed install (UX-027) --------------------------------
 def test_managed_install_preadds_the_installer(tmp_path):
-    from delta.connectors.setup import managed_connect_slack_install
+    from integrations.connectors.setup import managed_connect_slack_install
 
     s = SecretStore(tmp_path / "secrets.json")
     managed_connect_slack_install(
@@ -228,7 +228,7 @@ def test_managed_install_preadds_the_installer(tmp_path):
 
 
 def test_reinstall_preserves_the_existing_allow_list(tmp_path):
-    from delta.connectors.setup import managed_connect_slack_install
+    from integrations.connectors.setup import managed_connect_slack_install
 
     s = SecretStore(tmp_path / "secrets.json")
     s.put(
@@ -249,7 +249,7 @@ def test_reinstall_preserves_the_existing_allow_list(tmp_path):
 
 
 def test_workspace_listing_carries_installer_identity(tmp_path):
-    from delta.connectors.setup import (
+    from integrations.connectors.setup import (
         _slack_workspaces,
         managed_connect_slack_install,
     )

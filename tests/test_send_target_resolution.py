@@ -2,10 +2,10 @@
 channel NAMES resolve to addresses in send_message/send_file ("post Hi to #general" must
 just work when Slack is connected — owner repro 2026-07-14)."""
 
-from delta.connectors.base import SendResult
-from delta.connectors.tool_defs import TOOL_DEFS, approval_for_tool
-from delta.connectors.tools import make_send_file_tool, make_send_message_tool
-from delta.secrets import SecretStore
+from integrations.connectors.base import SendResult
+from integrations.connectors.tool_defs import TOOL_DEFS, approval_for_tool
+from integrations.connectors.tools import make_send_file_tool, make_send_message_tool
+from packages.secrets import SecretStore
 
 
 # -- connector reads never gate ---------------------------------------------------------
@@ -19,7 +19,7 @@ def test_registry_kinds_are_exhaustive_and_drive_approval():
 
 
 def test_integration_tools_reads_are_free_writes_gate(tmp_path):
-    from delta.connectors.integration_tools import make_integration_tools
+    from integrations.connectors.integration_tools import make_integration_tools
 
     tools = {
         t.__name__: t
@@ -39,7 +39,7 @@ def test_integration_tools_reads_are_free_writes_gate(tmp_path):
 
 
 def test_browser_automation_reads_are_free_interactions_gate():
-    from delta.connectors.browser_automation import make_browser_automation_tools
+    from integrations.connectors.browser_automation import make_browser_automation_tools
 
     tools = {t.__name__: t for t in make_browser_automation_tools()}
     assert (
@@ -69,7 +69,7 @@ def _record_sender(record: list):
 
 
 def _fake_roster(monkeypatch, channels_by_team: dict):
-    from delta.connectors import slack_directory
+    from integrations.connectors import slack_directory
 
     calls: list = []
 

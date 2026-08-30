@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { ApprovalDecision, Item } from "../types";
 import { humanizeApprovalTitle, resolveHumanLine, type HumanLine } from "../humanize";
 import { Icon } from "./Icon";
-import { useI18n } from "../i18n/I18nContext";
+import { useI18n } from "@delta/i18n/I18nContext";
 
 type T = (key: string, vars?: Record<string, string | number>) => string;
 

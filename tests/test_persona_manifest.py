@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from delta.personas.manifest import ManifestError, parse_manifest
+from core.personas.manifest import ManifestError, parse_manifest
 
 VALID = """---
 id: demo
@@ -35,8 +35,8 @@ def test_parse_valid():
 
 
 def test_to_agent_carries_traits_and_tools(tmp_path):
-    from delta.agents.base import AgentContext
-    from delta.tools.todo import TodoList
+    from core.agents.base import AgentContext
+    from integrations.tools.todo import TodoList
 
     agent = parse_manifest(VALID).to_agent()
     assert agent.name == "demo" and agent.family == "knowledge"
