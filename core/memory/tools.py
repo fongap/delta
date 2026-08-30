@@ -15,7 +15,7 @@ it back. Failures in the callback never fail the write.
 
 from __future__ import annotations
 
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 import aisuite as ai
 
@@ -27,9 +27,13 @@ _SCOPES = {s.value for s in Scope}
 # reads are L0, writes are reversible local writes (Undo carries the previous
 # text back), and forget is a consequential local write with no undo — the
 # gateway maps these to L0 / L1 / L2 respectively.
-_META_READ = dict(category="memory", risk_level="low", capabilities=["memory_read"])
-_META_WRITE = dict(category="memory", risk_level="low", capabilities=["remember"])
-_META_FORGET = dict(
+_META_READ: dict[str, Any] = dict(
+    category="memory", risk_level="low", capabilities=["memory_read"]
+)
+_META_WRITE: dict[str, Any] = dict(
+    category="memory", risk_level="low", capabilities=["remember"]
+)
+_META_FORGET: dict[str, Any] = dict(
     category="memory",
     risk_level="low",
     requires_approval=True,
