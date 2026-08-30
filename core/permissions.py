@@ -24,6 +24,7 @@ _SHELL_OPERATORS = (";", "&", "|", ">", "<", "`", "$(", "(", "\n", "\r")
 def _has_shell_operators(command: str) -> bool:
     return any(op in command for op in _SHELL_OPERATORS)
 
+from core.gateway import write_paths
 from core.risk import (  # re-exported for back-compat (manager.py imports WRITE_TOOLS)
     SHELL_TOOL,
     WRITE_TOOLS,
@@ -49,11 +50,72 @@ class Mode(str, Enum):
 READ_ONLY_MODES = frozenset({Mode.DISCUSS, Mode.PLAN})
 
 # WRITE_LOCAL target arguments, in the spirit of connectors' TARGET_ARGS: which argument
-# names a tool's on-disk target for the writable-root scope check. The aisuite file toolkit
-# (write_file / replace_in_file) uses `path`; the aliases cover tool variants that name a
-# file directly (`file_path`, `file`, `filepath`) so a renamed argument can't bypass scoping.
-# Patch/diff tools carry their targets inside the patch text and stay approval-gated.
+# names a tool's on-disk target for the writable-root scope check. Superseded by
+# gateway.write_paths, which also extracts targets buried in patch/diff blobs — kept
+# only as a name alias for back-compat.
 _WRITE_PATH_ARGS = ("path", "file_path", "filepath", "file")
+
+
+def _protected_state_files() -> list[str]:
+    """Filenames of the permission system's own state, wherever Delta keeps them.
+
+    The manager stores state either in the global state dir or, when a workspace is
+    open, in `<workspace>/.delta/` — the same files govern permissions in both layouts,
+    so both are protected."""
+    return [
+        "config.toml",  # packages.config: modes, auto-allow, command allowlists
+        "risk_overrides.json",  # core.overrides: per-tool risk classes
+        "workspace_trust.json",  # core.workspace_trust: which repos may grant commands
+        "secrets.json",  # SecretStore: every connector/MCP credential
+        "unattended.json",  # core.unattended: unattended-run autonomy flags
+        "inbox_routing.json",  # core.inbox_routing: which agent answers which inbox
+        "memory-settings.json",  # memory on/off + standing rules
+        "core.db",  # sessions, memory, audit trail
+        "run-events.db",  # run event ledger
+        "automation.db",  # TaskStore: automation records + §25 standing rules
+    ]
+
+
+def protected_paths(workspace_root: Path | None = None) -> list[Path]:
+    """Files that govern the permission system itself. Nothing the agent does may write
+    these — in any mode, through any tool. The escalation this blocks is: approve one
+    ordinary-looking command, it quietly appends to the rule file, and every future
+    session is more permissive. That happens in the DEFAULT interactive mode, so this
+    cannot be a property of a sandbox or of any one mode; it is a floor. Loosening
+    requires editing these files out-of-band."""
+    from packages.secrets import state_dir
+
+    base = state_dir()
+    names = _protected_state_files()
+    out = [base / name for name in names]
+    if workspace_root is not None:
+        out.extend(Path(workspace_root) / ".delta" / name for name in names)
+    return out
+
+
+# Files INSIDE a workspace that execute on a later, innocuous-looking action, or that
+# carry agent-reachable policy. An edit here is a deferred command: writing
+# `.git/hooks/pre-commit` and then running `git commit` runs it; editing
+# `.delta/config.toml` rewrites the grants Delta itself reads. They stay writable, but
+# never WITHOUT a human — no auto-approve path (auto mode, custom auto_allow, session
+# "always allow") may clear them.
+_PROTECTED_IN_PROJECT = (
+    ".git/hooks/",
+    ".github/workflows/",
+    ".gitlab-ci.yml",
+    ".vscode/tasks.json",
+    ".delta/",  # workspace config (command grants) + skills the agent could self-grant
+)
+
+
+def _is_protected_in_project(candidate: Path) -> bool:
+    posix = candidate.as_posix().lower()
+    return any(
+        (f"/{marker}" in posix or posix.startswith(marker))
+        if marker.endswith("/")
+        else posix.endswith("/" + marker)
+        for marker in _PROTECTED_IN_PROJECT
+    )
 
 
 @dataclass
@@ -145,23 +207,60 @@ class PermissionEngine:
         is_shell = risk is RiskClass.EXEC
         consequential = is_consequential(risk)
 
+        # SELF-PROTECTION FLOOR — runs before mode, allowlists and every auto-approve
+        # path, because the escalation it blocks happens in the DEFAULT mode. No verdict
+        # below can reach these files, and no human click in the flow can grant it either:
+        # loosening requires editing the files out-of-band.
+        if is_write or is_shell:
+            hit = self._touches_protected(tool_name, arguments, is_shell)
+            if hit is not None:
+                return Decision(
+                    False,
+                    f"refusing to modify Delta's own settings: {hit}",
+                    needs_user=False,
+                )
+
         # Discuss / plan modes: read-only.
         if self.mode in READ_ONLY_MODES and consequential:
             return Decision(
                 False, f"{self.mode.value} mode is read-only", needs_user=False
             )
 
-        # Path scoping for writes that name a path (all modes): must land in a writable
-        # root. Check every target-shaped argument the call actually carries.
+        # Path scoping for writes (all modes): every path the write touches — top-level
+        # path arguments AND targets buried in a patch/diff blob — must land in a writable
+        # root. A write whose path can't be located is not scope-able, so it fails closed
+        # to an explicit human decision rather than slipping through auto/custom unscoped.
+        needs_human_for_protected = False
         if is_write:
-            for arg_name in _WRITE_PATH_ARGS:
-                path = arguments.get(arg_name)
-                if isinstance(path, str) and path and not self._under_writable_root(path):
-                    return Decision(False, f"path is not in a writable directory: {path}")
+            paths, located = write_paths(tool_name, arguments)
+            if not located:
+                return Decision(
+                    False, "cannot determine the write path to scope", needs_user=True
+                )
+            for path in paths:
+                if not self._under_writable_root(path):
+                    return Decision(
+                        False, f"path is not in a writable directory: {path}"
+                    )
+                # In-project files that run on a later action (git hooks, CI config,
+                # workspace config) may be edited, but never by an auto-approve path —
+                # a human must see it.
+                if _is_protected_in_project(self._candidate(path)):
+                    needs_human_for_protected = True
 
         # Non-consequential tools always run.
         if not consequential:
             return Decision(True, "low risk")
+
+        # A protected in-project target (git hooks, CI config, .delta/) skips every
+        # auto-approve path below — including auto mode and the session/config
+        # allowlists — and asks.
+        if needs_human_for_protected:
+            return Decision(
+                False,
+                "this file runs automatically later — approval required",
+                needs_user=True,
+            )
 
         # Full access. Blanket by design — the gateway's grant gate (slice 4a) still
         # refuses to release L3+ external effects on this basis alone.
@@ -211,6 +310,41 @@ class PermissionEngine:
             self.session_allow_commands.add(command)
 
     # -- helpers ----------------------------------------------------------------
+    def _touches_protected(
+        self, tool_name: str, arguments: dict[str, Any], is_shell: bool
+    ) -> Optional[str]:
+        """The protected settings path this call would modify, or None.
+
+        For writes we resolve the real target (including paths buried in a patch/diff
+        blob). For shell we can only inspect the command text — parser depth, so it
+        stops accidents and casual attempts, not a determined adversary (that needs the
+        OS sandbox). Cheap and worth having regardless.
+
+        Shell matching is on the FULL path only, never a bare filename: matching
+        `secrets.json` anywhere in a command would refuse unrelated work that merely
+        mentions the name. A command naming the real settings path is refused whether it
+        reads or writes — we cannot tell which from text, and the conservative direction
+        is the right one for these files.
+        """
+        targets = [str(p) for p in protected_paths(self.workspace_root)]
+        if is_shell:
+            command = str(arguments.get("command", ""))
+            if not command:
+                return None
+            lowered = command.replace("\\", "/").lower()
+            for target in targets:
+                if target.replace("\\", "/").lower() in lowered:
+                    return target
+            return None
+        paths, located = write_paths(tool_name, arguments)
+        if not located:
+            return None  # unlocatable writes are already failed closed by the caller
+        resolved = {str(self._candidate(p)) for p in paths}
+        for target in targets:
+            if str(Path(target).resolve()) in resolved:
+                return target
+        return None
+
     def _candidate(self, path: str) -> Path:
         # Relative paths resolve against the primary (workspace_root); absolute/`~` taken as-is.
         p = Path(path).expanduser()
