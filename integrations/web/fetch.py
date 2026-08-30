@@ -121,9 +121,11 @@ def make_web_fetch_tool() -> Callable[..., Any]:
     web_fetch.__aisuite_tool_metadata__ = ai.ToolMetadata(
         name="web_fetch",
         category="web",
-        risk_level="low",
+        # Egress: the URL is model-chosen and can carry local data in its query, so
+        # this gates like an external effect (core.risk.EGRESS_TOOLS), not like a read.
+        risk_level="medium",
         capabilities=["fetch"],
-        requires_approval=False,
+        requires_approval=True,
     )
     web_fetch.__delta_schema__ = _SCHEMA
     return web_fetch

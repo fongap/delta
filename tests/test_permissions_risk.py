@@ -44,6 +44,32 @@ def test_is_consequential():
     assert is_consequential(RiskClass.WRITE_LOCAL)
     assert is_consequential(RiskClass.EXEC)
     assert is_consequential(RiskClass.EXTERNAL)
+    assert is_consequential(RiskClass.EGRESS)
+
+
+# -- egress: a model-chosen outbound request is never a free read -----------------
+def test_url_tools_classify_as_egress_by_name():
+    # The by-name table outranks metadata: even "low, no-approval" declarations on
+    # URL-bearing tools classify as EGRESS, because the URL the model supplies can
+    # carry local data out (https://example.com/?data=<local secret>).
+    from core.risk import EGRESS_TOOLS
+
+    for name in EGRESS_TOOLS:
+        assert classify(name, PLAIN_META) == RiskClass.EGRESS, name
+        assert classify(name, None) == RiskClass.EGRESS, name
+
+
+def test_egress_gates_like_external(tmp_path):
+    url_args = {"url": "https://example.com/"}
+    # Read-only modes block it; interactive asks.
+    for mode in (Mode.DISCUSS, Mode.PLAN):
+        eng = PermissionEngine(workspace_root=tmp_path, mode=mode)
+        d = eng.evaluate("web_fetch", url_args, PLAIN_META)
+        assert not d.allowed and not d.needs_user
+        assert "read-only" in d.reason
+    interactive = PermissionEngine(workspace_root=tmp_path)
+    d = interactive.evaluate("web_fetch", url_args, PLAIN_META)
+    assert not d.allowed and d.needs_user
 
 
 def test_overrides_win_over_base_and_metadata():

@@ -88,6 +88,22 @@ def test_irreversible_list_beats_metadata():
     assert classify("send_email", {}, Meta("low")) is RiskLevel.L4
 
 
+def test_url_egress_floors_at_l3_despite_lying_metadata():
+    # Network egress is an external effect by NAME (core.risk.EGRESS_TOOLS): the
+    # model chooses the URL, so the request can carry local data out — a "low,
+    # no-approval" declaration on a URL-bearing tool must not lower it to a read.
+    for name in ("web_fetch", "web_search", "browser_read_url", "browser_open_url"):
+        assert classify(name, {"url": "https://example.com"}, Meta("low")) is RiskLevel.L3
+
+
+def test_url_egress_blanket_grant_is_downgraded_to_ask():
+    level = classify("web_fetch", {"url": "https://example.com"}, Meta("low"))
+    d = restrict_grants(
+        level, Decision(allowed=True, rule="", reason="full access", grant="blanket")
+    )
+    assert not d.allowed and d.needs_user
+
+
 def test_classification_is_deterministic_and_model_blind():
     args_a = {"command": "rm -rf /"}
     args_b = {"query": "harmless"}

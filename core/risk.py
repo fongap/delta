@@ -20,15 +20,23 @@ class RiskClass(str, Enum):
     WRITE_LOCAL = "write_local"  # mutates the workspace — path-scoped + mode-gated
     EXEC = "exec"  # runs commands — mode-gated
     EXTERNAL = "external"  # side effects off the machine — the unattended Inbox hook
+    EGRESS = "egress"  # model-chosen outbound network request — gated like external
 
 
 # Built-in tools whose risk is fixed by name (the old WRITE_TOOLS / SHELL_TOOL, as data).
 WRITE_TOOLS = {"write_file", "replace_in_file", "apply_patch", "apply_unified_diff"}
 SHELL_TOOL = "run_shell"
 
+# Model-chosen outbound network requests. The URL/query is model-supplied, so it can carry
+# local data OUT (e.g. https://example.com/?data=<local secret>) even when the HTTP verb is
+# a "read" — network egress is not a pure read and must reach the gate. `web_search` reaches
+# a fixed destination, but its query is model-chosen free text: the same outbound channel.
+EGRESS_TOOLS = {"web_fetch", "web_search", "browser_read_url", "browser_open_url"}
+
 _BASE: dict[str, RiskClass] = {
     **{name: RiskClass.WRITE_LOCAL for name in WRITE_TOOLS},
     SHELL_TOOL: RiskClass.EXEC,
+    **{name: RiskClass.EGRESS for name in EGRESS_TOOLS},
 }
 
 # A user-local override resolver: tool name -> RiskClass (or None to defer to the base).

@@ -22,6 +22,8 @@ risk_level value, or an explicit irreversible-list hit) is treated as L4. Nothin
 is ever "unclassified, so probably fine". The model can never classify downward:
 sensitivity signals live in fixed tables here; model-supplied argument text can
 only ever escalate a decision (by naming what is being shared), never relax one.
+URL-bearing tools (model-chosen outbound requests) also carry a by-name L3 floor:
+network egress is an external effect regardless of what their metadata declares.
 """
 
 from __future__ import annotations
@@ -29,6 +31,8 @@ from __future__ import annotations
 from enum import IntEnum
 from pathlib import Path
 from typing import Any, Optional
+
+from core.risk import EGRESS_TOOLS
 
 
 class RiskLevel(IntEnum):
@@ -160,6 +164,12 @@ def classify(
     # metadata claims — even if a future refactor marks it "low".
     if tool_name in IRREVERSIBLE_TOOLS:
         return RiskLevel.L4
+
+    # Egress floor: a model-chosen outbound request is an external effect (L3) by
+    # name, whatever its metadata claims — a "low, no-approval" declaration on a
+    # URL-bearing tool is exactly the mislabel this floor exists to catch.
+    if tool_name in EGRESS_TOOLS:
+        return RiskLevel.L3
 
     # Fail closed: no registry metadata or an unknown risk value is L4.
     if metadata is None:

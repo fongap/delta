@@ -91,9 +91,12 @@ def make_web_search_tool(
     web_search.__aisuite_tool_metadata__ = ai.ToolMetadata(
         name="web_search",
         category="web",
-        risk_level="low",
+        # Egress: the destination is fixed, but the query is model-chosen free text —
+        # the same outbound channel (core.risk.EGRESS_TOOLS), so it gates like an
+        # external effect rather than riding as a free read.
+        risk_level="medium",
         capabilities=["search"],
-        requires_approval=False,
+        requires_approval=True,
     )
     web_search.__delta_schema__ = _SCHEMA
     return web_search
