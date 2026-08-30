@@ -331,6 +331,23 @@ def _snapshot(page, max_chars: int) -> dict[str, Any]:
     }
 
 
+def redirect_refusal(requested: str, final: str) -> Optional[str]:
+    """A refusal reason if navigation LANDED somewhere the address guard would refuse.
+
+    `check_url` vets the URL the model supplied; Playwright then follows redirects, and the
+    hop that actually loads is a different address the guard never saw. A public shortener
+    can land on the cloud metadata endpoint or a router admin page, and the approval the
+    user gave was for the first URL, not this one.
+
+    The request has already gone out by the time this runs — it cannot be prevented here.
+    What it prevents is the agent READING the page or interacting with it. Later
+    JavaScript- or meta-refresh-driven navigation is still unchecked; only a proxy that
+    vets every hop closes that, which is the larger design this defers."""
+    if not final or final == requested:
+        return None
+    return check_url(final)
+
+
 def make_browser_automation_tools() -> list[Callable[..., Any]]:
     tools: list[Callable[..., Any]] = []
 
@@ -341,17 +358,23 @@ def make_browser_automation_tools() -> list[Callable[..., Any]]:
             return {"error": "url must start with http:// or https://"}
         # Same address guard as web_fetch. This is approval gated, so it is defense in
         # depth, not the primary control. It checks the initial model supplied URL only;
-        # redirects that the browser follows internally are not hop checked here.
+        # the landing re-check below covers the redirect the browser follows itself.
         blocked = check_url(url)
         if blocked:
             return {"error": blocked}
-        return _BROWSER.call(
-            "open_url",
-            lambda page: (
-                page.goto(url, wait_until=wait_until, timeout=30000),
-                {"ok": True, "url": page.url},
-            )[1],
-        )
+
+        def _open(page: Any) -> dict[str, Any]:
+            page.goto(url, wait_until=wait_until, timeout=30000)
+            landed = redirect_refusal(url, page.url)
+            if landed:
+                # Leave nothing readable behind: the next snapshot/get_text must not be
+                # able to lift content off a page we just refused.
+                final = page.url
+                page.goto("about:blank")
+                return {"error": f"redirected to {final} — {landed}"}
+            return {"ok": True, "url": page.url}
+
+        return _BROWSER.call("open_url", _open)
 
     browser_open_url.__name__ = "browser_open_url"
     tools.append(

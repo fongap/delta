@@ -27,16 +27,19 @@ class ConnectorToolDef:
 TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
     ConnectorToolDef(
         "browser",
+        # web_fetch by another name: the URL is model-chosen, so this is egress —
+        # a "read" kind here would bypass the gate entirely (network egress is not
+        # a pure read; see core.risk.EGRESS_TOOLS).
         "browser_read_url",
         "Read public URL",
-        "read",
+        "write",
         "Fetch readable text from a public URL.",
     ),
     ConnectorToolDef(
         "browser",
         "browser_open_url",
         "Open URL",
-        "read",
+        "write",
         "Open a URL in the Playwright browser.",
     ),
     ConnectorToolDef(
@@ -144,14 +147,17 @@ TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
         "github",
         "github_clone",
         "Clone a repo",
-        "read",
+        # Both write to disk (clone creates a directory tree, pull fast-forwards a working
+        # tree), so a "read" kind here would make §36 downgrade the call site's
+        # approval=True and auto-allow a disk write.
+        "write",
         "Clone a repository into a session folder to explore the code.",
     ),
     ConnectorToolDef(
         "github",
         "github_pull",
         "Update a clone",
-        "read",
+        "write",
         "Fast-forward an existing clone to the latest commits.",
     ),
     ConnectorToolDef(
