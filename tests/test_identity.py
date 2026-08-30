@@ -10,18 +10,18 @@ import asyncio
 
 import aisuite as ai
 
-from delta.engine import TurnEngine
-from delta.events import EventType
-from delta.identity import (
+from core.engine import TurnEngine
+from core.events import EventType
+from core.identity import (
     DEVELOPER,
     PRODUCT_NAME,
     answer,
     display_model_name,
     match_identity,
 )
-from delta.permissions import PermissionEngine
-from delta.providers import AssistantTurn, ModelCapabilities, ProviderClient
-from delta.tools import ToolRegistry
+from core.permissions import PermissionEngine
+from providers import AssistantTurn, ModelCapabilities, ProviderClient
+from integrations.tools import ToolRegistry
 
 
 class _ScriptedProvider(ProviderClient):

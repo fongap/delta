@@ -9,8 +9,8 @@ import socket
 
 import pytest
 
-from delta.web import guard
-from delta.web.fetch import make_web_fetch_tool
+from integrations.web import guard
+from integrations.web.fetch import make_web_fetch_tool
 
 
 def _resolves_to(monkeypatch, ip: str):
@@ -238,7 +238,7 @@ def test_web_fetch_still_rejects_non_http_schemes():
 def test_browser_open_url_is_guarded_and_never_launches(monkeypatch):
     """The Playwright browser_open_url is approval gated, but the address guard still
     refuses a blocked URL before the browser is touched (defense in depth)."""
-    from delta.connectors.browser_automation import make_browser_automation_tools
+    from integrations.connectors.browser_automation import make_browser_automation_tools
 
     open_url = {t.__name__: t for t in make_browser_automation_tools()}["browser_open_url"]
     out = open_url("http://169.254.169.254/latest/meta-data/")

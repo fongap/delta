@@ -11,7 +11,7 @@ import {
 import type { TodoItem } from "../types";
 import { AccessSection } from "./AccessSection";
 import { Icon } from "./Icon";
-import { useI18n } from "../i18n/I18nContext";
+import { useI18n } from "@delta/i18n/I18nContext";
 import { Markdown, OPEN_ARTIFACT_EVENT } from "./Markdown";
 
 type Panel = "progress" | "artifacts";
@@ -505,7 +505,7 @@ function CsvTable({ text }: { text: string }) {
 }
 
 // xlsx/xls preview: the workbook is parsed server-side into a bounded JSON payload
-// (see src/delta/server/sheet_preview.py) — this component only renders it. Sheet tabs +
+// (see services/server/sheet_preview.py) — this component only renders it. Sheet tabs +
 // a capped grid; real spreadsheet work belongs in Numbers/Excel via "Open in default app".
 // WKWebView has no inline PDF plugin (<embed> shows a gray pane in the Tauri shell), so we
 // rasterize pages with pdf.js onto stacked canvases (lazy-chunked like the sheet viewer).

@@ -1,7 +1,7 @@
 """Server-side spreadsheet preview parsing (P1 security fix).
 
 The GUI used to parse workbooks client-side with npm `xlsx` (Prototype Pollution +
-ReDoS). Parsing now lives in src/delta/server/sheet_preview.py and these tests pin
+ReDoS). Parsing now lives in services/server/sheet_preview.py and these tests pin
 the contract: multi-sheet structure, value kinds, size caps, and graceful errors
 for corrupt / legacy files.
 
@@ -14,7 +14,7 @@ import zipfile
 
 from fastapi.testclient import TestClient
 
-from delta.server import SessionManager, create_app
+from services.server import SessionManager, create_app
 
 # -- fixture builders -----------------------------------------------------------
 

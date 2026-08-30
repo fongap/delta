@@ -8,7 +8,7 @@ import asyncio
 
 import pytest
 
-from delta.connectors import (
+from integrations.connectors import (
     ConnectorSettings,
     FakeAdapter,
     Gateway,
@@ -19,8 +19,8 @@ from delta.connectors import (
     make_send_message_tool,
     parse_target,
 )
-from delta.connectors.base import SendResult
-from delta.secrets import SecretStore
+from integrations.connectors.base import SendResult
+from packages.secrets import SecretStore
 
 
 # -- target tokens -------------------------------------------------------------
@@ -124,7 +124,7 @@ def test_load_settings_from_secretstore(tmp_path, monkeypatch):
         "telegram:default", {"type": "token", "bot_token": "T", "allowed_users": ["u1"]}
     )
     settings = __import__(
-        "delta.connectors.config", fromlist=["load_settings"]
+        "integrations.connectors.config", fromlist=["load_settings"]
     ).load_settings(secrets)
     assert settings["telegram"].enabled is True
     assert settings["telegram"].allowed_users == {"u1"}
@@ -136,7 +136,7 @@ def test_load_settings_env_allowlist(tmp_path, monkeypatch):
     secrets = SecretStore(tmp_path / "secrets.json")
     secrets.put("telegram:default", {"bot_token": "T"})
     settings = __import__(
-        "delta.connectors.config", fromlist=["load_settings"]
+        "integrations.connectors.config", fromlist=["load_settings"]
     ).load_settings(secrets)
     assert settings["telegram"].allowed_users == {"a", "b", "c"}
 
@@ -197,24 +197,24 @@ class _StubProvider:
     """Minimal ProviderClient stand-in (build_engine never calls it)."""
 
     def complete(self, **_kw):  # pragma: no cover - never invoked at build time
-        from delta.providers import AssistantTurn
+        from providers import AssistantTurn
 
         return AssistantTurn()
 
     def capabilities(self, _model):  # pragma: no cover
-        from delta.providers.base import ModelCapabilities
+        from providers.base import ModelCapabilities
 
         return ModelCapabilities()
 
     def stream(self, **_kw):  # pragma: no cover
-        from delta.providers.base import StreamChunk
+        from providers.base import StreamChunk
 
         yield StreamChunk(turn=self.complete())
 
 
 def test_engine_connector_tools_are_cowork_scoped(tmp_path):
-    from delta.agent import build_engine
-    from delta.agents import chat_agent, code_agent, cowork_agent, myhelper_agent
+    from core.agent import build_engine
+    from core.agents import chat_agent, code_agent, cowork_agent, myhelper_agent
 
     secrets = SecretStore(tmp_path / "secrets.json")
     eng = build_engine(agent=chat_agent(), provider=_StubProvider(), secrets=secrets)
@@ -293,7 +293,7 @@ def test_engine_connector_tools_are_cowork_scoped(tmp_path):
 
 # -- connector setup (descriptors / connect / disconnect / list) ---------------
 def test_connector_list_descriptors(tmp_path):
-    from delta.connectors import connector_list
+    from integrations.connectors import connector_list
 
     by_name = {
         c["name"]: c for c in connector_list(SecretStore(tmp_path / "secrets.json"))
@@ -333,9 +333,9 @@ def test_connector_list_pre_connect_copy(tmp_path):
     """Every connectable connector ships Access bullets for the pre-connect
     detail page (UX-DECISIONS §38) — an empty Access section would render as
     'this app tells you nothing about what it can do'."""
-    from delta.connectors import connector_list
-    from delta.connectors.catalog_copy import ACCESS
-    from delta.connectors.descriptors import list_descriptors
+    from integrations.connectors import connector_list
+    from integrations.connectors.catalog_copy import ACCESS
+    from integrations.connectors.descriptors import list_descriptors
 
     for c in connector_list(SecretStore(tmp_path / "secrets.json")):
         assert isinstance(c["about"], str)
@@ -353,7 +353,7 @@ def test_connector_list_pre_connect_copy(tmp_path):
 
 
 def test_connector_list_connected_for_required_profiles(tmp_path):
-    from delta.connectors import (
+    from integrations.connectors import (
         connect_connector,
         connector_list,
         update_connector_tools,
@@ -397,7 +397,7 @@ def test_connector_list_connected_for_required_profiles(tmp_path):
 
 
 def test_connect_disconnect_no_validate(tmp_path):
-    from delta.connectors import (
+    from integrations.connectors import (
         connect_connector,
         connector_list,
         disconnect_connector,
@@ -429,8 +429,8 @@ def test_connect_disconnect_no_validate(tmp_path):
 def test_reconnect_does_not_clobber_secret_or_allowlist(tmp_path):
     # Regression: a re-submit carrying the masked placeholder (or a blank allow-list) must not
     # overwrite a stored real token / wipe the live allow-list.
-    from delta.connectors import connect_connector
-    from delta.connectors.descriptors import get_descriptor
+    from integrations.connectors import connect_connector
+    from integrations.connectors.descriptors import get_descriptor
 
     secrets = SecretStore(tmp_path / "secrets.json")
     placeholder = next(
@@ -466,7 +466,7 @@ def test_reconnect_does_not_clobber_secret_or_allowlist(tmp_path):
 
 
 def test_connect_missing_required_field(tmp_path):
-    from delta.connectors import connect_connector
+    from integrations.connectors import connect_connector
 
     secrets = SecretStore(tmp_path / "secrets.json")
     res = connect_connector(
@@ -476,7 +476,7 @@ def test_connect_missing_required_field(tmp_path):
 
 
 def test_manual_slack_reconnect_preserves_approval_owners(tmp_path):
-    from delta.connectors import connect_connector
+    from integrations.connectors import connect_connector
 
     secrets = SecretStore(tmp_path / "secrets.json")
     secrets.put(
@@ -501,8 +501,8 @@ def test_manual_slack_reconnect_preserves_approval_owners(tmp_path):
 
 
 def test_connect_validation_runs(tmp_path):
-    from delta.connectors import connect_connector
-    from delta.connectors.descriptors import ValidationResult, get_descriptor
+    from integrations.connectors import connect_connector
+    from integrations.connectors.descriptors import ValidationResult, get_descriptor
 
     secrets = SecretStore(tmp_path / "secrets.json")
     desc = get_descriptor("telegram")
@@ -521,9 +521,9 @@ def test_connect_validation_runs(tmp_path):
 def test_connectors_rest(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
-    from delta.connectors.descriptors import ValidationResult, get_descriptor
-    from delta.server.app import create_app
-    from delta.server.manager import SessionManager
+    from integrations.connectors.descriptors import ValidationResult, get_descriptor
+    from services.server.app import create_app
+    from services.server.manager import SessionManager
 
     monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     desc = get_descriptor("telegram")
@@ -559,7 +559,7 @@ def test_connectors_rest(tmp_path, monkeypatch):
 def test_telegram_message_mapper():
     from types import SimpleNamespace
 
-    from delta.connectors import telegram_message_to_event
+    from integrations.connectors import telegram_message_to_event
 
     msg = SimpleNamespace(
         text="hello",
@@ -581,7 +581,7 @@ def test_telegram_message_mapper():
 
 
 def test_slack_event_mapper_and_loop_guard():
-    from delta.connectors import slack_event_to_event
+    from integrations.connectors import slack_event_to_event
 
     ev = slack_event_to_event(
         {
@@ -607,7 +607,7 @@ def test_slack_event_mapper_and_loop_guard():
 
 
 def test_make_adapter():
-    from delta.connectors import SlackAdapter, TelegramAdapter, make_adapter
+    from integrations.connectors import SlackAdapter, TelegramAdapter, make_adapter
 
     assert isinstance(make_adapter("telegram", {"bot_token": "T"}), TelegramAdapter)
     assert isinstance(
@@ -618,7 +618,7 @@ def test_make_adapter():
 
 
 async def test_slack_resolves_and_caches_display_name():
-    from delta.connectors import SlackAdapter
+    from integrations.connectors import SlackAdapter
 
     calls: list[str] = []
 
@@ -648,7 +648,7 @@ async def test_slack_resolves_and_caches_display_name():
 
 
 async def test_slack_resolve_channel_name():
-    from delta.connectors import SlackAdapter
+    from integrations.connectors import SlackAdapter
 
     calls: list[str] = []
 
@@ -700,8 +700,8 @@ async def test_gateway_records_recent_senders():
 
 
 def test_manager_allow_disallow(tmp_path, monkeypatch):
-    from delta.connectors import connect_connector
-    from delta.server.manager import SessionManager
+    from integrations.connectors import connect_connector
+    from services.server.manager import SessionManager
 
     monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     m = SessionManager(data_dir=tmp_path / "data")
@@ -753,7 +753,7 @@ _NEW_CONNECTORS = {
 
 
 def test_new_connector_descriptors_listed(tmp_path):
-    from delta.connectors import connector_list
+    from integrations.connectors import connector_list
 
     by_name = {
         c["name"]: c for c in connector_list(SecretStore(tmp_path / "secrets.json"))
@@ -775,8 +775,8 @@ def test_new_connector_descriptors_listed(tmp_path):
 
 
 def test_new_connectors_connect_and_gate_tools(tmp_path):
-    from delta.connectors import connect_connector, connector_list
-    from delta.connectors.integration_tools import make_integration_tools
+    from integrations.connectors import connect_connector, connector_list
+    from integrations.connectors.integration_tools import make_integration_tools
 
     secrets = SecretStore(tmp_path / "secrets.json")
     for name, fields in _NEW_CONNECTORS.items():
@@ -794,7 +794,7 @@ def test_new_connectors_connect_and_gate_tools(tmp_path):
 
 
 def test_new_tools_error_when_not_connected(tmp_path):
-    from delta.connectors.integration_tools import make_integration_tools
+    from integrations.connectors.integration_tools import make_integration_tools
 
     tools = {
         t.__name__: t
@@ -827,7 +827,7 @@ def test_new_tools_error_when_not_connected(tmp_path):
 
 def _connected_tools(tmp_path, monkeypatch, calls):
     """All new connectors connected + _request recorded instead of hitting the network."""
-    import delta.connectors.integration_tools as it
+    import integrations.connectors.integration_tools as it
 
     secrets = SecretStore(tmp_path / "secrets.json")
     for name, fields in _NEW_CONNECTORS.items():
@@ -920,8 +920,8 @@ def test_registry_has_no_duplicate_names():
     """A new full descriptor once coexisted with a stale placeholder (both
     named "notion") — the Connectors page showed the connector twice and the
     tool registry carried colliding tool names. Guard both registries."""
-    from delta.connectors.descriptors import DESCRIPTORS
-    from delta.connectors.tool_defs import TOOL_DEFS
+    from integrations.connectors.descriptors import DESCRIPTORS
+    from integrations.connectors.tool_defs import TOOL_DEFS
 
     names = [d.name for d in DESCRIPTORS]
     assert len(names) == len(set(names)), sorted(n for n in names if names.count(n) > 1)
@@ -1121,7 +1121,7 @@ def test_batch3_tools_request_routing(tmp_path, monkeypatch):
 
 
 def test_docusign_account_discovery_caches(tmp_path, monkeypatch):
-    import delta.connectors.integration_tools as it
+    import integrations.connectors.integration_tools as it
 
     secrets = SecretStore(tmp_path / "secrets.json")
     secrets.put("docusign:default", {"access_token": "ds_x", "enabled": True})
@@ -1162,7 +1162,7 @@ def test_docusign_account_discovery_caches(tmp_path, monkeypatch):
 
 
 def test_drive_read_file_exports_google_docs(tmp_path, monkeypatch):
-    import delta.connectors.integration_tools as it
+    import integrations.connectors.integration_tools as it
 
     secrets = SecretStore(tmp_path / "secrets.json")
     secrets.put("google_drive:default", {"access_token": "ya29.x", "enabled": True})
@@ -1197,8 +1197,8 @@ def test_drive_read_file_exports_google_docs(tmp_path, monkeypatch):
 
 
 def test_notion_read_page_flattens_blocks(tmp_path, monkeypatch):
-    import delta.connectors.integration_tools as it
-    from delta.connectors import accounts
+    import integrations.connectors.integration_tools as it
+    from integrations.connectors import accounts
 
     secrets = SecretStore(tmp_path / "secrets.json")
     accounts.add_account(secrets, "notion", "ws1", {"access_token": "t"})
@@ -1233,9 +1233,9 @@ def test_notion_read_page_flattens_blocks(tmp_path, monkeypatch):
 def test_managed_callback_profile_keys_by_account_id(tmp_path):
     """Managed OAuth on an account-patterned connector: the broker's account_id
     keys the profile; a second workspace is a second account."""
-    from delta.cloud import managed_profile_from_callback
-    from delta.connectors import accounts
-    from delta.connectors.setup import managed_connect_connector
+    from integrations.cloud import managed_profile_from_callback
+    from integrations.connectors import accounts
+    from integrations.connectors.setup import managed_connect_connector
 
     secrets = SecretStore(tmp_path / "secrets.json")
     p1 = managed_profile_from_callback(
@@ -1263,9 +1263,9 @@ def test_google_drive_multi_account_keys_by_email(tmp_path):
     """Managed Drive must add multiple accounts keyed by email — the same way
     Gmail does — not by the opaque Google `sub`. The broker sends both `account`
     (email) and `account_id` (sub); account_field="@identity" makes the email win."""
-    from delta.cloud import managed_profile_from_callback
-    from delta.connectors import accounts
-    from delta.connectors.setup import managed_connect_connector
+    from integrations.cloud import managed_profile_from_callback
+    from integrations.connectors import accounts
+    from integrations.connectors.setup import managed_connect_connector
 
     secrets = SecretStore(tmp_path / "secrets.json")
     p1 = managed_profile_from_callback(
@@ -1298,10 +1298,10 @@ def test_google_drive_multi_account_keys_by_email(tmp_path):
 def test_outlook_managed_multi_account_keys_by_email(tmp_path, monkeypatch):
     """Managed Outlook mirrors Gmail/Drive: broker `account` (email from the
     Microsoft id_token) keys each mailbox; tools take an account param."""
-    import delta.connectors.integration_tools as it
-    from delta.cloud import managed_profile_from_callback
-    from delta.connectors import accounts
-    from delta.connectors.setup import managed_connect_connector
+    import integrations.connectors.integration_tools as it
+    from integrations.cloud import managed_profile_from_callback
+    from integrations.connectors import accounts
+    from integrations.connectors.setup import managed_connect_connector
 
     secrets = SecretStore(tmp_path / "secrets.json")
     for email, tok in (("rohit@openworker.com", "g1"), ("ops@acme.com", "g2")):
@@ -1338,9 +1338,9 @@ def test_outlook_calendar_tools_hit_the_right_graph_endpoints(tmp_path, monkeypa
     create carries attendees/location/Teams flags, update PATCHes only the
     provided fields, respond posts to the accept/decline/tentativelyAccept
     action endpoints."""
-    import delta.connectors.integration_tools as it
-    from delta.cloud import managed_profile_from_callback
-    from delta.connectors.setup import managed_connect_connector
+    import integrations.connectors.integration_tools as it
+    from integrations.cloud import managed_profile_from_callback
+    from integrations.connectors.setup import managed_connect_connector
 
     secrets = SecretStore(tmp_path / "secrets.json")
     managed_connect_connector(
@@ -1409,8 +1409,8 @@ def test_outlook_calendar_tools_hit_the_right_graph_endpoints(tmp_path, monkeypa
 def test_batch2_account_param_picks_the_profile(tmp_path, monkeypatch):
     """Two PostHog projects connected → the account param routes the call; the
     default pointer serves bare calls; unknown accounts fail closed."""
-    import delta.connectors.integration_tools as it
-    from delta.connectors import accounts
+    import integrations.connectors.integration_tools as it
+    from integrations.connectors import accounts
 
     calls = []
     secrets = SecretStore(tmp_path / "secrets.json")
@@ -1517,7 +1517,7 @@ def test_new_write_tools_require_approval(tmp_path, monkeypatch):
 
 
 def test_gitlab_self_hosted_base_url(tmp_path, monkeypatch):
-    import delta.connectors.integration_tools as it
+    import integrations.connectors.integration_tools as it
 
     secrets = SecretStore(tmp_path / "secrets.json")
     secrets.put(
@@ -1534,7 +1534,7 @@ def test_gitlab_self_hosted_base_url(tmp_path, monkeypatch):
 
 
 def test_quickbooks_sandbox_environment(tmp_path, monkeypatch):
-    import delta.connectors.integration_tools as it
+    import integrations.connectors.integration_tools as it
 
     secrets = SecretStore(tmp_path / "secrets.json")
     secrets.put(
@@ -1551,7 +1551,7 @@ def test_quickbooks_sandbox_environment(tmp_path, monkeypatch):
 
 
 def test_new_connector_validators_wired():
-    from delta.connectors.descriptors import get_descriptor
+    from integrations.connectors.descriptors import get_descriptor
 
     for name in (
         "linear",
@@ -1576,7 +1576,7 @@ def test_new_connector_validators_wired():
 
 
 def test_validate_whoami_helper(monkeypatch):
-    import delta.connectors.descriptors as d
+    import integrations.connectors.descriptors as d
 
     class _Resp:
         def __init__(self, status, payload):
@@ -1610,7 +1610,7 @@ def test_validate_whoami_helper(monkeypatch):
 def experimental_descriptor():
     """Register a synthetic experimental connector through the same hook the
     experimental package uses, and clean it up afterwards."""
-    import delta.connectors.descriptors as d
+    import integrations.connectors.descriptors as d
 
     desc = d.ConnectorDescriptor(
         name="dangerzone",
@@ -1631,7 +1631,7 @@ def experimental_descriptor():
 
 
 def test_experimental_hidden_until_enabled(tmp_path, experimental_descriptor):
-    from delta.connectors import connector_list, set_experimental_enabled
+    from integrations.connectors import connector_list, set_experimental_enabled
 
     secrets = SecretStore(tmp_path / "secrets.json")
     assert "dangerzone" not in {c["name"] for c in connector_list(secrets)}
@@ -1649,7 +1649,7 @@ def test_experimental_hidden_until_enabled(tmp_path, experimental_descriptor):
 
 
 def test_experimental_connect_requires_optin_and_ack(tmp_path, experimental_descriptor):
-    from delta.connectors import (
+    from integrations.connectors import (
         connect_connector,
         connector_list,
         set_experimental_enabled,
@@ -1675,7 +1675,7 @@ def test_experimental_connect_requires_optin_and_ack(tmp_path, experimental_desc
 
 
 def test_experimental_does_not_gate_regular_connectors(tmp_path):
-    from delta.connectors import connect_connector
+    from integrations.connectors import connect_connector
 
     secrets = SecretStore(tmp_path / "secrets.json")
     res = connect_connector(
@@ -1687,8 +1687,8 @@ def test_experimental_does_not_gate_regular_connectors(tmp_path):
 def test_experimental_rest_roundtrip(tmp_path, monkeypatch, experimental_descriptor):
     from fastapi.testclient import TestClient
 
-    from delta.server.app import create_app
-    from delta.server.manager import SessionManager
+    from services.server.app import create_app
+    from services.server.manager import SessionManager
 
     monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     client = TestClient(create_app(SessionManager(data_dir=tmp_path / "data")))
@@ -1720,8 +1720,8 @@ def test_experimental_rest_roundtrip(tmp_path, monkeypatch, experimental_descrip
 
 def test_experimental_package_loads_cleanly():
     """The experimental package import hook is a no-op when the package is empty or absent."""
-    from delta.connectors.descriptors import DESCRIPTORS
-    from delta.connectors.experimental import EXPERIMENTAL_DESCRIPTORS
+    from integrations.connectors.descriptors import DESCRIPTORS
+    from integrations.connectors.experimental import EXPERIMENTAL_DESCRIPTORS
 
     assert EXPERIMENTAL_DESCRIPTORS == []
     assert all(d.experimental is False for d in DESCRIPTORS if d.name != "dangerzone")

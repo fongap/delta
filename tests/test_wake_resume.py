@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import asyncio
 
-from delta.agent import build_engine
-from delta.agents.code import code_agent
-from delta.agents.cowork import cowork_agent
-from delta.automation.scheduler import Scheduler
-from delta.selfwake import Wake, WakeStore
-from delta.server.manager import SessionManager
+from core.agent import build_engine
+from core.agents.code import code_agent
+from core.agents.cowork import cowork_agent
+from core.automation.scheduler import Scheduler
+from core.selfwake import Wake, WakeStore
+from services.server.manager import SessionManager
 
 
 class _FakeStore:

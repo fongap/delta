@@ -5,7 +5,7 @@ import { ConnectorIcon } from "../features/connectors/ConnectorIcon";
 import { indexConnectors, visualFor, type ConnectorMap } from "../features/connectors/visuals";
 import { useRoots } from "../useRoots";
 import { AddFolderForm } from "./AddFolderForm";
-import { useI18n } from "../i18n/I18nContext";
+import { useI18n } from "@delta/i18n/I18nContext";
 
 // Empty-state for a fresh Cowork session (§27): a greeting, exactly three concrete template
 // tasks, and the composer — nothing else. Each task carries its own setup: no icon tiles (the

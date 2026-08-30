@@ -7,7 +7,7 @@ block (conversation prefix). Outbound-only — persisted history stays clean.
 
 from __future__ import annotations
 
-from delta.providers.anthropic_provider import AnthropicProvider
+from providers.anthropic_provider import AnthropicProvider
 
 MARKER = {"type": "ephemeral"}
 

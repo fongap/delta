@@ -50,16 +50,16 @@ browser = ["playwright>=1.44"]
 bedrock = ["boto3==1.43.73"]
 
 [project.scripts]
-delta = "delta.cli:main"
-delta-server = "delta.server.run:main"
-delta-connectors = "delta.connectors.cli:main"
+delta = "core.cli:main"
+delta-server = "services.server.run:main"
+delta-connectors = "integrations.connectors.cli:main"
 
 [tool.setuptools.packages.find]
-where = ["src"]
-include = ["delta*"]
+where = ["."]
+include = ["apps*", "core*", "integrations*", "packages*", "providers*", "services*"]
 
 [tool.setuptools.package-data]
-delta = ["personas/builtin/*.md"]
+core = ["personas/builtin/*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
