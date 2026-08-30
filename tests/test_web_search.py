@@ -8,14 +8,14 @@ from __future__ import annotations
 
 import pytest
 
-from delta.secrets import SecretStore
-from delta.web import (
+from packages.secrets import SecretStore
+from integrations.web import (
     SearchResult,
     build_provider,
     make_web_search_tool,
     provider_names,
 )
-from delta.web.providers import (
+from integrations.web.providers import (
     BraveProvider,
     DuckDuckGoProvider,
     TavilyProvider,
@@ -91,7 +91,7 @@ def test_tool_surfaces_missing_key_error(tmp_path):
 
 
 def test_resolve_provider_from_secretstore(tmp_path):
-    from delta.web import resolve_provider
+    from integrations.web import resolve_provider
 
     secrets = SecretStore(tmp_path / "secrets.json")
     secrets.put("web_search:default", {"provider": "tavily", "api_key": "tvly-123"})
@@ -102,8 +102,8 @@ def test_resolve_provider_from_secretstore(tmp_path):
 def test_web_search_rest(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
-    from delta.server.app import create_app
-    from delta.server.manager import SessionManager
+    from services.server.app import create_app
+    from services.server.manager import SessionManager
 
     monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     client = TestClient(create_app(SessionManager(data_dir=tmp_path / "data")))
@@ -126,8 +126,8 @@ def test_web_search_rest(tmp_path, monkeypatch):
 
 
 def test_engine_registers_web_search(tmp_path):
-    from delta.agent import build_engine
-    from delta.agents import chat_agent
+    from core.agent import build_engine
+    from core.agents import chat_agent
 
     eng = build_engine(
         agent=chat_agent(),
@@ -139,16 +139,16 @@ def test_engine_registers_web_search(tmp_path):
 
 class _StubProvider:
     def complete(self, **_kw):
-        from delta.providers import AssistantTurn
+        from providers import AssistantTurn
 
         return AssistantTurn()
 
     def capabilities(self, _model):
-        from delta.providers.base import ModelCapabilities
+        from providers.base import ModelCapabilities
 
         return ModelCapabilities()
 
     def stream(self, **_kw):
-        from delta.providers.base import StreamChunk
+        from providers.base import StreamChunk
 
         yield StreamChunk(turn=self.complete())

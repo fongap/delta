@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 
-from delta.inbox import (
+from core.inbox import (
     KIND_APPROVAL,
     KIND_NOTIFICATION,
     STATE_RESOLVED,
@@ -60,7 +60,7 @@ def test_reconcile_on_resume(tmp_path):
 def test_inbox_approver_allow(tmp_path):
     async def run():
         store = InboxStore(tmp_path / "inbox.json")
-        from delta.engine import ApprovalOutcome, PermissionRequest
+        from core.engine import ApprovalOutcome, PermissionRequest
 
         approver = inbox_approver(store, "s1")
         req = PermissionRequest("run_shell", {}, None, "needs approval")
@@ -84,7 +84,7 @@ def test_inbox_approver_allow(tmp_path):
 def test_inbox_approver_deny(tmp_path):
     async def run():
         store = InboxStore(tmp_path / "inbox.json")
-        from delta.engine import ApprovalOutcome, PermissionRequest
+        from core.engine import ApprovalOutcome, PermissionRequest
 
         approver = inbox_approver(store, "s1")
         req = PermissionRequest("rm", {}, None, "danger")
@@ -104,7 +104,7 @@ def test_inbox_approver_deny(tmp_path):
 
 
 def test_args_preview():
-    from delta.inbox import args_preview
+    from core.inbox import args_preview
 
     assert (
         args_preview({"path": "g.txt", "content": "buy milk"})
@@ -116,8 +116,8 @@ def test_args_preview():
 
 
 def test_approval_body_includes_tool_args():
-    from delta.engine import PermissionRequest
-    from delta.server.manager import _approval_body
+    from core.engine import PermissionRequest
+    from services.server.manager import _approval_body
 
     req = PermissionRequest(
         "write_file", {"path": "groceries.txt", "content": "buy milk"}, None, ""

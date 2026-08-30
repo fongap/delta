@@ -13,7 +13,7 @@ import {
 import { BrandIcon } from "./brandIcons";
 import { Icon } from "./Icon";
 import { Markdown } from "./Markdown";
-import { useI18n } from "../i18n/I18nContext";
+import { useI18n } from "@delta/i18n/I18nContext";
 import { PersonaHero } from "./PersonaHero";
 
 // The Persona Gallery, as a screen-sized modal over Settings ▸ Personas (the catalog

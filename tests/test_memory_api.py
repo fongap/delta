@@ -9,9 +9,9 @@ from __future__ import annotations
 
 from fastapi.testclient import TestClient
 
-from delta.memory.settings import MAX_USER_RULES_CHARS
-from delta.providers import ModelCapabilities, ProviderClient
-from delta.server import SessionManager, create_app
+from core.memory.settings import MAX_USER_RULES_CHARS
+from providers import ModelCapabilities, ProviderClient
+from services.server import SessionManager, create_app
 
 
 class _StubProvider(ProviderClient):

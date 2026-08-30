@@ -11,11 +11,11 @@ import asyncio
 
 import aisuite as ai
 
-from delta.automation import Schedule, ScheduledTask, Scheduler, TaskRun, TaskStore
-from delta.automation.models import grant_entries, rule_entry, rule_parts
-from delta.automation.tools import scheduling_tools
-from delta.engine import ApprovalOutcome, PermissionRequest
-from delta.permissions import Mode, PermissionEngine, standing_rule_candidate
+from core.automation import Schedule, ScheduledTask, Scheduler, TaskRun, TaskStore
+from core.automation.models import grant_entries, rule_entry, rule_parts
+from core.automation.tools import scheduling_tools
+from core.engine import ApprovalOutcome, PermissionRequest
+from core.permissions import Mode, PermissionEngine, standing_rule_candidate
 
 
 class _Meta:
@@ -35,7 +35,7 @@ def _task(**kw) -> ScheduledTask:
 
 
 def _provider():
-    from delta.providers import AssistantTurn, ModelCapabilities, ProviderClient
+    from providers import AssistantTurn, ModelCapabilities, ProviderClient
 
     class _P(ProviderClient):
         def complete(self, *, model, messages, tools=None, **settings):
@@ -214,7 +214,7 @@ def test_task_for_run_session(tmp_path):
 
 
 async def test_scheduled_approver_parks_and_mints(tmp_path, monkeypatch):
-    from delta.server.manager import SessionManager
+    from services.server.manager import SessionManager
 
     monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     ws = tmp_path / "ws"
@@ -268,7 +268,7 @@ async def test_scheduled_approver_parks_and_mints(tmp_path, monkeypatch):
 
 
 async def test_scheduled_approver_name_allows_and_denies(tmp_path, monkeypatch):
-    from delta.server.manager import SessionManager
+    from services.server.manager import SessionManager
 
     monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     ws = tmp_path / "ws"
@@ -305,7 +305,7 @@ async def test_scheduled_approver_name_allows_and_denies(tmp_path, monkeypatch):
 
 
 def test_mint_task_rule_validates(tmp_path, monkeypatch):
-    from delta.server.manager import SessionManager
+    from services.server.manager import SessionManager
 
     monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     manager = SessionManager(data_dir=tmp_path / "data", provider=_provider())
@@ -336,7 +336,7 @@ def test_mint_task_rule_validates(tmp_path, monkeypatch):
 
 
 def test_get_engine_seeds_run_session_rules(tmp_path, monkeypatch):
-    from delta.server.manager import SessionManager
+    from services.server.manager import SessionManager
 
     monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     ws = tmp_path / "ws"
@@ -359,7 +359,7 @@ def test_get_engine_seeds_run_session_rules(tmp_path, monkeypatch):
 
 
 def test_create_automation_grants_and_revoke(tmp_path, monkeypatch):
-    from delta.server.manager import SessionManager
+    from services.server.manager import SessionManager
 
     monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     manager = SessionManager(data_dir=tmp_path / "data", provider=_provider())
@@ -427,15 +427,15 @@ async def test_blocked_run_does_not_stall_other_tasks(tmp_path):
 
 
 def test_engine_events_carry_standing_context(tmp_path):
-    from delta.engine import TurnEngine
-    from delta.events import EventType
-    from delta.providers import (
+    from core.engine import TurnEngine
+    from core.events import EventType
+    from providers import (
         AssistantTurn,
         ModelCapabilities,
         ProviderClient,
         ToolCall,
     )
-    from delta.tools import ToolRegistry
+    from integrations.tools import ToolRegistry
 
     def send_message(target: str, text: str):
         return {"ok": True}

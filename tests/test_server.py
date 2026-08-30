@@ -5,14 +5,14 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from delta.providers import (
+from providers import (
     AssistantTurn,
     ModelCapabilities,
     ProviderClient,
     ToolCall,
 )
-from delta.server import SessionManager, create_app
-from delta.sessions import SessionRecord
+from services.server import SessionManager, create_app
+from core.sessions import SessionRecord
 
 
 class ScriptedProvider(ProviderClient):
@@ -411,7 +411,7 @@ def test_ws_simple_turn(tmp_path):
 
 
 def test_ws_events_use_strict_v1_envelope(tmp_path):
-    from delta.server.contracts import EventEnvelopeV1
+    from services.server.contracts import EventEnvelopeV1
 
     client = _client(tmp_path, [_text("contract reply")])
     with client.websocket_connect("/ws/session/contract-s1") as ws:
@@ -435,8 +435,8 @@ def test_ws_events_use_strict_v1_envelope(tmp_path):
 
 
 def test_ws_rejects_oversized_message(tmp_path):
-    from delta.attachments import MAX_ATTACHMENTS
-    from delta.server import app as app_mod
+    from core.attachments import MAX_ATTACHMENTS
+    from services.server import app as app_mod
 
     client = _client(tmp_path, [_text("eight accepted"), _text("normal")])
     with client.websocket_connect("/ws/session/big") as ws:
@@ -593,7 +593,7 @@ def test_ws_allows_only_one_inflight_turn_per_session(tmp_path):
 def test_ws_rate_limits_inbound_frames(tmp_path):
     from starlette.websockets import WebSocketDisconnect
 
-    from delta.server import app as app_mod
+    from services.server import app as app_mod
 
     client = _client(tmp_path, [])
     with pytest.raises(WebSocketDisconnect):
@@ -611,7 +611,7 @@ def test_server_sets_explicit_websocket_frame_limit(tmp_path, monkeypatch):
     import sys
     from types import SimpleNamespace
 
-    from delta.server import run as server_run
+    from services.server import run as server_run
 
     seen = {}
     fake_app = object()
@@ -634,7 +634,7 @@ def test_server_sets_explicit_websocket_frame_limit(tmp_path, monkeypatch):
 def test_standalone_server_token_file_is_user_only(tmp_path, monkeypatch):
     import os
 
-    from delta.server import run as server_run
+    from services.server import run as server_run
 
     monkeypatch.delenv("DELTA_API_TOKEN", raising=False)
     path = server_run._ensure_api_token(9876)
@@ -723,7 +723,7 @@ def test_ws_allows_webview_origin(tmp_path):
 def test_sidecar_token_gates_rest_and_websockets(tmp_path, monkeypatch):
     from starlette.websockets import WebSocketDisconnect as WSD
 
-    from delta.mcp.config import global_mcp_path
+    from integrations.mcp.config import global_mcp_path
 
     monkeypatch.setenv("DELTA_API_TOKEN", "a" * 64)
     manager = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
@@ -932,7 +932,7 @@ def test_workspace_command_trust_controls_live_engine(tmp_path):
 def test_recent_workspaces_exclude_scratch_dirs(tmp_path):
     # Scratch dirs get touched like any workspace, but must never show up as
     # "recent projects" in the folder gate (owner call, 2026-07-03).
-    from delta.server.manager import SessionManager
+    from services.server.manager import SessionManager
 
     proj = tmp_path / "real-project"
     proj.mkdir()
@@ -951,8 +951,8 @@ def test_delete_session_removes_its_scratch_dir_only(tmp_path):
     # 2026-07-03) — but NEVER a real project folder the user picked.
     from pathlib import Path
 
-    from delta.server.manager import SessionManager
-    from delta.sessions import SessionRecord
+    from services.server.manager import SessionManager
+    from core.sessions import SessionRecord
 
     mgr = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
     mgr._prefs["scratch_base"] = str(tmp_path / "scratch")

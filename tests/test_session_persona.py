@@ -6,8 +6,8 @@ practice — ``get_engine`` always rebuilds from it). Pin = ``pinned`` flag; ren
 
 from __future__ import annotations
 
-from delta.conversations import ConversationStore
-from delta.sessions import SessionRecord
+from core.conversations import ConversationStore
+from core.sessions import SessionRecord
 
 
 def _store(tmp_path) -> ConversationStore:

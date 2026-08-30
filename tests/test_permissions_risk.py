@@ -10,8 +10,8 @@ from types import SimpleNamespace
 
 import pytest
 
-from delta.permissions import Mode, PermissionEngine
-from delta.risk import RiskClass, classify, is_consequential
+from core.permissions import Mode, PermissionEngine
+from core.risk import RiskClass, classify, is_consequential
 
 EXTERNAL_META = SimpleNamespace(requires_approval=True, category="connector")
 PLAIN_META = SimpleNamespace(requires_approval=False)
@@ -134,7 +134,7 @@ def test_allowlist_prefix_is_argv_boundary(tmp_path):
 def test_shell_commands_not_auto_allowed_by_default(tmp_path):
     # There is no generally safe executable: these examples cover code execution,
     # environment disclosure, reads outside the workspace, and helper execution.
-    from delta.config import DEFAULT_ALLOWED_COMMANDS
+    from packages.config import DEFAULT_ALLOWED_COMMANDS
 
     eng = PermissionEngine(
         workspace_root=tmp_path, allowed_commands=list(DEFAULT_ALLOWED_COMMANDS)
