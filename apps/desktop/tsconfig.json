@@ -14,8 +14,15 @@
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+    "baseUrl": ".",
+    "paths": {
+      "@delta/i18n/*": ["../../packages/i18n/*"],
+      "react": ["node_modules/react"],
+      "react/*": ["node_modules/react/*"]
+    }
   },
-  "include": ["src"],
+  "include": ["src", "../../packages/i18n"],
+  "exclude": ["../../packages/i18n/**/*.test.ts", "../../packages/i18n/**/*.test.tsx"],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { getAudit, type AuditEvent } from "../api";
 import { PanelHead } from "./IntegrationsView";
-import { useI18n } from "../i18n/I18nContext";
+import { useI18n } from "@delta/i18n/I18nContext";
 
 // Activity — connector/browser tool history, restructured onto the IntegrationsView page shell
 // (centered panel + PanelHead + cards), replacing the legacy `page-view` layout. Read-only:

@@ -8,11 +8,11 @@ NEVER cover send_file.
 
 from pathlib import Path
 
-from delta.connectors.base import SendResult
-from delta.connectors.tools import make_send_file_tool
-from delta.permissions import Mode, PermissionEngine
-from delta.roots import RootDir
-from delta.secrets import SecretStore
+from integrations.connectors.base import SendResult
+from integrations.connectors.tools import make_send_file_tool
+from core.permissions import Mode, PermissionEngine
+from core.roots import RootDir
+from packages.secrets import SecretStore
 
 
 def _secrets(tmp_path, token="xoxb-1") -> SecretStore:
@@ -139,7 +139,7 @@ def test_thread_send_message_grant_never_covers_send_file(tmp_path):
     target = "slack:T1/C9:1700.1"
     engine.task_rules.setdefault("send_message", set()).add(target)
 
-    from delta.connectors.tools import make_send_file_tool, make_send_message_tool
+    from integrations.connectors.tools import make_send_file_tool, make_send_message_tool
 
     msg_meta = make_send_message_tool(_secrets(tmp_path)).__aisuite_tool_metadata__
     file_meta = make_send_file_tool(

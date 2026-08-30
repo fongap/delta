@@ -7,8 +7,8 @@ from pathlib import Path
 import aisuite as ai
 import pytest
 
-from delta.permissions import Decision, Mode, PermissionEngine
-from delta.tools import ToolRegistry
+from core.permissions import Decision, Mode, PermissionEngine
+from integrations.tools import ToolRegistry
 
 
 def _registry(root: Path) -> ToolRegistry:

@@ -44,7 +44,7 @@
   profile moves with the portable whenever wry honors WEBVIEW2_USER_DATA_FOLDER.
 
   Secrets stay safe in portable mode: every store/pref/log/DB/secret key is derived from
-  DELTA_STATE_DIR (see src/delta/secrets.py + src-tauri/src/lib.rs), which the launcher points
+  DELTA_STATE_DIR (see packages/secrets.py + src-tauri/src/lib.rs), which the launcher points
   at <ROOT>\Data. Moving Data moves the secrets; the folder never writes to %APPDATA%.
 #>
 [CmdletBinding()]

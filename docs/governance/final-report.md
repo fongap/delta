@@ -1,4 +1,8 @@
-# Delta Repository Governance — Final Report
+# Delta Repository Governance — Historical Final Report
+
+> Superseded by the responsibility-boundary split documented in
+> `docs/architecture/repository-layout.md`. This report records the earlier
+> `src/delta` migration and is retained only as an audit artifact.
 
 **Status:** Complete (code + CI + docs landed; two human-side GitHub actions remain — see §7)
 **Branch of record:** `refactor/repository-normalization`
@@ -32,7 +36,7 @@ The work was delivered across two merged PRs and one open branch of record:
 
 ### 2.1 Canonical repository layout (`docs/architecture/repository-layout.md`)
 
-- Top-level directories frozen: `apps/`, `services/`, `src/delta/`, `tests/`,
+- Top-level directories frozen: `apps/`, `services/`, `core/`, `tests/`,
   `resources/`, `packaging/`, `scripts/`, `docs/`, `.github/`.
 - Desktop is **feature-based**: `apps/desktop/src/features/<feature>/` with shared
   code under `src/shared/`; tests are colocated (`*.test.*`).
@@ -44,9 +48,9 @@ The work was delivered across two merged PRs and one open branch of record:
 
 ### 2.2 Runtime package cleanup
 
-- Private package name `coworker` renamed to **`delta`** (`src/delta/`).
+- Private package name `coworker` renamed to **`delta`** (`core/`).
 - **Test-only code moved out of the runtime package**: fake Slack server moved from
-  `src/delta/testing/` to `tests/fakes/`; `tests/conftest.py` updated. Test-only
+  `core/testing/` to `tests/fakes/`; `tests/conftest.py` updated. Test-only
   support now lives exclusively under `tests/`, per the layout rule "never inside
   the package."
 

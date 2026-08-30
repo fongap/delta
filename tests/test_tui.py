@@ -4,13 +4,13 @@ from __future__ import annotations
 
 import pytest
 
-from delta.providers import (
+from providers import (
     AssistantTurn,
     ModelCapabilities,
     ProviderClient,
     ToolCall,
 )
-from delta.tui.app import DeltaApp
+from apps.tui.app import DeltaApp
 
 
 def _text_turn(text):

@@ -9,8 +9,8 @@ walk (rglob descends first and filters after, which is what caused the bug).
 
 import os
 
-from delta.server.manager import SessionManager
-from delta.tools.search import OS_DATA_DIRS
+from services.server.manager import SessionManager
+from integrations.tools.search import OS_DATA_DIRS
 
 
 def _ws(tmp_path):
@@ -34,7 +34,7 @@ def test_os_data_dirs_are_not_traversed(tmp_path, monkeypatch):
             walked.append(dirpath)
             yield dirpath, dirs, files
 
-    monkeypatch.setattr("delta.server.manager.os.walk", spy)
+    monkeypatch.setattr("services.server.manager.os.walk", spy)
     m = SessionManager(data_dir=tmp_path / "data", workspace=str(ws))
     names = [a["name"] for a in m.list_artifacts("s1")]
 

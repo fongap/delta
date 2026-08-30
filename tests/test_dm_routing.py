@@ -6,10 +6,10 @@ import asyncio
 import pytest
 from fastapi.testclient import TestClient
 
-from delta.connectors.base import MessageEvent, SessionSource
-from delta.providers import ModelCapabilities, ProviderClient
-from delta.server import create_app
-from delta.server.manager import SessionManager
+from integrations.connectors.base import MessageEvent, SessionSource
+from providers import ModelCapabilities, ProviderClient
+from services.server import create_app
+from services.server.manager import SessionManager
 
 
 class ScriptedProvider(ProviderClient):

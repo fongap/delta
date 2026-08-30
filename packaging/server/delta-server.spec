@@ -5,8 +5,8 @@ One-DIR bundle (exe + `_internal/` support folder) shipped via Tauri's `resource
 It used to be a onefile binary in the externalBin slot, but onefile self-extracts its whole
 archive to a temp dir on EVERY launch — 6-7s of "Starting delta…" splash (measured; the
 actual Python import is ~0.5s). The wrinkles handled here:
-  - aisuite is a regular pip dependency (git-pinned in pyproject.toml); collect delta +
-    aisuite submodules from the venv.
+  - aisuite is a regular pip dependency (git-pinned in pyproject.toml); collect the
+    responsibility packages + aisuite submodules from the venv.
   - uvicorn loads its protocol/lifespan impls dynamically → collect_all.
   - certifi's CA bundle must ship for TLS (OpenAI, web search, Telegram/Slack).
   - messaging extras (slack_bolt, telegram) are optional; collected if importable.
@@ -30,25 +30,37 @@ from PyInstaller.utils.hooks import collect_all, collect_submodules
 PACKAGING = SPECPATH                 # packaging/server
 ROOT = os.path.dirname(PACKAGING)    # packaging
 REPO_ROOT = os.path.dirname(ROOT)    # <repo>
-SRC = os.path.join(REPO_ROOT, "src")  # src layout package root
+PYTHON_ROOT = REPO_ROOT  # responsibility packages live at the repository root
 
 IS_WINDOWS = sys.platform == "win32"
 
 # Experimental (use-at-your-own-risk) connectors are excluded from official builds: the code
 # is stripped, not just disabled. Self-builders opt in with DELTA_EXPERIMENTAL=1; the
-# loader in src/delta/connectors/descriptors.py treats the missing package as a no-op.
+# loader in integrations/connectors/descriptors.py treats the missing package as a no-op.
 INCLUDE_EXPERIMENTAL = os.environ.get("DELTA_EXPERIMENTAL") == "1"
 
 hiddenimports = []
 datas = []
 binaries = []
 
-for pkg in ("delta", "aisuite", "mcp", "ddgs", "croniter", "docstring_parser"):
+for pkg in (
+    "core",
+    "providers",
+    "integrations",
+    "packages",
+    "services",
+    "apps",
+    "aisuite",
+    "mcp",
+    "ddgs",
+    "croniter",
+    "docstring_parser",
+):
     hiddenimports += collect_submodules(pkg)
 
 if not INCLUDE_EXPERIMENTAL:
     hiddenimports = [
-        m for m in hiddenimports if not m.startswith("delta.connectors.experimental")
+        m for m in hiddenimports if not m.startswith("integrations.connectors.experimental")
     ]
 
 # `websockets` powers the managed Slack relay client (relay_client.py). It is
@@ -91,14 +103,14 @@ for pkg in ("slack_bolt", "telegram"):  # [messaging] extra — optional
 
 a = Analysis(
     [os.path.join(PACKAGING, "server_entry.py")],
-    pathex=[SRC],
+    pathex=[PYTHON_ROOT],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],
     excludes=["tkinter", "matplotlib", "PIL", "PyQt5", "PySide6"]
-    + ([] if INCLUDE_EXPERIMENTAL else ["delta.connectors.experimental"]),
+    + ([] if INCLUDE_EXPERIMENTAL else ["integrations.connectors.experimental"]),
     noarchive=False,
 )
 pyz = PYZ(a.pure)

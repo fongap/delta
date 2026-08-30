@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { chooseFolder } from "../tauri";
 import { Icon } from "./Icon";
-import { useI18n } from "../i18n/I18nContext";
+import { useI18n } from "@delta/i18n/I18nContext";
 
 // A single "Give access to a folder" affordance. Collapsed it's one button; expanded it's a path
 // field (Browse on desktop, paste anywhere) + an "Allow writing" checkbox that's OFF by default —

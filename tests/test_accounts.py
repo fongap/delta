@@ -7,14 +7,14 @@ from __future__ import annotations
 
 import pytest
 
-from delta.connectors import accounts, descriptors
-from delta.connectors.descriptors import ConnectorDescriptor, Field, ValidationResult
-from delta.connectors.setup import (
+from integrations.connectors import accounts, descriptors
+from integrations.connectors.descriptors import ConnectorDescriptor, Field, ValidationResult
+from integrations.connectors.setup import (
     connect_connector,
     connector_list,
     disconnect_connector,
 )
-from delta.secrets import SecretStore
+from packages.secrets import SecretStore
 
 
 def _fake_descriptor(name="acmeapp", account_field="project_id", managed=False):
@@ -151,9 +151,9 @@ def test_generic_account_routes(acme, secrets, tmp_path, monkeypatch):
     account-patterned connectors and refuse everything else."""
     from fastapi.testclient import TestClient
 
-    from delta.providers import ModelCapabilities, ProviderClient
-    from delta.server.app import create_app
-    from delta.server.manager import SessionManager
+    from providers import ModelCapabilities, ProviderClient
+    from services.server.app import create_app
+    from services.server.manager import SessionManager
 
     class _Provider(ProviderClient):
         def complete(self, *, model, messages, tools=None, **settings):
