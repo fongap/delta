@@ -370,7 +370,7 @@ class InboxApprovalsMixin:
         profile_key = f"slack:team:{team_id}"
         if not team_id or not self.secrets.get(profile_key):
             return {"ok": False, "error": "workspace not connected"}
-        from core import cloud
+        import integrations.cloud as cloud
         from packages.config import load_config
 
         await asyncio.to_thread(
@@ -412,7 +412,7 @@ class InboxApprovalsMixin:
         the desktop↔relay socket, the cloud sign-in that authorizes it, and each
         workspace's bot token. The desktop can't see the Slack↔cloud leg, so no
         layer here ever claims it — event silence ≠ outage."""
-        from core import cloud
+        import integrations.cloud as cloud
 
         default = self.secrets.get("slack:default") or {}
         mode = default.get("mode") or ""
@@ -450,7 +450,7 @@ class InboxApprovalsMixin:
         (best-effort), drop the local profile, hot-reload the gateway. The Slack
         per-workspace disconnect, GitHub flavour — a manual PAT stays untouched."""
         installation_id = str(installation_id).strip()
-        from core import cloud
+        import integrations.cloud as cloud
         from packages.config import load_config
         from integrations.connectors import github_installs
 
@@ -471,7 +471,7 @@ class InboxApprovalsMixin:
     def github_status(self) -> dict[str, Any]:
         """GitHub relay health, same three honest layers as Slack: the shared
         relay socket, the cloud sign-in, and per-installation token health."""
-        from core import cloud
+        import integrations.cloud as cloud
 
         default = self.secrets.get("github:default") or {}
         signin = cloud.status(self.secrets)
