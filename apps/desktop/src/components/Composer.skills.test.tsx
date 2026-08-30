@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Composer } from "./Composer";
 import { I18nProvider } from "@delta/i18n/I18nContext";
+import type { JSX } from "react";
 
 const MENU = {
   skills: [
