@@ -626,6 +626,9 @@ class ProvidersSettingsMixin:
             ),
             # "" → the session's own model (engine falls back to self.model).
             "model": str(self._prefs.get("compaction_model") or ""),
+            # Weighted prefill accounting (Codex-absorbed): < 1.0 reflects that input
+            # tokens cost less than output tokens on shared gateways. 1.0 = classic.
+            "prefill_weight": float(self._prefs.get("compaction_prefill_weight") or 1.0),
         }
 
 
@@ -636,6 +639,7 @@ class ProvidersSettingsMixin:
             "compaction_threshold_pct": settings["threshold_pct"],
             "compaction_cap_tokens": settings["cap_tokens"],
             "compaction_model": settings["model"],
+            "compaction_prefill_weight": settings["prefill_weight"],
         }
 
 
@@ -644,6 +648,7 @@ class ProvidersSettingsMixin:
         threshold_pct: Any = None,
         cap_tokens: Any = None,
         model: Any = None,
+        prefill_weight: Any = None,
     ) -> dict[str, Any]:
         """Persist the auto-compaction overrides (OPE-27). Threshold is a percentage of
         the model's context window (10–95); the cap is an absolute token ceiling; model
@@ -669,6 +674,17 @@ class ProvidersSettingsMixin:
                 return {"ok": False, "error": "compaction_cap_tokens must be a number"}
         if model is not None:
             self._prefs["compaction_model"] = str(model)
+        if prefill_weight is not None:
+            try:
+                weight = float(prefill_weight)
+            except (TypeError, ValueError):
+                return {"ok": False, "error": "compaction_prefill_weight must be a number"}
+            if not 0.01 <= weight <= 1.0:
+                return {
+                    "ok": False,
+                    "error": "compaction_prefill_weight must be between 0.01 and 1.0",
+                }
+            self._prefs["compaction_prefill_weight"] = weight
         self._save_prefs()
         return {"ok": True, **self.compaction_settings()}
 

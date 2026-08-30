@@ -39,6 +39,10 @@ CORE_TOOLS = frozenset(
     {"ask_user", "propose_plan", "load_skill", "save_skill", "todo_write"}
 )
 
+# Read-only mode drops actual write/exec tools — including save_skill (it writes a
+# skill to disk), which is core otherwise but must not ride a read-only turn.
+CORE_READONLY = CORE_TOOLS - {"save_skill"}
+
 # family → categories injected regardless of signals. Code is workspace-bound BY
 # PURPOSE; keyword-gating its file/shell/search/git tools would trade reliability
 # for tokens on the surface where reliability is the product.
@@ -74,6 +78,56 @@ def tool_category(name: str) -> str:
         if pattern.search(name):
             return category
     return "misc"
+
+
+# -- read-only task awareness (v0.3.0 P1) --------------------------------------
+
+# Tool-name patterns that perform writes or side effects — a read-only task must not
+# get them. `read_file`/`grep`/`git_status` are safe; `write_file`/`apply_patch`/
+# `send_message`/`run_shell` are not. Ordered loose match on the tool name.
+_WRITE_EXEC_RE = re.compile(
+    r"^(write|edit|append|patch|create|delete|remove|rename|move|copy|save|send|"
+    r"commit|push|merge|rebase|schedul|wake|sleep_|timer|remind|recurr|subscribe|"
+    r"notif|install|deploy|upload|download|branch|checkout|run_|^exec|shell)"
+)
+
+# Text signals that a task wants to write / execute / act — if any appear, the turn is
+# NOT read-only (conservative: a write hint keeps the write tools).
+_WRITE_EXEC_SIGNALS = (
+    r"命令|运行|执行|脚本|保存|写入|创建|修改|编辑|删除|追加|发送|提交|推送|定时|部署|安装|卸载|编译|移动|复制|重命名|订阅|提醒",
+    r"\b(shell|command|run|write|save|create|edit|delete|append|patch|send|commit|push|"
+    r"schedul|cron|deploy|install|build|compile|rename|move|copy|subscribe|remind)\b",
+)
+_WRITE_EXEC_SIGNAL_RE = [re.compile(p, re.IGNORECASE) for p in _WRITE_EXEC_SIGNALS]
+
+
+def is_write_or_exec(name: str) -> bool:
+    """True for tools that write or cause side effects (a read-only turn must not see
+    them). Unknown/MCP names return False — they stay (conservative; better a tool the
+    model may not use than a tool the task needs that was hidden)."""
+    if name in CORE_TOOLS:
+        return name == "save_skill"
+    return bool(_WRITE_EXEC_RE.search(name))
+
+
+def is_readonly_turn(messages: list[dict[str, Any]]) -> bool:
+    """True when the CURRENT turn shows no write/exec intent — a read/analysis task.
+    The latest user message (plus any assistant narration this turn) is scanned for
+    write/exec signals; their absence with the presence of ANY task signal counts as
+    read-only. Conservative: an empty/ambiguous turn is NOT read-only (keep tools)."""
+    start = 0
+    for i, message in enumerate(messages):
+        if message.get("role") == "user":
+            start = i
+    text = " ".join(
+        _message_text(m) for m in messages[start:] if m.get("role") in ("user", "assistant")
+    )
+    if not text:
+        return False
+    if any(re.search(p, text) for p in _WRITE_EXEC_SIGNAL_RE):
+        return False
+    # Some task signal must be present — an empty "继续" must not silently strip tools.
+    return bool(signal_categories(text))
 
 
 # Recall-biased (EN+ZH) per-category signal patterns over the current turn's text.
@@ -178,11 +232,15 @@ def select_tool_names(
     *,
     family: str = "knowledge",
     minimal: bool = False,
+    read_only: bool = False,
 ) -> list[str]:
     """The tool names to inject for THIS call. `minimal` (context-budget trim) drops
-    to the core set only; otherwise core + family base + signal matches + misc."""
+    to the core set only; `read_only` (a read-only task or plan phase) additionally
+    excludes write/exec tools so a "summarize this" turn never carries run_shell or
+    write_file. Core + family base + signal matches + misc otherwise."""
     available = set(registry_names)
-    selected = set(CORE_TOOLS & available)
+    core = CORE_READONLY if read_only else CORE_TOOLS
+    selected = set(core & available)
     # "misc" (unrecognized names — MCP, future tools) always rides along: an unknown
     # tool is more likely session-critical than safe to hide.
     misc = {n for n in available if tool_category(n) == "misc"}
@@ -190,8 +248,11 @@ def select_tool_names(
         return sorted(selected | misc)
     categories = FAMILY_BASE.get(family, frozenset()) | turn_signal_categories(messages)
     for name in available - selected - misc:
-        if tool_category(name) in categories:
-            selected.add(name)
+        if tool_category(name) not in categories:
+            continue
+        if read_only and is_write_or_exec(name):
+            continue
+        selected.add(name)
     return sorted(selected | misc)
 
 

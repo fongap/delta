@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
 import time
 from dataclasses import dataclass
 from enum import Enum
@@ -21,6 +22,13 @@ from typing import Any, AsyncIterator, Awaitable, Callable
 
 from core import compaction as _compaction
 from core import gateway
+from core.call_errors import (
+    ErrorClass,
+    TTFTTimeoutError,
+    classify_error,
+    is_retryable,
+    wait_for_retry,
+)
 from core.identity import (
     IDENTITY_CLAUSE,
     answer as identity_answer,
@@ -105,6 +113,13 @@ class TurnEngine:
         # Request observability sink (core/request_log.py): one dict per model call,
         # best-effort. None (tests, subagents) disables recording.
         request_logger: Callable[[dict[str, Any]], None] | None = None,
+        # TTFT ceiling (seconds) for the first streamed token — the pre-first-token wait
+        # on free/shared gateways is the timeout killer. None/<=0 disables the guard.
+        ttft_timeout: float | None = None,
+        # Bounded retry for TRANSIENT provider failures (429/5xx/connection/stall) —
+        # Codex-style exponential backoff. Never retries stream truncation (finish_reason
+        # guard) or context overflow (compaction's job). 0/None disables auto-retry.
+        max_retries: int = 2,
     ) -> None:
         self.provider = provider
         self.registry = registry
@@ -171,8 +186,13 @@ class TurnEngine:
         )
         self.agent_family = agent_family
         self.request_logger = request_logger
+        self.ttft_timeout = float(ttft_timeout) if (ttft_timeout or 0) > 0 else None
+        self.max_retries = max(0, int(max_retries or 0))
         self._tool_expanded = False
         self._tools_minimal = False
+        # Transient-retry budget, consumed across the WHOLE turn (all iterations):
+        # a persistent stall must give up after max_retries total, not per iteration.
+        self._turn_retries = 0
 
     # -- external controls ------------------------------------------------------
     def request_interrupt(self) -> None:
@@ -250,6 +270,7 @@ class TurnEngine:
             message["_display"] = display
         self.messages.append(message)
         self._cancel.clear()
+        self._turn_retries = 0
         data: dict[str, Any] = {"input": user_input}
         if source is not None:
             data["source"] = source
@@ -364,6 +385,7 @@ class TurnEngine:
         if not self._tail_is_retriable_error():
             return
         self._cancel.clear()
+        self._turn_retries = 0
         yield Event(EventType.TURN_START, {"input": ""})
         async for event in self._loop():
             yield event
@@ -378,6 +400,7 @@ class TurnEngine:
         if not pending:
             return
         self._cancel.clear()
+        self._turn_retries = 0
         yield Event(EventType.TURN_START, {"input": "(resumed)"})
         async for event in self._handle_tool_calls(pending):
             yield event
@@ -483,6 +506,39 @@ class TurnEngine:
                     if chunk.turn is not None:
                         turn = chunk.turn
             except Exception as exc:  # provider failure
+                # Bounded retry (Codex-absorbed, v0.3.0 P1): transient/transport
+                # failures (429, 5xx, connection, TTFT stall) earn a bounded exponential
+                # backoff. ONLY when nothing was streamed yet — re-sending a turn whose
+                # partial answer the user already watched arrive would duplicate it. The
+                # finish_reason guard (stream_truncated) and context overflow are never
+                # auto-retried here: the former stays loud by design, the latter belongs
+                # to the compaction policy.
+                if (
+                    self.max_retries > 0
+                    and self._turn_retries < self.max_retries
+                    and not streamed
+                    and not streamed_reasoning
+                    and not self._cancel.is_set()
+                    and is_retryable(exc)
+                ):
+                    self._turn_retries += 1
+                    delay = wait_for_retry(self._turn_retries - 1)
+                    self._append_notice(
+                        "retrying",
+                        f"Model call failed transiently ({classify_error(exc).value}) — "
+                        f"retrying (attempt {self._turn_retries}/{self.max_retries})",
+                    )
+                    yield Event(
+                        EventType.ERROR,
+                        {
+                            "error": (
+                                f"Transient model failure — retrying after "
+                                f"{delay * 1000:.0f}ms."
+                            ),
+                            "error_type": classify_error(exc).value,
+                        },
+                    )
+                    continue
                 # A raw context-overflow 400 (compaction mispredicted, e.g. the estimate
                 # path) routes into the compaction policy instead of surfacing. The retry
                 # is progress-guarded: each pass moves the boundary forward or gives up,
@@ -499,9 +555,11 @@ class TurnEngine:
                 if streamed or streamed_reasoning:
                     self.messages.append(_assistant_message(_partial_turn()))
                 friendly = friendly_model_error(self.model, exc)
+                error_class = classify_error(exc).value
                 payload = {
                     "error": friendly or str(exc),
-                    "error_type": type(exc).__name__,
+                    "error_type": error_class,
+                    "error_class": error_class,
                 }
                 if friendly:
                     payload["raw"] = str(exc)
@@ -619,10 +677,21 @@ class TurnEngine:
         cfg = self._compaction_config()
         if cfg.get("enabled") is False:
             return False
-        signal = (
-            self._last_context_tokens
-            or _compaction.estimate_tokens(self._outbound_messages())
-        ) + extra_tokens
+        if self._last_context_tokens is not None:
+            signal = self._last_context_tokens
+        else:
+            # Weighted prefill accounting (Codex-absorbed): when the config sets
+            # compaction_prefill_weight < 1.0, the estimate reflects that prefill
+            # (input) tokens cost less than sampling tokens on shared gateways — so a
+            # big prompt still triggers, but not as early as raw chars/4 would.
+            weight = float(cfg.get("prefill_weight", 1.0))
+            if weight != 1.0:
+                signal = _compaction.estimate_tokens_weighted(
+                    self._outbound_messages(), prefill_weight=weight
+                )
+            else:
+                signal = _compaction.estimate_tokens(self._outbound_messages())
+        signal += extra_tokens
         return _compaction.should_compact(
             signal,
             cfg.get("context_window"),
@@ -637,11 +706,20 @@ class TurnEngine:
         if self.tool_selection != "auto" or self._tool_expanded:
             names = self.registry.names()
             return (self.registry.schemas() or None), names, "full"
+        # Read-only awareness (v0.3.0 P1): a plan/discuss phase (READ_ONLY_MODES) or a
+        # read-only task must not see write/exec tools — cut payload AND the write
+        # surface on exactly the turns where acting isn't on the table.
+        from core.permissions import READ_ONLY_MODES
+
+        read_only = self.permissions.mode in READ_ONLY_MODES or _tool_selection.is_readonly_turn(
+            self.messages
+        )
         names = _tool_selection.select_tool_names(
             self.registry.names(),
             self.messages,
             family=self.agent_family,
             minimal=self._tools_minimal,
+            read_only=read_only,
         )
         return (self.registry.schemas(names) or None), names, "selected"
 
@@ -764,6 +842,9 @@ class TurnEngine:
             self.model_settings,
         )
         provider = self.provider
+        # Stops the producer mid-stream (TTFT stall) without touching `self._cancel` —
+        # the user-interrupt flag belongs to the USER, not to a retry guard.
+        abort = threading.Event()
 
         # One observation per call, written no matter how the stream ends. TTFT is
         # measured at the first chunk (the timeout killer on free/shared nodes);
@@ -771,7 +852,7 @@ class TurnEngine:
         _started = time.perf_counter()
         _ttft: list[float] = []
         _usage: list[Any] = []
-        _state: dict[str, Any] = {"outcome": "ok", "error_type": None}
+        _state: dict[str, Any] = {"outcome": "ok", "error_type": None, "error_class": None}
 
         def _observe() -> None:
             if self.request_logger is None:
@@ -798,6 +879,7 @@ class TurnEngine:
                         "duration_ms": round((time.perf_counter() - _started) * 1000),
                         "outcome": _state["outcome"],
                         "error_type": _state["error_type"],
+                        "error_class": _state["error_class"],
                         "context_tokens": (
                             getattr(usage, "context_tokens", None) if usage else None
                         ),
@@ -813,9 +895,10 @@ class TurnEngine:
                     model=model, messages=messages, tools=tools, **settings
                 )
                 for chunk in chunks:
-                    # User pressed Stop: drop the stream between chunks (reading the
-                    # asyncio.Event's flag from a thread is safe; we only read).
-                    if self._cancel.is_set():
+                    # User pressed Stop, or the TTFT guard aborted this attempt — drop
+                    # the stream between chunks (reading the flags from a thread is
+                    # safe; we only read).
+                    if self._cancel.is_set() or abort.is_set():
                         break
                     loop.call_soon_threadsafe(queue.put_nowait, ("chunk", chunk))
             except Exception as exc:  # surfaced to the awaiting consumer
@@ -839,16 +922,35 @@ class TurnEngine:
             while True:
                 # Race the queue against Stop so a stalled stream (no chunks arriving —
                 # the pre-first-token wait, a wedged connection) can't hold the turn.
+                # While waiting for the FIRST token, the TTFT ceiling bounds the wait;
+                # once streaming, only a user Stop can end it.
                 get_task = asyncio.ensure_future(queue.get())
                 cancel_task = asyncio.ensure_future(self._cancel.wait())
+                wait_timeout = self.ttft_timeout if not _ttft else None
                 done, _ = await asyncio.wait(
-                    {get_task, cancel_task}, return_when=asyncio.FIRST_COMPLETED
+                    {get_task, cancel_task},
+                    return_when=asyncio.FIRST_COMPLETED,
+                    timeout=wait_timeout,
                 )
                 cancel_task.cancel()
                 if get_task not in done:
                     get_task.cancel()
-                    _state["outcome"] = "interrupted"
-                    return  # interrupted — the producer exits on its own next chunk
+                    if self._cancel.is_set():
+                        # User stop — interrupted, not a stall.
+                        _state["outcome"] = "interrupted"
+                        return  # interrupted — the producer exits on its own next chunk
+                    # TTFT guard (v0.3.0 P1): the pre-first-token wait exceeded the
+                    # ceiling — a stall, not a user stop. Classify it and let the
+                    # retry policy decide (it IS retryable: nothing was delivered).
+                    abort.set()
+                    _state["outcome"] = "error"
+                    _state["error_type"] = TTFTTimeoutError.__name__
+                    _state["error_class"] = ErrorClass.TTFT_TIMEOUT.value
+                    raise TTFTTimeoutError(
+                        "No first token arrived within "
+                        f"{self.ttft_timeout:.0f}s — the upstream stalled or the "
+                        "gateway is overloaded."
+                    )
                 kind, payload = get_task.result()
                 if kind == "chunk":
                     if not _ttft:
@@ -859,6 +961,7 @@ class TurnEngine:
                 elif kind == "error":
                     _state["outcome"] = "error"
                     _state["error_type"] = type(payload).__name__
+                    _state["error_class"] = classify_error(payload).value
                     raise payload
                 else:
                     return

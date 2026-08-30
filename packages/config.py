@@ -43,6 +43,19 @@ class Config:
     # "full" restores always-everything injection (the kill switch if selection ever
     # misbehaves on a surface).
     tool_selection: str = "auto"
+    # TTFT ceiling (seconds) for the first streamed token (v0.3.0 P1). The
+    # pre-first-token wait on free/shared gateways is the timeout killer; >0 enables
+    # the guard, <=0 disables it.
+    ttft_timeout: float = 90.0
+    # Bounded retries for TRANSIENT model-call failures (429/5xx/connection/TTFT stall),
+    # Codex-style exponential backoff (v0.3.0 P1). Never retries stream truncation
+    # (finish_reason guard) or context overflow. 0 disables auto-retry.
+    max_retries: int = 2
+    # Weighted context accounting (Codex-absorbed, v0.3.0 P1): prefill (input) tokens
+    # cost less than sampling tokens on shared gateways (NVIDIA free tiers ~10x). The
+    # compaction estimate is multiplied by this weight when < 1.0 — a big prompt still
+    # triggers, just not as early as raw chars/4 would. 1.0 = disabled (classic chars/4).
+    compaction_prefill_weight: float = 1.0
     host: str = "127.0.0.1"
     port: int = 8765
     # Web search provider: "duckduckgo" (keyless default) | "tavily" | "brave" (need a key).
@@ -71,6 +84,9 @@ _FIELDS = {
     "allowed_commands",
     "auto_allow",
     "tool_selection",
+    "ttft_timeout",
+    "max_retries",
+    "compaction_prefill_weight",
     "host",
     "port",
     "web_search_provider",

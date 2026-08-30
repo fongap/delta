@@ -23,12 +23,14 @@ from providers.base import (
     ToolCall,
 )
 from providers.capabilities import capabilities_for
+from core.call_errors import StreamTruncatedError
 from providers.endpoint import (
     EndpointCaps,
     learned_caps,
     merge as _merge_endpoint_caps,
     record_rejection,
 )
+from providers.health import record_call as _record_health
 
 
 def resolve_api_key(secrets: Any = None) -> str | None:
@@ -87,6 +89,33 @@ def _strip_foreign_sidecars(messages: list[dict[str, Any]]) -> list[dict[str, An
 
 
 _MAX_TOKENS_ERROR = "'max_tokens' is not supported"
+_PARALLEL_TOOL_CALLS_ERROR = "parallel_tool_calls"
+
+
+def _apply_endpoint_caps(
+    kwargs: dict[str, Any], caps: EndpointCaps, *, has_tools: bool
+) -> None:
+    """Proactive parameter negotiation from the endpoint profile (v0.3.0 P1): params
+    the server is known (learned or configured) to reject are never sent, and params it
+    is known NOT to support are sent in their conservative form. The reactive retry
+    stays as the safety net for the unknowns.
+
+    - `stream_options` (usage opt-in): old compat servers 400 on it — only send when
+      the profile says the endpoint accepts it.
+    - `parallel_tool_calls`: an endpoint that doesn't support true parallelism gets
+      `parallel_tool_calls=false` (each call executed one at a time), which is safe on
+      every server that knows the field and a no-op on those that don't.
+    - `reasoning_content`: when the endpoint never emits thinking deltas, don't request
+      them via `reasoning_effort` (left to the model default) — reduces the chance of a
+      server-side 400 on an unknown knob.
+    """
+    if caps.stream_options:
+        kwargs["stream_options"] = {"include_usage": True}
+    if has_tools and caps.parallel_tool_calls is False:
+        kwargs["parallel_tool_calls"] = False
+    if caps.reasoning_content is False:
+        # A server that never delivers thinking shouldn't be asked to produce it.
+        kwargs.pop("reasoning_effort", None)
 
 
 def _param_fix_retry(kwargs: dict[str, Any], exc: Exception) -> dict[str, Any]:
@@ -108,6 +137,11 @@ def _param_fix_retry(kwargs: dict[str, Any], exc: Exception) -> dict[str, Any]:
         # Older compat servers don't know the usage opt-in; drop it, lose only metering.
         fixed = dict(kwargs)
         fixed.pop("stream_options")
+        return fixed
+    if _PARALLEL_TOOL_CALLS_ERROR in msg and "parallel_tool_calls" in kwargs:
+        # A server that rejects the field entirely: drop it (serial is the fallback).
+        fixed = dict(kwargs)
+        fixed.pop("parallel_tool_calls")
         return fixed
     raise exc
 
@@ -188,6 +222,10 @@ class OpenAIProvider(ProviderClient):
         tools: list[dict[str, Any]] | None = None,
         **settings: Any,
     ) -> AssistantTurn:
+        # Endpoint profile first (v0.3.0 P1): stream_options/parallel_tool_calls/
+        # reasoning are negotiated proactively from what this server accepts. The
+        # reactive retry below remains the safety net for the unknowns.
+        caps = self._effective_caps()
         kwargs: dict[str, Any] = {
             "model": model,
             "messages": _strip_foreign_sidecars(messages),
@@ -195,18 +233,43 @@ class OpenAIProvider(ProviderClient):
         }
         if tools:
             kwargs["tools"] = tools
+        _apply_endpoint_caps(kwargs, caps, has_tools=bool(tools))
         _pin_reasoning_effort(kwargs)
 
         client = self._ensure_client()
-        # Up to two param-fix retries: effort and max_tokens can BOTH need fixing.
-        for _ in range(2):
-            try:
+        import time as _time
+
+        _t0 = _time.perf_counter()
+        try:
+            # Up to two param-fix retries: effort and max_tokens can BOTH need fixing.
+            for _ in range(2):
+                try:
+                    response = client.chat.completions.create(**kwargs)
+                    break
+                except Exception as exc:
+                    msg = str(exc).lower()
+                    kwargs = _param_fix_retry(kwargs, exc)
+                    if "stream_options" in msg and "stream_options" in kwargs:
+                        record_rejection(self._endpoint_key, "stream_options")
+                    if "parallel_tool_calls" in msg and "parallel_tool_calls" in kwargs:
+                        record_rejection(self._endpoint_key, "parallel_tool_calls")
+            else:
                 response = client.chat.completions.create(**kwargs)
-                break
-            except Exception as exc:
-                kwargs = _param_fix_retry(kwargs, exc)
-        else:
-            response = client.chat.completions.create(**kwargs)
+        except Exception as exc:
+            _record_health(
+                self._endpoint_key,
+                model,
+                ok=False,
+                duration_ms=(_time.perf_counter() - _t0) * 1000,
+                error_class=type(exc).__name__,
+            )
+            raise
+        _record_health(
+            self._endpoint_key,
+            model,
+            ok=True,
+            duration_ms=(_time.perf_counter() - _t0) * 1000,
+        )
         choice = response.choices[0]
         message = choice.message
         text = getattr(message, "content", None)
@@ -232,9 +295,9 @@ class OpenAIProvider(ProviderClient):
         tools: list[dict[str, Any]] | None = None,
         **settings: Any,
     ):
-        # Endpoint profile first: a server known (learned or configured) to reject
-        # stream_options never sees it, instead of paying a failed round trip per call
-        # (v0.3.0 P0). The reactive retry below remains the safety net for the unknowns.
+        # Endpoint profile first: a server known (learned or configured) to reject a
+        # param never sees it, instead of paying a failed round trip per call
+        # (v0.3.0 P0/P1). The reactive retry below remains the safety net for unknowns.
         caps = self._effective_caps()
         kwargs: dict[str, Any] = {
             "model": model,
@@ -242,12 +305,9 @@ class OpenAIProvider(ProviderClient):
             "stream": True,
             **settings,
         }
-        if caps.stream_options:
-            # Usage on the final chunk (empty `choices`). Compat servers that reject
-            # the option get a one-shot retry without it (_param_fix_retry).
-            kwargs["stream_options"] = {"include_usage": True}
         if tools:
             kwargs["tools"] = tools
+        _apply_endpoint_caps(kwargs, caps, has_tools=bool(tools))
         _pin_reasoning_effort(kwargs)
         client = self._ensure_client()
 
@@ -257,38 +317,66 @@ class OpenAIProvider(ProviderClient):
         finish_reason = None
         usage: TokenUsage | None = None
 
-        # Up to two param-fix retries: effort and max_tokens can BOTH need fixing.
-        for _ in range(2):
+        import time as _time
+
+        _t0 = _time.perf_counter()
+        _ttft: list[float] = []
+        _ok = False
+
+        def _health() -> None:
+            """Record one call's health at stream end (best-effort, never raises)."""
             try:
+                _record_health(
+                    self._endpoint_key,
+                    model,
+                    ok=_ok,
+                    ttft_ms=((_ttft[0] - _t0) * 1000) if _ttft else None,
+                    duration_ms=(_time.perf_counter() - _t0) * 1000,
+                )
+            except Exception:
+                pass
+
+        try:
+            # Up to two param-fix retries: effort and max_tokens can BOTH need fixing.
+            for _ in range(2):
+                try:
+                    chunks = client.chat.completions.create(**kwargs)
+                    break
+                except Exception as exc:
+                    msg = str(exc).lower()
+                    fixed = _param_fix_retry(kwargs, exc)
+                    # Any param the server rejected is remembered for this endpoint so
+                    # the NEXT call skips the failed attempt (learning, v0.3.0 P0/P1).
+                    # Only learn when the rejection explicitly names the field — a
+                    # generic 4xx that merely mentions it must not mask a real
+                    # capability difference.
+                    if "stream_options" in msg and "stream_options" in kwargs:
+                        record_rejection(self._endpoint_key, "stream_options")
+                    if "parallel_tool_calls" in msg and "parallel_tool_calls" in kwargs:
+                        record_rejection(self._endpoint_key, "parallel_tool_calls")
+                    kwargs = fixed
+            else:
                 chunks = client.chat.completions.create(**kwargs)
-                break
-            except Exception as exc:
-                fixed = _param_fix_retry(kwargs, exc)
-                if "stream_options" in kwargs and "stream_options" not in fixed:
-                    # The server told us it doesn't know the usage opt-in: remember it
-                    # for this endpoint so the NEXT call skips the failed attempt.
-                    record_rejection(self._endpoint_key, "stream_options")
-                kwargs = fixed
-        else:
-            chunks = client.chat.completions.create(**kwargs)
-        for chunk in chunks:
-            chunk_usage = _usage_from(getattr(chunk, "usage", None))
-            if chunk_usage is not None:
-                usage = chunk_usage
-            choices = getattr(chunk, "choices", None)
-            if not choices:
-                continue
-            choice = choices[0]
-            delta = getattr(choice, "delta", None)
-            if delta is not None:
-                reasoning = _delta_reasoning(delta)
-                if reasoning:
-                    reasoning_parts.append(reasoning)
-                    yield StreamChunk(reasoning_delta=reasoning)
-                content = getattr(delta, "content", None)
-                if content:
-                    text_parts.append(content)
-                    yield StreamChunk(text_delta=content)
+            for chunk in chunks:
+                if not _ttft:
+                    _ttft.append(_time.perf_counter())
+                chunk_usage = _usage_from(getattr(chunk, "usage", None))
+                if chunk_usage is not None:
+                    usage = chunk_usage
+                choices = getattr(chunk, "choices", None)
+                if not choices:
+                    continue
+                choice = choices[0]
+                delta = getattr(choice, "delta", None)
+                if delta is not None:
+                    reasoning = _delta_reasoning(delta)
+                    if reasoning:
+                        reasoning_parts.append(reasoning)
+                        yield StreamChunk(reasoning_delta=reasoning)
+                    content = getattr(delta, "content", None)
+                    if content:
+                        text_parts.append(content)
+                        yield StreamChunk(text_delta=content)
                 for tc in getattr(delta, "tool_calls", None) or []:
                     acc = tool_accum.setdefault(
                         getattr(tc, "index", 0), {"id": "", "name": "", "args": ""}
@@ -301,45 +389,48 @@ class OpenAIProvider(ProviderClient):
                             acc["name"] = fn.name
                         if getattr(fn, "arguments", None):
                             acc["args"] += fn.arguments
-            if getattr(choice, "finish_reason", None):
-                finish_reason = choice.finish_reason
+                if getattr(choice, "finish_reason", None):
+                    finish_reason = choice.finish_reason
 
-        # A compliant OpenAI-compatible stream ALWAYS terminates with a
-        # finish_reason chunk followed by [DONE]. A stream that ends without any
-        # finish_reason was truncated in flight (pseudo-streaming relays, dropped
-        # connections, gateway kills) — surface that instead of silently presenting
-        # a two-character fragment as the finished answer (owner-hit 2026-08-26:
-        # custom OpenAI-compatible provider answered "你是谁" with "我是").
-        if finish_reason is None:
-            got = "".join(text_parts)
-            raise RuntimeError(
-                "上游流式响应被截断（未收到完成标记）— the upstream closed the stream "
-                f"before completion after {len(got)} chars; please retry."
-            )
+            # A compliant OpenAI-compatible stream ALWAYS terminates with a
+            # finish_reason chunk followed by [DONE]. A stream that ends without any
+            # finish_reason was truncated in flight (pseudo-streaming relays, dropped
+            # connections, gateway kills) — surface that instead of silently presenting
+            # a two-character fragment as the finished answer (owner-hit 2026-08-26:
+            # custom OpenAI-compatible provider answered "你是谁" with "我是").
+            if finish_reason is None:
+                got = "".join(text_parts)
+                raise StreamTruncatedError(
+                    "上游流式响应被截断（未收到完成标记）— the upstream closed the stream "
+                    f"before completion after {len(got)} chars; please retry."
+                )
 
-        tool_calls = []
-        for index in sorted(tool_accum):
-            acc = tool_accum[index]
-            try:
-                arguments = json.loads(acc["args"]) if acc["args"] else {}
-            except (TypeError, json.JSONDecodeError):
-                arguments = {"_raw": acc["args"]}
-            tool_calls.append(
-                ToolCall(id=acc["id"], name=acc["name"], arguments=arguments)
-            )
+            tool_calls = []
+            for index in sorted(tool_accum):
+                acc = tool_accum[index]
+                try:
+                    arguments = json.loads(acc["args"]) if acc["args"] else {}
+                except (TypeError, json.JSONDecodeError):
+                    arguments = {"_raw": acc["args"]}
+                tool_calls.append(
+                    ToolCall(id=acc["id"], name=acc["name"], arguments=arguments)
+                )
 
-        text, tool_calls = _maybe_salvage_tool_calls(
-            "".join(text_parts) or None, tool_calls, tools=tools
-        )
-        yield StreamChunk(
-            turn=AssistantTurn(
-                text=text,
-                tool_calls=tool_calls,
-                finish_reason=finish_reason,
-                reasoning="".join(reasoning_parts) or None,
-                usage=usage,
+            text, tool_calls = _maybe_salvage_tool_calls(
+                "".join(text_parts) or None, tool_calls, tools=tools
             )
-        )
+            _ok = True
+            yield StreamChunk(
+                turn=AssistantTurn(
+                    text=text,
+                    tool_calls=tool_calls,
+                    finish_reason=finish_reason,
+                    reasoning="".join(reasoning_parts) or None,
+                    usage=usage,
+                )
+            )
+        finally:
+            _health()
 
 
 def _parse_tool_calls(raw_tool_calls: Any) -> list[ToolCall]:
