@@ -22,16 +22,35 @@ from core.gateway import (
 
 
 class Meta:
-    def __init__(self, risk_level="low", requires_approval=False, category=""):
+    def __init__(self, risk_level="low", requires_approval=False, category="", capabilities=()):
         self.risk_level = risk_level
         self.requires_approval = requires_approval
         self.category = category
+        self.capabilities = list(capabilities)
 
 
 # -- classification -----------------------------------------------------------
 
 def test_low_metadata_without_approval_is_l0():
     assert classify("read_file", {}, Meta("low")) is RiskLevel.L0
+
+
+def test_reversible_local_write_category_is_l1():
+    # Memory writes are local and undoable — a real side effect, but not L0
+    # ("no side effects") and not L2-grade consequential. forget is not
+    # undoable, so it declares requires_approval and lands at L2.
+    assert (
+        classify("remember", {}, Meta("low", False, "memory", ("remember",)))
+        is RiskLevel.L1
+    )
+    assert (
+        classify("memory_update", {}, Meta("low", False, "memory", ("remember",)))
+        is RiskLevel.L1
+    )
+    assert classify("memory_forget", {}, Meta("low", True, "memory")) is RiskLevel.L2
+    # Reads stay L0, and unknown low categories stay L0 too.
+    assert classify("memory_read", {}, Meta("low", False, "memory")) is RiskLevel.L0
+    assert classify("search_web", {}, Meta("low", False, "web")) is RiskLevel.L0
 
 
 def test_medium_without_approval_is_l2():

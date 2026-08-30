@@ -58,6 +58,14 @@ _VALID_METADATA_RISK = {"low", "medium", "high"}
 # unknown or missing category conservatively stays at L3 (fail closed → ask).
 _LOCAL_CATEGORIES = frozenset({"filesystem"})
 
+# Metadata categories whose low-risk, non-approval tools are REVERSIBLE local
+# writes (in-app undo exists), not read-only — they sit at L1, not L0. The
+# L0 definition is "no side effects"; declaring a write as L0 poisons every
+# audit/policy built on the taxonomy. The category alone is not the write
+# signal (a category holds read tools too) — the tool must also declare the
+# category's write capability.
+_REVERSIBLE_WRITE_CATEGORIES = {"memory": frozenset({"remember"})}
+
 # -- Slice 4b: resource sensitivity ---------------------------------------------
 
 # Argument names that carry the RESOURCE a side effect lands on. Sensitivity is
@@ -164,7 +172,7 @@ def classify(
     if risk not in _VALID_METADATA_RISK:
         return RiskLevel.L4
 
-    base = _band_level(risk, requires_approval, category)
+    base = _band_level(risk, requires_approval, category, metadata)
 
     # Sensitivity: an external effect (L3) that touches a sensitive resource
     # escalates to L4 — sharing payroll/credential/identity data off-machine is
@@ -177,7 +185,9 @@ def classify(
     return base
 
 
-def _band_level(risk: str, requires_approval: bool, category: str) -> RiskLevel:
+def _band_level(
+    risk: str, requires_approval: bool, category: str, metadata: Any
+) -> RiskLevel:
     """The action's risk band from registry metadata alone (no argument inspection)."""
     if risk == "high":
         # Arbitrary local execution (shell): consequential and unsandboxed today,
@@ -198,7 +208,12 @@ def _band_level(risk: str, requires_approval: bool, category: str) -> RiskLevel:
         return RiskLevel.L2
 
     # risk == "low"
-    return RiskLevel.L2 if requires_approval else RiskLevel.L0
+    if requires_approval:
+        return RiskLevel.L2
+    write_caps = _REVERSIBLE_WRITE_CATEGORIES.get(category)
+    if write_caps and write_caps & set(getattr(metadata, "capabilities", None) or ()):
+        return RiskLevel.L1
+    return RiskLevel.L0
 
 
 def enforce_level(level: RiskLevel, decision: Any) -> Any:
