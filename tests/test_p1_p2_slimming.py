@@ -6,7 +6,6 @@ from __future__ import annotations
 import asyncio
 import json
 
-from core import call_errors
 from core.call_errors import (
     ErrorClass,
     ProtocolIncompatibleError,
@@ -24,7 +23,6 @@ from providers import health as _health
 from providers.openai_provider import (
     OpenAIProvider,
     _apply_endpoint_caps,
-    _param_fix_retry,
 )
 
 
@@ -265,9 +263,9 @@ def test_ttft_timeout_is_retried(tmp_path):
     )
     rows = []
     engine.request_logger = rows.append
-    events = _run(engine)
     # Every attempt before the (missing) first token logs as ttft_timeout; the final
     # surfaced error is also classified ttft_timeout.
+    _run(engine)
     assert rows[0]["error_class"] == "ttft_timeout"
     assert rows[-1]["error_class"] == "ttft_timeout"
 
