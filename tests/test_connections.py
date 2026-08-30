@@ -11,17 +11,17 @@ from pathlib import Path
 
 import pytest
 
-from delta.connections import (
+from core.connections import (
     PersonaConnectionStore,
     SessionConnectionStore,
     effective,
 )
-from delta.connectors.base import MessageEvent, SessionSource
-from delta.personas import registry as persona_registry
-from delta.personas.manifest import load_manifest_file
-from delta.providers import ModelCapabilities, ProviderClient
-from delta.server.manager import SessionManager
-from delta.sessions import SessionRecord
+from integrations.connectors.base import MessageEvent, SessionSource
+from core.personas import registry as persona_registry
+from core.personas.manifest import load_manifest_file
+from providers import ModelCapabilities, ProviderClient
+from services.server.manager import SessionManager
+from core.sessions import SessionRecord
 
 
 @pytest.fixture(autouse=True)

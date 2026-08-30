@@ -16,7 +16,7 @@ import { InboxItemCard } from "./InboxItemCard";
 import { InboxConfigure } from "./InboxConfigure";
 import { PanelHead } from "./IntegrationsView";
 import { shortPersonaName } from "../personaScope";
-import { useI18n } from "../i18n/I18nContext";
+import { useI18n } from "@delta/i18n/I18nContext";
 
 const ICON_FOR: Record<string, "diamond" | "chat" | "code"> = {
   cowork: "diamond",

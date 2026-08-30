@@ -29,7 +29,7 @@ import { ModelChecklist } from "./ModelChecklist";
 import { CustomCreateForm, ProviderCards, ProviderForm, useProviderSetup } from "../providers/ProviderSetup";
 import { Toggle } from "./Toggle";
 import { Icon } from "./Icon";
-import { useI18n } from "../i18n/I18nContext";
+import { useI18n } from "@delta/i18n/I18nContext";
 
 type T = (key: string, vars?: Record<string, string | number>) => string;
 

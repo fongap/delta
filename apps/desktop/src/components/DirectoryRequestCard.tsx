@@ -2,7 +2,7 @@ import { useState } from "react";
 import type { Item } from "../types";
 import { chooseFolder } from "../tauri";
 import { Icon } from "./Icon";
-import { useI18n } from "../i18n/I18nContext";
+import { useI18n } from "@delta/i18n/I18nContext";
 
 type DirReqItem = Extract<Item, { kind: "dirreq" }>;
 

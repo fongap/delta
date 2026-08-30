@@ -9,8 +9,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from delta.providers import resolve_api_key
-from delta.secrets import SecretStore
+from providers import resolve_api_key
+from packages.secrets import SecretStore
 
 
 def test_resolve_api_key_prefers_env(monkeypatch, tmp_path):
@@ -31,8 +31,8 @@ def test_resolve_api_key_falls_back_to_store(monkeypatch, tmp_path):
 def test_settings_rest_roundtrip(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
-    from delta.server.app import create_app
-    from delta.server.manager import SessionManager
+    from services.server.app import create_app
+    from services.server.manager import SessionManager
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
@@ -73,8 +73,8 @@ def test_settings_rest_roundtrip(tmp_path, monkeypatch):
 def test_default_model_and_onboarding_persist(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
-    from delta.server.app import create_app
-    from delta.server.manager import SessionManager
+    from services.server.app import create_app
+    from services.server.manager import SessionManager
 
     monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     data_dir = tmp_path / "data"
@@ -106,8 +106,8 @@ def test_default_model_and_onboarding_persist(tmp_path, monkeypatch):
 def test_nav_layout_setting_roundtrips(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
-    from delta.server.app import create_app
-    from delta.server.manager import SessionManager
+    from services.server.app import create_app
+    from services.server.manager import SessionManager
 
     monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     data_dir = tmp_path / "data"
@@ -135,8 +135,8 @@ def test_nav_layout_setting_roundtrips(tmp_path, monkeypatch):
 def test_language_setting_roundtrips(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
-    from delta.server.app import create_app
-    from delta.server.manager import SessionManager
+    from services.server.app import create_app
+    from services.server.manager import SessionManager
 
     monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     data_dir = tmp_path / "data"
@@ -163,8 +163,8 @@ def test_language_setting_roundtrips(tmp_path, monkeypatch):
 def test_scratch_base_setting_persists_and_drives_provisioning(tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
 
-    from delta.server.app import create_app
-    from delta.server.manager import SessionManager
+    from services.server.app import create_app
+    from services.server.manager import SessionManager
 
     monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     data_dir = tmp_path / "data"
@@ -192,7 +192,7 @@ def test_scratch_base_setting_persists_and_drives_provisioning(tmp_path, monkeyp
 def test_ollama_models_gated_on_liveness(tmp_path, monkeypatch):
     """`ollama:*` entries show only while a local Ollama answers — keyless must not mean
     always-present (a stray ollama:<junk> pref would otherwise render forever)."""
-    from delta.server.manager import SessionManager
+    from services.server.manager import SessionManager
 
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))

@@ -4,7 +4,7 @@ import type { SessionInfo } from "../types";
 import { isProjectScoped, shortPersonaName } from "../personaScope";
 import { Icon } from "./Icon";
 import { baseName } from "../paths";
-import { useI18n } from "../i18n/I18nContext";
+import { useI18n } from "@delta/i18n/I18nContext";
 
 // Command-palette search (Codex-style): clicking Search opens this overlay over the whole app
 // rather than filtering the sidebar in place (which made the grouped list collapse). It searches

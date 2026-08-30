@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 
-from delta.sources import (
+from core.sources import (
     FRESH_CHANGED,
     FRESH_CURRENT,
     FRESH_MISSING,
@@ -130,7 +130,7 @@ def test_capture_outside_workspace_keeps_absolute_location(tmp_path):
 
 
 def test_source_dto_contract():
-    from delta.server.contracts import SourceDTO
+    from services.server.contracts import SourceDTO
 
     dto = to_dto(
         type(

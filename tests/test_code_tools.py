@@ -9,10 +9,10 @@ from __future__ import annotations
 import subprocess
 from types import SimpleNamespace
 
-from delta.tools.files import file_tools
-from delta.tools.git import git_tools
-from delta.tools.search import _py_grep, search_tools
-from delta.web.fetch import _html_to_text, make_web_fetch_tool
+from integrations.tools.files import file_tools
+from integrations.tools.git import git_tools
+from integrations.tools.search import _py_grep, search_tools
+from integrations.web.fetch import _html_to_text, make_web_fetch_tool
 
 
 # -- grep ----------------------------------------------------------------------
@@ -40,7 +40,7 @@ def test_grep_finds_matches_and_respects_glob(tmp_path):
 
 
 def test_ripgrep_uses_the_same_ignored_dirs_as_the_python_fallback(tmp_path, monkeypatch):
-    import delta.tools.search as search
+    import integrations.tools.search as search
 
     commands = []
     monkeypatch.setattr(search.shutil, "which", lambda name: "rg")
@@ -158,8 +158,8 @@ def test_html_to_text_strips_scripts_and_tags():
 
 # -- Code agent wiring ---------------------------------------------------------
 def test_code_agent_has_grep_and_git_log_not_search_files(tmp_path):
-    from delta.agents.base import AgentContext
-    from delta.agents.code import code_agent
+    from core.agents.base import AgentContext
+    from core.agents.code import code_agent
 
     ctx = AgentContext(workspace=tmp_path, executor=None, todo=None)
     names = {getattr(t, "__name__", "") for t in code_agent().build_tools(ctx)}
@@ -170,8 +170,8 @@ def test_code_agent_has_grep_and_git_log_not_search_files(tmp_path):
 
 
 def test_cowork_has_grep_not_search_files(tmp_path):
-    from delta.agents.base import AgentContext
-    from delta.agents.cowork import cowork_tool_factory
+    from core.agents.base import AgentContext
+    from core.agents.cowork import cowork_tool_factory
 
     names = {
         getattr(t, "__name__", "")

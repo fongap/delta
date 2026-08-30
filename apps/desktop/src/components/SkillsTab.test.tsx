@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
-import { I18nProvider } from "../i18n/I18nContext";
+import { I18nProvider } from "@delta/i18n/I18nContext";
 import { SkillsTab } from "./SkillsTab";
 
 // SKILLS-SPEC §5/§6 GUI — Settings ▸ Skills: list + badges + rich-skill file counts, form

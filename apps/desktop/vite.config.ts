@@ -27,7 +27,16 @@ export default defineConfig(({ command }) => {
   return {
     base: "./",
     plugins: [react()],
-    server: { port: 1420, strictPort: true },
+    resolve: {
+      alias: {
+        "@delta/i18n": path.resolve(process.cwd(), "../../packages/i18n"),
+      },
+    },
+    server: {
+      port: 1420,
+      strictPort: true,
+      fs: { allow: [path.resolve(process.cwd(), "../..")] },
+    },
     define: { __DELTA_DEV_TOKEN__: JSON.stringify(devToken) },
     // Tauri CLI looks for these; harmless for the browser build.
     clearScreen: false,

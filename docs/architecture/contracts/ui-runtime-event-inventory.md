@@ -7,8 +7,8 @@ validation/diagnostic behavior; reconnect and domain event normalization remain 
 ## Scope and notation
 
 - Snapshot: 2026-08-23, local commit `0db7225d` plus the current uncommitted working tree.
-- Producers: `src/delta/events.py`, `src/delta/engine.py`, `src/delta/server/app.py`,
-  and `src/delta/server/manager.py`.
+- Producers: `core/events.py`, `core/engine.py`, `services/server/app.py`,
+  and `services/server/manager.py`.
 - Transport and consumers: `apps/desktop/src/api.ts`, `types.ts`, `App.tsx`, and
   the components reached from `App` state.
 - All current session and app-wide event frames use the strict v1 envelope

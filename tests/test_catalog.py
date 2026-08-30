@@ -9,12 +9,12 @@ from __future__ import annotations
 
 import pytest
 
-from delta.agents.base import AgentContext
-from delta.agents.code import CODE_CAPABILITIES, code_agent
-from delta.agents.cowork import COWORK_CAPABILITIES, cowork_agent
-from delta.catalog import CATALOG, capability, expand, risk_summary
-from delta.risk import RiskClass
-from delta.tools.todo import TodoList
+from core.agents.base import AgentContext
+from core.agents.code import CODE_CAPABILITIES, code_agent
+from core.agents.cowork import COWORK_CAPABILITIES, cowork_agent
+from core.catalog import CATALOG, capability, expand, risk_summary
+from core.risk import RiskClass
+from integrations.tools.todo import TodoList
 
 # Expected toolset for each surface — the frozen equivalence contract for the refactor.
 CODE_TOOLS = {

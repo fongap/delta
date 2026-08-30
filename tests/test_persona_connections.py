@@ -8,10 +8,10 @@ connected (auth="none"), so effective-set assertions use subsets, not exact equa
 
 from fastapi.testclient import TestClient
 
-from delta.providers import ModelCapabilities, ProviderClient
-from delta.server import create_app
-from delta.server.manager import SessionManager
-from delta.sessions import SessionRecord
+from providers import ModelCapabilities, ProviderClient
+from services.server import create_app
+from services.server.manager import SessionManager
+from core.sessions import SessionRecord
 
 
 class ScriptedProvider(ProviderClient):

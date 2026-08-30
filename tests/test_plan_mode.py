@@ -6,17 +6,17 @@ import asyncio
 
 import aisuite as ai
 
-from delta.engine import TurnEngine
-from delta.events import EventType
-from delta.permissions import Mode, PermissionEngine
-from delta.providers import (
+from core.engine import TurnEngine
+from core.events import EventType
+from core.permissions import Mode, PermissionEngine
+from providers import (
     AssistantTurn,
     ModelCapabilities,
     ProviderClient,
     ToolCall,
 )
-from delta.tools import ToolRegistry
-from delta.tools.plan import propose_plan_tool
+from integrations.tools import ToolRegistry
+from integrations.tools.plan import propose_plan_tool
 
 
 def _text_turn(text):
@@ -157,8 +157,8 @@ class _Stub:
 
 
 def test_build_engine_plan_mode_wiring(tmp_path):
-    from delta.agent import build_engine
-    from delta.agents import code_agent
+    from core.agent import build_engine
+    from core.agents import code_agent
 
     engine = build_engine(
         agent=code_agent(), workspace=tmp_path, provider=_Stub(), mode=Mode.PLAN
@@ -174,8 +174,8 @@ def test_build_engine_plan_mode_wiring(tmp_path):
 
 
 def test_build_engine_interactive_registers_tool_without_reminder(tmp_path):
-    from delta.agent import build_engine
-    from delta.agents import code_agent
+    from core.agent import build_engine
+    from core.agents import code_agent
 
     # The tool is always registered (the GUI can flip a live session into plan mode via
     # set_mode), but the per-turn reminder only appears while actually planning.
@@ -219,8 +219,8 @@ def test_propose_plan_in_discuss_mode_says_describe_instead(tmp_path):
 
 
 def test_build_engine_discuss_reminder_not_plan_contract(tmp_path):
-    from delta.agent import build_engine
-    from delta.agents import code_agent
+    from core.agent import build_engine
+    from core.agents import code_agent
 
     engine = build_engine(
         agent=code_agent(), workspace=tmp_path, provider=_Stub(), mode=Mode.DISCUSS

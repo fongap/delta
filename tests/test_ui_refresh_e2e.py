@@ -27,16 +27,16 @@ import time
 
 from fastapi.testclient import TestClient
 
-from delta.interactions import decode
-from delta.providers import (
+from core.interactions import decode
+from providers import (
     AssistantTurn,
     ModelCapabilities,
     ProviderClient,
     ToolCall,
 )
-from delta.server import create_app
-from delta.server.manager import SessionManager
-from delta.sessions import SessionRecord
+from services.server import create_app
+from services.server.manager import SessionManager
+from core.sessions import SessionRecord
 
 SID = "incident"
 CHANNEL = "C_OPS"

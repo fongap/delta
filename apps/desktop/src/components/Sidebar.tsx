@@ -26,7 +26,7 @@ import { PersonaGlyph, personaGlyph } from "./personaIcon";
 import { SearchModal } from "./SearchModal";
 import { baseName } from "../paths";
 import { showPersonas } from "../flags";
-import { useI18n } from "../i18n/I18nContext";
+import { useI18n } from "@delta/i18n/I18nContext";
 
 // Session surfaces shown as accordions, in display order. The surfaced personas drive this list
 // (so third-party / Ops personas appear); the hardcoded set is the fallback before personas load.

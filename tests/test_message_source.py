@@ -9,13 +9,13 @@ import asyncio
 
 from fastapi.testclient import TestClient
 
-from delta.connectors.base import MessageEvent, MessageSource, SessionSource
-from delta.engine import TurnEngine
-from delta.permissions import PermissionEngine
-from delta.providers import AssistantTurn, ModelCapabilities, ProviderClient
-from delta.server import create_app
-from delta.server.manager import SessionManager
-from delta.tools import ToolRegistry
+from integrations.connectors.base import MessageEvent, MessageSource, SessionSource
+from core.engine import TurnEngine
+from core.permissions import PermissionEngine
+from providers import AssistantTurn, ModelCapabilities, ProviderClient
+from services.server import create_app
+from services.server.manager import SessionManager
+from integrations.tools import ToolRegistry
 
 
 class CapturingProvider(ProviderClient):
@@ -181,7 +181,7 @@ def test_tool_display_sidecar_is_agent_invisible(tmp_path):
     """`_display` on a tool result (e.g. gmail filter-hidden counts) mirrors the
     `source` contract: lifted onto the message for the GUI, audited as a rule+count
     row, and stripped from every provider feed — the agent sees no tombstone."""
-    from delta.providers.base import ToolCall
+    from providers.base import ToolCall
 
     audits: list[dict] = []
     engine = TurnEngine(
