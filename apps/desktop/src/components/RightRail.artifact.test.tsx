@@ -6,6 +6,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { fireEvent } from "@testing-library/react";
 import { RightRail } from "./RightRail";
 import { I18nProvider } from "@delta/i18n/I18nContext";
+import type { JSX } from "react";
 
 const { getArtifactsMock, readArtifactMock } = vi.hoisted(() => ({
   getArtifactsMock: vi.fn(),

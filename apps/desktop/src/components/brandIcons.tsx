@@ -5,6 +5,7 @@
 // back to the neutral plug glyph so new descriptors degrade gracefully.
 
 import { Icon } from "./Icon";
+import type { JSX } from "react";
 
 const ALIAS: Record<string, string> = {
   gcal: "google_calendar",

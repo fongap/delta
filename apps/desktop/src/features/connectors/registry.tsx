@@ -14,6 +14,7 @@
 // JSX.)
 
 import type { SimpleIcon } from "simple-icons";
+import type { JSX } from "react";
 import {
   siAsana,
   siBox,
