@@ -11,6 +11,9 @@ export default defineConfig({
       "@delta/i18n": path.resolve(process.cwd(), "../../packages/i18n"),
     },
   },
+  server: {
+    fs: { allow: [path.resolve(process.cwd(), "../..")] },
+  },
   test: {
     environment: "jsdom",
     include: ["src/**/*.test.{ts,tsx}", "../../packages/i18n/**/*.test.{ts,tsx}"],

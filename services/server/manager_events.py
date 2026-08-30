@@ -19,7 +19,7 @@ class EventsMixin:
         signed out or opted out, and sends only content-free facts."""
         import threading
 
-        from core import cloud
+        import integrations.cloud as cloud
         from packages.config import load_config
 
         entry = self.personas.get(persona_id)
