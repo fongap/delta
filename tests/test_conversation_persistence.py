@@ -16,6 +16,7 @@ fbf57149faaa96f49c4fe8a42a5371906aee448e (atomic shrink rewrite).
 
 from __future__ import annotations
 
+import json
 import os
 
 import pytest
@@ -218,3 +219,141 @@ def test_revert_preserves_history_when_write_crashes(tmp_path, monkeypatch):
 
     assert len(store.load(sid).messages) == 4
     assert not (tmp_path / "conversations" / f"{sid}.tmp").exists()
+
+
+# -- full lifecycle: repair/corrupt → load → save → reload ------------------------
+
+def _assistant_with_call(call_id: str) -> dict:
+    return {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "id": call_id,
+                "type": "function",
+                "function": {"name": "run_shell", "arguments": "{}"},
+            }
+        ],
+    }
+
+
+def _reload_fresh(tmp_path, sid: str):
+    """A brand-new store instance — a cold `_known` cache, like a process restart.
+    The append-offset bugs only bite when `_count()` reads the disk fresh."""
+    return ConversationStore(tmp_path / "state")
+
+
+def _jsonl_path(tmp_path, sid: str):
+    return tmp_path / "state" / "conversations" / f"{sid}.jsonl"
+
+
+def test_corrupt_line_then_continue_persists_new_message(tmp_path):
+    """P0 regression: after tolerating a corrupt line, the next save() must still
+    persist new messages. `_count()` used to count physical lines, so a skipped
+    corrupt line made `len(record.messages) == existing` and the turn's new
+    messages were silently never written."""
+    store = ConversationStore(tmp_path / "state")
+    sid = "corruptcontinue01"
+    _seed(store, sid, 2)
+    with open(_jsonl_path(tmp_path, sid), "a", encoding="utf-8") as f:
+        f.write('{"role": "user", "content": "torn\n')  # corrupt line
+
+    loaded = _reload_fresh(tmp_path, sid).load(sid)
+    assert [m["content"] for m in loaded.messages] == ["m0", "m1"]
+
+    loaded.messages.append({"role": "user", "content": "after restart"})
+    _reload_fresh(tmp_path, sid).save(loaded)
+
+    reloaded = _reload_fresh(tmp_path, sid).load(sid)
+    assert [m["content"] for m in reloaded.messages] == ["m0", "m1", "after restart"]
+
+
+def test_corrupt_line_canonicalized_on_load(tmp_path):
+    """The corrupt line itself must not survive: load() rewrites the canonical
+    history, so the store converges instead of carrying damage forever."""
+    store = ConversationStore(tmp_path / "state")
+    sid = "corruptrewrite01"
+    _seed(store, sid, 2)
+    with open(_jsonl_path(tmp_path, sid), "a", encoding="utf-8") as f:
+        f.write('{"role": "user", "content": "torn\n')
+
+    _reload_fresh(tmp_path, sid).load(sid)
+
+    text = _jsonl_path(tmp_path, sid).read_text(encoding="utf-8")
+    lines = [line for line in text.splitlines() if line.strip()]
+    assert len(lines) == 2
+    for line in lines:
+        json.loads(line)  # every remaining line is valid JSON
+
+
+def test_repaired_placeholder_persists_without_duplicating_tail(tmp_path):
+    """P0 regression: a repaired history that grew a placeholder used to collide
+    with `save()`'s disk-line offset — the placeholder was never written and the
+    last real message was appended a second time on every subsequent turn."""
+    store = ConversationStore(tmp_path / "state")
+    sid = "pairingoffset01"
+    _seed(store, sid, 1)  # create the index row; history is overwritten below
+    disk_history = [
+        {"role": "user", "content": "question"},
+        _assistant_with_call("c1"),
+        {"role": "user", "content": "follow-up"},
+    ]
+    with open(_jsonl_path(tmp_path, sid), "w", encoding="utf-8") as f:
+        for m in disk_history:
+            f.write(json.dumps(m) + "\n")
+
+    loaded = _reload_fresh(tmp_path, sid).load(sid)
+    # load() repaired in memory: placeholder injected before the follow-up.
+    assert [m["role"] for m in loaded.messages] == [
+        "user", "assistant", "tool", "user",
+    ]
+
+    loaded.messages.append({"role": "assistant", "content": "answer"})
+    _reload_fresh(tmp_path, sid).save(loaded)
+
+    reloaded = _reload_fresh(tmp_path, sid).load(sid)
+    assert [m["role"] for m in reloaded.messages] == [
+        "user", "assistant", "tool", "user", "assistant",
+    ]
+    assert [m["content"] for m in reloaded.messages if m["role"] == "user"] == [
+        "question", "follow-up",
+    ]
+    # And the placeholder is durable now, not re-synthesised per load.
+    tool_msgs = [m for m in reloaded.messages if m["role"] == "tool"]
+    assert len(tool_msgs) == 1
+    assert tool_msgs[0]["tool_call_id"] == "c1"
+
+
+def test_lifecycle_is_idempotent_across_restart_cycles(tmp_path):
+    """load → save → reload repeatedly with one new message per cycle: history
+    must grow by exactly one message per cycle, forever — the canonical file and
+    the in-memory repair must reach a fixed point."""
+    sid = "lifecyclefixedpt1"
+    store = ConversationStore(tmp_path / "state")
+    record = store.load(sid) or SessionRecord(
+        session_id=sid,
+        workspace="/tmp",
+        model="m",
+        mode="interactive",
+        messages=[{"role": "user", "content": "m0"}],
+    )
+    store.save(record)
+
+    for cycle in range(1, 4):
+        store = _reload_fresh(tmp_path, sid)
+        record = store.load(sid)
+        assert record is not None
+        record.messages.append(
+            {"role": "user", "content": f"m{cycle}"}
+        )
+        _reload_fresh(tmp_path, sid).save(record)
+
+        store = _reload_fresh(tmp_path, sid)
+        record = store.load(sid)
+        assert [m["content"] for m in record.messages] == [
+            f"m{i}" for i in range(cycle + 1)
+        ]
+        row = store._conn.execute(
+            "SELECT n_msgs FROM sessions WHERE session_id = ?", (sid,)
+        ).fetchone()
+        assert row["n_msgs"] == len(record.messages)

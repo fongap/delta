@@ -61,21 +61,23 @@ def _display_title(row: sqlite3.Row) -> str | None:
     return row["auto_title"] or row["title"]
 
 
-def _parse_jsonl(text: str) -> list[dict]:
+def _parse_jsonl(text: str) -> tuple[list[dict], int]:
     """Parse a .jsonl body tolerantly: skip blank lines and, rather than failing the
     whole load, skip individual corrupt/truncated lines. An append interrupted mid-write
     (crash, disk full) leaves one malformed line; a bare `json.loads` would raise and
     make load() throw on every open — bricking that session on every surface. Keep the
-    recoverable history instead."""
+    recoverable history instead. Returns the valid messages and how many corrupt lines
+    were dropped (blank lines don't count) — the caller canonicalizes when that is > 0."""
     messages: list[dict] = []
+    corrupt = 0
     for line in text.splitlines():
         if not line.strip():
             continue
         try:
             messages.append(json.loads(line))
         except json.JSONDecodeError:
-            continue
-    return messages
+            corrupt += 1
+    return messages, corrupt
 
 
 def title_from(messages: list[dict]) -> str:
@@ -152,10 +154,30 @@ class ConversationStore:
         return path
 
     def _read_jsonl(self, sid: str) -> list[dict] | None:
+        messages, _ = self._read_canonical(sid, repair=False)
+        return messages
+
+    def _read_canonical(
+        self, sid: str, *, repair: bool = True
+    ) -> tuple[list[dict] | None, bool]:
+        """Read the session's .jsonl and return its valid messages plus whether the
+        on-disk bytes drifted from that canonical form — corrupt lines dropped, or the
+        tool-pairing repair changed anything. Drift means the file must be rewritten
+        before any further append: `save()` offsets new messages by the on-disk message
+        count, so a disk that disagrees with the repaired in-memory history would
+        mis-align every future append (duplicated tail messages, lost placeholders)."""
         path = self._file(sid)
         if not path.exists():
-            return None
-        return _parse_jsonl(path.read_text(encoding="utf-8"))
+            return None, False
+        text = path.read_text(encoding="utf-8")
+        messages, corrupt = _parse_jsonl(text)
+        drifted = corrupt > 0
+        if repair and messages:
+            repaired = self._repair_tool_pairing(messages)
+            if repaired != messages:
+                messages = repaired
+                drifted = True
+        return messages, drifted
 
     # -- tool-call/result pairing repair ----------------------------------------
     @staticmethod
@@ -257,11 +279,14 @@ class ConversationStore:
         return repaired
 
     def _count(self, sid: str) -> int:
-        """On-disk line count for `sid`, using the cache when it is warm.
+        """Canonical message count for `sid`, using the cache when it is warm.
 
         The JSONL is append-only and only ever written by this class (append / revert / the
-        rare rewrite), so the cached count stays accurate without a full file read.
-        """
+        rare rewrite / load-time canonicalization), so the cached count stays accurate
+        without a full file read. The cold path counts *valid messages*, not physical
+        lines — `save()` offsets appends by this number against `len(record.messages)`,
+        so a corrupt line counted as a message would make that offset land one short and
+        silently drop the turn's new messages."""
         known = self._known.get(sid)
         if known is not None:
             return known
@@ -269,11 +294,9 @@ class ConversationStore:
         if not path.exists():
             self._known[sid] = 0
             return 0
-        n = sum(
-            1 for line in path.read_text(encoding="utf-8").splitlines() if line.strip()
-        )
-        self._known[sid] = n
-        return n
+        messages, _ = self._read_canonical(sid, repair=False)
+        self._known[sid] = len(messages or [])
+        return self._known[sid]
 
     def _append(self, sid: str, messages: list[dict]) -> None:
         with open(self._file(sid), "a", encoding="utf-8") as f:
@@ -306,7 +329,7 @@ class ConversationStore:
             path = self._file(sid)
             if not path.exists():
                 return []
-            messages = _parse_jsonl(path.read_text(encoding="utf-8"))
+            messages, _ = _parse_jsonl(path.read_text(encoding="utf-8"))
             if index <= 0 or index >= len(messages):
                 return []
             dropped = messages[index:]
@@ -367,6 +390,9 @@ class ConversationStore:
                     except json.JSONDecodeError:
                         legacy = []
                     if legacy:
+                        # Same canonicalization as load(): never append raw mis-paired
+                        # history — the offset below assumes the file is canonical.
+                        legacy = self._repair_tool_pairing(legacy)
                         self._append(sid, legacy)
 
             existing = self._count(sid)
@@ -411,18 +437,35 @@ class ConversationStore:
             row = self._conn.execute(
                 "SELECT * FROM sessions WHERE session_id = ?", (session_id,)
             ).fetchone()
-        if not row:
-            return None
-        messages = self._read_jsonl(session_id)
-        if messages is None:
-            try:
-                messages = json.loads(row["messages"] or "[]")
-            except json.JSONDecodeError:
-                messages = []
-        # Self-heal: ensure every tool result immediately follows its call. An
-        # interrupted turn can persist a user message between an assistant tool_calls
-        # block and its tool result, which providers reject (400).
-        messages = self._repair_tool_pairing(messages)
+            if not row:
+                return None
+            messages, drifted = self._read_canonical(session_id)
+            if messages is None:
+                # No .jsonl yet — promote the legacy inline blob to a canonical file now,
+                # already repaired. Letting save()'s lazy migration copy the raw blob
+                # would re-introduce the append-offset bug for mis-paired legacy history.
+                try:
+                    messages = json.loads(row["messages"] or "[]")
+                except json.JSONDecodeError:
+                    messages = []
+                messages = self._repair_tool_pairing(messages)
+                if messages:
+                    self._rewrite_jsonl(session_id, messages)
+                    self._known[session_id] = len(messages)
+            elif drifted:
+                # Canonicalize: the repaired history (reordered tool results, synthesised
+                # placeholders, dropped corrupt lines) only exists in memory right now —
+                # persist it and keep the index count in lockstep, or the next save()
+                # would offset its append against the pre-repair disk and corrupt the
+                # tail of the thread. Canonical message count is the only count that
+                # counts; physical lines mean nothing.
+                self._rewrite_jsonl(session_id, messages)
+                self._known[session_id] = len(messages)
+                self._conn.execute(
+                    "UPDATE sessions SET n_msgs = ? WHERE session_id = ?",
+                    (len(messages), session_id),
+                )
+                self._conn.commit()
         return SessionRecord(
             session_id=session_id,
             workspace=row["workspace"],
