@@ -10,12 +10,12 @@ answer tags itself. Untagged channel traffic stays judgement-only (silence defau
 import asyncio
 import sqlite3
 
-from delta.connectors.adapters import slack_event_to_event
-from delta.connectors.base import MessageEvent, SessionSource
-from delta.conversations import ConversationStore
-from delta.providers import AssistantTurn, ModelCapabilities, ProviderClient
-from delta.server.manager import SessionManager
-from delta.sessions import SessionRecord
+from integrations.connectors.adapters import slack_event_to_event
+from integrations.connectors.base import MessageEvent, SessionSource
+from core.conversations import ConversationStore
+from providers import AssistantTurn, ModelCapabilities, ProviderClient
+from services.server.manager import SessionManager
+from core.sessions import SessionRecord
 
 
 class CapturingProvider(ProviderClient):
@@ -269,7 +269,7 @@ def test_set_origin_round_trips_and_survives_saves(tmp_path):
 
 def test_origin_columns_migrate_on_old_db(tmp_path):
     """A pre-§31 database (no origin columns) upgrades in place on open."""
-    db = tmp_path / "delta.db"
+    db = tmp_path / "core.db"
     conn = sqlite3.connect(db)
     conn.execute(
         "CREATE TABLE sessions (session_id TEXT PRIMARY KEY, workspace TEXT, model TEXT, "

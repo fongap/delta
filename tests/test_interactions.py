@@ -3,12 +3,12 @@
 import asyncio
 import json
 
-from delta.connectors.base import InteractionEvent
-from delta.connectors.senders import _slack_blocks
-from delta.inbox import InboxStore
-from delta.interactions import Button, buttons_for, decode, encode
-from delta.providers import ModelCapabilities, ProviderClient
-from delta.server.manager import SessionManager
+from integrations.connectors.base import InteractionEvent
+from integrations.connectors.senders import _slack_blocks
+from core.inbox import InboxStore
+from core.interactions import Button, buttons_for, decode, encode
+from providers import ModelCapabilities, ProviderClient
+from services.server.manager import SessionManager
 
 
 class ScriptedProvider(ProviderClient):

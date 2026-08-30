@@ -11,7 +11,7 @@ tools (files, spreadsheets, mail, calendar, chat, web) and ask for work products
 reports, summaries, analyses, drafts. Delta's answers are only as trustworthy as their
 inputs, but sources are currently a display-only sidecar:
 
-- `src/delta/connectors/base.py` defines `MessageSource` (connector/kind/channel/sender/
+- `integrations/connectors/base.py` defines `MessageSource` (connector/kind/channel/sender/
   ts/text) purely for rendering connector messages; it is stripped before any provider call.
 - The contract exposes `source` only as an optional dict on `MessageDTO`.
 - Files referenced during a run (Excel, PDF, CSV) have no durable identity: no hash,

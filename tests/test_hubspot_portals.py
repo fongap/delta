@@ -11,11 +11,11 @@ from __future__ import annotations
 import pytest
 from fastapi.testclient import TestClient
 
-from delta.connectors import hubspot_portals
-from delta.connectors.integration_tools import make_integration_tools
-from delta.connectors.setup import connector_list
-from delta.secrets import SecretStore
-from delta.server import SessionManager, create_app
+from integrations.connectors import hubspot_portals
+from integrations.connectors.integration_tools import make_integration_tools
+from integrations.connectors.setup import connector_list
+from packages.secrets import SecretStore
+from services.server import SessionManager, create_app
 
 
 @pytest.fixture
@@ -95,7 +95,7 @@ def test_default_repoints_on_disconnect(secrets):
 
 
 def _fake_hubspot(monkeypatch, responses: dict[str, dict]):
-    from delta.connectors import integration_tools
+    from integrations.connectors import integration_tools
 
     calls: list[tuple[str, str, dict]] = []
 
@@ -201,7 +201,7 @@ def client(tmp_path, monkeypatch):
 
 
 def test_managed_callback_lands_in_portal_profile(client):
-    import delta.cloud as cloud
+    import integrations.cloud as cloud
 
     cloud._pending_managed_states["s"] = cloud._now()
     resp = client.post(
@@ -236,7 +236,7 @@ def test_managed_callback_lands_in_portal_profile(client):
 
 
 def test_portal_routes_default_and_disconnect(client, monkeypatch):
-    import delta.cloud as cloud
+    import integrations.cloud as cloud
 
     monkeypatch.setattr(cloud, "cloud_disconnect", lambda *a, **k: None)
     for hub in ("111", "222"):

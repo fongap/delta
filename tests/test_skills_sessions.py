@@ -11,9 +11,9 @@ from pathlib import Path
 
 import pytest
 
-from delta.providers import ModelCapabilities, ProviderClient
-from delta.server.manager import SessionManager
-from delta.skills import (
+from providers import ModelCapabilities, ProviderClient
+from services.server.manager import SessionManager
+from integrations.skills import (
     SessionSkillStore,
     SkillLoader,
     SkillStore,
@@ -130,7 +130,7 @@ def test_workspace_without_skills_dir_is_fine(manager, tmp_path):
 
 
 def test_empty_catalog_is_safe(tmp_path):
-    from delta.tools.registry import ToolRegistry
+    from integrations.tools.registry import ToolRegistry
 
     loader = SkillLoader([tmp_path / "nowhere"])
     assert skill_catalog_text(loader) == ""
@@ -148,8 +148,8 @@ def test_live_load_skill_semantics(manager):
     · load_skill consults live state per call (create-after-build loadable; a Settings
       disable applies to RUNNING sessions; delete ≡ disable to the model);
     · the ONLY thing that persists is what a conversation already loaded (history)."""
-    from delta.agent import build_engine
-    from delta.agents.registry import get_agent
+    from core.agent import build_engine
+    from core.agents.registry import get_agent
 
     _skill(manager.skill_store.global_dir, "early", body="early body")
     engine = build_engine(
@@ -197,8 +197,8 @@ def test_disable_countermand_for_loaded_skills(manager):
     history are not. Recomputed fresh: re-enabling clears it; unloaded skills never get one."""
     import json as _json
 
-    from delta.agent import build_engine
-    from delta.agents.registry import get_agent
+    from core.agent import build_engine
+    from core.agents.registry import get_agent
 
     _skill(manager.skill_store.global_dir, "used-one", body="used body")
     _skill(manager.skill_store.global_dir, "unused-one", body="never loaded")

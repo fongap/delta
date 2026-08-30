@@ -2,7 +2,7 @@ import { useState, type ReactNode } from "react";
 import type { InboxItem } from "../api";
 import type { QuestionOption } from "../types";
 import { humanizeApprovalTitle } from "../humanize";
-import { useI18n } from "../i18n/I18nContext";
+import { useI18n } from "@delta/i18n/I18nContext";
 import {
   approvalActionLabels,
   PreviewBlock,

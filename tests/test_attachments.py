@@ -15,7 +15,7 @@ import zlib
 
 import pytest
 
-from delta.attachments import build_user_content, content_to_text
+from core.attachments import build_user_content, content_to_text
 
 
 # -- a tiny solid-color PNG (stdlib) so tests need no fixtures -------------------
@@ -96,9 +96,9 @@ def test_content_to_text_flattens_parts():
 
 # -- (2) the assumption: image reaches the provider unmodified ------------------
 async def test_image_reaches_provider_unmodified():
-    from delta.agent import build_engine
-    from delta.agents.chat import chat_agent
-    from delta.providers import AssistantTurn, ModelCapabilities, ProviderClient
+    from core.agent import build_engine
+    from core.agents.chat import chat_agent
+    from providers import AssistantTurn, ModelCapabilities, ProviderClient
 
     class Spy(ProviderClient):
         def __init__(self):
@@ -131,8 +131,8 @@ async def test_image_reaches_provider_unmodified():
 
 # -- (3) persistence of list-content messages ----------------------------------
 def test_list_content_message_persists_and_titles(tmp_path):
-    from delta.conversations import ConversationStore, title_from
-    from delta.sessions import SessionRecord
+    from core.conversations import ConversationStore, title_from
+    from core.sessions import SessionRecord
 
     url = _data_url(0, 128, 0)
     msgs = [
@@ -165,8 +165,8 @@ def test_list_content_message_persists_and_titles(tmp_path):
     reason="opt-in: real OpenAI vision call (set DELTA_LIVE_VISION=1)",
 )
 def test_live_vision_model_reads_image():
-    from delta.providers import OpenAIProvider
-    from delta.secrets import SecretStore
+    from providers import OpenAIProvider
+    from packages.secrets import SecretStore
 
     provider = OpenAIProvider(default_model="gpt-4o", secrets=SecretStore())
     content = build_user_content(
@@ -191,7 +191,7 @@ def test_pdf_attachment_becomes_file_part():
 
 
 def test_pdf_attachment_invalid_or_oversized_skipped():
-    from delta.attachments import MAX_PDF_CHARS
+    from core.attachments import MAX_PDF_CHARS
 
     bad = [
         {"kind": "pdf", "name": "x.pdf", "data_url": "data:image/png;base64,zz"},

@@ -16,7 +16,7 @@ from pathlib import Path
 
 import pytest
 
-from delta.skills import SkillLoader, SkillStore, validate_name
+from integrations.skills import SkillLoader, SkillStore, validate_name
 
 
 @pytest.fixture()
@@ -315,7 +315,7 @@ def test_corrupt_settings_json_treated_as_empty(store):
 # -- save_skill tool (SKILLS-SPEC §5.2 — the worker-authors door) -------------------
 
 
-from delta.skills import save_skill_tool
+from integrations.skills import save_skill_tool
 
 
 @pytest.fixture()

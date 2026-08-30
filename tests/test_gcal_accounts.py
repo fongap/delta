@@ -12,10 +12,10 @@ import time
 
 import pytest
 
-from delta.connectors import gcal_accounts
-from delta.connectors.integration_tools import make_integration_tools
-from delta.connectors.setup import connector_list, disconnect_connector
-from delta.secrets import SecretStore
+from integrations.connectors import gcal_accounts
+from integrations.connectors.integration_tools import make_integration_tools
+from integrations.connectors.setup import connector_list, disconnect_connector
+from packages.secrets import SecretStore
 
 
 @pytest.fixture
@@ -42,7 +42,7 @@ def _tool(secrets, name: str):
 
 def _fake_gcal(monkeypatch, responses: dict[str, dict]):
     """Route _request by URL suffix; records (method, url, bearer, body)."""
-    from delta.connectors import integration_tools
+    from integrations.connectors import integration_tools
 
     calls: list[tuple[str, str, str, dict | None]] = []
 
@@ -223,7 +223,7 @@ def test_write_tools_require_approval(secrets):
 
 
 def test_account_profile_refreshes_in_place(secrets, monkeypatch):
-    from delta import cloud
+    from integrations import cloud
 
     secrets.put(
         cloud.CLOUD_AUTH_PROFILE, {"access_token": "jwt", "expires": time.time() + 3600}

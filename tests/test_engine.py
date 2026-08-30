@@ -8,17 +8,17 @@ import time
 
 import aisuite as ai
 
-from delta.engine import ApprovalOutcome, PermissionRequest, TurnEngine
-from delta.events import EventType
-from delta.permissions import PermissionEngine
-from delta.providers import (
+from core.engine import ApprovalOutcome, PermissionRequest, TurnEngine
+from core.events import EventType
+from core.permissions import PermissionEngine
+from providers import (
     AssistantTurn,
     ModelCapabilities,
     ProviderClient,
     StreamChunk,
     ToolCall,
 )
-from delta.tools import ToolRegistry
+from integrations.tools import ToolRegistry
 
 
 def _text_turn(text):

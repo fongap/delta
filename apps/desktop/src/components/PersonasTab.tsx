@@ -10,7 +10,7 @@ import {
 } from "../api";
 import type { SessionInfo } from "../types";
 import { Icon } from "./Icon";
-import { useI18n } from "../i18n/I18nContext";
+import { useI18n } from "@delta/i18n/I18nContext";
 import { fullPersonaName } from "../personaScope";
 
 // Personas management: enable a persona, choose whether it shows in the new-session picker,
