@@ -61,6 +61,23 @@ def _display_title(row: sqlite3.Row) -> str | None:
     return row["auto_title"] or row["title"]
 
 
+def _parse_jsonl(text: str) -> list[dict]:
+    """Parse a .jsonl body tolerantly: skip blank lines and, rather than failing the
+    whole load, skip individual corrupt/truncated lines. An append interrupted mid-write
+    (crash, disk full) leaves one malformed line; a bare `json.loads` would raise and
+    make load() throw on every open — bricking that session on every surface. Keep the
+    recoverable history instead."""
+    messages: list[dict] = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            messages.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return messages
+
+
 def title_from(messages: list[dict]) -> str:
     from core.attachments import content_to_text
 
@@ -138,11 +155,7 @@ class ConversationStore:
         path = self._file(sid)
         if not path.exists():
             return None
-        return [
-            json.loads(line)
-            for line in path.read_text(encoding="utf-8").splitlines()
-            if line.strip()
-        ]
+        return _parse_jsonl(path.read_text(encoding="utf-8"))
 
     def _count(self, sid: str) -> int:
         """On-disk line count for `sid`, using the cache when it is warm.
@@ -169,6 +182,22 @@ class ConversationStore:
                 f.write(json.dumps(m) + "\n")
         self._known[sid] = self._known.get(sid, 0) + len(messages)
 
+    def _rewrite_jsonl(self, sid: str, messages: list[dict]) -> None:
+        """Atomically replace the session's .jsonl with exactly `messages`. Both callers
+        (the rare save() shrink and revert()) rewrite existing history, so a crash partway
+        through must never truncate the file: write a temp file, close it, then swap in
+        one step — the tmp-then-replace pattern of packages.jsonstate.save_json_state."""
+        path = self._file(sid)
+        tmp = path.with_suffix(".tmp")
+        try:
+            with open(tmp, "w", encoding="utf-8") as f:
+                for m in messages:
+                    f.write(json.dumps(m) + "\n")
+            tmp.replace(path)
+        except BaseException:
+            tmp.unlink(missing_ok=True)  # never leave a scratch file behind
+            raise
+
     def revert(self, sid: str, index: int) -> list[dict]:
         """Drop messages from `index` onward (the user message at `index` and everything
         after), keeping [0, index). Returns the dropped slice so the caller can prefill the
@@ -178,18 +207,11 @@ class ConversationStore:
             path = self._file(sid)
             if not path.exists():
                 return []
-            messages = [
-                json.loads(line)
-                for line in path.read_text(encoding="utf-8").splitlines()
-                if line.strip()
-            ]
+            messages = _parse_jsonl(path.read_text(encoding="utf-8"))
             if index <= 0 or index >= len(messages):
                 return []
             dropped = messages[index:]
-            path.write_text(
-                "".join(json.dumps(m) + "\n" for m in messages[:index]),
-                encoding="utf-8",
-            )
+            self._rewrite_jsonl(sid, messages[:index])
             self._known[sid] = index
             self._conn.execute(
                 "UPDATE sessions SET n_msgs = MAX(0, n_msgs - ?) WHERE session_id = ?",
@@ -252,9 +274,7 @@ class ConversationStore:
             if len(record.messages) > existing:
                 self._append(sid, record.messages[existing:])
             elif len(record.messages) < existing:  # rare; not append-only
-                with open(self._file(sid), "w", encoding="utf-8") as f:
-                    for m in record.messages:
-                        f.write(json.dumps(m) + "\n")
+                self._rewrite_jsonl(sid, record.messages)
                 self._known[sid] = len(record.messages)
 
             title = record.title or title_from(record.messages)
