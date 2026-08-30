@@ -19,7 +19,7 @@ import {
 import type { SessionInfo } from "../types";
 import { ChannelPicker } from "./SubscriptionsChip";
 import { Icon } from "./Icon";
-import { useI18n } from "../i18n/I18nContext";
+import { useI18n } from "@delta/i18n/I18nContext";
 
 // Inbox ▸ Configure (UX-DECISIONS §28): the former Connectors ▸ "Messaging routing" page,
 // relocated whole — where inbox items go out (mirror channel), how inbound messages reach

@@ -3,7 +3,7 @@ import { getConnectors } from "../api";
 import { McpTab } from "./ManageTabs";
 import { ConnectorsSection } from "../features/connectors/components/ConnectorsSection";
 import { Icon } from "./Icon";
-import { useI18n, type TranslationKey } from "../i18n/I18nContext";
+import { useI18n, type TranslationKey } from "@delta/i18n/I18nContext";
 
 // The Connectors surface (renamed from "Integrations", §26) keeps the left sub-nav, now just
 // Connectors · MCP. The old "Messaging routing" tab (and its ⚠ unrouted badge) moved whole to

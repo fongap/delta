@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { fireEvent, waitFor } from "@testing-library/react";
 import { RightRail } from "./RightRail";
-import { I18nProvider } from "../i18n/I18nContext";
+import { I18nProvider } from "@delta/i18n/I18nContext";
 
 const { getArtifactsMock, readArtifactMock } = vi.hoisted(() => ({
   getArtifactsMock: vi.fn(),

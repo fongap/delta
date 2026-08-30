@@ -3,7 +3,7 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { ProviderCards, ProviderForm, CustomCreateForm, useProviderSetup, type ProviderSetupState } from "./ProviderSetup";
-import { I18nProvider } from "../i18n/I18nContext";
+import { I18nProvider } from "@delta/i18n/I18nContext";
 import type { ProviderInfo } from "../api";
 
 vi.mock("../tauri", () => ({ openExternal: vi.fn() }));

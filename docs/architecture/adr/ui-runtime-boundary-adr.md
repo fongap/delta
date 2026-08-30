@@ -97,7 +97,7 @@ authorize exposing the Agent implementation object or using its internal fields.
 ## Current exceptions and migration rule
 
 The present code only partially enforces this decision. The v1 contract models now live
-in `src/delta/server/contracts.py` and `apps/desktop/src/runtime-contract.ts`, but:
+in `services/server/contracts.py` and `apps/desktop/src/runtime-contract.ts`, but:
 
 - components import functions and DTOs directly from `api.ts`;
 - `WsEvent.payload` is untyped;

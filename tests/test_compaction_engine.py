@@ -4,17 +4,17 @@ session persistence round-trip. Scripted providers, tiny forced windows, no netw
 
 import asyncio
 
-from delta.engine import TurnEngine
-from delta.events import EventType
-from delta.permissions import PermissionEngine
-from delta.providers import (
+from core.engine import TurnEngine
+from core.events import EventType
+from core.permissions import PermissionEngine
+from providers import (
     AssistantTurn,
     ModelCapabilities,
     ProviderClient,
     ToolCall,
 )
-from delta.providers.base import TokenUsage
-from delta.tools import ToolRegistry
+from providers.base import TokenUsage
+from integrations.tools import ToolRegistry
 
 SUMMARY = "## Primary request and intent\nkeep building the report"
 
@@ -205,7 +205,7 @@ def test_non_overflow_provider_errors_still_surface(tmp_path):
 
 
 def test_set_compaction_settings_validates_and_round_trips(tmp_path):
-    from delta.server.manager import SessionManager
+    from services.server.manager import SessionManager
 
     class Provider(ProviderClient):
         def complete(self, *, model, messages, tools=None, **settings):
@@ -231,8 +231,8 @@ def test_set_compaction_settings_validates_and_round_trips(tmp_path):
 
 
 def test_compaction_state_survives_save_and_rebuild(tmp_path):
-    from delta.compaction import CompactionState
-    from delta.server.manager import SessionManager
+    from core.compaction import CompactionState
+    from services.server.manager import SessionManager
 
     class Provider(ProviderClient):
         def complete(self, *, model, messages, tools=None, **settings):

@@ -13,11 +13,11 @@ from types import SimpleNamespace
 import pytest
 from fastapi.testclient import TestClient
 
-from delta.mcp import build_callables, load_mcp_servers, tool_name
-from delta.mcp.config import MCPServerDef
-from delta.secrets import SecretStore
-from delta.server.app import create_app
-from delta.server.manager import SessionManager
+from integrations.mcp import build_callables, load_mcp_servers, tool_name
+from integrations.mcp.config import MCPServerDef
+from packages.secrets import SecretStore
+from services.server.app import create_app
+from services.server.manager import SessionManager
 
 
 def _write_json(path, data):

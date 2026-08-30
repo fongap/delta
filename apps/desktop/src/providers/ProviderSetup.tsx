@@ -14,7 +14,7 @@ import {
   type ProviderProtocol,
 } from "../api";
 import { openExternal } from "../tauri";
-import { useI18n } from "../i18n/I18nContext";
+import { useI18n } from "@delta/i18n/I18nContext";
 import { PROVIDER_LOGOS, providerRank } from "./providerLogos";
 
 // The provider gallery ⇄ key form, shared by Onboarding step 1 (§39) and
