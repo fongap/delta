@@ -1433,6 +1433,14 @@ def create_app(manager: SessionManager) -> FastAPI:
     def providers_get() -> list[dict[str, Any]]:
         return manager.get_providers()
 
+    @app.get("/v1/providers/health")
+    def providers_health() -> dict[str, Any]:
+        # Per-endpoint/model health (v0.3.0 P2): success rate + latency over a recent
+        # window, for the GUI and routing decisions.
+        from providers import health as _health
+
+        return {"profiles": [p.as_dict() for p in _health.all_profiles()]}
+
     @app.post("/v1/providers")
     def providers_set(body: dict) -> dict[str, Any]:
         name = (body or {}).get("name", "")
@@ -1545,12 +1553,14 @@ def create_app(manager: SessionManager) -> FastAPI:
     @app.post("/v1/settings/compaction")
     def settings_set_compaction(body: dict) -> dict[str, Any]:
         # Auto-compaction overrides (OPE-27): threshold % of the context window, the
-        # absolute token cap, and the summarizer-model pin ("" → session's own model).
+        # absolute token cap, the summarizer-model pin ("" → session's own model), and
+        # the prefill weight for weighted context accounting (1.0 = classic chars/4).
         b = body or {}
         return manager.set_compaction_settings(
             threshold_pct=b.get("compaction_threshold_pct"),
             cap_tokens=b.get("compaction_cap_tokens"),
             model=b.get("compaction_model"),
+            prefill_weight=b.get("compaction_prefill_weight"),
         )
 
     @app.post("/v1/attachments/inspect-pdf")

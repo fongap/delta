@@ -57,6 +57,26 @@ def estimate_tokens(messages: list[dict[str, Any]]) -> int:
     return total // 4
 
 
+def estimate_tokens_weighted(
+    messages: list[dict[str, Any]],
+    *,
+    sampling_weight: float = 1.0,
+    prefill_weight: float = 0.1,
+) -> int:
+    """Weighted token estimate (Codex-absorbed rollout budget): prefill (input) tokens
+    are cheaper than sampling (output) tokens on many gateways (NVIDIA free tiers bill
+    ~10x for output). Messages here are PROMPT-side, so the prefill weight applies to
+    the whole serialized prompt; sampling_weight is reserved for the post-turn output
+    accounting the budget uses downstream. Both default to the Codex defaults."""
+    chars = 0
+    for msg in messages:
+        try:
+            chars += len(json.dumps(msg, default=str))
+        except (TypeError, ValueError):
+            chars += len(str(msg))
+    return int((chars / 4) * prefill_weight * sampling_weight)
+
+
 def estimate_tools_tokens(tools: list[dict[str, Any]] | None) -> int:
     """chars/4 over the serialized tool schemas — tool definitions occupy the context
     window like message text does, so the budget trigger must count them (v0.3.0 P0:
