@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=84.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -45,9 +45,9 @@ dev = ["pytest==9.1.1", "pytest-asyncio==1.4.0", "httpx==0.28.1"]
 # drives the real handler) — declare it so CI installs it, not just transitively.
 messaging = ["python-telegram-bot==22.8", "slack-bolt==1.30.0", "aiohttp==3.14.3"]
 # Interactive Cowork browser automation.
-browser = ["playwright>=1.44"]
+browser = ["playwright>=1.62.0"]
 # AWS Bedrock provider (lazy-imported; desktop builds bundle it, pip users opt in).
-bedrock = ["boto3==1.43.73"]
+bedrock = ["boto3==1.43.81"]
 
 [project.scripts]
 delta = "core.cli:main"
