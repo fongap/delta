@@ -18,7 +18,9 @@ from typing import Any, Optional
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
-from mcp.client.streamable_http import streamablehttp_client
+# mcp 2.x renamed streamablehttp_client and folded headers/auth into a caller-provided
+# httpx2.AsyncClient (httpx2 is mcp 2.x's fork of httpx).
+from mcp.client.streamable_http import streamable_http_client
 
 from integrations.mcp.config import MCPServerDef
 
@@ -122,10 +124,16 @@ class MCPManager:
                             self._secrets,
                             interactive=interactive,
                         )
-                    read, write, *_ = await stack.enter_async_context(
-                        streamablehttp_client(
-                            server.url, headers=server.headers or None, auth=auth
+                    if server.headers or auth is not None:
+                        import httpx2
+
+                        http_client = await stack.enter_async_context(
+                            httpx2.AsyncClient(headers=server.headers or None, auth=auth)
                         )
+                    else:
+                        http_client = None
+                    read, write, *_ = await stack.enter_async_context(
+                        streamable_http_client(server.url, http_client=http_client)
                     )
                 else:
                     if not server.command:

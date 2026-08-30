@@ -8,28 +8,28 @@ version = "0.2.2"
 description = "Agent delta platform — provider-agnostic agentic delta runtime"
 requires-python = ">=3.11"
 dependencies = [
-    "openai==3.2.0",
-    "anthropic==0.122.0",  # native Claude Messages API provider
-    "google-genai==2.18.1",  # native Gemini provider
-    "google-auth==2.56.3",  # Vertex credentials (service account / ADC / MaaS bearer)
+    "openai==3.5.0",
+    "anthropic==1.1.0",  # native Claude Messages API provider
+    "google-genai==2.20.0",  # native Gemini provider
+    "google-auth==2.57.0",  # Vertex credentials (service account / ADC / MaaS bearer)
     "textual==8.2.8",
     "fastapi==0.141.1",
-    "uvicorn[standard]==0.52.3",
+    "uvicorn[standard]==0.52.4",
     # Keep the immutable OpenWorker import commit: it contains Agent/runtime fixes newer
     # than the 2025-11 PyPI 0.1.14 artifact, so equal package metadata is not equivalence.
     "aisuite @ git+https://github.com/andrewyng/aisuite.git@1b4bbf303ec21968230b1ec869a144d054e9b3c4",
     "docstring_parser==0.18.0",
     "pyyaml==6.0.3",  # persona manifest frontmatter (YAML)
     "pydantic==2.13.4",
-    "mcp==1.29.0",  # MCP client (stdio + streamable-http); 2.0 removed streamablehttp_client
+    "mcp==2.1.1",  # MCP client (stdio + streamable-http); 2.x renames streamablehttp_client and moves headers/auth onto a caller-owned httpx2 client
     "httpx==0.28.1",  # sync outbound senders for messaging connectors (send_message tool)
     "websockets==16.1.1",  # managed Slack relay client transport (relay_client.py)
-    "ddgs==9.15.0",  # keyless default web-search provider (DuckDuckGo); Tavily/Brave use httpx
+    "ddgs==9.16.0",  # keyless default web-search provider (DuckDuckGo); Tavily/Brave use httpx
     "croniter==6.2.4",  # cron next-fire math for the automation scheduler
     # PDF attachments for models without native PDF support (pdf_support.py):
     # pypdf = pure-python text extraction; pypdfium2 = page rasterization (BSD pdfium,
     # ships its own libpdfium — NOT PyMuPDF, whose AGPL license can't ride in a release package).
-    "pypdf==6.16.1",
+    "pypdf==6.16.2",
     "pypdfium2==5.13.0",
     # IANA tz database for zoneinfo. Windows ships no system tz db, so without this every
     # named schedule timezone (UTC, Asia/Kolkata, …) silently falls back to local time.
