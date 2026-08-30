@@ -531,13 +531,15 @@ function PdfViewer({ dataUrl }: { dataUrl: string }) {
       .then(async (pdfjs) => {
         pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
         const bytes = Uint8Array.from(atob(base64), (c) => c.charCodeAt(0));
-        const doc = await pdfjs.getDocument({ data: bytes }).promise;
+        // pdfjs-dist v5+: only the loading task has destroy(); the doc no longer does.
+        const loadingTask = pdfjs.getDocument({ data: bytes });
+        const doc = await loadingTask.promise;
         const el = holder.current;
         if (cancelled || !el) {
-          doc.destroy();
+          void loadingTask.destroy();
           return;
         }
-        docRef = doc;
+        docRef = loadingTask;
         el.innerHTML = "";
         const width = el.clientWidth || 640;
         const dpr = window.devicePixelRatio || 1;
@@ -573,7 +575,8 @@ function PdfViewer({ dataUrl }: { dataUrl: string }) {
             canvas.width = viewport.width;
             canvas.height = viewport.height;
             canvas.className = "artifact-pdf-page";
-            await page.render({ canvasContext: canvas.getContext("2d")!, viewport }).promise;
+            // pdfjs-dist v5+: render takes the canvas itself, not a 2D context.
+            await page.render({ canvas, viewport }).promise;
             const slot = slots.get(pageNum);
             if (cancelled || !slot) return;
             slot.replaceChildren(canvas);
