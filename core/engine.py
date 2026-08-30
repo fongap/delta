@@ -32,6 +32,8 @@ from core.permissions import Mode, PermissionEngine
 from providers import AssistantTurn, ProviderClient, ToolCall
 from providers.errors import friendly_model_error
 from providers.openai_provider import looks_like_unparsed_tool_call
+from core import request_log as _request_log
+from core import tool_selection as _tool_selection
 from integrations.tools import ToolRegistry
 
 # Stateless message-formatting helpers moved to engine_format; the TurnEngine body resolves
@@ -94,6 +96,15 @@ class TurnEngine:
         # Called (thread-safe, best-effort) when the user stops the turn — e.g. the
         # executor's kill for a running shell command.
         interrupt_hooks: list[Callable[[], None]] | None = None,
+        # Per-call tool injection policy (core/tool_selection.py): "auto" (default)
+        # resolves the relevant subset per call; anything else ("full", "off") restores
+        # the historical always-everything injection.
+        tool_selection: str = "auto",
+        # The agent's family ("code" pins the workspace tool base; see FAMILY_BASE).
+        agent_family: str = "knowledge",
+        # Request observability sink (core/request_log.py): one dict per model call,
+        # best-effort. None (tests, subagents) disables recording.
+        request_logger: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.provider = provider
         self.registry = registry
@@ -150,6 +161,18 @@ class TurnEngine:
         # carried on every audit row for that call (see core/gateway.py).
         self._tool_levels: dict[str, Any] = {}
         self._interrupt_hooks: list[Callable[[], None]] = list(interrupt_hooks or [])
+        # Tool injection state (v0.3.0 P0): `_tool_expanded` is the one-way escape hatch
+        # — the model visibly reached for a tool it couldn't see, so the session falls
+        # back to full injection for good. `_tools_minimal` is the context-budget trim
+        # (core set only for this stretch of history); it resets when compaction frees
+        # room.
+        self.tool_selection = (
+            tool_selection if str(tool_selection).lower() == "auto" else "full"
+        )
+        self.agent_family = agent_family
+        self.request_logger = request_logger
+        self._tool_expanded = False
+        self._tools_minimal = False
 
     # -- external controls ------------------------------------------------------
     def request_interrupt(self) -> None:
@@ -407,14 +430,29 @@ class TurnEngine:
             # Auto-compaction checkpoint (OPE-27): between tool turns and before a new
             # turn's first call. Deliberately no "wrap up" warning to the model. The
             # COMPACTING signal precedes the (multi-second) summarizer call so surfaces
-            # can show progress instead of a silent stall.
+            # can show progress instead of a silent stall. Budget order (v0.3.0 P0):
+            # tool schemas count toward the trigger, and trimming the toolset is tried
+            # BEFORE the summarizer — the cheapest payload goes first.
+            turn_tools, turn_tool_names, turn_tool_mode = self._tools_for_call()
             notice = None
-            if self._compaction_due():
-                yield Event(EventType.COMPACTING, {})
-                notice = await self._compact_now()
-            if notice:
-                self._append_notice("compacted", notice)
-                yield Event(EventType.COMPACTED, {"text": notice})
+            if self._compaction_due(_compaction.estimate_tools_tokens(turn_tools)):
+                trim_notice = self._try_trim_tools(turn_tools)
+                if trim_notice is not None:
+                    self._append_notice("tools_trimmed", trim_notice)
+                    yield Event(EventType.COMPACTED, {"text": trim_notice})
+                    turn_tools, turn_tool_names, turn_tool_mode = self._tools_for_call()
+                else:
+                    yield Event(EventType.COMPACTING, {})
+                    notice = await self._compact_now()
+                    if notice:
+                        # Room again — the budget trim's job is done until the next
+                        # pressure point.
+                        self._tools_minimal = False
+                        self._append_notice("compacted", notice)
+                        yield Event(EventType.COMPACTED, {"text": notice})
+                        turn_tools, turn_tool_names, turn_tool_mode = (
+                            self._tools_for_call()
+                        )
 
             turn: AssistantTurn | None = None
             streamed: list[str] = []
@@ -429,7 +467,9 @@ class TurnEngine:
                 )
 
             try:
-                async for chunk in self._astream():
+                async for chunk in self._astream(
+                    turn_tools, turn_tool_names, turn_tool_mode
+                ):
                     if chunk.reasoning_delta:
                         streamed_reasoning.append(chunk.reasoning_delta)
                         yield Event(
@@ -507,6 +547,26 @@ class TurnEngine:
                 if looks_like_unparsed_tool_call(
                     turn.text, self.registry.schemas() or None
                 ):
+                    # Tool-injection escape hatch (v0.3.0 P0): the model is writing
+                    # tool-call markup for a tool it couldn't SEE this call (the
+                    # selection withheld it). One miss flips the session to full
+                    # injection and retries the iteration — a keyword miss must cost
+                    # payload, never the turn. Genuine format drift (no named tool)
+                    # still ends as the retriable error below.
+                    if self.tool_selection == "auto" and not self._tool_expanded:
+                        missed = _tool_selection.named_withheld_tools(
+                            turn.text, turn_tool_names, self.registry.names()
+                        )
+                        if missed:
+                            self._tool_expanded = True
+                            self._tools_minimal = False
+                            message = (
+                                "The model reached for tool(s) " + ", ".join(missed) +
+                                " that weren't injected this turn — retrying with the "
+                                "full toolset for the rest of this conversation."
+                            )
+                            self._append_notice("tools_expanded", message)
+                            continue
                     message = (
                         f"{self.model} replied with a tool call this endpoint couldn't "
                         "parse, so the turn was stopped rather than answered from a "
@@ -549,20 +609,69 @@ class TurnEngine:
         cfg.setdefault("cap_tokens", _compaction.DEFAULT_CAP_TOKENS)
         return cfg
 
-    def _compaction_due(self) -> bool:
+    def _compaction_due(self, extra_tokens: int = 0) -> bool:
         """The trigger check alone — cheap and side-effect free, so the loop can emit
-        the COMPACTING signal before committing to the (slow) summarizer call."""
+        the COMPACTING signal before committing to the (slow) summarizer call. Tool
+        schemas occupy the window like messages do, so the estimate path adds them
+        (`extra_tokens`); the reported-usage path already includes whatever rode along
+        on that call, but adding the CURRENT call's schemas keeps the check conservative
+        either way."""
         cfg = self._compaction_config()
         if cfg.get("enabled") is False:
             return False
-        signal = self._last_context_tokens or _compaction.estimate_tokens(
-            self._outbound_messages()
-        )
+        signal = (
+            self._last_context_tokens
+            or _compaction.estimate_tokens(self._outbound_messages())
+        ) + extra_tokens
         return _compaction.should_compact(
             signal,
             cfg.get("context_window"),
             threshold_pct=float(cfg["threshold_pct"]),
             cap_tokens=int(cfg["cap_tokens"]),
+        )
+
+    def _tools_for_call(self) -> tuple[list[dict[str, Any]] | None, list[str], str]:
+        """The tool schemas for THIS model call (v0.3.0 P0 tool injection): the relevant
+        subset per the tool-selection policy, or everything under "full" / after the
+        escape hatch fired. Returns (schemas, names, mode_label) for the request log."""
+        if self.tool_selection != "auto" or self._tool_expanded:
+            names = self.registry.names()
+            return (self.registry.schemas() or None), names, "full"
+        names = _tool_selection.select_tool_names(
+            self.registry.names(),
+            self.messages,
+            family=self.agent_family,
+            minimal=self._tools_minimal,
+        )
+        return (self.registry.schemas(names) or None), names, "selected"
+
+    def _try_trim_tools(self, turn_tools: list[dict[str, Any]] | None) -> str | None:
+        """Context-budget step 1 (v0.3.0 P0): when history + tool schemas would breach
+        the trigger, first try shedding everything but the core toolset — tool schemas
+        are the cheapest payload to drop (no knowledge lost, no compaction call). Returns
+        the user-facing notice when the trim applies, else None (→ full compaction)."""
+        if self.tool_selection != "auto" or self._tools_minimal or self._tool_expanded:
+            return None
+        cfg = self._compaction_config()
+        core_names = sorted(_tool_selection.CORE_TOOLS & set(self.registry.names()))
+        msg_signal = self._last_context_tokens or _compaction.estimate_tokens(
+            self._outbound_messages()
+        )
+        trigger = _compaction.trigger_tokens(
+            cfg.get("context_window"),
+            threshold_pct=float(cfg["threshold_pct"]),
+            cap_tokens=int(cfg["cap_tokens"]),
+        )
+        if msg_signal + _compaction.estimate_tools_tokens(
+            self.registry.schemas(core_names)
+        ) > trigger:
+            return None  # even core-only wouldn't fit — compaction must run
+        if len(core_names) >= len(turn_tools or []):
+            return None  # already (effectively) minimal
+        self._tools_minimal = True
+        return (
+            f"Context is tight — trimmed the injected toolset to the core "
+            f"{len(core_names)} tool(s) to keep the next model call within budget."
         )
 
     async def _compact_now(self, *, force: bool = False) -> str | None:
@@ -637,18 +746,65 @@ class TurnEngine:
         return None
 
     # -- helpers ----------------------------------------------------------------
-    async def _astream(self):
+    async def _astream(
+        self,
+        tools: list[dict[str, Any]] | None,
+        tool_names: list[str],
+        tool_mode: str,
+    ):
         """Bridge the provider's blocking stream generator to the async loop via a
-        thread + queue, so text deltas surface live without blocking the event loop."""
+        thread + queue, so text deltas surface live without blocking the event loop.
+        Also the request-observability chokepoint (v0.3.0 P0): exactly one log row per
+        model call — payload size, tool count, TTFT, outcome."""
         loop = asyncio.get_running_loop()
         queue: asyncio.Queue = asyncio.Queue()
-        tools = self.registry.schemas() or None
         model, messages, settings = (
             self.model,
             self._outbound_messages(),
             self.model_settings,
         )
         provider = self.provider
+
+        # One observation per call, written no matter how the stream ends. TTFT is
+        # measured at the first chunk (the timeout killer on free/shared nodes);
+        # `context_tokens` comes from the provider's reported usage when it reports.
+        _started = time.perf_counter()
+        _ttft: list[float] = []
+        _usage: list[Any] = []
+        _state: dict[str, Any] = {"outcome": "ok", "error_type": None}
+
+        def _observe() -> None:
+            if self.request_logger is None:
+                return
+            try:
+                body = json.dumps(
+                    {"messages": messages, "tools": tools}, default=str
+                ).encode("utf-8")
+                usage = _usage[0] if _usage else None
+                self.request_logger(
+                    {
+                        "ts": time.time(),
+                        "provider": type(provider).__name__,
+                        "model": model,
+                        "messages_count": len(messages),
+                        "body_bytes": len(body),
+                        "tools_count": len(tools or []),
+                        "tool_mode": tool_mode,
+                        "tool_names": tool_names,
+                        "context_estimate_tokens": len(body) // 4,
+                        "ttft_ms": (
+                            round((_ttft[0] - _started) * 1000) if _ttft else None
+                        ),
+                        "duration_ms": round((time.perf_counter() - _started) * 1000),
+                        "outcome": _state["outcome"],
+                        "error_type": _state["error_type"],
+                        "context_tokens": (
+                            getattr(usage, "context_tokens", None) if usage else None
+                        ),
+                    }
+                )
+            except Exception:
+                pass  # observability must never break the turn
 
         def produce():
             chunks = None
@@ -679,25 +835,35 @@ class TurnEngine:
                 loop.call_soon_threadsafe(queue.put_nowait, ("done", None))
 
         loop.run_in_executor(None, produce)
-        while True:
-            # Race the queue against Stop so a stalled stream (no chunks arriving —
-            # the pre-first-token wait, a wedged connection) can't hold the turn.
-            get_task = asyncio.ensure_future(queue.get())
-            cancel_task = asyncio.ensure_future(self._cancel.wait())
-            done, _ = await asyncio.wait(
-                {get_task, cancel_task}, return_when=asyncio.FIRST_COMPLETED
-            )
-            cancel_task.cancel()
-            if get_task not in done:
-                get_task.cancel()
-                return  # interrupted — the producer exits on its own next chunk
-            kind, payload = get_task.result()
-            if kind == "chunk":
-                yield payload
-            elif kind == "error":
-                raise payload
-            else:
-                return
+        try:
+            while True:
+                # Race the queue against Stop so a stalled stream (no chunks arriving —
+                # the pre-first-token wait, a wedged connection) can't hold the turn.
+                get_task = asyncio.ensure_future(queue.get())
+                cancel_task = asyncio.ensure_future(self._cancel.wait())
+                done, _ = await asyncio.wait(
+                    {get_task, cancel_task}, return_when=asyncio.FIRST_COMPLETED
+                )
+                cancel_task.cancel()
+                if get_task not in done:
+                    get_task.cancel()
+                    _state["outcome"] = "interrupted"
+                    return  # interrupted — the producer exits on its own next chunk
+                kind, payload = get_task.result()
+                if kind == "chunk":
+                    if not _ttft:
+                        _ttft.append(time.perf_counter())
+                    if payload.turn is not None and payload.turn.usage is not None:
+                        _usage.append(payload.turn.usage)
+                    yield payload
+                elif kind == "error":
+                    _state["outcome"] = "error"
+                    _state["error_type"] = type(payload).__name__
+                    raise payload
+                else:
+                    return
+        finally:
+            _observe()
 
     async def _handle_tool_calls(
         self, tool_calls: list[ToolCall]

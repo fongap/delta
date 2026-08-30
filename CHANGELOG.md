@@ -4,6 +4,29 @@
 
 ## [Unreleased]
 
+### 新增 (Added)
+
+#### 2026-08-31 — v0.3.0 P0：模型调用瘦身 + OpenAI-compatible 契约治理
+
+- **P0：工具按需注入（`core/tool_selection.py`）**
+  - 模型调用不再每轮携带全量 `registry.schemas()`：新增按调用的工具选择器，按 persona 家族（code 固定注入 files/search/shell/git 基础集）、当前轮信号（用户消息 / 助手叙述 / 本轮已发生的工具调用，中英双语召回优先）解析本轮相关工具子集。纯聊天轮只携带核心集（ask_user / propose_plan / load_skill / save_skill / todo_write——人在回路、计划与技能装载属于 harness 功能，永不裁剪）；未识别工具（MCP 等）归入 misc 恒注入（保守）。
+  - 类别在回合内只增不减；逃生舱：模型回复中出现未注入工具的调用残片时，会话自动回退全量注入并重试本迭代（关键词漏判只损失负载，不损失回合）。
+  - 配置开关：`tool_selection = "full"`（config.toml，全局或工作区）一键恢复旧行为；explorer 子代理显式固定 full。
+- **P0：请求可观测性（`core/request_log.py`）**
+  - 每次模型调用向 `<state_dir>/request_log.jsonl` 记录一行：`provider / model / messages_count / body_bytes（messages+tools 序列化体积）/ tools_count / tool_mode / tool_names / context_estimate_tokens / ttft_ms / duration_ms / outcome（ok|error|interrupted）/ error_type / context_tokens`。TTFT（首 chunk 时延）即免费节点超时的关键指标。记录失败绝不影响调用。
+- **P0：OpenAI-compatible endpoint 能力画像（`providers/endpoint.py`）**
+  - 自定义端点不再被假定与标准 Chat Completions 完全一致：每个端点（按 base_url）持有能力画像 `stream_options / reasoning_content / parallel_tool_calls / max_context`。
+  - 三层来源：Settings 服务商配置显式声明（用户优先）→ 学习事实（服务端一次拒绝即记录，后续调用主动跳过该参数，省去每轮一次失败往返）→ 合规默认。响应式参数修复重试保留作为兜底。
+  - 声明语义：仅 profile 中显式声明的字段覆盖学习事实，未触碰的默认值不会悄悄重新启用已被拒绝的参数。
+- **P0：上下文预算计入工具 schema（`core/compaction.py` + 引擎检查点）**
+  - compaction 触发信号计入本轮注入的工具 schema 体积（`estimate_tools_tokens`）——工具定义与消息一样占用上下文窗口。
+  - 超阈值时先裁工具（回退核心集，若核心集足以容纳）再走摘要压缩（摘要成功后重置裁剪）；裁剪仍超限才触发 LLM 摘要。
+
+### 测试 (Tests)
+
+- 新增 `tests/test_tool_selection.py`（类别映射 / 信号 / 回合内单调 / 最小集 / 逃生舱）、`tests/test_request_observability.py`（成功 / 错误 / 中断各行记录、注入数一致、JSONL sink）、`tests/test_endpoint_caps.py`（profile 解析 / 学习与跳过 / 显式覆盖学习 / registry 构建接线）、`tests/test_context_budget.py`（schema 计入触发 / 先裁工具 / 裁不动再压缩）。
+- 全量回归与基线失败集合逐字节一致（本次改动零回归）；`openai_provider.py` 的 finish_reason 截断守卫原样保留（0.2.2 修复未回退）。
+
 ## [0.2.2] - 2026-08-27
 
 ### 修复 (Fixed)

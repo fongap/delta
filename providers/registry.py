@@ -26,6 +26,7 @@ from typing import Any, Callable, Optional
 from providers.anthropic_provider import AnthropicProvider
 from providers.base import ProviderClient
 from providers.bedrock_provider import BedrockProvider
+from providers.endpoint import from_profile as endpoint_caps_from_profile
 from providers.gemini_provider import GeminiProvider
 from providers.openai_provider import OpenAIProvider
 from providers.openai_responses import OpenAIResponsesProvider
@@ -141,7 +142,14 @@ def _build_openai(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     # which is what compat servers implement.
     base_url = ((profile or {}).get("base_url") or "").strip() or None
     if base_url:
-        return OpenAIProvider(secrets=secrets, base_url=base_url)
+        # Custom endpoints get the capability profile (providers/endpoint.py): params
+        # this server is known to reject are never sent. Keyed by base_url for learning.
+        return OpenAIProvider(
+            secrets=secrets,
+            base_url=base_url,
+            endpoint_caps=endpoint_caps_from_profile(profile),
+            endpoint_key=base_url,
+        )
     return OpenAIResponsesProvider(secrets=secrets)
 
 
@@ -160,7 +168,12 @@ def _build_openai_compat(profile: dict[str, Any], secrets: Any) -> ProviderClien
         raise RuntimeError(
             "No server address configured — add it in Settings ▸ Models."
         )
-    return OpenAIProvider(api_key=api_key, base_url=base_url)
+    return OpenAIProvider(
+        api_key=api_key,
+        base_url=base_url,
+        endpoint_caps=endpoint_caps_from_profile(profile),
+        endpoint_key=base_url,
+    )
 
 
 def _build_anthropic(profile: dict[str, Any], secrets: Any) -> ProviderClient:
@@ -224,7 +237,12 @@ def _build_ollama(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     # Ollama's OpenAI-compatible endpoint ignores the key but the SDK requires a non-empty
     # string, so we pass a placeholder. `base_url` comes from the stored profile (or the default).
     base_url = _normalize_ollama_url((profile or {}).get("base_url"))
-    return OpenAIProvider(api_key="ollama", base_url=base_url)
+    return OpenAIProvider(
+        api_key="ollama",
+        base_url=base_url,
+        endpoint_caps=endpoint_caps_from_profile(profile),
+        endpoint_key=base_url,
+    )
 
 
 def _openai_compat(vendor: str, default_base_url: str, env_key: str | None = None):
@@ -244,7 +262,12 @@ def _openai_compat(vendor: str, default_base_url: str, env_key: str | None = Non
             raise RuntimeError(
                 f"No {vendor} API key configured — add it in Settings ▸ Models."
             )
-        return OpenAIProvider(api_key=api_key, base_url=base_url)
+        return OpenAIProvider(
+            api_key=api_key,
+            base_url=base_url,
+            endpoint_caps=endpoint_caps_from_profile(profile),
+            endpoint_key=base_url,
+        )
 
     return build
 

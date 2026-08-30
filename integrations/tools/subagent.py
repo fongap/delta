@@ -73,6 +73,10 @@ def build_explorer_engine(
         instructions=EXPLORER_INSTRUCTIONS,
         max_iterations=max_iterations,
         model_settings=model_settings,
+        # The explorer IS a tool loop (its instructions name the read-only tools); its
+        # registry is already the narrow read-only slice, so selection has nothing to
+        # shed — keep the historical full injection.
+        tool_selection="full",
     )
 
 

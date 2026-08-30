@@ -31,6 +31,7 @@ from core.memory import (
 from core.overrides import RiskOverrideStore
 from core.permissions import Mode, PermissionEngine
 from core.project import load_agents_md
+from core import request_log as _request_log
 from providers import ProviderClient, ProviderRouter
 from core.roots import RootDir, normalize_roots, render_context
 from packages.secrets import SecretStore, state_dir
@@ -484,6 +485,11 @@ def build_engine(
         directory_requester=directory_requester,
         plan_approver=plan_approver,
         question_asker=question_asker,
+        # v0.3.0 P0: per-call tool injection (config kill switch: tool_selection="full")
+        # and request observability (one JSONL row per model call in the state dir).
+        tool_selection=config.tool_selection,
+        agent_family=agent.family,
+        request_logger=_request_log.default_logger(),
     )
     engine.executor = executor  # type: ignore[attr-defined]
     engine.todo = todo  # type: ignore[attr-defined]
