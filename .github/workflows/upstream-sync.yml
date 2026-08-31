@@ -4,7 +4,7 @@
 # code. It only refreshes the mirror branch so upstream changes remain available for
 # explicit review and selective absorption.
 
-name: Sync OpenWorker Upstream
+name: Upstream Auto Sync
 
 on:
   schedule:
