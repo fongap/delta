@@ -7,6 +7,8 @@ archive to a temp dir on EVERY launch — 6-7s of "Starting delta…" splash (me
 actual Python import is ~0.5s). The wrinkles handled here:
   - aisuite is a regular pip dependency (git-pinned in pyproject.toml); collect the
     responsibility packages + aisuite submodules from the venv.
+  - MCP runtime/client modules are collected, but the optional `mcp.cli` package is
+    deliberately excluded because Delta does not use it and it requires optional `typer`.
   - uvicorn loads its protocol/lifespan impls dynamically → collect_all.
   - certifi's CA bundle must ship for TLS (OpenAI, web search, Telegram/Slack).
   - messaging extras (slack_bolt, telegram) are optional; collected if importable.
@@ -25,24 +27,33 @@ import sys
 
 from PyInstaller.utils.hooks import collect_all, collect_submodules
 
+
 # SPECPATH is injected by PyInstaller and points at this file's directory
 # (<repo>/packaging/server). Derive everything else from it — no hardcoded paths.
 PACKAGING = SPECPATH                 # packaging/server
 ROOT = os.path.dirname(PACKAGING)    # packaging
 REPO_ROOT = os.path.dirname(ROOT)    # <repo>
-PYTHON_ROOT = REPO_ROOT  # responsibility packages live at the repository root
+PYTHON_ROOT = REPO_ROOT              # responsibility packages live at repository root
 
 IS_WINDOWS = sys.platform == "win32"
+
 
 # Experimental (use-at-your-own-risk) connectors are excluded from official builds: the code
 # is stripped, not just disabled. Self-builders opt in with DELTA_EXPERIMENTAL=1; the
 # loader in integrations/connectors/descriptors.py treats the missing package as a no-op.
 INCLUDE_EXPERIMENTAL = os.environ.get("DELTA_EXPERIMENTAL") == "1"
 
+
 hiddenimports = []
 datas = []
 binaries = []
 
+
+# Collect Delta responsibility packages and regular runtime dependencies.
+#
+# `mcp` is intentionally handled separately below. Calling
+# `collect_submodules("mcp")` without a filter imports `mcp.cli` during PyInstaller
+# analysis; that optional CLI requires `typer`, which Delta's runtime does not use.
 for pkg in (
     "core",
     "providers",
@@ -51,28 +62,60 @@ for pkg in (
     "services",
     "apps",
     "aisuite",
-    "mcp",
     "ddgs",
     "croniter",
     "docstring_parser",
 ):
     hiddenimports += collect_submodules(pkg)
 
+
+# Delta uses the MCP SDK runtime/client, not MCP's optional command-line interface.
+# Keep all MCP runtime modules required by ClientSession/transports while excluding
+# mcp.cli so official builds do not require or bundle the optional `typer` dependency.
+hiddenimports += collect_submodules(
+    "mcp",
+    filter=lambda name: not (
+        name == "mcp.cli"
+        or name.startswith("mcp.cli.")
+    ),
+)
+
+
+# Packaging invariant: mcp.cli must never enter the desktop sidecar.
+# Keep this before Analysis() so future spec changes fail with a direct explanation.
+assert not any(
+    name == "mcp.cli" or name.startswith("mcp.cli.")
+    for name in hiddenimports
+), "mcp.cli must not be bundled into delta-server"
+
+
 if not INCLUDE_EXPERIMENTAL:
     hiddenimports = [
-        m for m in hiddenimports if not m.startswith("integrations.connectors.experimental")
+        m
+        for m in hiddenimports
+        if not m.startswith("integrations.connectors.experimental")
     ]
+
 
 # `websockets` powers the managed Slack relay client (relay_client.py). It is
 # lazy-imported inside a function, so PyInstaller's static analysis misses it —
 # collect it explicitly or the packaged relay adapter fails to open its socket.
-# `pypdf`/`pypdfium2` are lazy-imported the same way (pdf_support.py) — and pypdfium2
-# carries the libpdfium binary, which collect_all is what actually stages.
-for pkg in ("uvicorn", "certifi", "anyio", "websockets", "pypdf", "pypdfium2"):
+#
+# `pypdf` / `pypdfium2` are lazy-imported the same way (pdf_support.py), and
+# pypdfium2 carries the libpdfium binary, which collect_all is what stages.
+for pkg in (
+    "uvicorn",
+    "certifi",
+    "anyio",
+    "websockets",
+    "pypdf",
+    "pypdfium2",
+):
     d, b, h = collect_all(pkg)
     datas += d
     binaries += b
     hiddenimports += h
+
 
 # Windows has no system tz database; tzdata ships the zoneinfo files the scheduler needs.
 if IS_WINDOWS:
@@ -84,8 +127,9 @@ if IS_WINDOWS:
     except Exception:
         pass
 
-# [bedrock] extra — boto3 is lazy-imported (bedrock_provider.py) so static analysis
-# misses it, and botocore's service-model JSON data dir only ships via collect_all.
+
+# [bedrock] extra — boto3 is lazy-imported (bedrock_provider.py), so static analysis
+# misses it, and botocore's service-model JSON data directory only ships via collect_all.
 for pkg in ("boto3", "botocore"):
     try:
         d, b, h = collect_all(pkg)
@@ -95,11 +139,14 @@ for pkg in ("boto3", "botocore"):
     except Exception:
         pass
 
-for pkg in ("slack_bolt", "telegram"):  # [messaging] extra — optional
+
+# [messaging] extras are optional.
+for pkg in ("slack_bolt", "telegram"):
     try:
         hiddenimports += collect_submodules(pkg)
     except Exception:
         pass
+
 
 a = Analysis(
     [os.path.join(PACKAGING, "server_entry.py")],
@@ -109,34 +156,68 @@ a = Analysis(
     hiddenimports=hiddenimports,
     hookspath=[],
     runtime_hooks=[],
-    excludes=["tkinter", "matplotlib", "PIL", "PyQt5", "PySide6"]
-    + ([] if INCLUDE_EXPERIMENTAL else ["integrations.connectors.experimental"]),
+    excludes=[
+        "tkinter",
+        "matplotlib",
+        "PIL",
+        "PyQt5",
+        "PySide6",
+    ]
+    + (
+        []
+        if INCLUDE_EXPERIMENTAL
+        else ["integrations.connectors.experimental"]
+    ),
     noarchive=False,
 )
+
+
 pyz = PYZ(a.pure)
+
+
 exe = EXE(
     pyz,
     a.scripts,
     [],
     exclude_binaries=True,
     name="delta-server",
-    # Embed version info so Windows Task Manager shows "Delta Server" (FileDescription)
-    # instead of the bare filename; the process groups visually under the Delta family.
-    version=os.path.join(PACKAGING, "delta-server-version.txt") if IS_WINDOWS else None,
-    # Same Delta logo as the app/launcher — the Python-icon default read as an unrelated
-    # process in Task Manager's process tree.
-    icon=os.path.join(ROOT, "portable", "launcher", "icon.ico") if IS_WINDOWS else None,
+
+    # Embed version info so Windows Task Manager shows "Delta Server"
+    # (FileDescription) instead of the bare filename; the process groups
+    # visually under the Delta family.
+    version=(
+        os.path.join(PACKAGING, "delta-server-version.txt")
+        if IS_WINDOWS
+        else None
+    ),
+
+    # Same Delta logo as the app/launcher — the Python-icon default reads as
+    # an unrelated process in Task Manager's process tree.
+    icon=(
+        os.path.join(ROOT, "portable", "launcher", "icon.ico")
+        if IS_WINDOWS
+        else None
+    ),
+
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
     upx=False,
-    # Console on every OS: a windowed build nulls stdout/stderr and hangs uvicorn. The Tauri
-    # shell hides the window on Windows via CREATE_NO_WINDOW when spawning the sidecar.
+
+    # Console on every OS: a windowed build nulls stdout/stderr and hangs uvicorn.
+    # The Tauri shell hides the window on Windows via CREATE_NO_WINDOW when
+    # spawning the sidecar.
     console=True,
+
     # target_arch left unset → PyInstaller builds for the host architecture.
 )
-# Onedir: dist/delta-server/{delta-server[.exe], _internal/}. The build scripts stage
-# this whole folder into src-tauri/binaries/sidecar/ for Tauri's `resources` bundling.
+
+
+# Onedir:
+# dist/delta-server/{delta-server[.exe], _internal/}
+#
+# The build scripts stage this whole folder into
+# src-tauri/binaries/sidecar/ for Tauri's `resources` bundling.
 coll = COLLECT(
     exe,
     a.binaries,
