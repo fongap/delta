@@ -373,6 +373,7 @@ jobs:
           # crate, not merely compiled as a Tauri path dependency.
           - workspace: services/stt
             tauri-deps: false
+            stt-audio-deps: true
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -395,6 +396,17 @@ jobs:
             librsvg2-dev \
             patchelf \
             libasound2-dev
+
+      # cpal's Linux backend links ALSA independently of Tauri. Keep this separate
+      # from the desktop GUI dependency set so the STT crate remains standalone.
+      - name: Install STT Linux audio dependencies
+        if: ${{ matrix.stt-audio-deps }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev pkg-config
 
       - name: Stub sidecar binary for Tauri codegen
         if: ${{ matrix.tauri-deps }}
