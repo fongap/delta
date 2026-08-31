@@ -172,7 +172,7 @@ from core.attachments import (
 )
 from core.engine import ApprovalOutcome
 from core.inbox import VIS_INBOX, VIS_INLINE, args_preview
-from providers import PROTOCOLS, AssistantTurn
+from providers import AssistantTurn, core_protocol_descriptors
 from services.server.contracts import error_envelope
 from services.server.manager import SessionManager
 
@@ -1415,7 +1415,7 @@ def create_app(manager: SessionManager) -> FastAPI:
     def protocols_get() -> list[dict[str, Any]]:
         """Protocol definitions for the custom-provider form (no callable fields)."""
         out: list[dict[str, Any]] = []
-        for pid, proto in PROTOCOLS.items():
+        for pid, proto in core_protocol_descriptors().items():
             out.append(
                 {
                     "id": pid,

@@ -447,14 +447,15 @@ def test_stream_handles_enum_like_finish_reason():
 # -- registry / capabilities ----------------------------------------------------------
 
 
-def test_registry_builds_native_gemini_provider():
+def test_registry_builds_openai_compatible_gemini_preset():
     from providers.registry import build_provider_client
+    from providers.openai_provider import OpenAIProvider
 
     provider = build_provider_client("gemini", {"api_key": "AIza-x"}, None)
-    assert isinstance(provider, GeminiProvider)
+    assert isinstance(provider, OpenAIProvider)
     assert provider._api_key == "AIza-x"
     # no key in the profile is fine at build time — resolution is deferred to first call
-    assert isinstance(build_provider_client("gemini", {}, None), GeminiProvider)
+    assert isinstance(build_provider_client("gemini", {}, None), OpenAIProvider)
 
 
 def test_resolve_api_key_env_then_secrets(monkeypatch):

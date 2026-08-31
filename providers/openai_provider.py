@@ -35,7 +35,7 @@ from providers.health import record_call as _record_health
 
 def resolve_api_key(secrets: Any = None) -> str | None:
     """Resolve the OpenAI API key: env `OPENAI_API_KEY` first, else the SecretStore
-    `provider:openai` profile (`{api_key}`). Lets a Tauri-launched sidecar — which does NOT
+    `provider-profile:openai` profile (`{api_key}`). Lets a Tauri-launched sidecar — which does NOT
     inherit the shell env — still find a key the user entered in Settings. The value never
     enters the model context; it only configures the SDK client.
     """
@@ -45,7 +45,7 @@ def resolve_api_key(secrets: Any = None) -> str | None:
     if key:
         return key
     if secrets is not None:
-        profile = secrets.get("provider:openai") or {}
+        profile = secrets.get("provider-profile:openai") or {}
         return profile.get("api_key") or None
     return None
 
@@ -173,6 +173,7 @@ class OpenAIProvider(ProviderClient):
         secrets: Any = None,
         endpoint_caps: EndpointCaps | None = None,
         endpoint_key: str | None = None,
+        allow_credential_fallback: bool = True,
     ):
         # The SDK client is built lazily on first use, NOT at construction. This lets an engine
         # be assembled before any key exists — the desktop app lets you enter the key in Settings
@@ -187,6 +188,9 @@ class OpenAIProvider(ProviderClient):
         self._api_key = api_key
         self._base_url = base_url
         self._secrets = secrets
+        # A profile-bound endpoint must never inherit the OpenAI environment/store key.
+        # `api_key=""` deliberately means "no key configured", not "fall back".
+        self._allow_credential_fallback = allow_credential_fallback
         self.default_model = default_model
         # Endpoint capability profile (providers/endpoint.py): what THIS server accepts,
         # so known-unsupported params are never sent (instead of eating a 400 every call).
@@ -202,7 +206,9 @@ class OpenAIProvider(ProviderClient):
             # Lazy import so the SDK is only required when actually talking to OpenAI.
             from openai import OpenAI
 
-            key = self._api_key or resolve_api_key(self._secrets)
+            key = self._api_key
+            if not key and self._allow_credential_fallback:
+                key = resolve_api_key(self._secrets)
             if not key:
                 raise RuntimeError(
                     "No model API key configured. Set OPENAI_API_KEY in the environment, "

@@ -16,7 +16,7 @@ from packages.secrets import SecretStore
 def test_resolve_api_key_prefers_env(monkeypatch, tmp_path):
     monkeypatch.setenv("OPENAI_API_KEY", "sk-env-123")
     secrets = SecretStore(path=tmp_path / "secrets.json")
-    secrets.put("provider:openai", {"type": "api_key", "api_key": "sk-store-999"})
+    secrets.put("provider-profile:openai", {"type": "api_key", "api_key": "sk-store-999"})
     assert resolve_api_key(secrets) == "sk-env-123"
 
 
@@ -24,7 +24,7 @@ def test_resolve_api_key_falls_back_to_store(monkeypatch, tmp_path):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     secrets = SecretStore(path=tmp_path / "secrets.json")
     assert resolve_api_key(secrets) is None
-    secrets.put("provider:openai", {"type": "api_key", "api_key": "sk-store-999"})
+    secrets.put("provider-profile:openai", {"type": "api_key", "api_key": "sk-store-999"})
     assert resolve_api_key(secrets) == "sk-store-999"
 
 
