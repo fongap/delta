@@ -35,4 +35,33 @@ describe("Markdown artifact links", () => {
     render(<Markdown text="[](artifact:out/report.pdf)" />);
     expect(screen.getByTestId("artifact-chip").textContent).toContain("report.pdf");
   });
+
+  it("decodes a URI-encoded artifact href so the viewer can match the real file", () => {
+    const seen: string[] = [];
+    const listener = (e: Event) => seen.push((e as CustomEvent).detail.path);
+    window.addEventListener(OPEN_ARTIFACT_EVENT, listener);
+
+    const encoded = encodeURIComponent("二女伺夫改写_定稿.md");
+    render(
+      <Markdown text={`[二女伺夫改写_定稿.md](artifact:out/${encoded})`} />
+    );
+    const chip = screen.getByTestId("artifact-chip");
+    expect(chip.textContent).toContain("二女伺夫改写_定稿.md");
+    fireEvent.click(chip);
+    expect(seen).toEqual([`out/二女伺夫改写_定稿.md`]);
+
+    window.removeEventListener(OPEN_ARTIFACT_EVENT, listener);
+  });
+
+  it("keeps a literal percent that is not an escape sequence", () => {
+    const seen: string[] = [];
+    const listener = (e: Event) => seen.push((e as CustomEvent).detail.path);
+    window.addEventListener(OPEN_ARTIFACT_EVENT, listener);
+
+    render(<Markdown text="[](artifact:out/100%.md)" />);
+    fireEvent.click(screen.getByTestId("artifact-chip"));
+    expect(seen).toEqual(["out/100%.md"]);
+
+    window.removeEventListener(OPEN_ARTIFACT_EVENT, listener);
+  });
 });

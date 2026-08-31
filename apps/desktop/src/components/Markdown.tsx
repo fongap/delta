@@ -9,6 +9,18 @@ import { Icon } from "./Icon";
 // the session's artifact list, App un-hides the rail.
 export const OPEN_ARTIFACT_EVENT = "delta-open-artifact";
 
+// Markdown link hrefs are URI-encoded (non-ASCII filenames become %E4%BA%8C…), while the
+// artifact list and the server resolve the decoded on-disk path. Decode once here so the
+// chip displays the real filename and the viewer can match it; a literal "%" that isn't an
+// escape sequence (e.g. a file named "100%.md") falls back to the raw path unchanged.
+function decodeArtifactPath(path: string): string {
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    return path;
+  }
+}
+
 function ArtifactChip({ path, title }: { path: string; title: string }) {
   const file = path.split("/").pop() || path;
   return (
@@ -47,7 +59,12 @@ export function Markdown({ text }: { text: string }) {
           a: ({ node: _n, href, children, ...props }) => {
             if (href?.startsWith("artifact:")) {
               const title = Array.isArray(children) ? children.join("") : String(children ?? "");
-              return <ArtifactChip path={href.slice("artifact:".length)} title={title} />;
+              return (
+                <ArtifactChip
+                  path={decodeArtifactPath(href.slice("artifact:".length))}
+                  title={title}
+                />
+              );
             }
             return (
               <a href={href} {...props} target="_blank" rel="noreferrer">
