@@ -55,9 +55,9 @@ Delta 将继续坚持本地优先，逐步完善：
 ### 本地开发
 
 ```bash
-# 后端
+# 后端（先安装 uv；uv.lock 固定完整依赖图）
+uv sync --locked --extra dev --extra messaging
 .venv\Scripts\activate
-pip install -e ".[dev,messaging]"
 uvicorn services.server.app:app --port 9876
 
 # 前端
@@ -69,7 +69,8 @@ npm run tauri dev
 ### 构建便携包
 
 ```powershell
-# 前置条件：Rust、Node.js、Python 3.11+、.venv 已安装 pyinstaller
+# 前置条件：Rust、Node.js、Python 3.11+、uv
+uv sync --locked --extra bedrock --extra build
 .\packaging\portable\build_portable.ps1
 # 最终产物仅写入仓库根目录 releases\（ZIP + .sha256）
 ```
