@@ -1,7 +1,7 @@
 # Delta CI
 #
 # Coverage:
-# - Python runtime tests on Linux and Windows
+# - Python runtime tests on supported Linux versions and Windows
 # - Desktop TypeScript/unit tests
 # - Hermetic Playwright e2e tests
 # - Python/npm/Rust dependency advisory gates
@@ -37,16 +37,23 @@ concurrency:
 
 jobs:
   pytest:
-    name: pytest
+    name: pytest (${{ matrix.python-version }})
     runs-on: ubuntu-latest
     timeout-minutes: 30
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # Keep the declared Python support range continuously verified. Windows
+        # remains on the primary version to keep the platform matrix bounded.
+        python-version: ["3.11", "3.12", "3.13"]
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
           cache: "pip"
           cache-dependency-path: pyproject.toml
 
@@ -211,6 +218,13 @@ jobs:
           --config "$GITHUB_WORKSPACE/deny.toml"
           check advisories
 
+      - name: Advisories — STT service
+        working-directory: services/stt
+        run: >
+          cargo deny
+          --config "$GITHUB_WORKSPACE/deny.toml"
+          check advisories
+
 
   static:
     name: static
@@ -355,6 +369,12 @@ jobs:
           - workspace: packaging/portable/launcher
             tauri-deps: false
 
+          # STT has its own lockfile and must be governed as an independent
+          # crate, not merely compiled as a Tauri path dependency.
+          - workspace: services/stt
+            tauri-deps: false
+            stt-audio-deps: true
+
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
@@ -376,6 +396,17 @@ jobs:
             librsvg2-dev \
             patchelf \
             libasound2-dev
+
+      # cpal's Linux backend links ALSA independently of Tauri. Keep this separate
+      # from the desktop GUI dependency set so the STT crate remains standalone.
+      - name: Install STT Linux audio dependencies
+        if: ${{ matrix.stt-audio-deps }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev pkg-config
 
       - name: Stub sidecar binary for Tauri codegen
         if: ${{ matrix.tauri-deps }}

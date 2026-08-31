@@ -88,19 +88,17 @@ fn windows_internet_proxy() -> Option<String> {
         command.creation_flags(CREATE_NO_WINDOW)
     }
     // ProxyEnable == 1 means a system proxy is configured (0 = direct access).
-    let enable = quiet(&mut Command::new("reg").args(["query", KEY, "/v", "ProxyEnable"]))
+    let enable = quiet(Command::new("reg").args(["query", KEY, "/v", "ProxyEnable"]))
         .output()
         .ok()?;
     if !String::from_utf8_lossy(&enable.stdout).contains("0x1") {
         return None;
     }
-    let server = quiet(&mut Command::new("reg").args(["query", KEY, "/v", "ProxyServer"]))
+    let server = quiet(Command::new("reg").args(["query", KEY, "/v", "ProxyServer"]))
         .output()
         .ok()?;
     let server_str = String::from_utf8_lossy(&server.stdout);
-    let line = server_str
-        .lines()
-        .find(|l| l.contains("ProxyServer"))?;
+    let line = server_str.lines().find(|l| l.contains("ProxyServer"))?;
     let value = line.rsplit("REG_SZ").next()?.trim();
     let value = value.trim_matches(|c: char| c.is_whitespace() || c == '\0');
     if value.is_empty() {
@@ -156,7 +154,6 @@ fn fetch_model_response() -> Result<ureq::Response, String> {
     }
 }
 
-
 #[derive(Debug, Clone, Serialize)]
 pub struct DictationStatus {
     pub recording: bool,
@@ -180,6 +177,9 @@ struct Recording {
     sample_rate: u32,
 }
 
+type SampleBuffer = Arc<Mutex<Vec<f32>>>;
+type LiveRecording = Arc<Mutex<Option<(SampleBuffer, u32)>>>;
+
 /// A reusable single-microphone dictation session manager.
 ///
 /// It records only while a host has explicitly started a session; audio is held in memory for
@@ -193,7 +193,7 @@ pub struct Dictation {
     recording: Arc<Mutex<bool>>,
     // Live handle onto the in-flight recording's sample buffer (set by the capture worker
     // for the duration of a session) so hosts can meter input loudness for UI feedback.
-    live: Arc<Mutex<Option<(Arc<Mutex<Vec<f32>>>, u32)>>>,
+    live: LiveRecording,
     download_in_progress: AtomicBool,
     cancel_download: AtomicBool,
 }
@@ -522,7 +522,7 @@ fn model_verification_marker_matches(model_path: &Path, marker_path: &Path) -> b
 fn capture_worker(
     receiver: Receiver<Command>,
     recording_status: Arc<Mutex<bool>>,
-    live: Arc<Mutex<Option<(Arc<Mutex<Vec<f32>>>, u32)>>>,
+    live: LiveRecording,
 ) {
     let mut recording: Option<Recording> = None;
     let set_live = |value: Option<(Arc<Mutex<Vec<f32>>>, u32)>| {
