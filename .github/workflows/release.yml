@@ -72,7 +72,7 @@ jobs:
           python -m venv .venv
           .\.venv\Scripts\python.exe -m pip install --upgrade pip
           .\.venv\Scripts\python.exe -m pip install -e ".[bedrock]" pyinstaller typer tzdata
-          .\.venv\Scripts\python.exe -c "import aisuite, delta"
+          .\.venv\Scripts\python.exe -c "import aisuite; from core.cli import main; from services.server.run import main as server_main"
 
       - name: Install frontend dependencies
         working-directory: apps/desktop
