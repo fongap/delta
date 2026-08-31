@@ -490,7 +490,7 @@ jobs:
 
   ci-required:
     name: ci-required
-    if: always()
+    if: ${{ always() && (github.event_name == 'pull_request' || !cancelled()) }}
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
