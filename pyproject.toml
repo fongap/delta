@@ -45,7 +45,7 @@ messaging = ["python-telegram-bot==22.8", "slack-bolt==1.30.0", "aiohttp==3.14.3
 # Interactive Cowork browser automation.
 browser = ["playwright>=1.62.0"]
 # AWS Bedrock provider (lazy-imported; desktop builds bundle it, pip users opt in).
-bedrock = ["boto3==1.43.81"]
+bedrock = ["boto3==1.43.82"]
 
 [project.scripts]
 delta = "core.cli:main"
