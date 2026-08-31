@@ -37,7 +37,16 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest==9.1.1", "pytest-asyncio==1.4.0", "httpx==0.28.1"]
+dev = [
+    "pytest==9.1.1",
+    "pytest-asyncio==1.4.0",
+    "httpx==0.28.1",
+    # CI tools are project dependencies so uv.lock fixes the exact versions used
+    # by all static/audit gates instead of resolving them separately at runtime.
+    "pip-audit==2.10.1",
+    "pyright==1.1.397",
+    "ruff==0.11.13",
+]
 # Inbound messaging listeners (outbound send_message needs only httpx, already a core dep).
 # aiohttp is slack-bolt's Socket Mode transport at runtime (and the FakeSlack test harness
 # drives the real handler) — declare it so CI installs it, not just transitively.
@@ -46,6 +55,9 @@ messaging = ["python-telegram-bot==22.8", "slack-bolt==1.30.0", "aiohttp==3.14.3
 browser = ["playwright>=1.62.0"]
 # AWS Bedrock provider (lazy-imported; desktop builds bundle it, pip users opt in).
 bedrock = ["boto3==1.43.82"]
+# Windows Portable build-only dependency. Keeping it as an explicit extra lets
+# the release sidecar environment be reproduced from uv.lock.
+build = ["pyinstaller==6.22.2"]
 
 [project.scripts]
 delta = "core.cli:main"
@@ -62,3 +74,8 @@ core = ["personas/builtin/*.md"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.uv]
+# CI and release use this exact resolver so the committed uv.lock remains the
+# single reproducible Python dependency graph across supported platforms.
+required-version = "==0.12.3"
