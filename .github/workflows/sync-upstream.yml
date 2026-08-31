@@ -1,25 +1,41 @@
+# Keep an exact mirror of OpenWorker's main branch under upstream-openworker.
+#
+# This workflow does not merge upstream code into Delta and does not execute upstream
+# code. It only refreshes the mirror branch so upstream changes remain available for
+# explicit review and selective absorption.
+
 name: Sync OpenWorker Upstream
 
 on:
   schedule:
-    - cron: '0 22 * * *'   # 每日北京时间 06:00
+    # 22:00 UTC = 06:00 Asia/Shanghai (next day).
+    - cron: "0 22 * * *"
   workflow_dispatch:
 
 permissions:
   contents: write
 
+concurrency:
+  group: sync-openworker-upstream
+  cancel-in-progress: true
+
 jobs:
   sync:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
 
     steps:
       - name: Checkout Delta
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          fetch-depth: 0
 
       - name: Sync OpenWorker main
+        shell: bash
         run: |
+          set -euo pipefail
+
           git remote add upstream https://github.com/andrewyng/openworker.git
-          git fetch upstream main
-          git push origin +refs/remotes/upstream/main:refs/heads/upstream-openworker
+          git fetch --no-tags upstream main
+
+          # upstream-openworker is a mirror/reference branch, not a Delta development
+          # branch. Force-update it to exactly match OpenWorker main.
+          git push origin +FETCH_HEAD:refs/heads/upstream-openworker
