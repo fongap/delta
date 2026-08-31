@@ -1,306 +1,504 @@
-# App CI — the delta Python suite, the GUI unit tests, and the hermetic
-# Playwright e2e suite (mocked /v1 + WS; no model or network needed).
+# Delta CI
 #
-# Supply-chain hardening (P2):
-# - every third-party action is pinned to an immutable commit SHA (tag in a comment);
-#   bump deliberately: resolve the new tag's SHA, update, review the diff.
-# - dependency advisories are gated by pip-audit / npm audit / cargo-deny.
-# - static gates: ruff blocks on runtime-breaking issue classes only (E9/F63/F7/F82);
-#   the full lint + pyright scans run as reports until the baseline is cleaned up,
-#   then they flip to blocking.
+# Coverage:
+# - Python runtime tests on Linux and Windows
+# - Desktop TypeScript/unit tests
+# - Hermetic Playwright e2e tests
+# - Python/npm/Rust dependency advisory gates
+# - Python static-analysis regression gates
+# - Rust fmt/check/clippy/tests
+# - Repository layout invariants
+#
+# Supply-chain policy:
+# - Third-party GitHub Actions are pinned to immutable commit SHAs.
+# - Tool versions that affect security/static baselines are explicitly pinned.
+# - The root deny.toml is explicitly supplied to cargo-deny.
+#
+# Branch protection:
+# - The main Ruleset requires only the stable `ci-required` job.
+# - Individual job names may evolve without stranding GitHub Required Checks.
 
 name: CI
 
-on: [push, pull_request]
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
 
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   pytest:
+    name: pytest
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+
     steps:
-      # v4
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      # v5
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
+
       - name: Install
+        shell: bash
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[messaging,dev,bedrock]"
+          set -euo pipefail
+          python -m pip install --upgrade "pip==26.2.1"
+          python -m pip install -e ".[messaging,dev,bedrock]"
+          python -m pip check
+
       - name: Runtime contract schemas
         run: pytest tests/test_ui_runtime_contracts.py -q
+
       - name: Test
-        run: pytest tests -q
+        # test_ui_runtime_contracts.py already ran above as an explicit contract gate.
+        run: pytest tests -q --ignore=tests/test_ui_runtime_contracts.py
+
 
   pytest-windows:
+    name: pytest-windows
     runs-on: windows-latest
+    timeout-minutes: 40
+
     steps:
-      # v4
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      # v5
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
+
       - name: Install
+        shell: pwsh
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[messaging,dev,bedrock]"
+          python -m pip install --upgrade "pip==26.2.1"
+          python -m pip install -e ".[messaging,dev,bedrock]"
+          python -m pip check
+
       - name: Test
         run: pytest tests -q
 
+
   desktop-unit:
+    name: desktop-unit
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+
     steps:
-      # v4
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      # v4
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
+
       - name: npm ci
         working-directory: apps/desktop
         run: npm ci
-      - name: Dependency advisories (npm audit)
+
+      - name: Dependency advisories
         working-directory: apps/desktop
         run: npm audit --omit=dev --audit-level=high
+
       - name: Typecheck
         working-directory: apps/desktop
         run: npx tsc --noEmit
+
       - name: Runtime contract fixtures
         working-directory: apps/desktop
-        run: npx vitest run src/api.contract.test.ts src/runtime-contract.test.ts src/api.auth.test.ts
+        run: >
+          npx vitest run
+          src/api.contract.test.ts
+          src/runtime-contract.test.ts
+          src/api.auth.test.ts
+
       - name: Unit tests
         working-directory: apps/desktop
         run: npm test
 
+
   desktop-e2e:
+    name: desktop-e2e
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+
     steps:
-      # v4
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      # v4
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 22
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
+
       - name: npm ci
         working-directory: apps/desktop
         run: npm ci
-      - name: Install Playwright browsers
+
+      - name: Install Playwright browser
         working-directory: apps/desktop
         run: npx playwright install --with-deps chromium
+
       - name: e2e
         working-directory: apps/desktop
         run: npm run e2e
 
+
   python-advisories:
+    name: python-advisories
     runs-on: ubuntu-latest
+    timeout-minutes: 20
+
     steps:
-      # v4
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      # v5
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-      - name: Install (full dependency set)
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
+
+      - name: Install full dependency set
+        shell: bash
         run: |
-          python -m pip install --upgrade pip
-          pip install -e ".[messaging,dev,bedrock]"
-      - name: Dependency advisories (pip-audit)
-        run: |
-          pip install pip-audit
-          pip-audit --skip-editable
+          set -euo pipefail
+          python -m pip install --upgrade "pip==26.2.1"
+          python -m pip install -e ".[messaging,dev,bedrock]"
+          python -m pip install "pip-audit==2.10.1"
+          python -m pip check
+
+      - name: Dependency advisories
+        run: pip-audit --skip-editable
+
 
   rust-advisories:
+    name: rust-advisories
     runs-on: ubuntu-latest
     timeout-minutes: 30
+
     steps:
-      # v4
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      # dtolnay/rust-toolchain, stable branch snapshot
-      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable snapshot
+
       - name: Install cargo-deny
-        run: cargo install cargo-deny --locked
-      - name: Advisories (Tauri app)
+        run: cargo install cargo-deny --version 0.20.2 --locked
+
+      - name: Advisories — Tauri app
         working-directory: apps/desktop/src-tauri
-        run: cargo deny check advisories
-      - name: Advisories (portable launcher)
+        run: >
+          cargo deny
+          --config "$GITHUB_WORKSPACE/deny.toml"
+          check advisories
+
+      - name: Advisories — portable launcher
         working-directory: packaging/portable/launcher
-        run: cargo deny check advisories
+        run: >
+          cargo deny
+          --config "$GITHUB_WORKSPACE/deny.toml"
+          check advisories
+
 
   static:
+    name: static
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+
     steps:
-      # v4
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      # v5
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: pyproject.toml
+
       - name: Install linters
+        shell: bash
         run: |
-          python -m pip install --upgrade pip
-          # Pinned to the versions this baseline was measured against (ruff 0.11.13,
-          # pyright 1.1.397). Bump deliberately: re-measure, update the baseline below
-          # only DOWNWARD (a higher count needs a reviewed change with a comment).
-          pip install ruff==0.11.13 pyright==1.1.397
-          pip install -e ".[messaging]"
-      - name: Ruff (blocking — runtime-breaking classes only)
-        run: ruff check core providers integrations packages services/server apps/tui tests --select E9,F63,F7,F82
-      # Full-scan + pyright run as BASELINE REGRESSION gates: they may have unfixed
-      # findings, but the count must never grow past the committed baseline (CI fails
-      # only on a regression, not on a pre-existing finding). Lower the baseline as
-      # lint debt is cleaned up; raise it deliberately (with a comment) after a
-      # reviewed change that adds noise. Baselines were re-measured at the pinned
-      # versions above (ruff 0.11.13 / pyright 1.1.397) and lowered from the prior
-      # 467 / 572 to the actual current counts. NOTE: pyright is platform-sensitive —
-      # the Windows-only `tzdata; sys_platform == 'win32'` conditional imports parse
-      # differently on the Linux runner, so the CI (Linux) count (581) is higher than
-      # a Windows measurement (570); the baseline uses the CI Linux count.
-      - name: Ruff full-scan (baseline gate — 192)
+          set -euo pipefail
+          python -m pip install --upgrade "pip==26.2.1"
+
+          # These versions define the committed static-analysis baseline.
+          # Upgrade them only together with a deliberate baseline re-measurement.
+          python -m pip install \
+            "ruff==0.11.13" \
+            "pyright==1.1.397"
+
+          python -m pip install -e ".[messaging]"
+          python -m pip check
+
+      - name: Ruff — blocking runtime-breaking classes
+        run: >
+          ruff check
+          core
+          providers
+          integrations
+          packages
+          services/server
+          apps/tui
+          tests
+          --select E9,F63,F7,F82
+
+      # Existing lint debt is tolerated, but the number of findings may not increase.
+      # Baselines should normally only move downward as debt is repaired.
+
+      - name: Ruff full scan — baseline gate
         env:
           RUFF_BASELINE: "192"
+        shell: bash
         run: |
-          RUN=$(ruff check core providers integrations packages services/server apps/tui tests --output-format=json || true)
-          COUNT=$(python -c "import json,sys; print(len(json.loads('$RUN')))" 2>/dev/null || python -c "import json,sys; print(len(json.load(sys.stdin)))" <<<"$RUN")
-          echo "ruff findings: $COUNT (baseline $RUFF_BASELINE)"
-          python - "$COUNT" "$RUFF_BASELINE" <<'PY'
-          import sys
-          count, baseline = int(sys.argv[1]), int(sys.argv[2])
+          set -euo pipefail
+
+          ruff check \
+            core \
+            providers \
+            integrations \
+            packages \
+            services/server \
+            apps/tui \
+            tests \
+            --output-format=json \
+            > ruff-report.json || true
+
+          python - <<'PY'
+          import json
+          import os
+
+          baseline = int(os.environ["RUFF_BASELINE"])
+
+          with open("ruff-report.json", "r", encoding="utf-8") as fh:
+              findings = json.load(fh)
+
+          if not isinstance(findings, list):
+              raise SystemExit("invalid Ruff JSON report")
+
+          count = len(findings)
+          print(f"ruff findings: {count} (baseline {baseline})")
+
           if count > baseline:
-              raise SystemExit(f"ruff findings {count} > baseline {baseline} — clean up or raise the baseline deliberately")
-          PY
-      - name: Pyright (baseline gate — 581)
-        env:
-          PYRIGHT_BASELINE: "581"
-        run: |
-          RUN=$(pyright core providers integrations packages services/server apps/tui 2>/dev/null || true)
-          echo "$RUN" | tail -1
-          COUNT=$(echo "$RUN" | grep -oE '[0-9]+ errors?' | grep -oE '[0-9]+' || echo 0)
-          echo "pyright errors: $COUNT (baseline $PYRIGHT_BASELINE)"
-          python - "$COUNT" "$PYRIGHT_BASELINE" <<'PY'
-          import sys
-          count, baseline = int(sys.argv[1]), int(sys.argv[2])
-          if count > baseline:
-              raise SystemExit(f"pyright errors {count} > baseline {baseline} — clean up or raise the baseline deliberately")
+              raise SystemExit(
+                  f"ruff findings {count} > baseline {baseline} — "
+                  "clean up the regression or deliberately revise the baseline"
+              )
           PY
 
+      - name: Pyright — baseline gate
+        env:
+          PYRIGHT_BASELINE: "581"
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          pyright \
+            core \
+            providers \
+            integrations \
+            packages \
+            services/server \
+            apps/tui \
+            --outputjson \
+            > pyright-report.json || true
+
+          python - <<'PY'
+          import json
+          import os
+
+          baseline = int(os.environ["PYRIGHT_BASELINE"])
+
+          with open("pyright-report.json", "r", encoding="utf-8") as fh:
+              report = json.load(fh)
+
+          summary = report.get("summary")
+          if not isinstance(summary, dict):
+              raise SystemExit("invalid Pyright JSON report: summary missing")
+
+          count = summary.get("errorCount")
+          if not isinstance(count, int):
+              raise SystemExit("invalid Pyright JSON report: errorCount missing")
+
+          print(f"pyright errors: {count} (baseline {baseline})")
+
+          if count > baseline:
+              raise SystemExit(
+                  f"pyright errors {count} > baseline {baseline} — "
+                  "clean up the regression or deliberately revise the baseline"
+              )
+          PY
+
+
   rust:
-    # Rust quality gate for the Tauri desktop shell (src-tauri) and the portable
-    # launcher. fmt must be clean, the graph must check, clippy is -D warnings
-    # (fix simple findings rather than blanket-allowing), and tests run where they
-    # exist (src-tauri carries the localhost proxy token-isolation tests).
+    name: rust (${{ matrix.workspace }})
     runs-on: ubuntu-latest
     timeout-minutes: 45
+
     strategy:
       fail-fast: false
       matrix:
         include:
           - workspace: apps/desktop/src-tauri
             tauri-deps: true
+
           - workspace: packaging/portable/launcher
             tauri-deps: false
+
     steps:
-      # v4
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-      # dtolnay/rust-toolchain, stable branch snapshot
-      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable snapshot
         with:
           components: rustfmt, clippy
-      - name: Install Tauri Linux system deps
+
+      - name: Install Tauri Linux system dependencies
         if: ${{ matrix.tauri-deps }}
+        shell: bash
         run: |
+          set -euo pipefail
+
           sudo apt-get update
-          # webkit/gtk for the Tauri shell + libasound2-dev for ALSA (src-tauri pulls
-          # the local delta-stt crate -> cpal -> alsa-sys, whose build.rs needs asound.h).
-          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf libasound2-dev
-      - name: Stub the sidecar binary for codegen
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libasound2-dev
+
+      - name: Stub sidecar binary for Tauri codegen
         if: ${{ matrix.tauri-deps }}
-        # tauri-build's codegen checks that `binaries/sidecar` exists; the real binary
-        # is built by packaging/portable/build_portable.ps1 at release time, so CI
-        # touches an empty placeholder so fmt/check/clippy/test can run against the
-        # shell crate.
-        run: mkdir -p apps/desktop/src-tauri/binaries && touch apps/desktop/src-tauri/binaries/sidecar
-      # v2
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          mkdir -p apps/desktop/src-tauri/binaries
+          touch apps/desktop/src-tauri/binaries/sidecar
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: ${{ matrix.workspace }}
+
       - name: Format
         working-directory: ${{ matrix.workspace }}
         run: cargo fmt --check
+
       - name: Check
         working-directory: ${{ matrix.workspace }}
         run: cargo check --locked
+
       - name: Clippy
         working-directory: ${{ matrix.workspace }}
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets -- -D warnings
+
       - name: Test
         working-directory: ${{ matrix.workspace }}
-        run: cargo test
+        run: cargo test --locked
+
 
   layout-check:
-    # Structural guard: the repository layout is frozen (see
-    # docs/architecture/repository-layout.md). This job fails if a forbidden
-    # top-level directory reappears or if a migrated legacy OpenWork runtime key
-    # sneaks back into source. Keep this check stable and path-independent — it
-    # must never become a GitHub Required Check that changes name on a rename.
+    name: layout-check
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    # Structural guard for the frozen repository responsibility layout.
+    # Keep this job path-independent so repository refactors cannot accidentally
+    # strand the stable ci-required branch-protection check.
+
     steps:
-      # v4
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
       - name: Forbidden top-level directories
+        shell: bash
         run: |
-          set -uo pipefail
+          set -euo pipefail
+
           for d in surfaces crates coworker assets src stt; do
             if [ -d "$d" ]; then
               echo "::error::Forbidden top-level directory '$d' present (see docs/architecture/repository-layout.md)"
               exit 1
             fi
           done
+
           echo "no forbidden top-level directories"
+
       - name: Legacy OpenWork runtime keys
+        shell: bash
         run: |
-          set -uo pipefail
-          # The legacy localStorage key 'openwork-theme' and event 'openwork:theme-pref'
-          # were migrated to delta-theme / delta:theme-pref. Block their return in any
-          # runtime source tree — EXCEPT the two files that are *required* to keep the
-          # legacy key: the backward-compat migration in apps/desktop/src/theme.ts and its
-          # pre-paint mirrors (apps/desktop/index.html, apps/desktop/src-tauri/src/lib.rs)
-          # read the old key once to migrate it. Those are legitimately excepted, exactly
-          # like the provenance allow-list in docs/CHANGELOG/UPSTREAM.md. Any NEW reference
-          # elsewhere fails the build.
-          if grep -rn "openwork-theme\|openwork:theme-pref" apps services tests scripts \
-              --include='*.ts' --include='*.tsx' --include='*.html' --include='*.rs' \
-              --include='*.py' --include='*.js' --include='*.json' --include='*.css' 2>/dev/null \
-              | grep -v 'apps/desktop/src/theme.ts' \
-              | grep -v 'apps/desktop/index.html' \
-              | grep -v 'apps/desktop/src-tauri/src/lib.rs'; then
-            echo "::error::Legacy OpenWork theme runtime key found in source; must use delta-theme / delta:theme-pref"
+          set -euo pipefail
+
+          # The legacy localStorage key `openwork-theme` and event
+          # `openwork:theme-pref` were migrated to Delta names.
+          #
+          # Three files are intentionally allowed to read the legacy key for
+          # backward-compatible migration/pre-paint behavior:
+          # - apps/desktop/src/theme.ts
+          # - apps/desktop/index.html
+          # - apps/desktop/src-tauri/src/lib.rs
+          #
+          # Any new occurrence elsewhere in runtime/test/script source fails CI.
+
+          if grep -rn \
+              "openwork-theme\|openwork:theme-pref" \
+              apps \
+              core \
+              providers \
+              integrations \
+              packages \
+              services \
+              tests \
+              scripts \
+              --include='*.ts' \
+              --include='*.tsx' \
+              --include='*.html' \
+              --include='*.rs' \
+              --include='*.py' \
+              --include='*.js' \
+              --include='*.json' \
+              --include='*.css' \
+              2>/dev/null \
+            | grep -v 'apps/desktop/src/theme.ts' \
+            | grep -v 'apps/desktop/index.html' \
+            | grep -v 'apps/desktop/src-tauri/src/lib.rs'
+          then
+            echo "::error::Legacy OpenWork theme runtime key found in source; use delta-theme / delta:theme-pref"
             exit 1
           fi
-          echo "no legacy OpenWork theme keys"
+
+          echo "no unexpected legacy OpenWork theme keys"
+
       - name: Deprecated migrated paths
+        shell: bash
         run: |
-          set -uo pipefail
-          # Files that moved during the restructure (packaging/server/, packaging/portable/)
-          # must be referenced by their CURRENT path everywhere outside history files
-          # (CHANGELOG/UPSTREAM/docs-governance keep their records verbatim). The script
-          # owns the pattern list — extend it there when a path migrates.
+          set -euo pipefail
+
+          # The script owns the historical-path pattern list.
+          # Extend that list whenever another responsibility path migrates.
           python3 scripts/check_legacy_paths.py
 
+
   ci-required:
-    # Stable single gate for the main branch Ruleset. The Ruleset requires ONLY this
-    # job, so a directory rename that changes a matrix check name can never strand a
-    # Required Check. This job faithfully reflects the real checks: success only when
-    # every listed job succeeded; any failure, cancellation, or unexpected skip fails.
+    name: ci-required
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    # Stable single gate for the main-branch Ruleset.
+    #
+    # The Ruleset should continue requiring ONLY this job. A failure, cancellation,
+    # or unexpected skip in any real gate below makes ci-required fail.
+
     needs:
       - pytest
       - pytest-windows
@@ -311,19 +509,33 @@ jobs:
       - rust-advisories
       - rust
       - layout-check
+
     steps:
       - name: Evaluate required checks
         env:
           NEEDS_JSON: ${{ toJson(needs) }}
+        shell: bash
         run: |
+          set -euo pipefail
+
           python - <<'PY'
-          import json, os, sys
+          import json
+          import os
+          import sys
+
           results = json.loads(os.environ["NEEDS_JSON"])
-          failures = {k: v["result"] for k, v in results.items() if v["result"] != "success"}
+
+          failures = {
+              name: details["result"]
+              for name, details in results.items()
+              if details["result"] != "success"
+          }
+
           if failures:
               print("ci-required blocked by checks that did not succeed:")
-              for k, r in failures.items():
-                  print(f"  {k}: {r}")
+              for name, result in failures.items():
+                  print(f"  {name}: {result}")
               sys.exit(1)
+
           print("all required checks passed")
           PY
