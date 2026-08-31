@@ -453,6 +453,19 @@ impl Dictation {
     }
 }
 
+fn encode_lower_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+
+    let mut output = String::with_capacity(bytes.len() * 2);
+
+    for &byte in bytes {
+        output.push(HEX[(byte >> 4) as usize] as char);
+        output.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+
+    output
+}
+
 fn verify_model_file(path: &Path) -> Result<(), String> {
     let metadata =
         fs::metadata(path).map_err(|e| format!("Could not read the local voice model: {e}"))?;
@@ -476,7 +489,8 @@ fn verify_model_file(path: &Path) -> Result<(), String> {
         }
         hasher.update(&buffer[..count]);
     }
-    let actual = format!("{:x}", hasher.finalize());
+    let digest = hasher.finalize();
+    let actual = encode_lower_hex(digest.as_ref());
     if actual != DEFAULT_MODEL_SHA256 {
         return Err(
             "The local voice model failed its checksum. Repair the download in Settings."
@@ -742,9 +756,21 @@ mod tests {
     };
 
     use super::{
-        resample_mono, write_verification_marker, Dictation, DEFAULT_MODEL_BYTES,
+        encode_lower_hex, resample_mono, write_verification_marker, Dictation, DEFAULT_MODEL_BYTES,
         DEFAULT_MODEL_FILE,
     };
+
+    #[test]
+    fn sha256_digest_formats_as_lowercase_hex() {
+        use sha2::{Digest, Sha256};
+
+        let mut hasher = Sha256::new();
+        hasher.update(b"abc");
+        assert_eq!(
+            encode_lower_hex(hasher.finalize().as_ref()),
+            "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
 
     #[test]
     fn resampling_preserves_a_16khz_stream() {
