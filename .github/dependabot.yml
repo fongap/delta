@@ -1,52 +1,75 @@
 # Dependabot configuration for the Delta monorepo.
-# Ecosystems are scoped to directories that actually exist in this repo.
+#
+# Principles:
+# - Only ecosystems and directories that actually exist in the repository are tracked.
+# - Related updates are grouped to reduce PR noise.
+# - Weekly updates run at a predictable time.
+# - Open PR counts are deliberately bounded so dependency maintenance cannot flood
+#   the repository or monopolize CI capacity.
 
 version: 2
+
 updates:
-  # GitHub Actions — a single group to avoid one PR per workflow.
+  # GitHub Actions — keep SHA-pinned workflow dependencies current as one group.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "Asia/Shanghai"
     groups:
       github-actions:
-        patterns: ["*"]
-    open-pull-requests-limit: 10
+        patterns:
+          - "*"
+    open-pull-requests-limit: 5
 
-  # Desktop GUI (npm) — group production deps; dev deps update separately.
+  # Desktop GUI (npm) — production and development dependencies are grouped separately.
   - package-ecosystem: "npm"
     directory: "/apps/desktop"
     schedule:
       interval: "weekly"
+      day: "monday"
+      time: "06:10"
+      timezone: "Asia/Shanghai"
     groups:
       npm-production:
         dependency-type: "production"
       npm-development:
         dependency-type: "development"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
 
-  # Python runtime (pip) — group production deps; dev deps update separately.
+  # Python runtime (pip) — production and development dependencies are grouped separately.
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
       interval: "weekly"
+      day: "monday"
+      time: "06:20"
+      timezone: "Asia/Shanghai"
     groups:
       pip-production:
         dependency-type: "production"
       pip-development:
         dependency-type: "development"
-    open-pull-requests-limit: 10
+    open-pull-requests-limit: 5
 
-  # Desktop Tauri (cargo).
+  # Desktop Tauri application.
   - package-ecosystem: "cargo"
     directory: "/apps/desktop/src-tauri"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 10
+      day: "monday"
+      time: "06:30"
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 5
 
-  # Portable launcher (cargo).
+  # Windows portable root launcher.
   - package-ecosystem: "cargo"
     directory: "/packaging/portable/launcher"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 10
+      day: "monday"
+      time: "06:40"
+      timezone: "Asia/Shanghai"
+    open-pull-requests-limit: 5
