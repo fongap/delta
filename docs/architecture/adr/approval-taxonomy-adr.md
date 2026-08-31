@@ -1,6 +1,6 @@
 # ADR: Approval Taxonomy L0–L4 and Fail-Closed Policy (ARCH-002)
 
-- Status: Proposed
+- Status: Accepted
 - Date: 2026-08-25
 - Scope: permission engine, approval flow, execution gating
 

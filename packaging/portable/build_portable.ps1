@@ -34,8 +34,8 @@
     - Rust (rustup) with the x86_64-pc-windows-msvc target + MSVC C++ build tools (link.exe).
     - Node + npm (frontend build).
     - A Python venv at <repo>\.venv with this package installed editable, plus pyinstaller
-      and tzdata (Windows tz database); `typer` is also needed at build time.
-        py -m venv .venv ; .\.venv\Scripts\pip install -e ".[bedrock]" pyinstaller tzdata typer
+      and tzdata (Windows tz database).
+        py -m venv .venv ; .\.venv\Scripts\pip install -e ".[bedrock]" pyinstaller tzdata
     - tar.exe (system bsdtar, present on Windows 10 1803+) for a long-path / Unicode-safe ZIP.
 
   WebView2 is NOT bundled (tauri.conf.json uses downloadBootstrapper for installers). A portable

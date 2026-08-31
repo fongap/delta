@@ -98,9 +98,7 @@ fn windows_internet_proxy() -> Option<String> {
         .output()
         .ok()?;
     let server_str = String::from_utf8_lossy(&server.stdout);
-    let line = server_str
-        .lines()
-        .find(|l| l.contains("ProxyServer"))?;
+    let line = server_str.lines().find(|l| l.contains("ProxyServer"))?;
     let value = line.rsplit("REG_SZ").next()?.trim();
     let value = value.trim_matches(|c: char| c.is_whitespace() || c == '\0');
     if value.is_empty() {
@@ -155,7 +153,6 @@ fn fetch_model_response() -> Result<ureq::Response, String> {
         Err(other) => Err(format!("Could not download the local voice model: {other}")),
     }
 }
-
 
 #[derive(Debug, Clone, Serialize)]
 pub struct DictationStatus {
