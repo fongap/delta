@@ -1,16 +1,25 @@
 # Dependabot configuration for the Delta monorepo.
 #
-# Principles:
-# - Only ecosystems and directories that actually exist in the repository are tracked.
-# - Related updates are grouped to reduce PR noise.
-# - Weekly updates run at a predictable time.
-# - Open PR counts are deliberately bounded so dependency maintenance cannot flood
-#   the repository or monopolize CI capacity.
+# Policy:
+# - Runtime/production dependencies are updated individually.
+# - Development-only dependencies may be grouped to reduce PR noise.
+# - GitHub Actions updates are grouped together.
+# - Rust workspaces are tracked independently.
+# - Update windows are staggered to avoid unnecessary CI contention.
+# - Open PR counts are bounded.
+#
+# Rationale:
+# Production dependencies can affect runtime compatibility independently.
+# Do not group unrelated runtime upgrades into one PR, because one incompatible
+# dependency would otherwise block or obscure the others.
 
 version: 2
 
 updates:
-  # GitHub Actions — keep SHA-pinned workflow dependencies current as one group.
+  # GitHub Actions
+  #
+  # Workflow actions are SHA-pinned in the repository. Dependabot keeps those
+  # immutable references current as one maintenance group.
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -18,13 +27,21 @@ updates:
       day: "monday"
       time: "06:00"
       timezone: "Asia/Shanghai"
+
     groups:
       github-actions:
         patterns:
           - "*"
+
     open-pull-requests-limit: 5
 
-  # Desktop GUI (npm) — production and development dependencies are grouped separately.
+  # Desktop GUI — npm
+  #
+  # Production dependencies intentionally remain ungrouped so React, Tauri,
+  # PDF.js and other runtime packages can be validated independently.
+  #
+  # Development dependencies are grouped because they primarily affect the
+  # build/test toolchain rather than the shipped runtime.
   - package-ecosystem: "npm"
     directory: "/apps/desktop"
     schedule:
@@ -32,14 +49,20 @@ updates:
       day: "monday"
       time: "06:10"
       timezone: "Asia/Shanghai"
+
     groups:
-      npm-production:
-        dependency-type: "production"
       npm-development:
         dependency-type: "development"
-    open-pull-requests-limit: 5
 
-  # Python runtime (pip) — production and development dependencies are grouped separately.
+    open-pull-requests-limit: 8
+
+  # Python runtime
+  #
+  # Production dependencies intentionally remain ungrouped.
+  #
+  # This is important for provider SDKs and transports such as openai,
+  # anthropic, google-genai, MCP, FastAPI and websockets, which can have
+  # independent compatibility constraints.
   - package-ecosystem: "pip"
     directory: "/"
     schedule:
@@ -47,14 +70,14 @@ updates:
       day: "monday"
       time: "06:20"
       timezone: "Asia/Shanghai"
+
     groups:
-      pip-production:
-        dependency-type: "production"
       pip-development:
         dependency-type: "development"
-    open-pull-requests-limit: 5
 
-  # Desktop Tauri application.
+    open-pull-requests-limit: 10
+
+  # Desktop Tauri application
   - package-ecosystem: "cargo"
     directory: "/apps/desktop/src-tauri"
     schedule:
@@ -62,9 +85,10 @@ updates:
       day: "monday"
       time: "06:30"
       timezone: "Asia/Shanghai"
+
     open-pull-requests-limit: 5
 
-  # Windows portable root launcher.
+  # Windows portable launcher
   - package-ecosystem: "cargo"
     directory: "/packaging/portable/launcher"
     schedule:
@@ -72,9 +96,10 @@ updates:
       day: "monday"
       time: "06:40"
       timezone: "Asia/Shanghai"
+
     open-pull-requests-limit: 5
 
-  # Local STT service has its own manifest and lockfile.
+  # Local STT service
   - package-ecosystem: "cargo"
     directory: "/services/stt"
     schedule:
@@ -82,4 +107,5 @@ updates:
       day: "monday"
       time: "06:50"
       timezone: "Asia/Shanghai"
+
     open-pull-requests-limit: 5
