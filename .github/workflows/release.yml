@@ -61,6 +61,12 @@ jobs:
     needs: prepare
     runs-on: windows-latest
     timeout-minutes: 60
+    permissions:
+      contents: read
+      # GitHub artifact attestation uses an ephemeral OIDC/Sigstore identity;
+      # no long-lived signing secret is required for public release provenance.
+      attestations: write
+      id-token: write
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -82,21 +88,17 @@ jobs:
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
           python-version: "3.12"
-          cache: "pip"
-          cache-dependency-path: pyproject.toml
+
+      - uses: astral-sh/setup-uv@94527f2e458b27549849d47d273a16bec83a01e9 # v7
+        with:
+          version: "0.12.3"
+          enable-cache: true
 
       - name: Set up sidecar build environment
         shell: pwsh
         run: |
-          python -m venv .venv
-
-          .\.venv\Scripts\python.exe -m pip install --upgrade "pip==26.2.1"
-
-          .\.venv\Scripts\python.exe -m pip install `
-            -e ".[bedrock]" `
-            "pyinstaller==6.22.2"
-
-          .\.venv\Scripts\python.exe -m pip check
+          uv sync --locked --extra bedrock --extra build
+          uv pip check --python .venv\Scripts\python.exe
 
           # `delta` is the distribution/project name, not a Python package.
           # Smoke-test the real post-refactor entry points instead.
@@ -243,6 +245,11 @@ jobs:
           Write-Host "  SHA-256 : $actualHash"
           Write-Host "  Version : $actualVersion"
 
+      - name: Attest portable ZIP provenance
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
+        with:
+          subject-path: releases/Delta-Windows-Portable.zip
+
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: windows-portable-${{ needs.prepare.outputs.tag }}
@@ -303,10 +310,12 @@ jobs:
             exit 1
           fi
 
+          # The build artifact is deliberately restricted to exactly these two
+          # files. The SBOM is generated in the release job below.
           ASSET_COUNT=$(find dist -maxdepth 1 -type f | wc -l)
 
           if [ "$ASSET_COUNT" -ne 2 ]; then
-            echo "::error::portable release must contain exactly two assets"
+            echo "::error::portable build artifact must contain exactly ZIP and checksum"
             exit 1
           fi
 
@@ -324,6 +333,18 @@ jobs:
               exit 1
             fi
           fi
+
+      - name: Generate release CycloneDX SBOM
+        # Syft discovers the committed uv.lock, package-lock.json, and Cargo.lock
+        # files from the exact source commit that built this release.
+        uses: anchore/sbom-action@fbfd9c6c189226748411491745178e0c2017392d # v0.20.10
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: dist/Delta-Windows-Portable.sbom.cdx.json
+          artifact-name: delta-release-sbom
+          upload-artifact: false
+          upload-release-assets: false
 
       - name: Verify CI passed for this commit
         shell: bash
@@ -414,7 +435,7 @@ jobs:
 
           ASSETS=$(gh release view "$TAG" --json assets)
 
-          EXPECTED='["Delta-Windows-Portable.zip","Delta-Windows-Portable.zip.sha256"]'
+          EXPECTED='["Delta-Windows-Portable.sbom.cdx.json","Delta-Windows-Portable.zip","Delta-Windows-Portable.zip.sha256"]'
           ACTUAL=$(jq -c '[.assets[].name] | sort' <<<"$ASSETS")
 
           if [ "$ACTUAL" != "$EXPECTED" ]; then
