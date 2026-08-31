@@ -9,7 +9,7 @@ description = "Agent delta platform — provider-agnostic agentic delta runtime"
 requires-python = ">=3.11"
 dependencies = [
     "openai==3.5.0",
-    "anthropic==1.1.0",  # native Claude Messages API provider
+    "anthropic==1.2.0",  # native Claude Messages API provider
     "google-genai==2.20.0",  # native Gemini provider
     "google-auth==2.57.0",  # Vertex credentials (service account / ADC / MaaS bearer)
     "textual==8.2.8",
