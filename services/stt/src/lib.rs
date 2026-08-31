@@ -14,6 +14,7 @@ use std::{
         Arc, Mutex,
     },
     thread,
+    time::Duration,
 };
 
 use cpal::{
@@ -115,42 +116,115 @@ fn windows_internet_proxy() -> Option<String> {
     Some(chosen.to_string())
 }
 
+/// Build an HTTP agent bound to `proxy`, or an explicit no-proxy direct agent. Direct
+/// connections pass `proxy(None)` so ureq 3's default `proxy-from-env` behavior (it reads
+/// HTTP_PROXY/HTTPS_PROXY/ALL_PROXY) can never silently route a "direct" request through an
+/// ambient proxy — the model download strategy stays: real direct first, system proxy only
+/// on a connection-class failure.
+fn build_http_agent(proxy: Option<ureq::Proxy>) -> ureq::Agent {
+    let connect = Duration::from_secs(30);
+    let recv = Duration::from_secs(30);
+    ureq::Agent::new_with_config(
+        ureq::config::Config::builder()
+            .timeout_connect(Some(connect))
+            .timeout_recv_response(Some(recv))
+            // No overall body deadline: a 142 MB model download legitimately takes minutes.
+            // A stalled read is bounded per-read by TimeoutRead (ureq 3 has only an overall
+            // body timeout, not a per-read one, so the per-read bound is enforced locally).
+            .timeout_recv_body(None)
+            .proxy(proxy)
+            .build(),
+    )
+}
+
+/// Only a network-path failure may fall back to the system proxy. Once the server has
+/// returned an HTTP response, the result is authoritative — a 404 is not "try again through
+/// a proxy". `fetch_model_response` calls `.call()`, whose errors are all connection/header
+/// phase (the body is read separately), so an `Io` here is a connection-class error.
+fn should_retry_via_proxy(error: &ureq::Error) -> bool {
+    matches!(
+        error,
+        ureq::Error::HostNotFound
+            | ureq::Error::ConnectionFailed
+            | ureq::Error::Timeout(_)
+            | ureq::Error::Io(_)
+    )
+}
+
 /// Fetch the model response: try a DIRECT connection first; only if the host is unreachable
 /// (a transport-level failure, not an HTTP error) retry through the auto-detected system
 /// proxy. An HTTP status error (404/403) is never retried via proxy — it's a server problem.
-fn fetch_model_response() -> Result<ureq::Response, String> {
-    let connect = std::time::Duration::from_secs(30);
-    let read = std::time::Duration::from_secs(30);
-    let direct = ureq::AgentBuilder::new()
-        .timeout_connect(connect)
-        .timeout_read(read)
-        .build();
+fn fetch_model_response() -> Result<ureq::http::Response<ureq::Body>, String> {
+    let direct = build_http_agent(None);
     match direct.get(DEFAULT_MODEL_URL).call() {
         Ok(r) => Ok(r),
-        Err(ureq::Error::Transport(t)) => {
+        Err(e) if should_retry_via_proxy(&e) => {
             // Direct connection failed — retry through the system proxy if one is detected.
             match detect_system_proxy() {
                 Some(proxy_url) => {
                     let proxy = ureq::Proxy::new(&proxy_url)
-                        .map_err(|e| format!("Could not configure the system proxy: {e}"))?;
-                    let proxied = ureq::AgentBuilder::new()
-                        .timeout_connect(connect)
-                        .timeout_read(read)
-                        .proxy(proxy)
-                        .build();
+                        .map_err(|err| format!("Could not configure the system proxy: {err}"))?;
+                    let proxied = build_http_agent(Some(proxy));
                     proxied
                         .get(DEFAULT_MODEL_URL)
                         .call()
-                        .map_err(|e| {
+                        .map_err(|err| {
                             format!(
-                                "Could not download the local voice model (tried direct, then the system proxy): {e}"
+                                "Could not download the local voice model (tried direct, then the system proxy): {err}"
                             )
                         })
                 }
-                None => Err(format!("Could not download the local voice model: {t}")),
+                None => Err(format!("Could not download the local voice model: {e}")),
             }
         }
         Err(other) => Err(format!("Could not download the local voice model: {other}")),
+    }
+}
+
+/// Bounds each blocking `read()` on the model body to a per-read timeout, independently of
+/// the overall transfer duration. A 142 MB download legitimately takes minutes, but a
+/// stalled connection (no data for the read timeout) must surface as an error so the cancel
+/// flag — only observed between reads — stays responsive. ureq 3 has only an *overall* body
+/// timeout (`timeout_recv_body`), so the per-read bound is enforced here with a detached
+/// reader thread + a channel: the worker pumps reads; the consumer receives with a timeout.
+struct TimeoutRead {
+    rx: Receiver<std::io::Result<(usize, Vec<u8>)>>,
+    per_read: Duration,
+}
+
+impl TimeoutRead {
+    /// Spawn a detached worker that pumps reads from `reader` into a channel until the
+    /// receiver is dropped. A blocked read leaves the worker waiting; for a one-shot model
+    /// download that is acceptable — the worker exits once the underlying connection closes.
+    fn new(mut reader: ureq::BodyReader<'static>, per_read: Duration) -> Self {
+        let (tx, rx) = mpsc::channel::<std::io::Result<(usize, Vec<u8>)>>();
+        thread::spawn(move || {
+            let mut buf = vec![0u8; 64 * 1024];
+            loop {
+                let res = reader.read(&mut buf).map(|n| (n, buf[..n].to_vec()));
+                if tx.send(res).is_err() {
+                    break; // receiver dropped — stop the worker
+                }
+            }
+        });
+        TimeoutRead { rx, per_read }
+    }
+}
+
+impl Read for TimeoutRead {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        match self.rx.recv_timeout(self.per_read) {
+            Ok(Ok((n, data))) => {
+                buf[..n].copy_from_slice(&data);
+                Ok(n)
+            }
+            Ok(Err(e)) => Err(e),
+            Err(mpsc::RecvTimeoutError::Timeout) => Err(std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "Voice model download stalled — no data for the read timeout.",
+            )),
+            Err(mpsc::RecvTimeoutError::Disconnected) => Ok(0),
+        }
     }
 }
 
@@ -290,7 +364,8 @@ impl Dictation {
             // Direct first; if the host is unreachable, retry through the auto-detected system
             // proxy (non-persistent — see fetch_model_response / detect_system_proxy).
             let response = fetch_model_response()?;
-            let mut input = response.into_reader();
+            let mut input =
+                TimeoutRead::new(response.into_body().into_reader(), Duration::from_secs(30));
             let mut output = fs::File::create(&partial)
                 .map_err(|e| format!("Could not save the local voice model: {e}"))?;
             let mut downloaded = 0_u64;
@@ -756,8 +831,8 @@ mod tests {
     };
 
     use super::{
-        encode_lower_hex, resample_mono, write_verification_marker, Dictation, DEFAULT_MODEL_BYTES,
-        DEFAULT_MODEL_FILE,
+        encode_lower_hex, resample_mono, should_retry_via_proxy, write_verification_marker,
+        Dictation, DEFAULT_MODEL_BYTES, DEFAULT_MODEL_FILE,
     };
 
     #[test]
@@ -770,6 +845,33 @@ mod tests {
             encode_lower_hex(hasher.finalize().as_ref()),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
         );
+    }
+
+    #[test]
+    fn proxy_fallback_only_for_connection_class_errors() {
+        use std::io;
+        use ureq::{Error, Timeout};
+
+        // Network-path failures → retry through the system proxy.
+        assert!(should_retry_via_proxy(&Error::HostNotFound));
+        assert!(should_retry_via_proxy(&Error::ConnectionFailed));
+        assert!(should_retry_via_proxy(&Error::Timeout(Timeout::Connect)));
+        assert!(should_retry_via_proxy(&Error::Timeout(
+            Timeout::RecvResponse
+        )));
+        assert!(should_retry_via_proxy(&Error::Io(io::Error::new(
+            io::ErrorKind::ConnectionRefused,
+            "host unreachable"
+        ))));
+
+        // The server already answered → the result is authoritative, no proxy fallback.
+        assert!(!should_retry_via_proxy(&Error::StatusCode(403)));
+        assert!(!should_retry_via_proxy(&Error::StatusCode(404)));
+        assert!(!should_retry_via_proxy(&Error::StatusCode(500)));
+        assert!(!should_retry_via_proxy(&Error::BadUri(
+            "no host".to_string()
+        )));
+        assert!(!should_retry_via_proxy(&Error::InvalidProxyUrl));
     }
 
     #[test]
