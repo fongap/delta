@@ -1080,6 +1080,58 @@ def test_ws_session_resume_via_store(tmp_path):
     assert any(s["session_id"] == "keep" and s["messages"] > 0 for s in sessions)
 
 
+def test_ws_turn_survives_switching_away_from_its_session(tmp_path):
+    """A browser view is disposable; its server-side turn is not.
+
+    Desktop session switching closes the old session WebSocket.  The running turn must keep
+    its durable checkpoint and finish while a different conversation is in the foreground.
+    """
+    import threading
+    import time
+
+    class BlockingProvider(ProviderClient):
+        def __init__(self):
+            self.started = threading.Event()
+            self.release = threading.Event()
+
+        def complete(self, *, model, messages, tools=None, **settings):
+            self.started.set()
+            assert self.release.wait(2), "test did not release the background turn"
+            return _text("finished in the background")
+
+        def capabilities(self, model):
+            return ModelCapabilities()
+
+    provider = BlockingProvider()
+    manager = SessionManager(workspace=tmp_path, provider=provider)
+    with TestClient(create_app(manager)) as client:
+        with client.websocket_connect("/ws/session/background?agent=chat") as ws:
+            assert ws.receive_json()["type"] == "ready"
+            ws.send_json({"type": "user_message", "text": "keep working"})
+            assert provider.started.wait(1)
+
+        # This represents the user selecting another conversation. The original socket has
+        # gone away, but the first turn remains persisted and visibly working.
+        with client.websocket_connect("/ws/session/foreground?agent=chat") as ws:
+            assert ws.receive_json()["type"] == "ready"
+            sessions = client.get("/v1/sessions").json()["sessions"]
+            background = next(s for s in sessions if s["session_id"] == "background")
+            assert background["liveness"] == "working"
+            assert background["messages"] >= 1  # turn_start checkpoint is already durable
+
+        provider.release.set()
+        deadline = time.monotonic() + 2
+        while manager.is_running("background") and time.monotonic() < deadline:
+            time.sleep(0.01)
+
+    assert not manager.is_running("background")
+    record = manager.session_store.load("background")
+    assert record is not None
+    assert [m["content"] for m in record.messages if m.get("role") == "assistant"] == [
+        "finished in the background"
+    ]
+
+
 def test_ws_first_message_binds_then_midsession_switch_persists_notice(tmp_path):
     """The FIRST user_message's model binds the session silently (race-proof across
     reconnects — found 2026-07-04). Mid-session rebinds are ALLOWED (roadmap item 3,
