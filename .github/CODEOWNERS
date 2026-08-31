@@ -1,0 +1,9 @@
+# Delta CODEOWNERS
+#
+# All repository changes require review by the Delta maintainer
+# when Code Owner review is enforced by the review-main Ruleset.
+
+* @fongap
+
+# Explicitly protect repository governance files.
+/.github/ @fongap
