@@ -33,6 +33,14 @@ from providers.openai_responses import OpenAIResponsesProvider
 from providers.vertex_provider import VertexProvider
 
 DEFAULT_OLLAMA_URL = "http://localhost:11434"
+DEFAULT_OPENAI_URL = "https://api.openai.com/v1"
+DEFAULT_ANTHROPIC_URL = "https://api.anthropic.com"
+DEFAULT_GEMINI_OPENAI_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
+
+# These are the only first-class remote protocols. Vendor names are profile presets that choose
+# a default endpoint/model; they do not select a distinct client implementation.
+PROFILE_PROTOCOL_OPENAI = "openai"
+PROFILE_PROTOCOL_ANTHROPIC = "anthropic"
 
 # Protocols a custom provider can be built against. Each entry reuses the
 # protocol-specific builder logic (so native endpoints/behaviour match the
@@ -108,6 +116,11 @@ class ProviderDescriptor:
     )
     # One-line note under the provider title (e.g. "Connects through X's OpenAI-compatible API").
     blurb: str = ""
+    # Protocol is the runtime boundary; `name` is only a profile/preset identity used in the UI
+    # and in model prefixes for backwards compatibility.
+    protocol: str = PROFILE_PROTOCOL_OPENAI
+    preset: bool = True
+    visible: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -117,6 +130,9 @@ class ProviderDescriptor:
             "fields": [f.to_dict() for f in self.fields],
             "recommended_model": self.recommended_model,
             "blurb": self.blurb,
+            "protocol": self.protocol,
+            "preset": self.preset,
+            "visible": self.visible,
         }
 
 
@@ -140,22 +156,34 @@ def _build_openai(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     # API — the only wire with reasoning + tools on GPT-5.6+. A custom endpoint (Azure
     # OpenAI /openai/v1, vLLM, any OpenAI-compliant gateway) keeps Chat Completions,
     # which is what compat servers implement.
-    base_url = ((profile or {}).get("base_url") or "").strip() or None
-    if base_url:
+    p = profile or {}
+    base_url = ((p.get("base_url") or "").strip().rstrip("/")) or DEFAULT_OPENAI_URL
+    api_key = (p.get("api_key") or "").strip() or None
+    mode = (p.get("api_mode") or ("responses" if base_url == DEFAULT_OPENAI_URL else "chat")).strip().lower()
+    # Environment fallback is only legitimate for the official endpoint. A custom URL is an
+    # independent credential boundary even when its field was left blank in the form.
+    official = base_url == DEFAULT_OPENAI_URL
+    if mode == "chat":
         # Custom endpoints get the capability profile (providers/endpoint.py): params
         # this server is known to reject are never sent. Keyed by base_url for learning.
         return OpenAIProvider(
-            secrets=secrets,
+            api_key=api_key,
             base_url=base_url,
+            secrets=secrets if official else None,
+            allow_credential_fallback=official,
             endpoint_caps=endpoint_caps_from_profile(profile),
             endpoint_key=base_url,
         )
-    return OpenAIResponsesProvider(secrets=secrets)
+    return OpenAIResponsesProvider(
+        api_key=api_key,
+        base_url=base_url,
+        secrets=secrets if official else None,
+        allow_credential_fallback=official,
+    )
 
 
 def _build_openai_native(profile: dict[str, Any], secrets: Any) -> ProviderClient:
-    # Stock OpenAI (no custom endpoint) — always the Responses API.
-    return OpenAIResponsesProvider(secrets=secrets)
+    return _build_openai({**(profile or {}), "api_mode": "responses"}, secrets)
 
 
 def _build_openai_compat(profile: dict[str, Any], secrets: Any) -> ProviderClient:
@@ -171,6 +199,7 @@ def _build_openai_compat(profile: dict[str, Any], secrets: Any) -> ProviderClien
     return OpenAIProvider(
         api_key=api_key,
         base_url=base_url,
+        allow_credential_fallback=False,
         endpoint_caps=endpoint_caps_from_profile(profile),
         endpoint_key=base_url,
     )
@@ -183,20 +212,26 @@ def _build_anthropic(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     # explicit 0 → off (see DEFAULT_THINKING_BUDGET).
     from providers.anthropic_provider import DEFAULT_THINKING_BUDGET
 
+    base_url = (((profile or {}).get("base_url") or "").strip().rstrip("/")) or DEFAULT_ANTHROPIC_URL
     api_key = ((profile or {}).get("api_key") or "").strip() or None
     try:
         thinking_budget = int(str((profile or {}).get("thinking_budget") or "").strip())
     except ValueError:
         thinking_budget = DEFAULT_THINKING_BUDGET
     return AnthropicProvider(
-        api_key=api_key, secrets=secrets, thinking_budget=thinking_budget
+        api_key=api_key,
+        base_url=base_url,
+        secrets=secrets if base_url == DEFAULT_ANTHROPIC_URL else None,
+        allow_credential_fallback=base_url == DEFAULT_ANTHROPIC_URL,
+        thinking_budget=thinking_budget,
     )
 
 
 def _build_gemini(profile: dict[str, Any], secrets: Any) -> ProviderClient:
-    # Same deferred-key contract as anthropic (GeminiProvider/resolve_api_key).
-    api_key = ((profile or {}).get("api_key") or "").strip() or None
-    return GeminiProvider(api_key=api_key, secrets=secrets)
+    # Gemini's public OpenAI-compatible endpoint keeps the core to two protocols. Unlike the
+    # former native SDK path, it is endpoint-bound and never falls back to another profile key.
+    p = {**(profile or {}), "base_url": (profile or {}).get("base_url") or DEFAULT_GEMINI_OPENAI_URL}
+    return _build_openai_compat(p, secrets)
 
 
 def _build_bedrock(profile: dict[str, Any], secrets: Any) -> ProviderClient:
@@ -240,6 +275,7 @@ def _build_ollama(profile: dict[str, Any], secrets: Any) -> ProviderClient:
     return OpenAIProvider(
         api_key="ollama",
         base_url=base_url,
+        allow_credential_fallback=False,
         endpoint_caps=endpoint_caps_from_profile(profile),
         endpoint_key=base_url,
     )
@@ -446,16 +482,29 @@ DESCRIPTORS: list[ProviderDescriptor] = [
             ),
             ProviderField(
                 "base_url",
-                "Custom endpoint (optional)",
+                "Endpoint",
+                secret=False,
+                default=DEFAULT_OPENAI_URL,
+                placeholder=DEFAULT_OPENAI_URL,
+                help="Official OpenAI endpoint by default. Edit it for a compatible gateway; its key stays bound to this endpoint.",
+            ),
+            ProviderField(
+                "api_mode",
+                "API mode",
                 secret=False,
                 required=False,
-                placeholder="https://…/openai/v1",
-                help="For Azure OpenAI, vLLM, or any OpenAI-compliant server. Leave blank for api.openai.com.",
+                default="responses",
+                choices=(
+                    {"value": "responses", "label": "Responses API"},
+                    {"value": "chat", "label": "Chat Completions"},
+                ),
+                help="Use Responses for OpenAI; use Chat Completions only for a compatible endpoint that does not implement Responses.",
             ),
         ],
         build=_build_openai,
         recommended_model="gpt-5.6-sol",
         env_key="OPENAI_API_KEY",
+        protocol=PROFILE_PROTOCOL_OPENAI,
     ),
     ProviderDescriptor(
         name="anthropic",
@@ -468,28 +517,46 @@ DESCRIPTORS: list[ProviderDescriptor] = [
                 secret=True,
                 placeholder="sk-ant-…",
             ),
+            ProviderField(
+                "base_url",
+                "Endpoint",
+                secret=False,
+                default=DEFAULT_ANTHROPIC_URL,
+                placeholder=DEFAULT_ANTHROPIC_URL,
+                help="Official Anthropic Messages endpoint by default. A custom endpoint uses only this profile's key.",
+            ),
             # No thinking_budget field (owner call 2026-07-23): extended thinking is
             # on by default; the profile key stays a hidden override (0 = off).
         ],
         build=_build_anthropic,
         recommended_model="claude-fable-5",
         env_key="ANTHROPIC_API_KEY",
+        protocol=PROFILE_PROTOCOL_ANTHROPIC,
     ),
     ProviderDescriptor(
         name="gemini",
-        title="Gemini (Google)",
+        title="Gemini (Google preset)",
         needs_key=True,
         fields=[
             ProviderField(
                 "api_key",
-                "Gemini API key",
+                "Google AI API key",
                 secret=True,
                 placeholder="AIza…",
+            ),
+            ProviderField(
+                "base_url",
+                "OpenAI-compatible endpoint",
+                secret=False,
+                default=DEFAULT_GEMINI_OPENAI_URL,
+                placeholder=DEFAULT_GEMINI_OPENAI_URL,
+                help="Google's OpenAI-compatible endpoint. Edit only for a controlled proxy.",
             ),
         ],
         build=_build_gemini,
         recommended_model="gemini-3.6-flash",
-        env_key="GEMINI_API_KEY",
+        protocol=PROFILE_PROTOCOL_OPENAI,
+        blurb="Preset: Google Gemini through its OpenAI-compatible endpoint.",
     ),
     ProviderDescriptor(
         name="bedrock",
@@ -574,6 +641,7 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         recommended_model="claude/anthropic.claude-sonnet-4-6-v1:0",
         blurb="Runs models inside your own AWS account. Claude uses Anthropic's native "
         "Bedrock path; every other model goes through the Converse API.",
+        visible=False,
     ),
     ProviderDescriptor(
         name="vertex",
@@ -645,6 +713,7 @@ DESCRIPTORS: list[ProviderDescriptor] = [
         recommended_model="gemini/gemini-3.6-flash",
         blurb="Runs models inside your own Google Cloud project. Gemini and Claude use "
         "their native APIs; open-weight models go through the Vertex MaaS endpoint.",
+        visible=False,
     ),
     # OpenAI-compatible vendors, listed as first-class providers so users don't need to know the
     # "point the OpenAI slot at a different endpoint" trick (owner call, 2026-07-04). Each keeps
@@ -736,30 +805,117 @@ DESCRIPTORS: list[ProviderDescriptor] = [
     ),
     ProviderDescriptor(
         name="ollama",
-        title="Ollama (local models)",
+        title="Ollama (local preset)",
         needs_key=False,
         fields=[
             ProviderField(
                 "base_url",
-                "Ollama server URL",
+                "OpenAI-compatible endpoint",
                 secret=False,
                 required=False,
-                placeholder=DEFAULT_OLLAMA_URL,
-                help="Where `ollama serve` is listening. The OpenAI-compatible /v1 path is added automatically.",
+                default=_normalize_ollama_url(DEFAULT_OLLAMA_URL),
+                placeholder=_normalize_ollama_url(DEFAULT_OLLAMA_URL),
+                help="Ollama's OpenAI-compatible endpoint. API key is optional for local use.",
             ),
+            ProviderField("api_key", "API key (optional)", secret=True, required=False),
         ],
         build=_build_ollama,
         # Reliable native tool-calling + strong coding quality (verified). Pull with
         # `ollama pull qwen3-coder:30b`.
         recommended_model="qwen3-coder:30b",
+        protocol=PROFILE_PROTOCOL_OPENAI,
+        blurb="Preset: local Ollama through its OpenAI-compatible endpoint.",
     ),
 ]
 
 _BY_NAME = {d.name: d for d in DESCRIPTORS}
 
+_PROFILE_SECRET_PREFIX = "provider-profile:"
+_LEGACY_PROTOCOL_MAP = {
+    PROTOCOL_OPENAI_COMPAT: PROFILE_PROTOCOL_OPENAI,
+    PROTOCOL_OPENAI_NATIVE: PROFILE_PROTOCOL_OPENAI,
+    PROTOCOL_GEMINI: PROFILE_PROTOCOL_OPENAI,
+    PROTOCOL_OLLAMA: PROFILE_PROTOCOL_OPENAI,
+    PROTOCOL_ANTHROPIC: PROFILE_PROTOCOL_ANTHROPIC,
+    PROTOCOL_BEDROCK: "legacy-bedrock",
+    PROTOCOL_VERTEX: "legacy-vertex",
+}
+
+
+def provider_profile_key(name: str) -> str:
+    """SecretStore location for an endpoint-bound provider profile."""
+    return _PROFILE_SECRET_PREFIX + name
+
+
+def profile_protocol(name: str, profile: dict[str, Any] | None = None) -> str:
+    """Resolve a runtime protocol from profile metadata, never from a vendor brand."""
+    configured = (profile or {}).get("protocol")
+    if configured:
+        return _LEGACY_PROTOCOL_MAP.get(str(configured), str(configured))
+    descriptor = get_descriptor(name)
+    return descriptor.protocol if descriptor else PROFILE_PROTOCOL_OPENAI
+
+
+def migrate_legacy_provider_profiles(secrets: Any, prefs: dict[str, Any]) -> dict[str, Any]:
+    """One-time migration from `provider:<vendor>` + `custom_providers`.
+
+    Credentials move atomically into endpoint-bound `provider-profile:<name>` records and the
+    legacy records are removed only after the new one exists.  The JSON prefs retain a compact,
+    non-secret migration receipt so configuration is never silently discarded.
+    """
+    marker = prefs.get("provider_profile_migration")
+    if isinstance(marker, dict) and marker.get("version") == 1:
+        return marker
+    custom = prefs.get("custom_providers") or {}
+    profiles = dict(prefs.get("provider_profiles") or {})
+    names = set(_BY_NAME) | set(custom)
+    migrated: list[str] = []
+    skipped: list[str] = []
+    for name in sorted(names):
+        legacy_key = f"provider:{name}"
+        legacy = secrets.get(legacy_key)
+        target_key = provider_profile_key(name)
+        existing = secrets.get(target_key)
+        meta = custom.get(name) if isinstance(custom, dict) else None
+        raw_protocol = (meta or {}).get("protocol") if isinstance(meta, dict) else None
+        descriptor = _BY_NAME.get(name)
+        protocol = _LEGACY_PROTOCOL_MAP.get(
+            str(raw_protocol or (descriptor.protocol if descriptor else PROFILE_PROTOCOL_OPENAI)),
+            str(raw_protocol or (descriptor.protocol if descriptor else PROFILE_PROTOCOL_OPENAI)),
+        )
+        if legacy and not existing:
+            target = dict(legacy)
+            target["name"] = name
+            target["protocol"] = protocol
+            if protocol == PROFILE_PROTOCOL_OPENAI:
+                target.setdefault("api_mode", "responses" if name == "openai" else "chat")
+                if name == "gemini":
+                    target.setdefault("base_url", DEFAULT_GEMINI_OPENAI_URL)
+                elif name == "ollama":
+                    target["base_url"] = _normalize_ollama_url(target.get("base_url"))
+            elif protocol == PROFILE_PROTOCOL_ANTHROPIC:
+                target.setdefault("base_url", DEFAULT_ANTHROPIC_URL)
+            secrets.put(target_key, target)
+            secrets.delete(legacy_key)
+            migrated.append(name)
+        elif legacy and existing:
+            # Keep the already-migrated profile authoritative; remove only the duplicate legacy
+            # record and leave an audit trail instead of silently merging secrets.
+            secrets.delete(legacy_key)
+            skipped.append(name)
+        if name in custom:
+            profiles[name] = {"protocol": protocol, "preset": False}
+    if custom:
+        prefs.pop("custom_providers", None)
+    if profiles:
+        prefs["provider_profiles"] = profiles
+    receipt = {"version": 1, "migrated": migrated, "duplicates_removed": skipped}
+    prefs["provider_profile_migration"] = receipt
+    return receipt
+
 
 def provider_descriptors() -> list[ProviderDescriptor]:
-    return list(DESCRIPTORS) + custom_provider_descriptors()
+    return [d for d in [*DESCRIPTORS, *custom_provider_descriptors()] if d.visible]
 
 
 def provider_names() -> list[str]:
@@ -780,11 +936,38 @@ def get_descriptor(name: str) -> ProviderDescriptor | None:
     return _custom_descriptor(name)
 
 
+def core_protocol_descriptors() -> dict[str, dict[str, Any]]:
+    """The two user-selectable protocols for newly-created profiles."""
+    return {
+        PROFILE_PROTOCOL_OPENAI: {
+            "title": "OpenAI",
+            "needs_key": False,
+            "fields": list(PROTOCOLS[PROTOCOL_OPENAI_COMPAT]["fields"]),
+            "recommended_model": "gpt-4o",
+        },
+        PROFILE_PROTOCOL_ANTHROPIC: {
+            "title": "Anthropic",
+            "needs_key": True,
+            "fields": [
+                ProviderField("api_key", "Anthropic API key", secret=True, placeholder="sk-ant-…"),
+                ProviderField("base_url", "Endpoint", required=False, default=DEFAULT_ANTHROPIC_URL),
+            ],
+            "recommended_model": "claude-fable-5",
+        },
+    }
+
+
 def _custom_descriptor(name: str) -> ProviderDescriptor | None:
     meta = CUSTOM_PROVIDERS.get(name)
     if not meta:
         return None
-    proto = PROTOCOLS[meta["protocol"]]
+    raw_protocol = meta["protocol"]
+    canonical = _LEGACY_PROTOCOL_MAP.get(raw_protocol, raw_protocol)
+    # The descriptor remains dynamic for the existing UI, while the stored profile routes by
+    # canonical protocol. OpenAI aliases use the compatibility form (endpoint + optional key).
+    proto = PROTOCOLS.get(raw_protocol) or PROTOCOLS[
+        PROTOCOL_OPENAI_COMPAT if canonical == PROFILE_PROTOCOL_OPENAI else PROTOCOL_ANTHROPIC
+    ]
     return ProviderDescriptor(
         name=name,
         # The alias is the provider's durable identity everywhere else: routing prefix,
@@ -797,6 +980,8 @@ def _custom_descriptor(name: str) -> ProviderDescriptor | None:
         recommended_model=proto["recommended_model"],
         env_key=proto.get("env_key"),
         blurb=proto["title"],
+        protocol=canonical,
+        preset=False,
     )
 
 
@@ -819,11 +1004,15 @@ def register_custom_provider(
     alias route like any built-in so `alias:model` resolves and persists across restart
     once SessionManager re-hydrates it from prefs.
     """
-    if protocol not in PROTOCOLS:
+    raw_protocol = protocol
+    protocol = _LEGACY_PROTOCOL_MAP.get(protocol, protocol)
+    if protocol not in (PROFILE_PROTOCOL_OPENAI, PROFILE_PROTOCOL_ANTHROPIC, "legacy-bedrock", "legacy-vertex"):
         raise ValueError(f"Unknown protocol: {protocol}")
     if not _valid_alias(alias):
         raise ValueError("Invalid provider alias.")
-    CUSTOM_PROVIDERS[alias] = {"protocol": protocol, **(fields_meta or {})}
+    # Keep old protocol spellings in the in-memory descriptor only for API compatibility;
+    # persisted profiles are canonicalized by the manager/migration layer.
+    CUSTOM_PROVIDERS[alias] = {"protocol": raw_protocol, **(fields_meta or {})}
 
 
 def unregister_custom_provider(alias: str) -> None:
@@ -838,8 +1027,22 @@ def build_provider_client(
     name: str, profile: dict[str, Any], secrets: Any
 ) -> ProviderClient:
     """Build a `ProviderClient` for `name` from its stored profile. Unknown → OpenAI default."""
+    profile = profile or {}
+    # Direct callers from extensions/tests that still pass the pre-profile shape keep their
+    # legacy builder. SessionManager always writes `protocol`, so normal runtime routing is
+    # protocol-first.
+    if "protocol" not in profile:
+        descriptor = get_descriptor(name) or _BY_NAME["openai"]
+        return descriptor.build(profile, secrets)
+    protocol = profile_protocol(name, profile)
+    if protocol == PROFILE_PROTOCOL_OPENAI:
+        return _build_openai(profile, secrets)
+    if protocol == PROFILE_PROTOCOL_ANTHROPIC:
+        return _build_anthropic(profile, secrets)
+    # Legacy adapters stay available for existing configured profiles, but cannot become new
+    # default protocol choices or leak into the normal OpenAI/Anthropic routing path.
     descriptor = get_descriptor(name) or _BY_NAME["openai"]
-    return descriptor.build(profile or {}, secrets)
+    return descriptor.build(profile, secrets)
 
 
 def descriptor_configured(d: ProviderDescriptor, profile: dict[str, Any]) -> bool:
@@ -1060,22 +1263,27 @@ def verify_provider_key(
     import httpx
 
     d = get_descriptor(name) or _BY_NAME["openai"]
+    fields = fields or {}
     key = (api_key or "").strip()
+    protocol = profile_protocol(name, fields)
     if name == "bedrock":
         return _verify_bedrock(fields or {}, timeout)
     if name == "vertex":
         return _verify_vertex(fields or {}, timeout)
     try:
-        if name == "anthropic":
-            resp = httpx.get(
-                "https://api.anthropic.com/v1/models",
-                headers={"x-api-key": key, "anthropic-version": "2023-06-01"},
-                timeout=timeout,
-            )
-        elif name == "gemini":
+        if name == "gemini" and "protocol" not in fields:
+            # Compatibility for callers of the legacy helper. The profile-aware manager passes
+            # protocol=openai and therefore uses the preset's OpenAI-compatible endpoint.
             resp = httpx.get(
                 "https://generativelanguage.googleapis.com/v1beta/models",
                 params={"key": key},
+                timeout=timeout,
+            )
+        elif protocol == PROFILE_PROTOCOL_ANTHROPIC:
+            base = ((base_url or "").strip().rstrip("/") or DEFAULT_ANTHROPIC_URL)
+            resp = httpx.get(
+                base + "/v1/models",
+                headers={"x-api-key": key, "anthropic-version": "2023-06-01"},
                 timeout=timeout,
             )
         elif name == "ollama":
@@ -1091,7 +1299,7 @@ def verify_provider_key(
             base = (
                 (base_url or "").strip().rstrip("/")
                 or default_base.rstrip("/")
-                or "https://api.openai.com/v1"
+                or (DEFAULT_GEMINI_OPENAI_URL.rstrip("/") if name == "gemini" else DEFAULT_OPENAI_URL)
             )
             # Same keyless rule: omit the header rather than send a bare "Bearer ".
             resp = httpx.get(
@@ -1116,6 +1324,8 @@ def verify_provider_key(
             "ok": False,
             "error": "Reached the server, but no OpenAI-compatible /v1 API there.",
         }
+    if resp.status_code == 404:
+        return {"ok": False, "error": "Model listing is not supported by this endpoint — add a model ID manually."}
     return {"ok": False, "error": f"{d.title} returned HTTP {resp.status_code}."}
 
 
@@ -1134,10 +1344,14 @@ def _fetch_models_request(
     meta = CUSTOM_PROVIDERS.get(name)
     if not meta:
         raise RuntimeError(f"Unknown provider: {name}")
-    protocol = meta["protocol"]
+    protocol = profile_protocol(name, meta)
     key = (api_key or "").strip()
 
-    if protocol == PROTOCOL_OPENAI_COMPAT:
+    if meta.get("protocol") == PROTOCOL_OLLAMA:
+        base = _normalize_ollama_url(base_url)
+        return httpx.get(base.rstrip("/") + "/models", timeout=timeout)
+
+    if protocol == PROFILE_PROTOCOL_OPENAI:
         base = (base_url or "").strip().rstrip("/")
         if not base:
             raise RuntimeError("No server address configured.")
@@ -1151,24 +1365,11 @@ def _fetch_models_request(
             timeout=timeout,
         )
 
-    if protocol == PROTOCOL_OPENAI_NATIVE:
+    if protocol == PROFILE_PROTOCOL_ANTHROPIC:
+        base = (base_url or "").strip().rstrip("/") or DEFAULT_ANTHROPIC_URL
         return httpx.get(
-            "https://api.openai.com/v1/models",
-            headers={"Authorization": f"Bearer {key}"},
-            timeout=timeout,
-        )
-
-    if protocol == PROTOCOL_ANTHROPIC:
-        return httpx.get(
-            "https://api.anthropic.com/v1/models",
+            base + "/v1/models",
             headers={"x-api-key": key, "anthropic-version": "2023-06-01"},
-            timeout=timeout,
-        )
-
-    if protocol == PROTOCOL_GEMINI:
-        return httpx.get(
-            "https://generativelanguage.googleapis.com/v1beta/models",
-            params={"key": key},
             timeout=timeout,
         )
 
@@ -1199,7 +1400,8 @@ def fetch_provider_models(
     """
     title = get_descriptor(name).title if get_descriptor(name) else name
     meta = CUSTOM_PROVIDERS.get(name) or {}
-    if meta.get("protocol") in (PROTOCOL_BEDROCK, PROTOCOL_VERTEX):
+    protocol = profile_protocol(name, profile)
+    if protocol in ("legacy-bedrock", "legacy-vertex"):
         return {
             "ok": False,
             "error": f"{title} doesn't expose a model list to fetch — add its models manually.",
@@ -1207,7 +1409,30 @@ def fetch_provider_models(
     api_key = (profile.get("api_key") or "").strip()
     base_url = (profile.get("base_url") or "").strip() or None
     try:
-        resp = _fetch_models_request(name, api_key or None, base_url, timeout)
+        if is_custom_provider(name):
+            resp = _fetch_models_request(name, api_key or None, base_url, timeout)
+        else:
+            import httpx
+
+            if protocol == PROFILE_PROTOCOL_ANTHROPIC:
+                base = (base_url or DEFAULT_ANTHROPIC_URL).rstrip("/")
+                resp = httpx.get(
+                    base + "/v1/models",
+                    headers={"x-api-key": api_key, "anthropic-version": "2023-06-01"},
+                    timeout=timeout,
+                )
+            else:
+                if name == "ollama":
+                    base = _normalize_ollama_url(base_url)
+                elif name == "gemini":
+                    base = (base_url or DEFAULT_GEMINI_OPENAI_URL).rstrip("/")
+                else:
+                    base = (base_url or DEFAULT_OPENAI_URL).rstrip("/")
+                resp = httpx.get(
+                    base + "/models",
+                    headers={"Authorization": f"Bearer {api_key}"} if api_key else {},
+                    timeout=timeout,
+                )
     except Exception as exc:
         return {"ok": False, "error": f"Couldn't reach {title} ({exc.__class__.__name__})."}
     if resp.status_code < 300:
@@ -1216,6 +1441,8 @@ def fetch_provider_models(
         return {"ok": True, "models": ids}
     if resp.status_code in (401, 403):
         return {"ok": False, "error": "Invalid API key."}
+    if resp.status_code == 404:
+        return {"ok": False, "error": "Model listing is not supported by this endpoint — add a model ID manually."}
     return {
         "ok": False,
         "error": f"{title} returned HTTP {resp.status_code}.",

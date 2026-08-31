@@ -139,7 +139,7 @@ _PDF_DATA_URL_RE = re.compile(
 
 def resolve_api_key(secrets: Any = None) -> str | None:
     """Resolve the Anthropic API key: env `ANTHROPIC_API_KEY` first, else the SecretStore
-    `provider:anthropic` profile (`{api_key}`). Same contract as the OpenAI resolver: the
+    `provider-profile:anthropic` profile (`{api_key}`). Same contract as the OpenAI resolver: the
     Tauri-launched sidecar does not inherit the shell env, so Settings-entered keys must work.
     """
     import os
@@ -148,7 +148,7 @@ def resolve_api_key(secrets: Any = None) -> str | None:
     if key:
         return key
     if secrets is not None:
-        profile = secrets.get("provider:anthropic") or {}
+        profile = secrets.get("provider-profile:anthropic") or {}
         return profile.get("api_key") or None
     return None
 
@@ -384,8 +384,10 @@ class AnthropicProvider(ProviderClient):
         *,
         default_model: str = "",
         api_key: str | None = None,
+        base_url: str | None = None,
         secrets: Any = None,
         thinking_budget: int | None = None,
+        allow_credential_fallback: bool = True,
     ):
         # Mirrors OpenAIProvider: the SDK client is built lazily so engines can be assembled
         # before any key exists; the key resolves at call time (explicit → env → SecretStore).
@@ -393,7 +395,9 @@ class AnthropicProvider(ProviderClient):
         # profile's optional field) opts every request into extended thinking.
         self._client = client
         self._api_key = api_key
+        self._base_url = base_url
         self._secrets = secrets
+        self._allow_credential_fallback = allow_credential_fallback
         self.default_model = default_model
         self.thinking_budget = thinking_budget or 0
 
@@ -402,13 +406,18 @@ class AnthropicProvider(ProviderClient):
             # Lazy import so the SDK is only required when actually talking to Anthropic.
             from anthropic import Anthropic
 
-            key = self._api_key or resolve_api_key(self._secrets)
+            key = self._api_key
+            if not key and self._allow_credential_fallback:
+                key = resolve_api_key(self._secrets)
             if not key:
                 raise RuntimeError(
                     "No Anthropic API key configured. Set ANTHROPIC_API_KEY in the environment, "
                     "or add your key in Manage → Configure Models."
                 )
-            self._client = Anthropic(api_key=key)
+            kwargs: dict[str, Any] = {"api_key": key}
+            if self._base_url:
+                kwargs["base_url"] = self._base_url
+            self._client = Anthropic(**kwargs)
         return self._client
 
     def _request_kwargs(

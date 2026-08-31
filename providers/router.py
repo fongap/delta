@@ -17,7 +17,7 @@ from typing import Any, Optional
 
 from providers.base import ProviderClient
 from providers.capabilities import capabilities_for
-from providers.registry import build_provider_client, get_descriptor
+from providers.registry import build_provider_client, get_descriptor, provider_profile_key
 
 
 class ProviderRouter(ProviderClient):
@@ -62,7 +62,7 @@ class ProviderRouter(ProviderClient):
             if client is None:
                 profile = {}
                 if self._secrets is not None:
-                    profile = self._secrets.get(f"provider:{name}") or {}
+                    profile = self._secrets.get(provider_profile_key(name)) or {}
                 client = build_provider_client(name, profile, self._secrets)
                 self._clients[name] = client
             return client

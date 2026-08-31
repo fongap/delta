@@ -288,7 +288,9 @@ class OpenAIResponsesProvider(ProviderClient):
         *,
         default_model: str = "",
         api_key: str | None = None,
+        base_url: str | None = None,
         secrets: Any = None,
+        allow_credential_fallback: bool = True,
     ):
         # Same deferred-client contract as OpenAIProvider: built lazily so an engine can be
         # assembled before any key exists; key resolves at call time (explicit → env →
@@ -296,7 +298,9 @@ class OpenAIResponsesProvider(ProviderClient):
         # routes to the Chat Completions provider instead (registry.py).
         self._client = client
         self._api_key = api_key
+        self._base_url = base_url
         self._secrets = secrets
+        self._allow_credential_fallback = allow_credential_fallback
         self.default_model = default_model
 
     def _ensure_client(self) -> Any:
@@ -304,13 +308,18 @@ class OpenAIResponsesProvider(ProviderClient):
             # Lazy import so the SDK is only required when actually talking to OpenAI.
             from openai import OpenAI
 
-            key = self._api_key or resolve_api_key(self._secrets)
+            key = self._api_key
+            if not key and self._allow_credential_fallback:
+                key = resolve_api_key(self._secrets)
             if not key:
                 raise RuntimeError(
                     "No model API key configured. Set OPENAI_API_KEY in the environment, "
                     "or add your key in Manage → Settings."
                 )
-            self._client = OpenAI(api_key=key)
+            kwargs: dict[str, Any] = {"api_key": key}
+            if self._base_url:
+                kwargs["base_url"] = self._base_url
+            self._client = OpenAI(**kwargs)
         return self._client
 
     def _request_kwargs(

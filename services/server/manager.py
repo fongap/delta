@@ -42,6 +42,8 @@ from providers import (
     ProviderRouter,
     fetch_provider_models,
     get_descriptor,
+    migrate_legacy_provider_profiles,
+    provider_profile_key,
     register_custom_provider,
 )
 from core.runtime import RuntimePort
@@ -158,11 +160,14 @@ class SessionManager(
         self._data_base = base
         # Desktop/UI prefs (default model, onboarding state) — not secrets; a plain JSON file.
         self._prefs = self._load_prefs()
+        migration = migrate_legacy_provider_profiles(self.secrets, self._prefs)
+        if migration.get("migrated") or migration.get("duplicates_removed") or not self._prefs_path().exists():
+            self._save_prefs()
         if self._prefs.get("default_model"):
             self.model = self._prefs["default_model"]
-        # Re-hydrate user-registered custom providers (alias -> protocol) from prefs so
-        # `alias:model` routing survives a restart without re-registering from the GUI.
-        for alias, meta in (self._prefs.get("custom_providers") or {}).items():
+        # Re-hydrate user-created profiles (alias -> protocol) so `alias:model` remains
+        # compatible while the router itself dispatches by protocol, not vendor.
+        for alias, meta in (self._prefs.get("provider_profiles") or {}).items():
             try:
                 register_custom_provider(alias, meta["protocol"], meta)
             except (ValueError, KeyError):
@@ -262,7 +267,7 @@ class SessionManager(
             return {"ok": False, "error": f"unknown provider: {alias}"}
         # Probe with the supplied fields merged over any stored profile, so a never-saved
         # form submission can still test before persisting.
-        profile = dict(self.secrets.get(f"provider:{alias}") or {})
+        profile = dict(self.secrets.get(provider_profile_key(alias)) or {})
         merged: dict[str, Any] = {}
         for f in d.fields:
             val = (fields or {}).get(f.key) or profile.get(f.key) or ""
@@ -270,6 +275,7 @@ class SessionManager(
                 val = val.strip()
             if val:
                 merged[f.key] = val
+        merged["protocol"] = profile.get("protocol") or d.protocol
         result = fetch_provider_models(alias, merged, self.secrets, timeout)
         if not result.get("ok"):
             return result

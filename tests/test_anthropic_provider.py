@@ -476,7 +476,7 @@ def test_resolve_api_key_env_then_secrets(monkeypatch):
     class _Secrets:
         def get(self, name):
             return (
-                {"api_key": "sk-ant-stored"} if name == "provider:anthropic" else None
+                {"api_key": "sk-ant-stored"} if name == "provider-profile:anthropic" else None
             )
 
     assert resolve_api_key(_Secrets()) == "sk-ant-stored"

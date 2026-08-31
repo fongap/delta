@@ -31,6 +31,8 @@ from providers import (
     get_descriptor,
     is_custom_provider,
     provider_descriptors,
+    provider_profile_key,
+    profile_protocol,
     register_custom_provider,
     unregister_custom_provider,
     verify_provider_key,
@@ -46,7 +48,7 @@ class ProvidersSettingsMixin:
         """
         out: list[dict[str, Any]] = []
         for d in provider_descriptors():
-            profile = self.secrets.get(f"provider:{d.name}") or {}
+            profile = self.secrets.get(provider_profile_key(d.name)) or {}
             configured = descriptor_configured(d, profile)
             values = {
                 f.key: profile.get(f.key)
@@ -54,7 +56,7 @@ class ProvidersSettingsMixin:
                 if not f.secret and profile.get(f.key)
             }
             custom = is_custom_provider(d.name)
-            custom_meta = (self._prefs.get("custom_providers") or {}).get(d.name, {})
+            custom_meta = (self._prefs.get("provider_profiles") or {}).get(d.name, {})
             out.append(
                 {
                     **d.to_dict(),
@@ -141,8 +143,14 @@ class ProvidersSettingsMixin:
         if d is None:
             return {"ok": False, "error": f"unknown provider: {name}"}
         fields = fields or {}
-        profile = dict(self.secrets.get(f"provider:{name}") or {})
+        profile = dict(self.secrets.get(provider_profile_key(name)) or {})
+        profile.setdefault("name", name)
+        profile.setdefault("protocol", d.protocol)
+        if d.protocol == "openai":
+            profile.setdefault("api_mode", "responses" if name == "openai" else "chat")
         for f in d.fields:
+            if f.key not in profile and f.default:
+                profile[f.key] = f.default
             if f.key not in fields:
                 continue
             val = fields.get(f.key)
@@ -162,7 +170,7 @@ class ProvidersSettingsMixin:
             from datetime import date
 
             profile["key_set_at"] = date.today().isoformat()
-        self.secrets.put(f"provider:{name}", profile)
+        self.secrets.put(provider_profile_key(name), profile)
         self._refresh_provider(name)
         # Convenience: if the provider recommends a model and it's actually available, add it to
         # the curated list so it shows up in the composer right after configuring the provider.
@@ -188,7 +196,7 @@ class ProvidersSettingsMixin:
         d = get_descriptor(name)
         if d is None:
             return {"ok": False, "error": f"unknown provider: {name}"}
-        self.secrets.delete(f"provider:{name}")
+        self.secrets.delete(provider_profile_key(name))
         self._refresh_provider(name)
         return {"ok": True, "provider": name}
 
@@ -218,9 +226,10 @@ class ProvidersSettingsMixin:
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
         # Persist the registration so __init__ re-hydrates it after a restart.
-        custom = dict(self._prefs.get("custom_providers") or {})
-        custom[alias] = {"protocol": protocol}
-        self._prefs["custom_providers"] = custom
+        canonical = get_descriptor(alias).protocol if get_descriptor(alias) else protocol
+        custom = dict(self._prefs.get("provider_profiles") or {})
+        custom[alias] = {"protocol": canonical, "preset": False}
+        self._prefs["provider_profiles"] = custom
         self._save_prefs()
         # Store the actual config (key/endpoint) under provider:<alias> and rebuild the client.
         # A custom provider is first-class the moment it's named — its key/endpoint can be
@@ -242,10 +251,10 @@ class ProvidersSettingsMixin:
         if not is_custom_provider(alias):
             return {"ok": False, "error": f"unknown provider: {alias}"}
         unregister_custom_provider(alias)
-        self.secrets.delete(f"provider:{alias}")
-        custom = dict(self._prefs.get("custom_providers") or {})
+        self.secrets.delete(provider_profile_key(alias))
+        custom = dict(self._prefs.get("provider_profiles") or {})
         custom.pop(alias, None)
-        self._prefs["custom_providers"] = custom
+        self._prefs["provider_profiles"] = custom
         # Drop the alias's own models (and any hide-marks for them) so nothing routes
         # through a provider that no longer exists.
         prefix = alias + ":"
@@ -272,7 +281,7 @@ class ProvidersSettingsMixin:
         if d is None:
             return {"ok": False, "error": f"unknown provider: {name}"}
         fields = fields or {}
-        profile = self.secrets.get(f"provider:{name}") or {}
+        profile = self.secrets.get(provider_profile_key(name)) or {}
         merged = {}
         for f in d.fields:
             val = fields.get(f.key) or profile.get(f.key) or ""
@@ -280,8 +289,17 @@ class ProvidersSettingsMixin:
                 val = val.strip()
             if val:
                 merged[f.key] = val
+        merged["protocol"] = profile_protocol(name, profile)
         api_key = merged.get("api_key", "")
-        if not api_key and d.env_key:
+        base_url = str(merged.get("base_url") or "").strip().rstrip("/")
+        # Environment keys belong only to the official first-party endpoints. A custom profile
+        # must supply its own key; otherwise a shell's OpenAI/Anthropic credential could be sent
+        # to an unrelated URL during Test or model discovery.
+        allow_env = (
+            (name == "openai" and base_url in ("", "https://api.openai.com/v1"))
+            or (name == "anthropic" and base_url in ("", "https://api.anthropic.com"))
+        )
+        if not api_key and allow_env and d.env_key:
             api_key = os.environ.get(d.env_key, "").strip()
         has_key_field = any(f.key == "api_key" for f in d.fields)
         if d.needs_key and has_key_field and not api_key:
@@ -293,7 +311,7 @@ class ProvidersSettingsMixin:
             if missing:
                 return {"ok": False, "error": "missing: " + ", ".join(missing)}
         return verify_provider_key(
-            name, api_key=api_key, base_url=merged.get("base_url", ""), fields=merged
+            name, api_key=api_key, base_url=base_url, fields=merged
         )
 
 
@@ -310,7 +328,7 @@ class ProvidersSettingsMixin:
         d = get_descriptor(name)
         if d is None:
             return False
-        return descriptor_configured(d, self.secrets.get(f"provider:{name}") or {})
+        return descriptor_configured(d, self.secrets.get(provider_profile_key(name)) or {})
 
 
     # -- settings / prefs (model API key, default model, onboarding) -------------
@@ -361,7 +379,7 @@ class ProvidersSettingsMixin:
         cached = getattr(self, "_ollama_alive_cache", None)
         if cached and now - cached[0] < 30:
             return cached[1]
-        profile = self.secrets.get("provider:ollama") or {}
+        profile = self.secrets.get(provider_profile_key("ollama")) or {}
         base = (profile.get("base_url") or "http://localhost:11434").strip().rstrip("/")
         if base.endswith("/v1"):
             base = base[: -len("/v1")]
@@ -379,7 +397,7 @@ class ProvidersSettingsMixin:
         """Live list of models pulled into the configured Ollama server (via its native
         `/api/tags`), as `ollama:<name>` so they're directly selectable. Empty if Ollama isn't
         configured or unreachable — best-effort, never raises."""
-        profile = self.secrets.get("provider:ollama")
+        profile = self.secrets.get(provider_profile_key("ollama"))
         if not profile:
             return []
         base = (profile.get("base_url") or "http://localhost:11434").strip().rstrip("/")
@@ -463,7 +481,7 @@ class ProvidersSettingsMixin:
         import os
 
         env_key = bool(os.environ.get("OPENAI_API_KEY"))
-        stored = bool((self.secrets.get("provider:openai") or {}).get("api_key"))
+        stored = bool((self.secrets.get(provider_profile_key("openai")) or {}).get("api_key"))
         # Only surface models whose provider is actually configured — the composer picker
         # reflects exactly what's connected. The active default is always kept selectable
         # (it's hidden behind the "No model" state until a provider is connected anyway).
@@ -724,9 +742,12 @@ class ProvidersSettingsMixin:
         if not api_key:
             return {"ok": False, "error": "empty api key"}
         # Merge, don't replace: the profile may also hold a custom endpoint (base_url).
-        profile = dict(self.secrets.get("provider:openai") or {})
+        profile = dict(self.secrets.get(provider_profile_key("openai")) or {})
         profile.update({"type": "api_key", "api_key": api_key})
-        self.secrets.put("provider:openai", profile)
+        profile.setdefault("name", "openai")
+        profile.setdefault("protocol", "openai")
+        profile.setdefault("api_mode", "responses")
+        self.secrets.put(provider_profile_key("openai"), profile)
         self._refresh_provider("openai")  # rebuild the OpenAI client with the new key
         return {"ok": True, **self.get_settings()}
 

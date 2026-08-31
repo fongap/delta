@@ -5,6 +5,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from providers import (
     AssistantTurn,
     ModelCapabilities,
@@ -557,7 +559,7 @@ def test_custom_provider_roundtrip(tmp_path, monkeypatch):
     assert provs["mygw"]["configured"] is True
     assert provs["mygw"]["needs_key"] is False
     assert provs["mygw"]["title"] == "mygw"
-    assert provs["mygw"]["protocol"] == "openai-compatible"
+    assert provs["mygw"]["protocol"] == "openai"
 
     # model routing resolves through the alias
     assert mgr.provider._provider_name("mygw:gpt-4o") == "mygw"
@@ -567,7 +569,7 @@ def test_custom_provider_roundtrip(tmp_path, monkeypatch):
     assert mgr2.provider._provider_name("mygw:gpt-4o") == "mygw"
     provs2 = {p["name"]: p for p in mgr2.get_providers()}
     assert provs2["mygw"]["title"] == "mygw"
-    assert provs2["mygw"]["protocol"] == "openai-compatible"
+    assert provs2["mygw"]["protocol"] == "openai"
 
 
 def test_custom_provider_rejects_builtin_collision(tmp_path, monkeypatch):
@@ -645,10 +647,10 @@ def test_fetch_models_rejects_unknown(tmp_path, monkeypatch):
 def test_provider_builders(monkeypatch):
     import pytest
 
-    from providers import AnthropicProvider, GeminiProvider
+    from providers import AnthropicProvider, OpenAIProvider
     from providers.registry import build_provider_client
 
-    # anthropic and gemini are native: key resolution deferred to first call
+    # Anthropic remains native; Gemini is the OpenAI-compatible Google preset.
     p = build_provider_client("anthropic", {"api_key": "sk-ant-x"}, None)
     assert isinstance(p, AnthropicProvider) and p._api_key == "sk-ant-x"
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
@@ -656,10 +658,10 @@ def test_provider_builders(monkeypatch):
         build_provider_client("anthropic", {}, None)._ensure_client()
 
     g = build_provider_client("gemini", {"api_key": "AIza-x"}, None)
-    assert isinstance(g, GeminiProvider) and g._api_key == "AIza-x"
+    assert isinstance(g, OpenAIProvider) and g._api_key == "AIza-x"
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
-    with pytest.raises(RuntimeError, match="Gemini"):
+    with pytest.raises(RuntimeError, match="No model API key"):
         build_provider_client("gemini", {}, None)._ensure_client()
 
     # OpenAI custom endpoint (Azure /openai/v1, OpenRouter, vLLM, …) passes through and
@@ -702,10 +704,11 @@ def test_anthropic_gemini_provider_config(tmp_path, monkeypatch):
     # the recommended model is auto-added to the curated list with its provider prefix
     assert "anthropic:claude-fable-5" in mgr.get_settings()["models"]
 
-    # env var alone marks a provider configured
+    # A Google environment key cannot configure the Gemini preset: endpoint credentials are
+    # profile-bound, so a custom endpoint never inherits an unrelated ambient credential.
     monkeypatch.setenv("GEMINI_API_KEY", "AIza-env")
     provs = {p["name"]: p for p in mgr.get_providers()}
-    assert provs["gemini"]["configured"] is True
+    assert provs["gemini"]["configured"] is False
 
 
 def test_first_configured_provider_wins_default(tmp_path, monkeypatch):
@@ -786,6 +789,67 @@ def test_router_on_use_failures_never_break_the_call():
     router = ProviderRouter(on_use=boom)
     router._clients["openai"] = OpenAIProvider(client=_FakeOAClient(content="ok"))
     assert router.complete(model="gpt-5.5", messages=[]).text == "ok"
+
+
+def test_custom_openai_profile_never_falls_back_to_openai_credentials(monkeypatch, tmp_path):
+    """Endpoint-bound profiles must not send OPENAI_API_KEY to a different host."""
+    from providers.registry import build_provider_client
+    from packages.secrets import SecretStore
+
+    monkeypatch.setenv("OPENAI_API_KEY", "official-key")
+    store = SecretStore(tmp_path / "secrets.json")
+    profile = {
+        "name": "private-gateway",
+        "protocol": "openai",
+        "base_url": "https://gateway.example/v1",
+        "api_mode": "chat",
+        # Deliberately no api_key.
+    }
+    client = build_provider_client("private-gateway", profile, store)
+    assert isinstance(client, OpenAIProvider)
+    assert client._allow_credential_fallback is False
+    with pytest.raises(RuntimeError, match="No model API key"):
+        client._ensure_client()
+
+
+def test_openai_profile_selects_responses_or_chat_by_api_mode():
+    from providers import OpenAIResponsesProvider
+    from providers.registry import build_provider_client
+
+    responses = build_provider_client(
+        "openai",
+        {"name": "openai", "protocol": "openai", "api_key": "sk-x", "api_mode": "responses"},
+        None,
+    )
+    chat = build_provider_client(
+        "gateway",
+        {"name": "gateway", "protocol": "openai", "api_key": "sk-x", "base_url": "https://gw.example/v1", "api_mode": "chat"},
+        None,
+    )
+    assert isinstance(responses, OpenAIResponsesProvider)
+    assert isinstance(chat, OpenAIProvider)
+
+
+def test_legacy_provider_profiles_migrate_once_without_losing_credentials(tmp_path, monkeypatch):
+    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
+    from packages.secrets import SecretStore
+    from services.server.manager import SessionManager
+
+    store = SecretStore()
+    store.put("provider:deepseek", {"api_key": "deep-key", "base_url": "https://deep.example/v1"})
+    store.put("provider:mygw", {"api_key": "gw-key", "base_url": "https://gw.example/v1"})
+    (tmp_path / "prefs.json").write_text(
+        '{"custom_providers":{"mygw":{"protocol":"openai-compatible"}}}', encoding="utf-8"
+    )
+
+    manager = SessionManager(data_dir=tmp_path)
+    assert store.get("provider:deepseek") is None
+    assert store.get("provider:mygw") is None
+    assert store.get("provider-profile:deepseek")["api_key"] == "deep-key"
+    migrated = store.get("provider-profile:mygw")
+    assert migrated["api_key"] == "gw-key" and migrated["protocol"] == "openai"
+    assert manager._prefs["provider_profiles"]["mygw"]["protocol"] == "openai"
+    assert manager._prefs["provider_profile_migration"]["migrated"] == ["deepseek", "mygw"]
 
 
 def test_manager_key_hygiene_stamps(tmp_path, monkeypatch):
