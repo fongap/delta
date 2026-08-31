@@ -13,16 +13,65 @@ permissions:
 
 jobs:
   enable-auto-merge:
-    if: github.actor == 'dependabot[bot]'
+    name: Enable auto-merge
+    if: >
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.repository == 'fongap/delta'
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
     steps:
-      - name: Enable squash auto-merge
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3
+        with:
+          github-token: ${{ github.token }}
+
+      - name: Check repository auto-merge setting
+        id: repo
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          enabled="$(
+            gh api "repos/${GITHUB_REPOSITORY}" \
+              --jq '.allow_auto_merge'
+          )"
+
+          echo "enabled=${enabled}" >> "$GITHUB_OUTPUT"
+
+          if [ "$enabled" = "true" ]; then
+            echo "Repository auto-merge is enabled."
+          else
+            echo "::notice::Repository auto-merge is disabled; automatic merge will be skipped."
+          fi
+
+      - name: Show Dependabot update policy
+        run: |
+          echo "Dependencies: ${{ steps.metadata.outputs.dependency-names }}"
+          echo "Ecosystem: ${{ steps.metadata.outputs.package-ecosystem }}"
+          echo "Directory: ${{ steps.metadata.outputs.directory }}"
+          echo "Update type: ${{ steps.metadata.outputs.update-type }}"
+          echo "Dependency group: ${{ steps.metadata.outputs.dependency-group }}"
+
+      - name: Enable squash auto-merge for safe patch update
+        if: >
+          steps.repo.outputs.enabled == 'true' &&
+          steps.metadata.outputs.update-type == 'version-update:semver-patch' &&
+          steps.metadata.outputs.dependency-group == ''
+        env:
+          GH_TOKEN: ${{ github.token }}
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: |
           gh pr merge "$PR_URL" \
             --auto \
             --squash
+
+      - name: Skip grouped update
+        if: steps.metadata.outputs.dependency-group != ''
+        run: |
+          echo "::notice::Grouped Dependabot update requires manual review; auto-merge skipped."
+
+      - name: Skip non-patch update
+        if: steps.metadata.outputs.update-type != 'version-update:semver-patch'
+        run: |
+          echo "::notice::Only SemVer patch updates are eligible for auto-merge."
