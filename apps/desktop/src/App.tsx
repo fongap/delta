@@ -218,6 +218,14 @@ export function App() {
   const [reasoningOverrides, setReasoningOverrides] = useState<Record<string, string>>({});
   const [projects, setProjects] = useState<RecentWorkspace[]>([]);
   const [sessionId, setSessionId] = useState<string>(newId());
+  // WebSocket handlers and transcript reads can outlive the visible conversation while React
+  // swaps sessions. Keep the foreground id in a ref so late events/responses from the old
+  // socket cannot overwrite the newly selected transcript or its running state.
+  const foregroundSessionIdRef = useRef(sessionId);
+  const activateSession = useCallback((id: string) => {
+    foregroundSessionIdRef.current = id;
+    setSessionId(id);
+  }, []);
   // Automation-run context (§ owner ask 2026-07-04): which task an open __run__ session belongs
   // to, driving the banner + "Back to runs". Best-effort — a run session without context still
   // shows a generic banner (detected by its __run__ id).
@@ -397,8 +405,10 @@ export function App() {
 
   // Fetch ALL sessions + known projects so the sidebar can group them.
   const refreshSessions = useCallback(() => {
-    getSessions().then(setSessions).catch(() => setSessions([]));
-    getRecentWorkspaces().then(setProjects).catch(() => setProjects([]));
+    // A sidecar restart or a transient local request failure must not make every background
+    // conversation vanish from the sidebar. Keep the last good snapshot until a fresh one lands.
+    getSessions().then(setSessions).catch(() => {});
+    getRecentWorkspaces().then(setProjects).catch(() => {});
   }, []);
 
   // initial: adopt the server's seed workspace if any, else force the gate.
@@ -438,7 +448,7 @@ export function App() {
           setItems([]);
           setUsage(emptyUsage());
         }
-        setSessionId(last.session_id);
+        activateSession(last.session_id);
         setShowGate(false);
         return;
       }
@@ -615,6 +625,10 @@ export function App() {
       };
       // Any engine event after `compacting` means the summarizer finished (compacted /
       // silent no-op / failure prompt) — the transient must never outlive it.
+      // Closing a session socket does not stop its server-side turn. Its remaining events may
+      // still arrive during the hand-off, so only the currently visible session may mutate the
+      // shared transcript state.
+      if (foregroundSessionIdRef.current !== sessionId) return;
       if (ev.type !== "compacting") setCompacting(false);
       switch (ev.type) {
         case "ready":
@@ -818,7 +832,9 @@ export function App() {
           // bubble, streamed texts) carry no raw-message index, so Edit/Retract would
           // stay unavailable until a full reload. The server is authoritative now.
           getSessionMessages(sessionId)
-            .then((ms) => setItems(itemsFromMessages(ms)))
+            .then((ms) => {
+              if (foregroundSessionIdRef.current === sessionId) setItems(itemsFromMessages(ms));
+            })
             .catch(() => {});
           // Catch-all artifact refresh: files created via shell or on a brand-new session (whose
           // record only exists after the first save) appear once the turn completes.
@@ -838,6 +854,7 @@ export function App() {
     const session = new Session(sessionId, workspace || "", agent, {
       onEvent: handleEvent,
       onOpen: () => {
+        if (foregroundSessionIdRef.current !== sessionId) return;
         setConnected(true);
         // Auto-send the task prompt once a "Run now" session connects.
         const p = pendingPromptRef.current;
@@ -847,10 +864,15 @@ export function App() {
           sessionRef.current?.userMessage(p);
         }
       },
-      onClose: () => setConnected(false),
+      onClose: () => {
+        if (foregroundSessionIdRef.current === sessionId) setConnected(false);
+      },
     });
     sessionRef.current = session;
-    return () => session.close();
+    return () => {
+      session.close();
+      if (sessionRef.current === session) sessionRef.current = null;
+    };
     // NOTE: `workspace` is intentionally NOT a dependency. Every real workspace change
     // (pick folder, select/switch session, new session) is paired with a `sessionId`
     // change, so the socket still reconnects when it should. The one workspace-only change
@@ -1012,7 +1034,7 @@ export function App() {
     // Knowledge family: a new conversation starts fresh (orphan) — clear the workspace so the
     // server provisions a NEW scratch dir for the new session id. Code keeps its repo.
     if (!gatesWorkspace(target)) setWorkspace(null);
-    setSessionId(newId());
+    activateSession(newId());
   };
   // Inbox → session: the item carries its session's workspace/agent, so open it directly.
   // UX-026: 5s top-right toast when a SCHEDULED automation run starts (never for
@@ -1058,13 +1080,14 @@ export function App() {
   // then prefill the composer with the original text for editing & re-send.
   const editMessage = async (index: number) => {
     if (!sessionId) return;
+    const targetSessionId = sessionId;
     const r = await revertSession(sessionId, index).catch(
       (): { ok: false; error: string; text?: string } => ({ ok: false, error: "unreachable" }),
     );
-    if (!r.ok) return;
+    if (!r.ok || foregroundSessionIdRef.current !== targetSessionId) return;
     if (r.text) prefillComposer(r.text);
-    const messages = await getSessionMessages(sessionId);
-    setItems(itemsFromMessages(messages));
+    const messages = await getSessionMessages(targetSessionId);
+    if (foregroundSessionIdRef.current === targetSessionId) setItems(itemsFromMessages(messages));
   };
 
   const openSessionFromInbox = (sid: string, ws: string, ag: string) => selectSession(sid, ws, ag);
@@ -1079,12 +1102,14 @@ export function App() {
       setWorkspace(ws); // switch project to the session's folder
       setBranch(null);
     }
-    setSessionId(id);
+    activateSession(id);
     try {
       const messages = await getSessionMessages(id);
+      if (foregroundSessionIdRef.current !== id) return;
       setItems(itemsFromMessages(messages));
       setUsage(usageFromMessages(messages));
     } catch {
+      if (foregroundSessionIdRef.current !== id) return;
       setItems([]);
       setUsage(emptyUsage());
     }
@@ -1126,12 +1151,14 @@ export function App() {
       if (!gatesWorkspace(name)) setShowGate(false);
       else if (targetWorkspace) setShowGate(false);
       else setShowGate(true);
-      setSessionId(target.sessionId);
+      activateSession(target.sessionId);
       try {
         const messages = await getSessionMessages(target.sessionId);
+        if (foregroundSessionIdRef.current !== target.sessionId) return;
         setItems(itemsFromMessages(messages));
         setUsage(usageFromMessages(messages));
       } catch {
+        if (foregroundSessionIdRef.current !== target.sessionId) return;
         setItems([]);
         setUsage(emptyUsage());
       }
@@ -1146,7 +1173,7 @@ export function App() {
     } else if (!fallback && needsWorkspace(name)) {
       setWorkspace(null); // orphan cowork: server provisions a fresh scratch on connect
     }
-    setSessionId(id);
+    activateSession(id);
     rememberLastSession(name, id, fallback);
     if (!gatesWorkspace(name)) setShowGate(false);
     else setShowGate(!fallback);
@@ -1160,7 +1187,7 @@ export function App() {
     setUsage(emptyUsage());
     setStreaming("");
     setTodo([]);
-    setSessionId(newId());
+    activateSession(newId());
     getRecentWorkspaces().then(setProjects).catch(() => {});
   };
   // "New project" lives under a project-scoped persona's accordion. Switch to that persona, start a
@@ -1177,7 +1204,7 @@ export function App() {
     if (target !== agent) setAgent(target);
     setWorkspace(null);
     setBranch(null);
-    setSessionId(newId());
+    activateSession(newId());
     setGateCreate(true);
     setShowGate(true);
   };
@@ -1214,7 +1241,7 @@ export function App() {
       setStreaming("");
       setTodo([]);
       setRunning(false);
-      setSessionId(newId());
+      activateSession(newId());
     }
   };
   const deleteConversation = async (id: string) => {
@@ -1227,7 +1254,7 @@ export function App() {
       setStreaming("");
       setTodo([]);
       setRunning(false);
-      setSessionId(newId());
+      activateSession(newId());
     }
   };
 
