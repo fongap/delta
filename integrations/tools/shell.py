@@ -117,7 +117,7 @@ class _BackgroundTask:
         if _IS_WINDOWS:
             argv = ["powershell.exe", "-NoProfile", "-Command", command]
             spawn_kwargs: dict[str, Any] = {
-                "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP
+                "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP,  # type: ignore[attr-defined]
             }
         else:
             argv = ["/bin/bash", "-c", command]
@@ -244,7 +244,7 @@ class LocalExecutor(Executor):
             # New process group so a timeout can deliver Ctrl-Break to the child (and only
             # the child), without signaling our own process.
             spawn_kwargs: dict[str, Any] = {
-                "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP
+                "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP,  # type: ignore[attr-defined]
             }
         else:
             argv = [self._shell_path]
@@ -487,7 +487,7 @@ class LocalExecutor(Executor):
             # Ctrl-Break to the child's process group (best-effort). If the marker never
             # resyncs, run()'s grace timeout hard-closes the shell.
             try:
-                self._proc.send_signal(signal.CTRL_BREAK_EVENT)
+                self._proc.send_signal(signal.CTRL_BREAK_EVENT)  # type: ignore[attr-defined]
             except (OSError, ValueError):
                 pass
             return

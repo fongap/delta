@@ -1364,7 +1364,6 @@ export const zh: Record<TranslationKey, string> = {
   "providers.invalidKey": "无效的 API 密钥。",
   "providers.serverRejected": "服务器拒绝了请求。",
   "providers.enterKeyToTest": "请输入 API 密钥以进行测试。",
-  "providers.noOpenAiApi": "已连接到服务器，但那里没有 OpenAI 兼容的 /v1 API。",
   "providers.httpError": "{name} 返回 HTTP {code}。",
   "providers.unknownProvider": "未知提供商：{name}",
   "providers.unreachable": "无法验证",

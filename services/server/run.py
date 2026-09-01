@@ -83,7 +83,7 @@ def _watch_parent_windows(parent: int) -> None:
     INFINITE = 0xFFFF_FFFF
     WAIT_OBJECT_0 = 0x0000_0000
 
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
     kernel32.OpenProcess.restype = wintypes.HANDLE
     kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     kernel32.WaitForSingleObject.restype = wintypes.DWORD

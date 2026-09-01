@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os  # noqa: F401 — re-exported for tests that patch services.server.manager.os
 from pathlib import Path
 from typing import Any
 

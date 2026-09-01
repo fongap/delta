@@ -18,7 +18,7 @@ from core.gateway import write_paths
 from core.risk import (  # re-exported for back-compat (manager.py imports WRITE_TOOLS)
     RiskClass,
     RiskOverrides,
-    WRITE_TOOLS,
+    WRITE_TOOLS,  # noqa: F401 — re-exported for back-compat
     classify,
     is_consequential,
 )
