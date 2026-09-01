@@ -535,7 +535,7 @@ jobs:
 
       - name: Pyright — baseline gate
         env:
-          PYRIGHT_BASELINE: "573"
+          PYRIGHT_BASELINE: "577"
         shell: bash
         run: |
           set -euo pipefail
