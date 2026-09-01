@@ -1,5 +1,11 @@
 # Delta CI
 #
+# Validation policy:
+# - Pull Requests run checks according to the affected repository area.
+# - Pushes to main always run the full CI suite.
+# - Repository layout invariants always run.
+# - ci-required remains the single stable Required Check for main.
+#
 # Coverage:
 # - Python runtime tests on supported Linux versions and Windows
 # - Desktop TypeScript/unit tests
@@ -14,9 +20,28 @@
 # - Tool versions that affect security/static baselines are explicitly pinned.
 # - The root deny.toml is explicitly supplied to cargo-deny.
 #
+# Dependency-advisory policy:
+# - npm audit / pip-audit / cargo-deny can fail on newly disclosed upstream
+#   advisories that are unrelated to the current diff. This is intentional:
+#   advisory gates are a point-in-time check, not a diff check. If a PR goes
+#   red here for a change it didn't make, open a dedicated dependency-bump PR
+#   rather than loosening the gate.
+#
 # Branch protection:
 # - The main Ruleset requires only the stable `ci-required` job.
 # - Individual job names may evolve without stranding GitHub Required Checks.
+# - main is only ever updated by merging an already-green PR, so the `push`
+#   trigger does not need to be gated by `ci-required` itself: if two pushes
+#   land close together, `concurrency.cancel-in-progress` may cancel the
+#   older run's `ci-required` (see its `!cancelled()` guard below), and that
+#   is expected, not a validation gap. If this repo ever allows direct pushes
+#   to main outside of PR merges, this assumption must be revisited.
+#
+# ci-required maintenance note:
+# - The "which jobs are required" logic is intentionally duplicated in two
+#   places: each job's own `if:` (whether it *runs*) and the Python block in
+#   `ci-required` (whether it must *succeed*). These must be changed together.
+#   Search for "MUST STAY IN SYNC" in both locations before editing either.
 
 name: CI
 
@@ -24,6 +49,7 @@ on:
   push:
     branches:
       - main
+
   pull_request:
     branches:
       - main
@@ -35,18 +61,164 @@ concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+
 jobs:
+  changes:
+    name: changes
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    outputs:
+      python: ${{ steps.filter.outputs.python }}
+      desktop: ${{ steps.filter.outputs.desktop }}
+      rust: ${{ steps.filter.outputs.rust }}
+      python_advisories: ${{ steps.filter.outputs.python_advisories }}
+      rust_advisories: ${{ steps.filter.outputs.rust_advisories }}
+      full: ${{ steps.filter.outputs.full }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Detect changed areas
+        id: filter
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+
+          # main always receives the complete CI suite.
+          if [ "$EVENT_NAME" = "push" ]; then
+            {
+              echo "python=true"
+              echo "desktop=true"
+              echo "rust=true"
+              echo "python_advisories=true"
+              echo "rust_advisories=true"
+              echo "full=true"
+            } >> "$GITHUB_OUTPUT"
+
+            echo "push to main: full CI selected"
+            exit 0
+          fi
+
+          git diff --name-only "$BASE_SHA...$HEAD_SHA" > changed-files.txt
+
+          python=false
+          desktop=false
+          rust=false
+          python_advisories=false
+          rust_advisories=false
+          full=false
+
+          while IFS= read -r path; do
+            case "$path" in
+              # CI workflow changes are validated against the complete suite.
+              .github/workflows/*)
+                full=true
+                ;;
+
+              # Python runtime and repository-level Python tests.
+              core/*|providers/*|integrations/*|packages/*|services/server/*|apps/tui/*|tests/*)
+                python=true
+                ;;
+
+              # Python dependency graph changes require runtime and advisory checks.
+              pyproject.toml|uv.lock)
+                python=true
+                python_advisories=true
+                ;;
+
+              # Release-version gate implementation is covered by Python tests.
+              scripts/check_release_versions.py)
+                python=true
+                ;;
+
+              # Tauri Rust workspace.
+              apps/desktop/src-tauri/*)
+                rust=true
+                ;;
+
+              # Standalone STT Rust workspace.
+              services/stt/*)
+                rust=true
+                ;;
+
+              # Portable launcher Rust workspace.
+              packaging/portable/launcher/*)
+                rust=true
+                ;;
+
+              # Desktop frontend.
+              apps/desktop/*)
+                desktop=true
+                ;;
+
+              # cargo-deny policy only affects Rust advisory validation.
+              deny.toml)
+                rust_advisories=true
+                ;;
+
+              # Other packaging changes are release-critical and receive full CI.
+              packaging/*)
+                full=true
+                ;;
+            esac
+          done < changed-files.txt
+
+          # Full validation overrides selective detection.
+          if [ "$full" = true ]; then
+            python=true
+            desktop=true
+            rust=true
+            python_advisories=true
+            rust_advisories=true
+          fi
+
+          {
+            echo "python=$python"
+            echo "desktop=$desktop"
+            echo "rust=$rust"
+            echo "python_advisories=$python_advisories"
+            echo "rust_advisories=$rust_advisories"
+            echo "full=$full"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Changed files:"
+          cat changed-files.txt
+
+          echo
+          echo "Selected checks:"
+          echo "  python              = $python"
+          echo "  desktop             = $desktop"
+          echo "  rust                = $rust"
+          echo "  python_advisories   = $python_advisories"
+          echo "  rust_advisories     = $rust_advisories"
+          echo "  full                = $full"
+
+
   pytest:
     name: pytest (${{ matrix.python-version }})
+    needs: changes
+    if: ${{ needs.changes.outputs.python == 'true' }} # MUST STAY IN SYNC with ci-required's PYTHON_REQUIRED
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     strategy:
       fail-fast: false
+
       matrix:
-        # Keep the declared Python support range continuously verified. Windows
-        # remains on the primary version to keep the platform matrix bounded.
-        python-version: ["3.11", "3.12", "3.13"]
+        # Keep the declared Python support range continuously verified when
+        # Python validation is required. Windows remains on the primary version
+        # to keep the platform matrix bounded.
+        python-version:
+          - "3.11"
+          - "3.12"
+          - "3.13"
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -64,6 +236,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           uv sync --locked --extra messaging --extra dev --extra bedrock
           uv pip check --python .venv/bin/python
 
@@ -71,12 +244,15 @@ jobs:
         run: uv run --locked pytest tests/test_ui_runtime_contracts.py -q
 
       - name: Test
-        # test_ui_runtime_contracts.py already ran above as an explicit contract gate.
+        # test_ui_runtime_contracts.py already ran above as an explicit contract gate,
+        # so it is excluded here to avoid running it twice.
         run: uv run --locked pytest tests -q --ignore=tests/test_ui_runtime_contracts.py
 
 
   pytest-windows:
     name: pytest-windows
+    needs: changes
+    if: ${{ needs.changes.outputs.python == 'true' }} # MUST STAY IN SYNC with ci-required's PYTHON_REQUIRED
     runs-on: windows-latest
     timeout-minutes: 40
 
@@ -85,7 +261,7 @@ jobs:
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.12"
+          python-version-file: ".python-version"
 
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
@@ -104,6 +280,8 @@ jobs:
 
   desktop-unit:
     name: desktop-unit
+    needs: changes
+    if: ${{ needs.changes.outputs.desktop == 'true' }} # MUST STAY IN SYNC with ci-required's DESKTOP_REQUIRED
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -112,7 +290,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version-file: ".nvmrc"
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
 
@@ -122,6 +300,8 @@ jobs:
 
       - name: Dependency advisories
         working-directory: apps/desktop
+        # See "Dependency-advisory policy" at the top of this file: this step
+        # can fail on advisories unrelated to the current diff.
         run: npm audit --omit=dev --audit-level=high
 
       - name: Typecheck
@@ -138,11 +318,18 @@ jobs:
 
       - name: Unit tests
         working-directory: apps/desktop
-        run: npm test
+        # Contract fixtures already ran above as an explicit gate.
+        run: >
+          npm test --
+          --exclude src/api.contract.test.ts
+          --exclude src/runtime-contract.test.ts
+          --exclude src/api.auth.test.ts
 
 
   desktop-e2e:
     name: desktop-e2e
+    needs: changes
+    if: ${{ needs.changes.outputs.desktop == 'true' }} # MUST STAY IN SYNC with ci-required's DESKTOP_REQUIRED
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -151,7 +338,7 @@ jobs:
 
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22
+          node-version-file: ".nvmrc"
           cache: npm
           cache-dependency-path: apps/desktop/package-lock.json
 
@@ -170,6 +357,8 @@ jobs:
 
   python-advisories:
     name: python-advisories
+    needs: changes
+    if: ${{ needs.changes.outputs.python_advisories == 'true' }} # MUST STAY IN SYNC with ci-required's PYTHON_ADVISORIES_REQUIRED
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -178,7 +367,7 @@ jobs:
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.12"
+          python-version-file: ".python-version"
 
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
@@ -189,28 +378,51 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+
           uv sync --locked --extra messaging --extra dev --extra bedrock
           uv pip check --python .venv/bin/python
 
       - name: Dependency advisories
+        # See "Dependency-advisory policy" at the top of this file: this step
+        # can fail on advisories unrelated to the current diff.
         run: uv run --locked pip-audit --skip-editable
 
 
   rust-advisories:
     name: rust-advisories
+    needs: changes
+    # MUST STAY IN SYNC with ci-required's RUST_ADVISORIES_REQUIRED, which
+    # computes: rust_advisories OR rust (rust workspace changes always pull
+    # in an advisories re-check, same as here).
+    if: >-
+      ${{
+        needs.changes.outputs.rust == 'true' ||
+        needs.changes.outputs.rust_advisories == 'true'
+      }}
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Read Rust toolchain channel
+        id: rust-toolchain
+        shell: bash
+        run: |
+          channel=$(grep '^channel' rust-toolchain.toml | sed 's/.*"\(.*\)"/\1/')
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable snapshot
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
 
       - name: Install cargo-deny
         run: cargo install cargo-deny --version 0.20.2 --locked
 
       - name: Advisories — Tauri app
         working-directory: apps/desktop/src-tauri
+        # See "Dependency-advisory policy" at the top of this file: this step
+        # can fail on advisories unrelated to the current diff.
         run: >
           cargo deny
           --config "$GITHUB_WORKSPACE/deny.toml"
@@ -233,6 +445,11 @@ jobs:
 
   static:
     name: static
+    needs: changes
+    # tests/* changes intentionally select static because Ruff scans tests.
+    # Pyright currently does not scan tests, so its result may be unchanged
+    # for a tests-only change.
+    if: ${{ needs.changes.outputs.python == 'true' }} # MUST STAY IN SYNC with ci-required's PYTHON_REQUIRED
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -241,7 +458,7 @@ jobs:
 
       - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
         with:
-          python-version: "3.12"
+          python-version-file: ".python-version"
 
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
         with:
@@ -272,6 +489,9 @@ jobs:
 
       # Existing lint debt is tolerated, but the number of findings may not increase.
       # Baselines should normally only move downward as debt is repaired.
+      # Any upward revision of RUFF_BASELINE / PYRIGHT_BASELINE below must be
+      # explained in the PR description (why the debt increased, and the
+      # follow-up plan to pay it down).
 
       - name: Ruff full scan — baseline gate
         env:
@@ -341,11 +561,15 @@ jobs:
 
           summary = report.get("summary")
           if not isinstance(summary, dict):
-              raise SystemExit("invalid Pyright JSON report: summary missing")
+              raise SystemExit(
+                  "invalid Pyright JSON report: summary missing"
+              )
 
           count = summary.get("errorCount")
           if not isinstance(count, int):
-              raise SystemExit("invalid Pyright JSON report: errorCount missing")
+              raise SystemExit(
+                  "invalid Pyright JSON report: errorCount missing"
+              )
 
           print(f"pyright errors: {count} (baseline {baseline})")
 
@@ -359,11 +583,14 @@ jobs:
 
   rust:
     name: rust (${{ matrix.workspace }})
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' }} # MUST STAY IN SYNC with ci-required's RUST_REQUIRED
     runs-on: ubuntu-latest
     timeout-minutes: 45
 
     strategy:
       fail-fast: false
+
       matrix:
         include:
           - workspace: apps/desktop/src-tauri
@@ -381,8 +608,16 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
+      - name: Read Rust toolchain channel
+        id: rust-toolchain
+        shell: bash
+        run: |
+          channel=$(grep '^channel' rust-toolchain.toml | sed 's/.*"\(.*\)"/\1/')
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
       - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable snapshot
         with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
           components: rustfmt, clippy
 
       - name: Install Tauri Linux system dependencies
@@ -530,10 +765,16 @@ jobs:
 
     # Stable single gate for the main-branch Ruleset.
     #
-    # The Ruleset should continue requiring ONLY this job. A failure, cancellation,
-    # or unexpected skip in any real gate below makes ci-required fail.
+    # Required jobs must succeed.
+    # Jobs that were intentionally excluded by the change selector may be skipped.
+    # Unexpected skip/failure/cancellation of a required job blocks the gate.
+    #
+    # MUST STAY IN SYNC: the `required = {...}` map and the RUST_ADVISORIES
+    # derivation below must match each job's own `if:` condition above.
+    # Search other jobs for "MUST STAY IN SYNC" when editing either side.
 
     needs:
+      - changes
       - pytest
       - pytest-windows
       - desktop-unit
@@ -548,6 +789,17 @@ jobs:
       - name: Evaluate required checks
         env:
           NEEDS_JSON: ${{ toJson(needs) }}
+
+          PYTHON_REQUIRED: ${{ needs.changes.outputs.python }}
+          DESKTOP_REQUIRED: ${{ needs.changes.outputs.desktop }}
+          RUST_REQUIRED: ${{ needs.changes.outputs.rust }}
+
+          PYTHON_ADVISORIES_REQUIRED: >-
+            ${{ needs.changes.outputs.python_advisories }}
+
+          RUST_ADVISORIES_REQUIRED: >-
+            ${{ needs.changes.outputs.rust_advisories }}
+
         shell: bash
         run: |
           set -euo pipefail
@@ -559,16 +811,55 @@ jobs:
 
           results = json.loads(os.environ["NEEDS_JSON"])
 
-          failures = {
-              name: details["result"]
-              for name, details in results.items()
-              if details["result"] != "success"
+          python_required = os.environ["PYTHON_REQUIRED"] == "true"
+          desktop_required = os.environ["DESKTOP_REQUIRED"] == "true"
+          rust_required = os.environ["RUST_REQUIRED"] == "true"
+
+          python_advisories_required = (
+              os.environ["PYTHON_ADVISORIES_REQUIRED"] == "true"
+          )
+
+          # Mirrors rust-advisories' own `if:` condition exactly:
+          # rust workspace changes always pull in an advisories re-check too.
+          rust_advisories_required = (
+              os.environ["RUST_ADVISORIES_REQUIRED"] == "true"
+              or rust_required
+          )
+
+          required = {
+              "changes": True,
+              "layout-check": True,
+
+              "pytest": python_required,
+              "pytest-windows": python_required,
+              "static": python_required,
+
+              "desktop-unit": desktop_required,
+              "desktop-e2e": desktop_required,
+
+              "python-advisories": python_advisories_required,
+
+              "rust": rust_required,
+              "rust-advisories": rust_advisories_required,
           }
+
+          failures = {}
+
+          for name, expected in required.items():
+              result = results[name]["result"]
+
+              if expected:
+                  if result != "success":
+                      failures[name] = result
+              elif result not in {"success", "skipped"}:
+                  failures[name] = result
 
           if failures:
               print("ci-required blocked by checks that did not succeed:")
+
               for name, result in failures.items():
                   print(f"  {name}: {result}")
+
               sys.exit(1)
 
           print("all required checks passed")
