@@ -1,27 +1,21 @@
-"""Legacy-path consistency gate — blocks references to directories that were migrated
-during the repository restructure (see docs/architecture/repository-layout.md).
+"""Legacy-path consistency gate.
 
-The layout is frozen at the current structure; old hardcoded paths that survive in
-workflows, build scripts, configs, or tests reappear as release-time FileNotFoundErrors
-(owner-hit 2026-08-31: release.yml still read the server version file at its OLD
-packaging-root location after the file had moved to packaging/server/). This gate makes
-any return of a deprecated path a CI failure instead of a release-night surprise.
+用于阻止仓库重新引用已经迁移或废弃的文件路径。
 
-Scope and exemptions, deliberately:
-  - Scans every GIT-TRACKED file (git ls-files), so .gitignore'd build output can't
-    noise the result — and so this gate's own pattern table and its pytest wrapper are
-    scanned too. Neither may contain a matchable literal legacy path: the patterns are
-    regexes that don't match their own source, and tests must build their fixtures at
-    runtime (keep it that way, or the gate flags itself).
-  - Exempts HISTORY files only: CHANGELOG.md, UPSTREAM.md, and docs/governance/** —
-    migration records and attribution must keep describing the old paths verbatim.
-    Everything else (including docs and tests) must use current paths.
-  - Only precise file-level patterns are listed here (never bare directory names like
-    "surfaces" or "src" — those are ordinary English words and current subpaths such as
-    apps/desktop/src; the forbidden TOP-LEVEL roots stay covered by the directory-
-    existence check in the CI layout-check job).
+当前代码、Workflow、配置、测试以及 docs 下的有效文档都必须使用当前规范路径。
+历史路径只允许出现在 CHANGELOG.md 中；其他历史信息通过 Git 和 Pull Request 追溯。
 
-Run:  python scripts/check_legacy_paths.py     (exit 1 on any hit; used by CI)
+检查范围：
+  - 扫描所有 Git tracked files（git ls-files）。
+  - 忽略构建输出、依赖目录和其他非源码目录。
+  - 使用精确的文件级规则检查废弃路径。
+  - 顶层非法目录仍由 CI 中的 layout-check 负责检查。
+
+运行：
+
+    python scripts/check_legacy_paths.py
+
+发现废弃路径时返回 exit code 1。
 """
 
 from __future__ import annotations
@@ -31,70 +25,117 @@ import subprocess
 import sys
 from pathlib import Path
 
+
 REPO = Path(__file__).resolve().parent.parent
 
-# Legacy path → the current canonical path. Matched with [\\/] so Windows-style and
-# POSIX-style leftovers are both caught; anchored to "packaging[/\\]" (or the exact
-# shown prefix) so the canonical paths themselves never match.
+
+# 废弃路径 -> 当前规范路径。
+#
+# 使用 [\\/] 同时匹配 Windows 和 POSIX 路径形式。
+# 规则应保持精确，不使用单独的目录名等宽泛模式，
+# 避免误伤 apps/desktop/src 等当前合法路径。
 FORBIDDEN: dict[str, str] = {
-    r"packaging[/\\]delta-server-version\.txt": "packaging/server/delta-server-version.txt",
+    r"packaging[/\\]delta-server-version\.txt": (
+        "packaging/server/delta-server-version.txt"
+    ),
     r"packaging[/\\]delta-server\.spec": "packaging/server/delta-server.spec",
     r"packaging[/\\]server_entry\.py": "packaging/server/server_entry.py",
-    r"packaging[/\\]build_portable\.ps1": "packaging/portable/build_portable.ps1",
-    r"packaging[/\\]scan_portable_paths\.ps1": "packaging/portable/scan_portable_paths.ps1",
+    r"packaging[/\\]build_portable\.ps1": (
+        "packaging/portable/build_portable.ps1"
+    ),
+    r"packaging[/\\]scan_portable_paths\.ps1": (
+        "packaging/portable/scan_portable_paths.ps1"
+    ),
 }
 
-# Files where history/attribution legitimately records old paths (keep verbatim).
-HISTORY_EXEMPT = ("CHANGELOG.md", "UPSTREAM.md")
-HISTORY_EXEMPT_DIRS = ("docs/governance",)
 
-# Directories never worth scanning (build output / vendored trees).
-_SKIP_PARTS = {".git", "node_modules", "target", "__pycache__", ".venv", "dist", "releases"}
+# CHANGELOG 是唯一允许保留历史路径的当前文件。
+#
+# governance、architecture、operations、UPSTREAM 等均属于当前有效文档，
+# 不得继续引用已经废弃的路径。
+HISTORY_EXEMPT = ("CHANGELOG.md",)
+
+
+# 不需要扫描的构建输出和依赖目录。
+_SKIP_PARTS = {
+    ".git",
+    "node_modules",
+    "target",
+    "__pycache__",
+    ".venv",
+    "dist",
+    "releases",
+}
 
 
 def _tracked_files() -> list[Path]:
+    """返回仓库中所有 Git tracked files。"""
     out = subprocess.run(
-        ["git", "ls-files"], cwd=REPO, capture_output=True, text=True, check=True
+        ["git", "ls-files"],
+        cwd=REPO,
+        capture_output=True,
+        text=True,
+        check=True,
     ).stdout
+
     return [REPO / line for line in out.splitlines() if line]
 
 
 def _is_exempt(path: Path) -> bool:
+    """判断文件是否属于允许保留历史路径的例外。"""
     rel = path.relative_to(REPO).as_posix()
-    return rel in HISTORY_EXEMPT or rel.startswith(HISTORY_EXEMPT_DIRS)
+    return rel in HISTORY_EXEMPT
 
 
 def violations_for(text: str, rel_path: str) -> list[str]:
-    """Deprecated-path violations in one file's text (`rel_path` is repo-relative and
-    only used for reporting)."""
+    """返回单个文件中的废弃路径引用。"""
     return [
-        f"{rel_path}:{text.count(chr(10), 0, match.start()) + 1}: deprecated path "
-        f"-> use {canonical}"
+        (
+            f"{rel_path}:{text.count(chr(10), 0, match.start()) + 1}: "
+            f"deprecated path -> use {canonical}"
+        )
         for pattern, canonical in FORBIDDEN.items()
         for match in re.finditer(pattern, text)
     ]
 
 
 def find_violations() -> list[str]:
+    """扫描仓库并返回所有废弃路径引用。"""
     violations: list[str] = []
+
     for path in _tracked_files():
         if _is_exempt(path) or _SKIP_PARTS & set(path.parts):
             continue
+
         try:
             text = path.read_text(encoding="utf-8")
         except (OSError, UnicodeDecodeError):
-            continue  # binary asset
-        violations.extend(violations_for(text, path.relative_to(REPO).as_posix()))
+            continue
+
+        violations.extend(
+            violations_for(
+                text,
+                path.relative_to(REPO).as_posix(),
+            )
+        )
+
     return violations
 
 
 def main() -> int:
     violations = find_violations()
+
     if violations:
-        print("legacy-path gate FAILED — migrated paths referenced outside history files:")
+        print(
+            "legacy-path gate FAILED — "
+            "deprecated paths referenced outside CHANGELOG.md:"
+        )
+
         for violation in violations:
             print(f"  {violation}")
+
         return 1
+
     print("legacy-path gate clean: no deprecated path references")
     return 0
 

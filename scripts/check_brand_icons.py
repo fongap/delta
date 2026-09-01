@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regenerate and verify Delta's generated icon assets from the brand source.
+"""Check Delta's generated icon assets against the brand source.
 
 The single source of truth for the Delta brand is:
 
@@ -42,7 +42,7 @@ import os
 import sys
 from dataclasses import dataclass, field
 
-# Repository root is two levels above scripts/: <root>/scripts/generate_icons.py
+# Repository root is two levels above scripts/: <root>/scripts/check_brand_icons.py
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
 # The single source of truth. Everything below traces back to this file.
@@ -181,7 +181,7 @@ def run_checks(verify_stale: bool) -> bool:
     print(f"Checked {total} generated artifacts: "
           f"{total - missing - stale} ok, {missing} missing, {stale} stale.")
     if not all_ok:
-        print("Run `python scripts/generate_icons.py --regenerate` for the documented "
+        print("Run `python scripts/check_brand_icons.py --regenerate` for the documented "
               "toolchain commands to rebuild the failing artifacts from the source.")
     return all_ok
 
