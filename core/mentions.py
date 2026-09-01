@@ -18,7 +18,6 @@ from __future__ import annotations
 import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Optional
 
 from packages.jsonstate import load_json_state, save_json_state
 

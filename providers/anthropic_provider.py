@@ -1,8 +1,6 @@
 """Anthropic provider — native Claude Messages API.
 
-Wire Protocol: `anthropic` (Messages API). Platform Transport: `direct` (HTTPS) by
-default; also reused as a wire-protocol client by the `bedrock` and `vertex` platform
-transports (via `AnthropicBedrock` / `AnthropicVertex` SDK clients).
+Protocol: `anthropic` (Messages API over HTTPS).
 
 The runtime's canonical message format is OpenAI-shaped (that is what the engine builds and
 persists), so this module is mostly a pair of pure converters: OpenAI-style messages → Anthropic
@@ -25,7 +23,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Optional
+from typing import Any
 
 from providers.base import (
     AssistantTurn,
@@ -523,7 +521,11 @@ class AnthropicProvider(ProviderClient):
         return AssistantTurn(
             text="".join(text_parts) or None,
             tool_calls=tool_calls,
-            finish_reason=_STOP_REASON_MAP.get(stop_reason, stop_reason),
+            finish_reason=(
+                _STOP_REASON_MAP.get(stop_reason, stop_reason)
+                if isinstance(stop_reason, str)
+                else None
+            ),
             raw=response,
             reasoning=_reasoning_text(thinking_blocks),
             extras=_thinking_extras(thinking_blocks),
@@ -645,7 +647,11 @@ class AnthropicProvider(ProviderClient):
             turn=AssistantTurn(
                 text="".join(text_parts) or None,
                 tool_calls=tool_calls,
-                finish_reason=_STOP_REASON_MAP.get(stop_reason, stop_reason),
+                finish_reason=(
+                    _STOP_REASON_MAP.get(stop_reason, stop_reason)
+                    if isinstance(stop_reason, str)
+                    else None
+                ),
                 reasoning=_reasoning_text(thinking_blocks),
                 extras=_thinking_extras(thinking_blocks),
                 usage=usage,

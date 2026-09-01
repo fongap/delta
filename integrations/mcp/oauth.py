@@ -22,10 +22,15 @@ import asyncio
 import logging
 import os
 import secrets
-from typing import Any, Optional
+from typing import Any
 
 from mcp.client.auth import OAuthClientProvider, TokenStorage
-from mcp.shared.auth import OAuthClientInformationFull, OAuthClientMetadata, OAuthToken
+from mcp.shared.auth import (
+    AuthorizationCodeResult,
+    OAuthClientInformationFull,
+    OAuthClientMetadata,
+    OAuthToken,
+)
 
 from packages.secrets import SecretStore
 
@@ -84,8 +89,12 @@ class SecretStoreTokenStorage(TokenStorage):
         except Exception:
             return None
 
-    async def set_client_info(self, info: OAuthClientInformationFull) -> None:
-        self._merge({"client_info": info.model_dump(mode="json", exclude_none=True)})
+    async def set_client_info(
+        self, client_info: OAuthClientInformationFull
+    ) -> None:
+        self._merge(
+            {"client_info": client_info.model_dump(mode="json", exclude_none=True)}
+        )
 
 
 class InteractiveAuthRequired(RuntimeError):
@@ -176,20 +185,21 @@ async def _refuse_browser(url: str) -> None:
     )
 
 
-async def _refuse_callback() -> tuple[str, str | None]:
+async def _refuse_callback() -> AuthorizationCodeResult:
     raise InteractiveAuthRequired(
         "sign-in required — reconnect this server from its page"
     )
 
 
-async def _wait_for_callback() -> tuple[str, str | None]:
+async def _wait_for_callback() -> AuthorizationCodeResult:
     global _pending, _expected_state
     if _pending is not None and not _pending.done():
         _pending.cancel()  # a stale flow lost its browser tab; the new one wins
     pending = asyncio.get_running_loop().create_future()
     _pending = pending
     try:
-        return await asyncio.wait_for(pending, timeout=FLOW_TIMEOUT_SECONDS)
+        code, state = await asyncio.wait_for(pending, timeout=FLOW_TIMEOUT_SECONDS)
+        return AuthorizationCodeResult(code=code, state=state)
     except asyncio.TimeoutError:
         raise RuntimeError(
             "sign-in timed out — the browser window was not completed in "

@@ -158,7 +158,7 @@ jobs:
       - name: Set up sidecar build environment
         shell: pwsh
         run: |
-          uv sync --locked --extra bedrock --extra build
+          uv sync --locked --extra build
           uv pip check --python .venv\Scripts\python.exe
 
           # `delta` is the distribution/project name, not a Python package.

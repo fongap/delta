@@ -121,20 +121,18 @@ def _no_ts_keys(value) -> bool:
 
 
 def test_provider_adapters_drop_ts():
-    """Defense in depth: the native Anthropic/Gemini payload builders rebuild messages
+    """Defense in depth: the Anthropic payload builder rebuilds messages
     from role/content, so a `ts` that somehow slipped past the engine strip still never
     reaches the wire."""
     from providers.anthropic_provider import convert_messages as to_anthropic
-    from providers.gemini_provider import convert_messages as to_gemini
 
     history = [
         {"role": "system", "content": "be brief"},
         {"role": "user", "content": "hi", "ts": 1700000000.0},
         {"role": "assistant", "content": "hello", "ts": 1700000001.0},
     ]
-    for convert in (to_anthropic, to_gemini):
-        _system, payload = convert(history)
-        assert _no_ts_keys(payload)
+    _system, payload = to_anthropic(history)
+    assert _no_ts_keys(payload)
 
 
 def test_messages_endpoint_returns_ts(tmp_path):

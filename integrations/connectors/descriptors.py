@@ -9,8 +9,8 @@ data model — only the connect action differs.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Callable, Optional
+from dataclasses import dataclass
+from typing import Callable
 
 
 @dataclass

@@ -13,16 +13,18 @@ one agent round-trip instead of several). Plain-string options and the singular 
 stay valid: old sessions and simple asks render exactly as before.
 """
 
-# pyright: reportFunctionMemberAccess=false
 # (tool-builder module: attaches aisuite's dynamic metadata attributes
 # (__aisuite_tool_metadata__ / __delta_schema__) to plain functions —
 # the framework's plugin protocol, not a type error.)
 
 from __future__ import annotations
 
+from typing import Any, Callable
+
 import json
 
 from aisuite.agents import ToolMetadata, tool
+from integrations.tools.metadata import attach_tool_metadata
 
 # How many questions one grouped call may carry (stepper chips get unreadable past this).
 MAX_GROUPED_QUESTIONS = 4
@@ -124,7 +126,7 @@ _ASK_SCHEMA = {
 }
 
 
-def ask_user_tool() -> object:
+def ask_user_tool() -> Callable[..., dict[str, Any]]:
     def ask_user(
         question: str = "",
         options: list | None = None,
@@ -161,7 +163,7 @@ def ask_user_tool() -> object:
             ),
         ),
     )
-    wrapped.__delta_schema__ = _ASK_SCHEMA
+    attach_tool_metadata(wrapped, schema=_ASK_SCHEMA)
     return wrapped
 
 

@@ -142,12 +142,20 @@ def merge(learned: dict[str, Any], explicit: EndpointCaps | None) -> EndpointCap
     silently re-enable a param the server already rejected once."""
     caps = EndpointCaps()
     if learned:
-        merged = {**caps.as_dict(), **{
-            k: v for k, v in learned.items() if k in _KNOWN
-        }}
-        caps = EndpointCaps(**{
-            k: (bool(v) if k in DEFAULTS else v) for k, v in merged.items()
-        })
+        merged = {
+            **caps.as_dict(),
+            **{k: v for k, v in learned.items() if k in _KNOWN},
+        }
+        caps = EndpointCaps(
+            stream_options=bool(merged["stream_options"]),
+            reasoning_content=bool(merged["reasoning_content"]),
+            parallel_tool_calls=bool(merged["parallel_tool_calls"]),
+            max_context=(
+                int(merged["max_context"])
+                if isinstance(merged["max_context"], int)
+                else None
+            ),
+        )
     if explicit is None:
         return caps
     overrides = {k: getattr(explicit, k) for k in explicit.declared}

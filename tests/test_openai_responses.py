@@ -1,7 +1,6 @@
 """OpenAI Responses provider — message/tool conversion, complete(), stream(), sidecar
 replay, param-fix retries. SDK-free: the fake client mimics the OpenAI SDK's
-`responses.create` surface with dicts/SimpleNamespace objects, the same pattern the
-Gemini/Anthropic provider tests use."""
+`responses.create` surface with dicts/SimpleNamespace objects."""
 
 from __future__ import annotations
 
@@ -202,7 +201,7 @@ def test_convert_ignores_foreign_sidecars():
             {
                 "role": "assistant",
                 "content": "hi",
-                "_gemini": {"text_sig": "abc"},
+                "_foreign": {"signature": "abc"},
             },
         ]
     )
@@ -577,8 +576,7 @@ def test_registry_routes_blank_endpoint_to_responses():
         "openai", {"base_url": "https://my.azure.example/openai/v1"}, None
     )
     assert isinstance(custom, OpenAIProvider)
-    # …and so do Ollama and every compat vendor (their own descriptors).
-    assert isinstance(build_provider_client("ollama", {}, None), OpenAIProvider)
+    # …and so does every OpenAI-compatible vendor preset.
     assert isinstance(
         build_provider_client("deepseek", {"api_key": "sk-x"}, None), OpenAIProvider
     )

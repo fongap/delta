@@ -15,7 +15,6 @@ app teardown) observe an empty scope — their recorders decide where such event
 from __future__ import annotations
 
 from contextvars import ContextVar, Token
-from typing import Optional
 
 Scope = tuple[str, str]  # (run_id, session_id)
 

@@ -1,25 +1,19 @@
 """Provider-agnostic model access layer.
 
 The runtime never imports a provider SDK directly — it talks to a `ProviderClient`.
-Implementations are selected by the registry/router based on the three-layer provider
-model (see docs/architecture/adr/ADR-003-provider-protocol-model.md):
+Implementations are selected by the registry/router based on the profile protocol
+(see docs/architecture/adr/ADR-003-provider-protocol-model.md):
 
   - Wire Protocol `openai`    → `OpenAIResponsesProvider` (native /v1/responses)
                                or `OpenAIProvider` (Chat Completions / compat world)
   - Wire Protocol `anthropic`  → `AnthropicProvider` (Messages API)
-  - Wire Protocol `gemini`     → `GeminiProvider` (Google GenAI generateContent)
-
-Platform transports `bedrock` and `vertex` are NOT separate wire protocols — they
-are cloud access channels that reuse the native provider classes over platform-
-specific SDK clients (AnthropicBedrock, AnthropicVertex, genai.Client(vertexai=True),
-or the MaaS OpenAI-compatible endpoint).
 """
 
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 
 @dataclass
@@ -37,8 +31,7 @@ class TokenUsage:
 
     `input` counts only fresh (uncached) prompt tokens; cached prompt tokens are
     split into `cache_read`/`cache_write`. Providers that don't report a cache
-    split (Ollama, most compat vendors) leave the cache fields at 0. `output`
-    includes thinking tokens where the vendor bills them as output (Gemini).
+    split leave the cache fields at 0. `output` includes billed thinking tokens.
     """
 
     input: int = 0
@@ -68,12 +61,12 @@ class AssistantTurn:
     tool_calls: list[ToolCall] = field(default_factory=list)
     finish_reason: str | None = None
     raw: Any = field(default=None, repr=False, compare=False)
-    # The model's thinking text (DeepSeek reasoning_content, Gemini thought summaries, …).
+    # The model's thinking text (for example DeepSeek reasoning_content).
     # Display-only: persisted on the assistant message as the `reasoning` sidecar and shown
     # in the GUI, but stripped before every provider call — never replayed as context.
     reasoning: str | None = None
     # Provider-private sidecars to persist on the canonical assistant message
-    # (underscore-prefixed keys, e.g. `_gemini` thought signatures). Contract: the
+    # (underscore-prefixed keys). Contract: the
     # owning provider consumes its own key when converting history; every other
     # provider must strip or ignore foreign underscore keys before its wire call.
     extras: dict[str, Any] = field(default_factory=dict)
@@ -92,7 +85,7 @@ class ModelCapabilities:
 
     tools: bool = True
     vision: bool = False
-    # Native PDF ingestion (OpenAI `file` part / Anthropic document / Gemini inline_data).
+    # Native PDF ingestion (OpenAI `file` part / Anthropic document).
     # Models without it get a local fallback: text extraction or page images (pdf_support.py).
     pdf: bool = False
     parallel_tool_calls: bool = True

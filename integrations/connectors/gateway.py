@@ -11,7 +11,7 @@ from __future__ import annotations
 import logging
 from asyncio import to_thread
 from collections import OrderedDict
-from typing import Callable, Optional
+from typing import Callable
 from urllib.parse import urlparse
 
 from packages.secrets import SecretStore

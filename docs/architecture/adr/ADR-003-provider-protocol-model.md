@@ -1,57 +1,35 @@
-# ADR-003 Provider Protocol & Transport Model
+# ADR-003：Provider 协议模型
 
-**Status:** Active
+## 状态
 
-## Context
+已采纳。
 
-Delta 支持多种 AI Provider。用户理解的单位是 **Vendor / Preset**（OpenAI、Anthropic、Gemini、Ollama、DeepSeek、OpenRouter、MiniMax……）。代码内部，Provider 客户端通过 **Wire Protocol** 与服务商通信（`openai`、`anthropic`、`gemini`）。云平台托管模型需要特定的 **Platform Transport**（`direct`、`bedrock`、`vertex`）来访问。
+## 决策
 
-此前这三层概念在 `providers/registry.py` 中混在一起：
-- `PROFILE_PROTOCOL_*` 常量暴露 first-class wire protocols。
-- `PROTOCOL_*` 常量暴露所有可构建协议，包含 transport-specific 的（`bedrock`、`vertex`）。
-- Vendor presets 由 profile 名称和 endpoint 默认值隐式定义。
+Delta 的模型运行时只支持两种协议：
 
-这导致 `BedrockProvider` 和 `VertexProvider` 看起来与 `OpenAIProvider`、`AnthropicProvider` 平级，但实际上它们是 platform transport——内部复用 native provider 类（`AnthropicProvider`、`GeminiProvider`、`OpenAIProvider`）作为 wire protocol 客户端，只是通过平台特定 SDK client（`AnthropicBedrock`、`AnthropicVertex`、`genai.Client(vertexai=True)`、MaaS endpoint）访问。
+- `openai`：OpenAI Responses 或 Chat Completions；二者是协议内部的 `api_mode`，不构成新的 Provider 协议。
+- `anthropic`：Anthropic Messages API。
 
-## Decision
+自定义服务商由以下信息定义：
 
-明确三层概念，并在代码注释中统一术语（行为不变，仅文档层面收敛）：
+- 服务商名称（alias）
+- 协议（`openai` 或 `anthropic`）
+- API endpoint
+- API key
+- 用户选择的模型列表
 
-### 1. Vendor / Preset
-用户可见的服务商名称。决定默认 endpoint、默认 model、UI 字段、API Key 帮助文本。
-- OpenAI、Anthropic、Gemini、Ollama、DeepSeek、OpenRouter、MiniMax……
-- Profile 名称是 preset；**不**选择独立的 client 实现。
+alias 是配置、路由前缀和凭据隔离边界，不决定客户端实现。`ProviderRouter` 从 profile 的 `protocol` 选择 `OpenAIProvider` / `OpenAIResponsesProvider` 或 `AnthropicProvider`；服务商品牌只可提供 endpoint、推荐模型和 API key 帮助等表单默认值。
 
-### 2. Wire Protocol
-Provider 客户端实际使用的 HTTP API 契约。决定请求/响应 payload 格式。
-- `openai` — Chat Completions + `/v1/responses`（`OpenAIProvider` / `OpenAIResponsesProvider`）
-- `anthropic` — Messages API（`AnthropicProvider`）
-- `gemini` — Google GenAI generateContent（`GeminiProvider`）
+DeepSeek、OpenRouter、NVIDIA、MiniMax、GLM / Z.AI、Moonshot 等兼容服务使用 `openai`。本地服务若暴露 OpenAI-compatible endpoint，也使用 `openai`，并由用户明确填写包含 `/v1` 的地址。Anthropic-compatible 网关使用 `anthropic`。
 
-只有这三个 first-class wire protocol（`PROFILE_PROTOCOL_*`）。所有 vendor preset 最终映射到其中之一。
+## 不支持的边界
 
-### 3. Platform Transport
-访问云平台托管模型后端的通道。处理认证、endpoint 解析和平台特定 SDK 使用。
-- `direct` — 默认 HTTPS 到 vendor 公共 API（所有非云平台 provider）
-- `bedrock` — AWS（boto3 / `AnthropicBedrock` / Converse）
-- `vertex` — GCP（`genai.Client(vertexai=True)` / `AnthropicVertex` / MaaS endpoint）
+Delta 不提供第三种协议、平台 transport abstraction、占位 Provider 或未来兼容层。未实现 OpenAI-compatible 或 Anthropic Messages API 的平台，需要先由外部网关转换为受支持协议，才能接入 Delta。
 
-**Bedrock 和 Vertex 不是 wire protocol**，是 platform transport。一个 transport 可承载多个 wire protocol（例如 Bedrock 为 Claude 提供 `anthropic` wire protocol，为其他模型提供 Converse wire format）。
+## 结果
 
-## Implementation
-
-已在以下文件中更新 docstring，标注三层归属（仅文档层面，行为不变）：
-- `providers/registry.py` — 顶部注释说明三层模型与各常量归属
-- `providers/base.py` — `ProviderClient` docstring 按三层模型描述实现
-- `providers/openai_provider.py` — Wire Protocol: `openai` (Chat Completions); Transport: `direct`
-- `providers/openai_responses.py` — Wire Protocol: `openai` (Responses API); Transport: `direct`
-- `providers/anthropic_provider.py` — Wire Protocol: `anthropic`; Transport: `direct`（也被 `bedrock`/`vertex` transport 复用）
-- `providers/gemini_provider.py` — Wire Protocol: `gemini`; Transport: `direct`（也被 `vertex` transport 复用）
-- `providers/bedrock_provider.py` — Platform Transport: `bedrock`（按 model family 承载 `anthropic` 或 Converse wire protocol）
-- `providers/vertex_provider.py` — Platform Transport: `vertex`（按 model family 承载 `gemini`、`anthropic` 或 `openai` wire protocol）
-
-## Consequences
-
-- 代码命名、registry、UI、API contract 和 ADR 对三层使用一致术语。
-- 为后续 `registry.py` 职责拆分（将 transport-specific 逻辑从 protocol-specific builder 中分离）提供文档基础。
-- 不改变任何运行时行为、公共 API 或 provider 构建逻辑。
+- `providers/registry.py` 只暴露 `PROFILE_PROTOCOL_OPENAI` 与 `PROFILE_PROTOCOL_ANTHROPIC`。
+- 自定义服务商的协议下拉框只显示 OpenAI 与 Anthropic。
+- Provider 身份不会产生平行 builder、router 分支或 SDK 依赖。
+- endpoint profile 独立保存凭据，避免把官方服务的环境变量凭据发送到自定义地址。

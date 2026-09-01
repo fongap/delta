@@ -23,10 +23,10 @@ CHANGELOG 只记录用户可感知的变化和重要工程能力变化。
 ### 变更 (Changed)
 
 - **Provider 路由与凭据模型**
-  - Provider 从厂商名称绑定逐步收敛为按实际协议和 endpoint/profile 路由。
+  - Provider 从厂商名称绑定收敛为仅按 OpenAI-compatible 或 Anthropic Messages 协议和 endpoint/profile 路由。
   - OpenAI 与 Anthropic 支持显式 API 地址和对应凭据。
   - 自定义 endpoint 不再继承无关官方服务的 API Key，避免不同服务之间的凭据串用。
-  - Gemini、Ollama 等兼容服务按实际兼容协议进入统一 Provider 路由。
+  - 本地模型服务、Gemini-compatible 网关等通过自定义 OpenAI-compatible endpoint 接入，不再拥有独立运行时分支。
 
 - **STT 网络与依赖栈**
   - 升级 `ureq`、`sha2`、`cpal` 等 Rust 依赖并完成 API 兼容适配。
@@ -42,6 +42,13 @@ CHANGELOG 只记录用户可感知的变化和重要工程能力变化。
   - `CONTRIBUTING.md`、`UPSTREAM.md`、架构、治理和运维文档与当前仓库结构重新对齐。
   - 收紧历史路径检查，旧路径仅允许存在于必要历史记录。
   - 品牌资源检查脚本和开发环境说明按当前目录职责重新整理。
+
+
+### 移除 (Removed)
+
+- **不支持的 Provider 实现**
+  - 移除原生 Gemini、AWS Bedrock、Google Vertex 与 Ollama 独立 Provider/协议，以及对应 SDK 依赖、配置和模型目录。
+  - Pyright 改为零错误直接门禁，不再使用 errorCount baseline。
 
 
 ### 修复 (Fixed)

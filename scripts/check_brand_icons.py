@@ -40,7 +40,7 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 # Repository root is two levels above scripts/: <root>/scripts/check_brand_icons.py
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))

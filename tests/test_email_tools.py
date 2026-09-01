@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from email.message import EmailMessage
 
-import pytest
 
 from integrations.connectors.email_tools import (
     build_search_criteria,

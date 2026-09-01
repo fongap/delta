@@ -12,7 +12,7 @@ from __future__ import annotations
 import tomllib  # stdlib since 3.11 (the requires-python floor)
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from packages.secrets import state_dir
 

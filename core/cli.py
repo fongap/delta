@@ -6,7 +6,6 @@ import argparse
 import os
 import uuid
 from pathlib import Path
-from typing import Optional
 
 from packages.config import load_config
 from core.conversations import ConversationStore

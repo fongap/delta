@@ -5,7 +5,6 @@ execution time and never enter prompts. OAuth-managed setup can later replace th
 access-token fields without changing the tool surface.
 """
 
-# pyright: reportFunctionMemberAccess=false
 # (tool-builder module: attaches aisuite's dynamic metadata attributes
 # (__aisuite_tool_metadata__ / __delta_schema__) to plain functions —
 # the framework's plugin protocol, not a type error.)

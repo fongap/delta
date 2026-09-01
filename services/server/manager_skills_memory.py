@@ -8,20 +8,21 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from core.agents import list_agents as _list_agents
-from core.memory import MemorySettingsStore, MemoryStore, Scope, SQLiteMemoryStore
+from core.memory import Scope
 from integrations.skills import (
-    SessionSkillStore,
     SkillLoader,
-    SkillStore,
     effective_skills,
 )
 from services.server.manager_support import _SCOPES
 
 
-class SkillsMemoryMixin:
+from services.server.manager_contract import ManagerHostState
+
+
+class SkillsMemoryMixin(ManagerHostState):
 
     def list_agents(self) -> list[dict[str, Any]]:
         return _list_agents()

@@ -23,7 +23,7 @@ import json
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any, Iterable, Optional
+from typing import Any, Iterable
 
 TERMINAL_EVENTS = frozenset({"run.completed", "run.failed", "run.interrupted"})
 

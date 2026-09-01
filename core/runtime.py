@@ -23,7 +23,7 @@ Human decisions enter the runtime ONLY through the callbacks bound via
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, AsyncIterator, Callable, Optional, Protocol, runtime_checkable
+from typing import Any, AsyncIterator, Callable, Protocol, runtime_checkable
 
 from core.engine import Event, TurnEngine
 from core.permissions import Mode
@@ -318,7 +318,8 @@ class TurnEngineAdapter:
     @property
     def mode(self) -> Mode:
         permissions = getattr(self._engine, "permissions", None)
-        return getattr(permissions, "mode", None)
+        mode = getattr(permissions, "mode", Mode.INTERACTIVE)
+        return mode if isinstance(mode, Mode) else Mode.INTERACTIVE
 
     @property
     def messages(self) -> list[dict[str, Any]]:

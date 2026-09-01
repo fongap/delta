@@ -61,7 +61,7 @@ updates:
   # Production dependencies intentionally remain ungrouped.
   #
   # This is important for provider SDKs and transports such as openai,
-  # anthropic, google-genai, MCP, FastAPI and websockets, which can have
+  # anthropic, MCP, FastAPI and websockets, which can have
   # independent compatibility constraints.
   - package-ecosystem: "pip"
     directory: "/"

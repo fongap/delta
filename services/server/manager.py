@@ -9,11 +9,8 @@ from __future__ import annotations
 
 import asyncio
 import json
-import os
-import re
-import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from core.audit import AuditStore
 from core.automation import Scheduler, TaskStore
@@ -70,20 +67,6 @@ from services.server.manager_skills_memory import SkillsMemoryMixin
 
 # Re-exported helpers the rest of the application layer imports from the manager
 # package (kept here for backward-compatible import paths; see tests + mixins).
-from services.server.manager_support import (
-    _SCOPES,
-    _SLACK_TS_RE,
-    _approval_body,
-    _artifact_kind,
-    _epoch,
-    _git_branch,
-    _inbound_epoch,
-    _last_assistant_text,
-    _parse_inbox_json,
-    _recent_files,
-    _redact,
-    logger,
-)
 from services.server.manager_workspace import WorkspaceTrustMixin
 
 
@@ -114,7 +97,7 @@ class SessionManager(
         )
         self.model = model
         self.mode = mode
-        self.provider = provider
+        self.provider: ProviderClient
 
         if data_dir is not None:
             base = Path(data_dir).expanduser()
@@ -145,12 +128,14 @@ class SessionManager(
         self.workspace_trust = WorkspaceTrustStore()
         self.secrets = SecretStore()
         # No explicit provider injected → route by the model's `provider:` prefix (OpenAI default,
-        # Ollama, …). Tests inject a provider directly and bypass the router. The same router is
+        # custom aliases, …). Tests inject a provider directly and bypass the router. The same router is
         # shared by every engine and the `/v1/chat/completions` proxy.
-        if self.provider is None:
+        if provider is None:
             self.provider = ProviderRouter(
                 self.secrets, default_provider="openai", on_use=self._note_provider_use
             )
+        else:
+            self.provider = provider
         self.mcp = MCPManager(secrets=self.secrets)
         # OAuth MCP servers with a sign-in in flight / their last connect error —
         # feeds list_mcp's status so the GUI can show "authorizing…" and failures.

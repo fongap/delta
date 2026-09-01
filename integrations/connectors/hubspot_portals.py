@@ -18,7 +18,7 @@ sets are; UX-DECISIONS §21). Stripped-field counts go to the audit log.
 from __future__ import annotations
 
 import re
-from typing import Any, Optional
+from typing import Any
 
 from packages.secrets import SecretStore
 

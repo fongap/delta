@@ -5,7 +5,6 @@ a file came to be the way it is before changing it. Read-only; no commit/push he
 forbids those without explicit ask, and they'd go through run_shell anyway).
 """
 
-# pyright: reportFunctionMemberAccess=false
 # (tool-builder module: attaches aisuite's dynamic metadata attributes
 # (__aisuite_tool_metadata__ / __delta_schema__) to plain functions —
 # the framework's plugin protocol, not a type error.)
@@ -14,9 +13,11 @@ from __future__ import annotations
 
 import subprocess
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import aisuite as ai
+
+from integrations.tools.metadata import attach_tool_metadata
 
 _SEP = "\x1f"
 
@@ -84,12 +85,15 @@ def git_tools(workspace: str) -> list:
 
     git_log.__name__ = "git_log"
     git_log.__doc__ = _SCHEMA["function"]["description"]
-    git_log.__aisuite_tool_metadata__ = ai.ToolMetadata(
-        name="git_log",
-        category="git",
-        risk_level="low",
-        capabilities=["git"],
-        requires_approval=False,
+    attach_tool_metadata(
+        git_log,
+        schema=_SCHEMA,
+        metadata=ai.ToolMetadata(
+            name="git_log",
+            category="git",
+            risk_level="low",
+            capabilities=["git"],
+            requires_approval=False,
+        ),
     )
-    git_log.__delta_schema__ = _SCHEMA
     return [git_log]

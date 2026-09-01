@@ -2,7 +2,6 @@
 
 import asyncio
 
-import pytest
 
 from integrations.connectors.base import MessageEvent, SessionSource
 from providers import ModelCapabilities, ProviderClient

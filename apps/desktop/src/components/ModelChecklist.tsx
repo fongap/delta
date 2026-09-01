@@ -2,23 +2,6 @@ import { useState } from "react";
 import { addModel, getSettings, removeModel, setDefaultModel } from "../api";
 import { useI18n } from "@delta/i18n/I18nContext";
 
-// Cloud-account providers dispatch by a family segment baked into the model id
-// (`bedrock:claude/…`, `vertex:openweight/…`). The add-model row shows a dropdown so
-// users pick the family instead of memorizing the prefix; curated matrix ids already
-// carry theirs. Labels are presentation — resolved at render time via
-// models.family.<value> (en fallback below); the `value` stays the machine segment.
-const MODEL_FAMILIES: Record<string, { value: string; label: string }[]> = {
-  bedrock: [
-    { value: "claude", label: "Claude family" },
-    { value: "other", label: "Other models" },
-  ],
-  vertex: [
-    { value: "gemini", label: "Gemini family" },
-    { value: "claude", label: "Claude family" },
-    { value: "openweight", label: "Open-weight" },
-  ],
-};
-
 // One provider's models as a compact list. Two ORTHOGONAL states per row:
 //   checkbox = shown in the composer's model picker (display)
 //   radio    = the model new sessions start with (default; exactly one)
@@ -51,8 +34,6 @@ export function ModelChecklist({
   const [draft, setDraft] = useState("");
   const [addOpen, setAddOpen] = useState(false);
   const [hideBlocked, setHideBlocked] = useState(false);
-  const families = MODEL_FAMILIES[provider];
-  const [family, setFamily] = useState(families?.[0]?.value || "");
 
   const provOf = (id: string) => {
     const i = id.indexOf(":");
@@ -92,10 +73,6 @@ export function ModelChecklist({
   const add = async () => {
     let typed = draft.trim();
     if (!typed) return;
-    // Fold the family choice into the id unless the user already typed one.
-    if (families && !families.some((f) => typed.startsWith(`${f.value}/`))) {
-      typed = `${family}/${typed}`;
-    }
     const res = await addModel(prefixed(typed));
     if (res.ok) {
       setDraft("");
@@ -181,20 +158,6 @@ export function ModelChecklist({
                 if (e.key === "Escape") setAddOpen(false);
               }}
             />
-            {families && (
-              <select
-                value={family}
-                onChange={(e) => setFamily(e.target.value)}
-                aria-label={t("models.familyAria", undefined, "Model family")}
-                data-testid="mlist-family"
-              >
-                {families.map((f) => (
-                  <option key={f.value} value={f.value}>
-                    {t(`models.family.${f.value}`, undefined, f.label)}
-                  </option>
-                ))}
-              </select>
-            )}
             <div className="flex gap-2 justify-end">
               <button className="btn-secondary sm" onClick={() => setAddOpen(false)}>
                 {t("common.cancel", undefined, "Cancel")}

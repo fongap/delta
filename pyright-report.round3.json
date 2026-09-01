@@ -1,0 +1,46 @@
+{
+    "version": "1.1.411",
+    "time": "1788280245546",
+    "generalDiagnostics": [
+        {
+            "file": "d:\\900 AIWork\\910 GitHub\\FongHub\\delta\\core\\runtime.py",
+            "severity": "error",
+            "message": "Cannot access attribute \"DEFAULT\" for class \"type[Mode]\"\n  Attribute \"DEFAULT\" is unknown",
+            "range": {
+                "start": {
+                    "line": 320,
+                    "character": 49
+                },
+                "end": {
+                    "line": 320,
+                    "character": 56
+                }
+            },
+            "rule": "reportAttributeAccessIssue"
+        },
+        {
+            "file": "d:\\900 AIWork\\910 GitHub\\FongHub\\delta\\core\\runtime.py",
+            "severity": "error",
+            "message": "Cannot access attribute \"DEFAULT\" for class \"type[Mode]\"\n  Attribute \"DEFAULT\" is unknown",
+            "range": {
+                "start": {
+                    "line": 321,
+                    "character": 56
+                },
+                "end": {
+                    "line": 321,
+                    "character": 63
+                }
+            },
+            "rule": "reportAttributeAccessIssue"
+        }
+    ],
+    "summary": {
+        "filesAnalyzed": 155,
+        "errorCount": 2,
+        "warningCount": 0,
+        "informationCount": 0,
+        "timeInSec": 19.476
+    }
+}
+

@@ -15,7 +15,6 @@ from __future__ import annotations
 import json
 import threading
 from pathlib import Path
-from typing import Optional
 
 # User Rules is a bounded settings field, not a document store: big enough for any
 # real rule list, small enough that a paste-accident (or a hostile client) can't

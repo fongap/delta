@@ -10,7 +10,6 @@ only, no APPEND-to-Sent afterwards — so a failure can never leave "delivered b
 failed" state that tempts a retry into double-sending (Gmail saves to Sent server-side).
 """
 
-# pyright: reportFunctionMemberAccess=false
 # (tool-builder module: attaches aisuite's dynamic metadata attributes
 # (__aisuite_tool_metadata__ / __delta_schema__) to plain functions —
 # the framework's plugin protocol, not a type error.)
@@ -32,6 +31,7 @@ from typing import Any, Callable, Optional
 import aisuite as ai
 
 from core.roots import RootDir
+from integrations.tools.metadata import attach_tool_metadata
 from packages.secrets import SecretStore
 
 _TIMEOUT = 30.0
@@ -170,7 +170,9 @@ def _strip_html(html: str) -> str:
 
 def _decode_payload(part: Message) -> str:
     payload = part.get_payload(decode=True)
-    if not payload:
+    if isinstance(payload, str):
+        return payload
+    if not isinstance(payload, bytes) or not payload:
         return ""
     charset = part.get_content_charset() or "utf-8"
     try:
@@ -350,8 +352,11 @@ def _attach(
     # §36: the tool registry's read/write kind wins for registered tools — reads never gate.
     approval = approval_for_tool(name, default=approval)
     fn.__name__ = name
-    fn.__delta_schema__ = schema
-    fn.__aisuite_tool_metadata__ = _meta(name, approval=approval, capabilities=caps)
+    attach_tool_metadata(
+        fn,
+        schema=schema,
+        metadata=_meta(name, approval=approval, capabilities=caps),
+    )
     fn.__doc__ = schema["function"]["description"]
     return fn
 
@@ -398,6 +403,7 @@ def make_email_tools(
         imap, _, _, err = _connect_imap()
         if err:
             return err
+        assert imap is not None
         try:
             status, lines = imap.list()
             if status != "OK":
@@ -448,11 +454,12 @@ def make_email_tools(
         imap, _, _, err = _connect_imap()
         if err:
             return err
+        assert imap is not None
         try:
             sel_err = _select_readonly(imap, folder)
             if sel_err:
                 return {"error": sel_err}
-            status, data = imap.uid("SEARCH", criteria)
+            status, data = imap.uid("SEARCH", criteria.decode("ascii"))
             if status != "OK":
                 return {"error": "search failed"}
             uids = (data[0] or b"").split()
@@ -502,6 +509,7 @@ def make_email_tools(
         imap, _, _, err = _connect_imap()
         if err:
             return err
+        assert imap is not None
         try:
             sel_err = _select_readonly(imap, folder)
             if sel_err:
@@ -545,6 +553,7 @@ def make_email_tools(
         imap, _, _, err = _connect_imap()
         if err:
             return err
+        assert imap is not None
         try:
             sel_err = _select_readonly(imap, folder)
             if sel_err:
@@ -554,7 +563,9 @@ def make_email_tools(
                 return {"error": f"message {uid} not found in {folder}"}
             for name, part in list_attachment_parts(msg):
                 if name == filename:
-                    payload = part.get_payload(decode=True) or b""
+                    payload = part.get_payload(decode=True)
+                    if not isinstance(payload, bytes):
+                        payload = b""
                     target = scratch.path / _safe_filename(name)
                     counter = 1
                     while target.exists():
@@ -609,6 +620,7 @@ def make_email_tools(
             imap, _, _, err = _connect_imap()
             if err:
                 return err
+            assert imap is not None
             try:
                 sel_err = _select_readonly(imap, reply_to_folder)
                 if sel_err:

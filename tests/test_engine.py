@@ -366,21 +366,21 @@ def test_outbound_keeps_pdf_for_native_models(tmp_path):
 
 
 def test_provider_extras_persist_on_message_and_survive_outbound(tmp_path):
-    """A turn's provider-private sidecar (`extras`, e.g. Gemini thought signatures) rides
+    """A turn's provider-private sidecar (`extras`) rides
     the persisted assistant message and is NOT stripped by _outbound_messages — the owning
     provider needs it back; foreign providers strip it themselves."""
     turn = AssistantTurn(
         text="ok",
         finish_reason="stop",
-        extras={"_gemini": {"text_sig": "c2ln", "call_sigs": []}},
+        extras={"_provider_private": {"text_sig": "c2ln", "call_sigs": []}},
     )
     engine, _ = _engine(tmp_path, [turn])
     _collect(engine, "hi")
 
     persisted = engine.messages[-1]
-    assert persisted["_gemini"] == {"text_sig": "c2ln", "call_sigs": []}
+    assert persisted["_provider_private"] == {"text_sig": "c2ln", "call_sigs": []}
     outbound = engine._outbound_messages()[-1]
-    assert outbound["_gemini"] == {"text_sig": "c2ln", "call_sigs": []}
+    assert outbound["_provider_private"] == {"text_sig": "c2ln", "call_sigs": []}
     assert "ts" not in outbound  # display sidecars still stripped
 
 

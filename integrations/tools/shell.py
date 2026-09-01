@@ -27,7 +27,6 @@ explicit classes:
   pid + detach flag, so it stays visible and stoppable via `shell_task_kill`.
 """
 
-# pyright: reportFunctionMemberAccess=false
 # (tool-builder module: attaches aisuite's dynamic metadata attributes
 # (__aisuite_tool_metadata__ / __delta_schema__) to plain functions —
 # the framework's plugin protocol, not a type error.)
@@ -45,9 +44,11 @@ import uuid
 from abc import ABC, abstractmethod
 from collections import deque
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import aisuite as ai
+
+from integrations.tools.metadata import attach_tool_metadata
 
 _IS_WINDOWS = sys.platform == "win32"
 
@@ -707,7 +708,7 @@ def shell_tools(executor: Executor) -> list:
             requires_approval=True,
         ),
     )
-    wrapped_run.__delta_schema__ = _RUN_SHELL_SCHEMA
+    attach_tool_metadata(wrapped_run, schema=_RUN_SHELL_SCHEMA)
     wrapped_output = ai.tool(
         shell_task_output,
         metadata=ai.ToolMetadata(
@@ -717,7 +718,7 @@ def shell_tools(executor: Executor) -> list:
             requires_approval=False,
         ),
     )
-    wrapped_output.__delta_schema__ = _TASK_OUTPUT_SCHEMA
+    attach_tool_metadata(wrapped_output, schema=_TASK_OUTPUT_SCHEMA)
     wrapped_kill = ai.tool(
         shell_task_kill,
         metadata=ai.ToolMetadata(
@@ -727,5 +728,5 @@ def shell_tools(executor: Executor) -> list:
             requires_approval=False,
         ),
     )
-    wrapped_kill.__delta_schema__ = _TASK_KILL_SCHEMA
+    attach_tool_metadata(wrapped_kill, schema=_TASK_KILL_SCHEMA)
     return [wrapped_run, wrapped_output, wrapped_kill]

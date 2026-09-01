@@ -4,7 +4,6 @@ Most of the "organized agent" feel in interactive work. Low risk, auto-approved.
 is held in a `TodoList` the surface can read; `todo_write` replaces it.
 """
 
-# pyright: reportFunctionMemberAccess=false
 # (tool-builder module: attaches aisuite's dynamic metadata attributes
 # (__aisuite_tool_metadata__ / __delta_schema__) to plain functions —
 # the framework's plugin protocol, not a type error.)
@@ -14,6 +13,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 import aisuite as ai
+
+from integrations.tools.metadata import attach_tool_metadata
 
 _STATUSES = {"pending", "in_progress", "done"}
 
@@ -59,7 +60,9 @@ class TodoList:
 
 
 def todo_tools(todo: TodoList) -> list:
-    def todo_write(todos: list = None, items: list = None) -> dict:
+    def todo_write(
+        todos: list | None = None, items: list | None = None
+    ) -> dict:
         """Replace the task list. Each todo is an object with `content` and a `status`
         of pending, in_progress, or done."""
         # `items` stays accepted (models that free-style the old name; queued replays).
@@ -88,5 +91,5 @@ def todo_tools(todo: TodoList) -> list:
             capabilities=["todo"],
         ),
     )
-    wrapped.__delta_schema__ = _TODO_SCHEMA
+    attach_tool_metadata(wrapped, schema=_TODO_SCHEMA)
     return [wrapped]

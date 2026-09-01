@@ -7,22 +7,18 @@ async session on the server loop via `run_coroutine_threadsafe`. We attach `Tool
 explicit OpenAI schema built straight from the MCP `inputSchema` for fidelity.
 """
 
-# pyright: reportFunctionMemberAccess=false
-# (tool-builder module: attaches aisuite's dynamic metadata attributes
-# (__aisuite_tool_metadata__ / __delta_schema__) to plain functions —
-# the framework's plugin protocol, not a type error.)
-
 from __future__ import annotations
 
 import asyncio
 import re
-from typing import Any, Awaitable, Callable
+from typing import Any, Callable, Coroutine
 
 import aisuite as ai
 
 from integrations.mcp.config import MCPServerDef
+from integrations.tools.metadata import attach_tool_metadata
 
-CallAsync = Callable[[str, dict[str, Any]], Awaitable[Any]]
+CallAsync = Callable[[str, dict[str, Any]], Coroutine[Any, Any, Any]]
 
 _NAME_OK = re.compile(r"[^a-zA-Z0-9_-]")
 _MAX_NAME = 64  # OpenAI function-name limit
@@ -84,13 +80,16 @@ def build_callables(
             getattr(mcp_tool, "description", None)
             or f"MCP tool {remote} from {server.name}"
         )
-        _invoke.__aisuite_tool_metadata__ = ai.ToolMetadata(
-            name=name,
-            category="mcp",
-            risk_level="medium",
-            capabilities=[server.name],
-            requires_approval=server.requires_approval,
+        attach_tool_metadata(
+            _invoke,
+            schema=_openai_schema(name, mcp_tool),
+            metadata=ai.ToolMetadata(
+                name=name,
+                category="mcp",
+                risk_level="medium",
+                capabilities=[server.name],
+                requires_approval=server.requires_approval,
+            ),
         )
-        _invoke.__delta_schema__ = _openai_schema(name, mcp_tool)
         callables.append(_invoke)
     return callables

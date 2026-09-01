@@ -6,7 +6,6 @@ resolve `${VAR}` through the SecretStore. The tool is read-only; results are ext
 be treated as untrusted data, not instructions.
 """
 
-# pyright: reportFunctionMemberAccess=false
 # (tool-builder module: attaches aisuite's dynamic metadata attributes
 # (__aisuite_tool_metadata__ / __delta_schema__) to plain functions —
 # the framework's plugin protocol, not a type error.)
@@ -14,11 +13,12 @@ be treated as untrusted data, not instructions.
 from __future__ import annotations
 
 import os
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 import aisuite as ai
 
 from packages.secrets import SecretStore
+from integrations.tools.metadata import attach_tool_metadata
 from integrations.web.providers import WebSearchProvider, build_provider
 
 _SCHEMA = {
@@ -88,15 +88,16 @@ def make_web_search_tool(
 
     web_search.__name__ = "web_search"
     web_search.__doc__ = _SCHEMA["function"]["description"]
-    web_search.__aisuite_tool_metadata__ = ai.ToolMetadata(
-        name="web_search",
-        category="web",
-        # Egress: the destination is fixed, but the query is model-chosen free text —
-        # the same outbound channel (core.risk.EGRESS_TOOLS), so it gates like an
-        # external effect rather than riding as a free read.
-        risk_level="medium",
-        capabilities=["search"],
-        requires_approval=True,
+    attach_tool_metadata(
+        web_search,
+        schema=_SCHEMA,
+        metadata=ai.ToolMetadata(
+            name="web_search",
+            category="web",
+            # Egress: the destination is fixed, but the query is model-chosen free text.
+            risk_level="medium",
+            capabilities=["search"],
+            requires_approval=True,
+        ),
     )
-    web_search.__delta_schema__ = _SCHEMA
     return web_search

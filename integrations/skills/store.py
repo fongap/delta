@@ -13,7 +13,6 @@ be saved before anything lands in a scope dir. Staged content sits under
 ``state_dir()/skills-staged/<token>`` until confirmed or discarded.
 """
 
-# pyright: reportFunctionMemberAccess=false
 # (tool-builder module: attaches aisuite's dynamic metadata attributes
 # (__aisuite_tool_metadata__ / __delta_schema__) to plain functions —
 # the framework's plugin protocol, not a type error.)
@@ -28,12 +27,14 @@ import threading
 import uuid
 import zipfile
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 import aisuite as ai
 
+from integrations.tools.metadata import attach_tool_metadata
+
 from packages.secrets import state_dir
-from integrations.skills.base import Skill, _parse_skill
+from integrations.skills.base import _parse_skill
 
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
 _MAX_NAME = 64
@@ -629,12 +630,15 @@ def save_skill_tool(
 
     save_skill.__name__ = "save_skill"
     save_skill.__doc__ = _SAVE_SKILL_SCHEMA["function"]["description"]
-    save_skill.__aisuite_tool_metadata__ = ai.ToolMetadata(
-        name="save_skill",
-        category="skills",
-        risk_level="medium",
-        capabilities=["save_skill"],
-        requires_approval=True,
+    attach_tool_metadata(
+        save_skill,
+        schema=_SAVE_SKILL_SCHEMA,
+        metadata=ai.ToolMetadata(
+            name="save_skill",
+            category="skills",
+            risk_level="medium",
+            capabilities=["save_skill"],
+            requires_approval=True,
+        ),
     )
-    save_skill.__delta_schema__ = _SAVE_SKILL_SCHEMA
     return save_skill

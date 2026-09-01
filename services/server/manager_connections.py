@@ -6,31 +6,20 @@ mixin inheritance so behavior is unchanged.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
-from core.connections import (
-    PersonaConnectionStore,
-    SessionConnectionStore,
-)
 from core.connections import (
     effective as effective_connections,
 )
 from integrations.connectors import (
-    Gateway,
-    MessageSource,
-    connect_connector,
     connector_list,
-    disconnect_connector,
-    experimental_enabled,
-    load_settings,
-    make_adapter,
-    set_experimental_enabled,
-    slack_split,
-    update_connector_tools,
 )
 
 
-class ConnectionsMixin:
+from services.server.manager_contract import ManagerHostState
+
+
+class ConnectionsMixin(ManagerHostState):
 
     def _routing_targets(self, session_id: str, agent: str) -> list[str]:
         """The channel address(es) this session's Inbox routes OUT to — used to warn when a

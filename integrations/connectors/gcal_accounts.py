@@ -13,7 +13,7 @@ no "Never show agents" policy yet).
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from packages.secrets import SecretStore
 

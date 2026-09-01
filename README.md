@@ -75,7 +75,7 @@ Tauri 开发模式会使用仓库 `.venv` 中的 `delta-server`。
 
 ```powershell
 # 前置条件：Rust、Node.js、Python 3.11+、uv
-uv sync --locked --extra bedrock --extra build
+uv sync --locked --extra build
 .\packaging\portable\build_portable.ps1
 ```
 

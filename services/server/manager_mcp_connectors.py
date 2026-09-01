@@ -4,7 +4,6 @@ Extracted verbatim from SessionManager (see manager.py); composed back via
 mixin inheritance so behavior is unchanged.
 """
 
-# pyright: reportFunctionMemberAccess=false
 # (tool-builder module: attaches aisuite's dynamic metadata attributes
 # (__aisuite_tool_metadata__ / __delta_schema__) to plain functions —
 # the framework's plugin protocol, not a type error.)
@@ -12,7 +11,7 @@ mixin inheritance so behavior is unchanged.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Optional
+from typing import Any
 
 from integrations.connectors import (
     connect_connector,
@@ -29,10 +28,14 @@ from integrations.mcp import (
     put_global_server,
     read_global,
 )
+from integrations.tools.metadata import get_tool_metadata
 from services.server.manager_support import _redact, logger
 
 
-class McpConnectorsMixin:
+from services.server.manager_contract import ManagerHostState
+
+
+class McpConnectorsMixin(ManagerHostState):
 
     # -- MCP --------------------------------------------------------------------
     async def prepare_mcp_tools(
@@ -117,9 +120,11 @@ class McpConnectorsMixin:
                 # (server-level requires_approval is off for backed servers);
                 # anything unclassified stays approval-gated — fail closed.
                 for fn in callables:
-                    fn.__aisuite_tool_metadata__.requires_approval = approval_for_tool(
-                        fn.__aisuite_tool_metadata__.name, default=True
-                    )
+                    metadata = get_tool_metadata(fn)
+                    if metadata is not None:
+                        metadata.requires_approval = approval_for_tool(
+                            metadata.name or fn.__name__, default=True
+                        )
             out.extend(callables)
         return out
 

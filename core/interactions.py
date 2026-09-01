@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from typing import Optional
 
 from core.inbox import KIND_APPROVAL, KIND_QUESTION
 from integrations.tools.ask import option_label

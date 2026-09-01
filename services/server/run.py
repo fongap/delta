@@ -113,7 +113,7 @@ def build_app(workspace: str | None, model: str, mode: str):
     # Cold-start recovery (docs/architecture/adr/ADR-001-run-event-ledger.md): any run left without a terminal
     # event by a crash/quit gets a synthetic `run.interrupted` — its durable prefix
     # survives as the factual record of what it did before dying.
-    recovered = manager.run_ledger.recover_stale()
+    recovered = list(manager.run_ledger.recover_stale())
     if recovered:
         logging.getLogger("services.server").warning(
             "run ledger: recovered %d stale run(s) with synthetic interrupted events",

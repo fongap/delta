@@ -15,7 +15,7 @@ import re
 import threading
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable
 
 from packages.jsonstate import load_json_state, save_json_state
 

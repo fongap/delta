@@ -80,9 +80,10 @@ def test_py_grep_fallback_skips_ignored_dirs(tmp_path):
 def test_git_log_lists_commits(tmp_path):
     ws = tmp_path / "repo"
     ws.mkdir()
-    run = lambda *a: subprocess.run(
-        ["git", "-C", str(ws), *a], capture_output=True, check=True
-    )
+
+    def run(*a):
+        subprocess.run(["git", "-C", str(ws), *a], capture_output=True, check=True)
+
     run("init", "-q")
     run("config", "user.email", "t@t.io")
     run("config", "user.name", "T")

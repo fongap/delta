@@ -47,7 +47,7 @@ def normalize_roots(roots: Iterable[Any] | None) -> list[RootDir]:
                 )
             )
         elif isinstance(r, (str, Path)):
-            out.append(RootDir(path=r, writable=False))
+            out.append(RootDir(path=Path(r), writable=False))
         else:  # duck-typed object with .path/.writable
             out.append(
                 RootDir(

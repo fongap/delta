@@ -363,12 +363,12 @@ def test_retry_survives_model_switches(tmp_path):
         provider=provider,
         registry=ToolRegistry(),
         permissions=PermissionEngine(workspace_root=tmp_path),
-        model="gemini:gemini-3.6-flash",
+        model="anthropic:claude-sonnet-4-6",
     )
 
     async def scenario():
         first = [ev async for ev in engine.run("hello")]
-        assert engine.switch_model("gemini:gemini-3.1-pro-preview") is not None
+        assert engine.switch_model("anthropic:claude-opus-4-8") is not None
         assert engine.switch_model("gpt-5.6-sol") is not None
         second = [ev async for ev in engine.retry()]
         return first, second

@@ -1,8 +1,7 @@
-// Auth-method segmented choice + show_when field visibility (Bedrock's "Connect with"):
-// only the selected method's fields render, and clicking a segment switches them.
+// Custom-provider creation and identity behavior for the two supported protocols.
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { ProviderCards, ProviderForm, CustomCreateForm, useProviderSetup, type ProviderSetupState } from "./ProviderSetup";
+import { ProviderCards, CustomCreateForm, useProviderSetup, type ProviderSetupState } from "./ProviderSetup";
 import { I18nProvider } from "@delta/i18n/I18nContext";
 import type { ProviderInfo } from "../api";
 
@@ -16,45 +15,29 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-const BEDROCK: ProviderInfo = {
-  name: "bedrock",
-  title: "AWS Bedrock",
-  needs_key: true,
+const OPENAI: ProviderInfo = {
+  name: "openai",
+  title: "OpenAI",
+  needs_key: false,
   configured: false,
   values: {},
   suggested_models: [],
   recommended_model: null,
   fields: [
-    { key: "region", label: "AWS region", secret: false, required: true, help: "", placeholder: "us-east-1" },
-    {
-      key: "auth_method",
-      label: "Connect with",
-      secret: false,
-      required: false,
-      help: "",
-      placeholder: "",
-      default: "api_key",
-      choices: [
-        { value: "api_key", label: "Bedrock API key" },
-        { value: "profile", label: "AWS profile" },
-        { value: "iam", label: "IAM keys" },
-      ],
-    },
-    { key: "bedrock_api_key", label: "Bedrock API key", secret: true, required: false, help: "", placeholder: "ABSK…", show_when: { auth_method: "api_key" } },
-    { key: "aws_profile", label: "AWS profile", secret: false, required: false, help: "", placeholder: "default", show_when: { auth_method: "profile" } },
-    { key: "aws_secret_access_key", label: "Secret access key", secret: true, required: false, help: "", placeholder: "", show_when: { auth_method: "iam" } },
+    { key: "api_key", label: "API key", secret: true, required: false, help: "", placeholder: "sk-…" },
+    { key: "base_url", label: "Endpoint", secret: false, required: true, help: "", placeholder: "https://…/v1" },
   ],
 };
 
 function makePs(fields: Record<string, string>, setFieldValue = vi.fn()): ProviderSetupState {
   return {
-    providers: [BEDROCK],
-    ordered: [BEDROCK],
+    providers: [OPENAI],
+    ordered: [OPENAI],
     customProviders: [],
     orderedCustom: [],
     refreshProviders: async () => {},
-    sel: "bedrock",
-    info: BEDROCK,
+    sel: "openai",
+    info: OPENAI,
     fields,
     setFieldValue,
     dirty: false,
@@ -81,7 +64,7 @@ function makePs(fields: Record<string, string>, setFieldValue = vi.fn()): Provid
     creating: false,
     alias: "",
     setAlias: () => {},
-    protoId: "openai-compatible",
+    protoId: "openai",
     setProtoId: () => {},
     protoDef: undefined,
     openNewCustom: () => {},
@@ -93,34 +76,6 @@ function makePs(fields: Record<string, string>, setFieldValue = vi.fn()): Provid
     pickFetchedDefault: async () => {},
   };
 }
-
-describe("ProviderForm auth-method choice", () => {
-  it("renders only the selected method's fields", () => {
-    render(wrap(<ProviderForm ps={makePs({ auth_method: "api_key" })} tp="t" />));
-    expect(screen.getByTestId("t-field-bedrock_api_key")).toBeTruthy();
-    expect(screen.queryByTestId("t-field-aws_profile")).toBeNull();
-    expect(screen.queryByTestId("t-field-aws_secret_access_key")).toBeNull();
-    expect(screen.getByTestId("t-choice-auth_method-api_key").getAttribute("aria-checked")).toBe("true");
-  });
-
-  it("switching the segment swaps the visible fields", () => {
-    const setFieldValue = vi.fn();
-    const { rerender } = render(
-      wrap(<ProviderForm ps={makePs({ auth_method: "api_key" }, setFieldValue)} tp="t" />),
-    );
-    fireEvent.click(screen.getByTestId("t-choice-auth_method-profile"));
-    expect(setFieldValue).toHaveBeenCalledWith("auth_method", "profile");
-    rerender(wrap(<ProviderForm ps={makePs({ auth_method: "profile" }, setFieldValue)} tp="t" />));
-    expect(screen.getByTestId("t-field-aws_profile")).toBeTruthy();
-    expect(screen.queryByTestId("t-field-bedrock_api_key")).toBeNull();
-  });
-
-  it("iam segment shows the key-pair fields", () => {
-    render(wrap(<ProviderForm ps={makePs({ auth_method: "iam" })} tp="t" />));
-    expect(screen.getByTestId("t-field-aws_secret_access_key")).toBeTruthy();
-    expect(screen.queryByTestId("t-field-bedrock_api_key")).toBeNull();
-  });
-});
 
 describe("CustomCreateForm header shows the alias", () => {
   it("renders the generic title until an alias is typed", () => {
@@ -137,13 +92,13 @@ describe("CustomCreateForm header shows the alias", () => {
 describe("custom provider identity", () => {
   it("uses the alias as the card title and the protocol as secondary information", () => {
     const custom: ProviderInfo = {
-      ...BEDROCK,
+      ...OPENAI,
       name: "fong",
       alias: "fong",
       title: "fong",
       custom: true,
-      protocol: "openai-compatible",
-      blurb: "OpenAI compatible",
+      protocol: "openai",
+      blurb: "OpenAI",
       configured: true,
     };
     const ps = {
@@ -158,8 +113,7 @@ describe("custom provider identity", () => {
     render(wrap(<ProviderCards ps={ps} tp="t" customOnly hideAdd />));
     const card = screen.getByTestId("t-provider-fong");
     expect(card.textContent).toContain("fong");
-    expect(card.textContent).toContain("OpenAI compatible");
-    expect(card.textContent).not.toContain("AWS Bedrock");
+    expect(card.textContent).toContain("OpenAI");
   });
 
   it("keeps fetched models visible after a successful fetch in create mode", async () => {
@@ -169,7 +123,7 @@ describe("custom provider identity", () => {
       const json = (value: unknown) => ({ json: async () => value });
       if (url.endsWith("/v1/protocols")) {
         return json([{
-          id: "openai-compatible",
+          id: "openai",
           title: "OpenAI compatible",
           needs_key: false,
           recommended_model: null,
@@ -186,7 +140,7 @@ describe("custom provider identity", () => {
       if (url.endsWith("/v1/providers") && init?.method === "POST") {
         const body = JSON.parse(String(init.body));
         savedProvider = {
-          ...BEDROCK,
+          ...OPENAI,
           name: body.name,
           alias: body.name,
           title: body.name,
@@ -226,7 +180,7 @@ describe("custom provider identity", () => {
       const url = String(input);
       const json = (value: unknown) => ({ json: async () => value });
       if (url.endsWith("/v1/protocols")) {
-        return json([{ id: "openai-compatible", title: "OpenAI compatible", needs_key: false, recommended_model: null, fields: [{ key: "api_key", label: "API key", secret: true, required: false, help: "", placeholder: "" }, { key: "base_url", label: "Server address", secret: false, required: true, help: "", placeholder: "" }] }]);
+        return json([{ id: "openai", title: "OpenAI", needs_key: false, recommended_model: null, fields: [{ key: "api_key", label: "API key", secret: true, required: false, help: "", placeholder: "" }, { key: "base_url", label: "Server address", secret: false, required: true, help: "", placeholder: "" }] }]);
       }
       if (url.endsWith("/v1/providers") && init?.method === "POST") {
         const body = JSON.parse(String(init.body));
@@ -254,7 +208,7 @@ describe("custom provider identity", () => {
       const url = String(input);
       const json = (value: unknown) => ({ json: async () => value });
       if (url.endsWith("/v1/protocols")) {
-        return json([{ id: "openai-compatible", title: "OpenAI compatible", needs_key: false, recommended_model: null, fields: [{ key: "api_key", label: "API key", secret: true, required: false, help: "", placeholder: "" }, { key: "base_url", label: "Server address", secret: false, required: true, help: "", placeholder: "" }] }]);
+        return json([{ id: "openai", title: "OpenAI", needs_key: false, recommended_model: null, fields: [{ key: "api_key", label: "API key", secret: true, required: false, help: "", placeholder: "" }, { key: "base_url", label: "Server address", secret: false, required: true, help: "", placeholder: "" }] }]);
       }
       if (url.endsWith("/v1/providers") && init?.method === "POST") {
         const body = JSON.parse(String(init.body));

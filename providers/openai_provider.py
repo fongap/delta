@@ -2,8 +2,8 @@
 
 Wire Protocol: `openai` (Chat Completions). Platform Transport: `direct` (HTTPS).
 Vendor presets served: every OpenAI-compatible vendor (DeepSeek, Z AI, Kimi, …),
-resellers, Ollama, custom endpoints (Azure OpenAI, vLLM), and the Bedrock/Vertex MaaS
-paths. Native OpenAI models (the `openai` provider with no custom endpoint) route to
+resellers, and custom endpoints (Azure OpenAI, vLLM, local gateways). Native OpenAI
+models (the `openai` provider with no custom endpoint) route to
 `openai_responses.OpenAIResponsesProvider` instead — Chat Completions rejects function
 tools combined with reasoning on GPT-5.6+, so reasoning + tools needs `/v1/responses`.
 """
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Optional
+from typing import Any
 
 from providers.base import (
     AssistantTurn,
@@ -75,8 +75,8 @@ def _delta_reasoning(obj: Any) -> str | None:
 
 
 def _strip_foreign_sidecars(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Drop provider-private message sidecars (underscore-prefixed keys, e.g. `_gemini`
-    thought signatures — see providers/base.py): they belong to other providers, and the
+    """Drop provider-private message sidecars (underscore-prefixed keys):
+    they belong to other providers, and the
     OpenAI wire (and its compat servers) rejects unknown message fields."""
     return [
         (
@@ -122,7 +122,7 @@ def _param_fix_retry(kwargs: dict[str, Any], exc: Exception) -> dict[str, Any]:
     """Kwargs for the one retry an unsupported-parameter error earns, or re-raise.
 
     Reasoning-routed OpenAI models reject `max_tokens` outright (they want
-    `max_completion_tokens`) — but compat servers (Ollama's /v1) know ONLY
+    `max_completion_tokens`) — but some compatible servers know only
     `max_tokens`, so the swap must happen on rejection, never up front. Same
     contract as the reasoning_effort retry: fix exactly what the server named.
     """
@@ -182,8 +182,8 @@ class OpenAIProvider(ProviderClient):
         # inject a `client` directly, bypassing all of this.
         #
         # `base_url` points the same OpenAI SDK at any OpenAI-compatible endpoint — used by the
-        # provider router for Ollama (`http://localhost:11434/v1`, with a placeholder key) and,
-        # later, other OpenAI-shaped backends. When None, behavior is identical to stock OpenAI.
+        # provider router for local or remote OpenAI-shaped backends. When None, behavior
+        # is identical to stock OpenAI.
         self._client = client
         self._api_key = api_key
         self._base_url = base_url
@@ -456,7 +456,7 @@ def _parse_tool_calls(raw_tool_calls: Any) -> list[ToolCall]:
     return calls
 
 
-# Some OpenAI-compatible backends — notably Ollama for several local models (qwen, etc.) —
+# Some non-conforming OpenAI-compatible backends
 # fail to populate the structured `tool_calls` field and instead emit the call as TEXT, in
 # wildly varied shapes: a `<tool_call>{…}</tool_call>` block, a bare `{"name","arguments"}` object
 # (often mixed in with prose), or a `toolname {args}` / `toolname [args]` shorthand. Our agent

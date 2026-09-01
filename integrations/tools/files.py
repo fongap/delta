@@ -6,7 +6,6 @@ returns `cat -n`-style numbered lines, windows big files instead of failing, and
 the agent how to continue reading. Read-only, workspace-scoped.
 """
 
-# pyright: reportFunctionMemberAccess=false
 # (tool-builder module: attaches aisuite's dynamic metadata attributes
 # (__aisuite_tool_metadata__ / __delta_schema__) to plain functions —
 # the framework's plugin protocol, not a type error.)
@@ -17,6 +16,8 @@ from pathlib import Path
 from typing import Any
 
 import aisuite as ai
+
+from integrations.tools.metadata import attach_tool_metadata
 
 _DEFAULT_MAX_LINES = 2000
 _MAX_LINE_CHARS = 500
@@ -113,12 +114,15 @@ def file_tools(workspace: str) -> list:
 
     read_file.__name__ = "read_file"
     read_file.__doc__ = _SCHEMA["function"]["description"]
-    read_file.__aisuite_tool_metadata__ = ai.ToolMetadata(
-        name="read_file",
-        category="filesystem",
-        risk_level="low",
-        capabilities=["read"],
-        requires_approval=False,
+    attach_tool_metadata(
+        read_file,
+        schema=_SCHEMA,
+        metadata=ai.ToolMetadata(
+            name="read_file",
+            category="filesystem",
+            risk_level="low",
+            capabilities=["read"],
+            requires_approval=False,
+        ),
     )
-    read_file.__delta_schema__ = _SCHEMA
     return [read_file]

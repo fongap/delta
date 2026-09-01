@@ -9,7 +9,7 @@ import asyncio
 
 from fastapi.testclient import TestClient
 
-from integrations.connectors.base import MessageEvent, MessageSource, SessionSource
+from integrations.connectors.base import MessageEvent, SessionSource
 from core.engine import TurnEngine
 from core.permissions import PermissionEngine
 from providers import AssistantTurn, ModelCapabilities, ProviderClient

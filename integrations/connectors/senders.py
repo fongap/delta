@@ -12,7 +12,7 @@ tests inject fakes — no network.
 from __future__ import annotations
 
 import os
-from typing import Callable, Optional
+from typing import Callable
 
 from integrations.connectors.base import SendResult
 

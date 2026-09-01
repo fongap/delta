@@ -13,7 +13,6 @@ dressed up as an access problem.
 
 from __future__ import annotations
 
-from typing import Optional
 
 # Error-body markers, verbatim from the vendors' error codes/messages:
 # OpenAI: {"error": {"code": "model_not_found", "message": "The model `X` does not exist or

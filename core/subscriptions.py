@@ -21,9 +21,8 @@ import json
 import re
 import threading
 from collections import deque
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Optional
 
 
 @dataclass
@@ -188,7 +187,7 @@ class ChannelBuffer:
             pass  # persistence is best-effort; the in-memory buffer stays authoritative
 
     def recent(self, channel: str, n: int = 10) -> list[dict]:
-        msgs = list(self._by_channel.get(channel, ()))
+        msgs: list[dict] = list(self._by_channel.get(channel, ()))
         return msgs[-max(1, min(n, self._cap)) :]
 
     def name_for(self, channel: str) -> str | None:

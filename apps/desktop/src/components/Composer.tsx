@@ -951,7 +951,7 @@ function UsageChip({
                   {/* Every row is a session sum. With a cache split, the input rows are
                       the three BILLING CLASSES of input (each priced differently) and
                       read as components: uncached + cache reads + cache writes = total.
-                      Without one (Ollama, compat vendors), plain "Input" says it all. */}
+                      Without one (compatible endpoints), plain "Input" says it all. */}
                   <div className="mt-0.5 flex flex-col gap-0.5">
                     {t.cache_read + t.cache_write > 0 ? (
                       <>

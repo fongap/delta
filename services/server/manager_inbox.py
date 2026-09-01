@@ -8,7 +8,7 @@ mixin inheritance so behavior is unchanged.
 from __future__ import annotations
 
 import asyncio
-from typing import Any, Optional
+from typing import Any
 
 from integrations.connectors import (
     load_settings,
@@ -17,7 +17,10 @@ from integrations.connectors import (
 from services.server.manager_support import _approval_body, _parse_inbox_json
 
 
-class InboxApprovalsMixin:
+from services.server.manager_contract import ManagerHostState
+
+
+class InboxApprovalsMixin(ManagerHostState):
 
     def inbox_question_asker(self, session_id: str, agent: str):
         """The Unattended `ask_user` handler: turn the agent's question into an Inbox item and
@@ -432,8 +435,10 @@ class InboxApprovalsMixin:
             adapter, "status", None
         )  # relay adapter only; Socket Mode has none
         if callable(snapshot):
-            relay = snapshot()
-            teams = relay.pop("teams", {})
+            result = snapshot()
+            if isinstance(result, dict):
+                relay = result
+                teams = relay.pop("teams", {})
         return {
             "ok": True,
             "mode": mode,
@@ -488,9 +493,11 @@ class InboxApprovalsMixin:
         )
         snapshot = getattr(adapter, "status", None)
         if callable(snapshot):
-            relay = snapshot()
-            installs = relay.pop("installs", {})
-            missed = relay.pop("missed", {})
+            result = snapshot()
+            if isinstance(result, dict):
+                relay = result
+                installs = relay.pop("installs", {})
+                missed = relay.pop("missed", {})
         return {
             "ok": True,
             "mode": default.get("mode") or "",

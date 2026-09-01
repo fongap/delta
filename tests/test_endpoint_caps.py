@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import types
 
-import pytest
 
 from providers.endpoint import (
     EndpointCaps,
@@ -102,9 +101,9 @@ def test_unknown_endpoint_uses_defaults():
 
 
 def test_profile_flows_through_registry_builders():
-    from providers.registry import _build_openai_compat
+    from providers.registry import _build_openai
 
-    provider = _build_openai_compat(
+    provider = _build_openai(
         {"base_url": "http://gw:9000/v1", "api_key": "k", "stream_options": False},
         secrets=None,
     )

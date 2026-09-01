@@ -8,10 +8,12 @@ callable here is only a schema carrier + a safe fallback for surfaces without a 
 
 from __future__ import annotations
 
+from typing import Any, Callable
+
 from aisuite.agents import ToolMetadata, tool
 
 
-def request_directory_tool() -> object:
+def request_directory_tool() -> Callable[..., dict[str, Any]]:
     def request_directory(reason: str, path: str = "", writable: bool = False) -> dict:
         """Ask the user for access to a directory when the task needs files outside the current
         ones (e.g. to read a project the user mentioned, or to save a deliverable somewhere

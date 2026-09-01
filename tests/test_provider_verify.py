@@ -16,7 +16,7 @@ from providers import detect_provider, verify_provider_key
     [
         ("sk-ant-api03-abc", "anthropic"),
         ("sk-or-v1-abc", "openrouter"),
-        ("AIzaSyAbc123", "gemini"),
+        ("AIzaSyAbc123", None),
         ("sk-proj-abc", "openai"),
         ("sk_live_abc", "openai"),
         ("", None),
@@ -76,21 +76,6 @@ def test_verify_anthropic_headers(monkeypatch):
     assert "anthropic-version" in cap["headers"]
 
 
-def test_verify_gemini_key_param(monkeypatch):
-    cap: dict = {}
-    _patch_get(monkeypatch, status=200, capture=cap)
-    verify_provider_key("gemini", api_key="AIza-x")
-    assert cap["params"]["key"] == "AIza-x"
-
-
-def test_verify_ollama_uses_v1_models_no_key(monkeypatch):
-    cap: dict = {}
-    _patch_get(monkeypatch, status=200, capture=cap)
-    verify_provider_key("ollama", base_url="http://localhost:11434")
-    assert cap["url"] == "http://localhost:11434/v1/models"
-    assert "headers" not in cap  # keyless
-
-
 def test_verify_network_error_is_clean(monkeypatch):
     _patch_get(monkeypatch, raise_exc=ConnectionError("boom"))
     res = verify_provider_key("openai", api_key="sk-x")
@@ -128,7 +113,7 @@ def test_fetch_openai_compatible_uses_alias_endpoint(monkeypatch):
         unregister_custom_provider,
     )
 
-    register_custom_provider("mygw", "openai-compatible")
+    register_custom_provider("mygw", "openai")
     try:
         cap: dict = {}
         _patch_get_json(
@@ -171,14 +156,14 @@ def test_fetch_custom_anthropic_protocol_headers(monkeypatch):
         unregister_custom_provider("claude-gw")
 
 
-def test_fetch_custom_ollama_is_keyless(monkeypatch):
+def test_fetch_custom_openai_endpoint_can_be_keyless(monkeypatch):
     from providers import (
         fetch_provider_models,
         register_custom_provider,
         unregister_custom_provider,
     )
 
-    register_custom_provider("local-llm", "ollama")
+    register_custom_provider("local-llm", "openai")
     try:
         cap: dict = {}
         _patch_get_json(
@@ -186,10 +171,12 @@ def test_fetch_custom_ollama_is_keyless(monkeypatch):
             payload={"data": [{"id": "qwen3-coder:30b"}]},
             capture=cap,
         )
-        res = fetch_provider_models("local-llm", {"base_url": "http://box:11434"}, None)
+        res = fetch_provider_models(
+            "local-llm", {"base_url": "http://box:11434/v1"}, None
+        )
         assert res["ok"] is True and res["models"] == ["qwen3-coder:30b"]
         assert cap["url"] == "http://box:11434/v1/models"
-        assert "headers" not in cap  # keyless
+        assert cap["headers"] == {}
     finally:
         unregister_custom_provider("local-llm")
 
@@ -201,7 +188,7 @@ def test_fetch_bad_key_is_clean(monkeypatch):
         unregister_custom_provider,
     )
 
-    register_custom_provider("mygw", "openai-compatible")
+    register_custom_provider("mygw", "openai")
     try:
         _patch_get_json(monkeypatch, status=401)
         res = fetch_provider_models(
@@ -212,17 +199,3 @@ def test_fetch_bad_key_is_clean(monkeypatch):
         unregister_custom_provider("mygw")
 
 
-def test_fetch_bedrock_is_unsupported(monkeypatch):
-    from providers import (
-        fetch_provider_models,
-        register_custom_provider,
-        unregister_custom_provider,
-    )
-
-    register_custom_provider("aws-gw", "bedrock")
-    try:
-        res = fetch_provider_models("aws-gw", {"region": "us-east-1"}, None)
-        assert res["ok"] is False
-        assert "doesn't expose a model list" in res["error"]
-    finally:
-        unregister_custom_provider("aws-gw")
