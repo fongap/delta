@@ -1,0 +1,12 @@
+# Architecture Decision Records (ADRs)
+
+此目录收录 Delta 当前**有效**的架构决策记录。每个 ADR 使用 `ADR-XXX-<title>.md` 命名，遵循以下约定：
+- **Status**: `Active`（仍在使用），`Superseded`（已被后续 ADR 替代），`Deprecated`（不再推荐），`Removed`（已从代码中删除）。
+- 内容包括 **Context**, **Decision**, **Consequences**，以及代码实现位置的引用（文件:行号）。
+
+本目录仅保存 **长期有效** 的设计决策。已失效或仅用于一次性整改的文档应在对应代码提交历史中保留，不在此目录维护。
+
+当前收录的 ADR：
+- `ADR-001-run-event-ledger.md` – 持久化、哈希链式运行事件记录。
+- `ADR-002-approval-taxonomy.md` – 风险等级与自动审批模型。
+- `ADR-003-provider-protocol-model.md` – Provider 的 Vendor / Protocol / Transport 三层概念。

@@ -1,5 +1,9 @@
 """Gemini provider — native Google GenAI API (`google-genai` SDK).
 
+Wire Protocol: `gemini` (generateContent). Platform Transport: `direct` (HTTPS to
+generativelanguage.googleapis.com) by default; also reused as a wire-protocol client
+by the `vertex` platform transport (via `genai.Client(vertexai=True)`).
+
 Like the Anthropic provider, this is mostly a pair of pure converters from our canonical
 OpenAI-shaped history to Gemini's `generateContent` format. The differences the converters
 must absorb:

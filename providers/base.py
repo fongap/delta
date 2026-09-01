@@ -1,9 +1,18 @@
 """Provider-agnostic model access layer.
 
 The runtime never imports a provider SDK directly — it talks to a `ProviderClient`.
-Implementations: `OpenAIResponsesProvider` (native OpenAI via `/v1/responses`),
-`OpenAIProvider` (Chat Completions — the compat world), and the native
-Anthropic/Gemini/Bedrock/Vertex providers, all selected by the registry/router.
+Implementations are selected by the registry/router based on the three-layer provider
+model (see docs/architecture/adr/ADR-003-provider-protocol-model.md):
+
+  - Wire Protocol `openai`    → `OpenAIResponsesProvider` (native /v1/responses)
+                               or `OpenAIProvider` (Chat Completions / compat world)
+  - Wire Protocol `anthropic`  → `AnthropicProvider` (Messages API)
+  - Wire Protocol `gemini`     → `GeminiProvider` (Google GenAI generateContent)
+
+Platform transports `bedrock` and `vertex` are NOT separate wire protocols — they
+are cloud access channels that reuse the native provider classes over platform-
+specific SDK clients (AnthropicBedrock, AnthropicVertex, genai.Client(vertexai=True),
+or the MaaS OpenAI-compatible endpoint).
 """
 
 from __future__ import annotations

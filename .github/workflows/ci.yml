@@ -495,7 +495,7 @@ jobs:
 
       - name: Ruff full scan — baseline gate
         env:
-          RUFF_BASELINE: "192"
+          RUFF_BASELINE: "182"
         shell: bash
         run: |
           set -euo pipefail
@@ -535,7 +535,7 @@ jobs:
 
       - name: Pyright — baseline gate
         env:
-          PYRIGHT_BASELINE: "581"
+          PYRIGHT_BASELINE: "564"
         shell: bash
         run: |
           set -euo pipefail

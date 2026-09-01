@@ -1,6 +1,6 @@
 """Run scope — the ambient identity of the currently executing run.
 
-The Run Event Ledger records facts per run (docs/run-ledger-adr.md), but tools and
+The Run Event Ledger records facts per run (docs/architecture/adr/ADR-001-run-event-ledger.md), but tools and
 the executor sit BELOW the runtime adapter that owns the run id. Instead of threading
 `run_id` through build_engine → shell_tools → executor signatures, the adapter
 publishes the active run into a context variable for the duration of each driven

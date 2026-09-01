@@ -1,6 +1,6 @@
 """Run Event Ledger: hash-chained durable events per run + cold-start recovery.
 
-Contract (docs/run-ledger-adr.md):
+Contract (docs/architecture/adr/ADR-001-run-event-ledger.md):
 - append-only, hash = sha256(prev_hash | seq | type | actor | ts | canonical payload)
 - terminal events close a run; open runs get synthetic `run.interrupted` on recovery
 - the TurnEngineAdapter turns every driven turn into a ledgered run

@@ -1,6 +1,6 @@
 """Run Event Ledger — the append-only factual record of what each run did.
 
-Implements docs/run-ledger-adr.md slice 1:
+Implements docs/architecture/adr/ADR-001-run-event-ledger.md slice 1:
 
 - one row per durable event; rows are hash-chained per run
   (hash = sha256(prev_hash | seq | type | actor | ts | canonical payload))

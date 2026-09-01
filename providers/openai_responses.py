@@ -1,5 +1,10 @@
 """OpenAI Responses provider — native OpenAI models via `/v1/responses`.
 
+Wire Protocol: `openai` (Responses API). Platform Transport: `direct` (HTTPS).
+Vendor preset served: `OpenAI` (the `openai` provider entry with NO custom base_url).
+A custom endpoint (Azure, vLLM, any OpenAI-compatible gateway) and every compat vendor
+keep the Chat Completions `OpenAIProvider` (registry.py).
+
 Chat Completions rejects function tools combined with any `reasoning_effort` other than
 `none` on GPT-5.6+ ("use /v1/responses"), which had reasoning pinned OFF for native OpenAI
 models (see `openai_provider._pin_reasoning_effort`). This provider is the Responses path:
@@ -7,10 +12,6 @@ reasoning + tools at real effort levels, streamed reasoning summaries (→ the s
 `reasoning_delta` / `AssistantTurn.reasoning` plumbing the GUI already renders), and
 chain-of-thought continuity across tool round-trips via `store: false` +
 `include: ["reasoning.encrypted_content"]` — nothing retained server-side.
-
-Routing: the `openai` provider entry with NO custom base_url builds this class; a custom
-endpoint (Azure, vLLM, any OpenAI-compatible gateway) and every compat vendor keep the
-Chat Completions `OpenAIProvider` (registry.py).
 
 Like the other native providers, this is mostly a pair of pure converters from the
 canonical OpenAI-chat-shaped history to Responses `input` items. What the converters

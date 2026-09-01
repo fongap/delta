@@ -1608,38 +1608,9 @@ def create_app(manager: SessionManager) -> FastAPI:
             return {"ok": True}
 
     # -- automations (scheduled tasks) ------------------------------------------
-    @app.get("/v1/automations")
-    def automations_list() -> dict[str, Any]:
-        return manager.list_automations()
+    from services.server.routers import automations
 
-    @app.post("/v1/automations")
-    def automations_create(body: dict) -> dict[str, Any]:
-        return manager.create_automation(body or {})
-
-    @app.get("/v1/automations/{task_id}")
-    def automation_get(task_id: str) -> dict[str, Any]:
-        return manager.get_automation(task_id)
-
-    @app.patch("/v1/automations/{task_id}")
-    def automation_update(task_id: str, body: dict) -> dict[str, Any]:
-        return manager.update_automation(task_id, body or {})
-
-    @app.delete("/v1/automations/{task_id}")
-    def automation_delete(task_id: str) -> dict[str, Any]:
-        return manager.delete_automation(task_id)
-
-    @app.post("/v1/automations/{task_id}/seen")
-    def automations_seen(task_id: str) -> dict[str, Any]:
-        return manager.mark_automation_seen(task_id)
-
-    @app.post("/v1/automations/{task_id}/run")
-    def automation_run(task_id: str) -> dict[str, Any]:
-        # Prepare a live manual run; the GUI opens the returned session and drives it.
-        return manager.prepare_manual_run(task_id)
-
-    @app.post("/v1/automations/{task_id}/runs/{run_id}/finalize")
-    def automation_run_finalize(task_id: str, run_id: str) -> dict[str, Any]:
-        return manager.finalize_manual_run(task_id, run_id)
+    app.include_router(automations.router)
 
     @app.websocket("/ws/session/{session_id}")
     async def ws_session(ws: WebSocket, session_id: str) -> None:

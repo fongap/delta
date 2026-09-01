@@ -110,7 +110,7 @@ def build_app(workspace: str | None, model: str, mode: str):
         model=model,
         mode=Mode(mode),
     )
-    # Cold-start recovery (docs/run-ledger-adr.md): any run left without a terminal
+    # Cold-start recovery (docs/architecture/adr/ADR-001-run-event-ledger.md): any run left without a terminal
     # event by a crash/quit gets a synthetic `run.interrupted` — its durable prefix
     # survives as the factual record of what it did before dying.
     recovered = manager.run_ledger.recover_stale()

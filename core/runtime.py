@@ -208,7 +208,7 @@ class TurnEngineAdapter:
 
     When a RunEventLedger is provided, every driven turn becomes a durable run:
     run.started on entry, run.completed on normal exhaustion, run.failed (then
-    re-raised) on error — docs/run-ledger-adr.md.
+    re-raised) on error — docs/architecture/adr/ADR-001-run-event-ledger.md.
     """
 
     def __init__(
