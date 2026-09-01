@@ -1,7 +1,7 @@
 """OpenAI Chat Completions provider — the compat workhorse.
 
-Uses the OpenAI Python SDK `chat.completions` API only, which is what the entire
-OpenAI-compatible world implements: the compat vendors (DeepSeek, Z AI, Kimi, …),
+Wire Protocol: `openai` (Chat Completions). Platform Transport: `direct` (HTTPS).
+Vendor presets served: every OpenAI-compatible vendor (DeepSeek, Z AI, Kimi, …),
 resellers, Ollama, custom endpoints (Azure OpenAI, vLLM), and the Bedrock/Vertex MaaS
 paths. Native OpenAI models (the `openai` provider with no custom endpoint) route to
 `openai_responses.OpenAIResponsesProvider` instead — Chat Completions rejects function

@@ -1,4 +1,14 @@
-"""Google Vertex AI provider — one entry in Settings, three wire paths by model family.
+"""Google Vertex AI provider — Platform Transport: `vertex` (NOT a wire protocol).
+
+Vendor preset served: `Vertex` (models in the user's own GCP project). This provider is
+a platform transport that carries multiple wire protocols depending on the model family:
+
+- `gemini/…`     → wire protocol `gemini` via `genai.Client(vertexai=True)` (reuses
+  `GeminiProvider`).
+- `claude/…`     → wire protocol `anthropic` via `AnthropicVertex` SDK client (reuses
+  `AnthropicProvider`).
+- `openweight/…` → wire protocol `openai` against Vertex's OpenAI-compatible MaaS
+  endpoint (reuses `OpenAIProvider`; Llama, Qwen, DeepSeek, …).
 
 Routed ids look like `vertex:<family>/<model id>`; the router strips `vertex:` and this
 provider splits the family segment, reusing an existing provider class per family:

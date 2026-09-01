@@ -180,7 +180,7 @@ async def test_ui_refresh_cross_cutting_e2e(fake_slack, tmp_path, monkeypatch):
         # pre-build the engine + pre-allow the reply tool so the reply (step 3) doesn't itself ask.
         # NOTE: a session-scoped allow (allow_tool_for_session) is NOT enough for the outbound
         # reply — send_message is an L3 external effect, which the Execution Gateway keeps
-        # behind explicit approval or a USER-AUTHORED standing policy (docs/approval-taxonomy-adr.md
+        # behind explicit approval or a USER-AUTHORED standing policy (docs/architecture/adr/ADR-002-approval-taxonomy.md
         # slice 4a). A target-bound standing rule is the honest "policy" grant here.
         engine = mgr.get_engine(SID)
         assert engine is not None

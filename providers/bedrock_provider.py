@@ -1,4 +1,12 @@
-"""AWS Bedrock provider — one entry in Settings, two wire paths by model family.
+"""AWS Bedrock provider — Platform Transport: `bedrock` (NOT a wire protocol).
+
+Vendor preset served: `Bedrock` (models in the user's own AWS account). This provider is
+a platform transport that carries multiple wire protocols depending on the model family:
+
+- `claude/…`  → wire protocol `anthropic` via `AnthropicBedrock` SDK client (reuses
+  `AnthropicProvider`, so Claude-on-Bedrock gets everything direct Anthropic gets).
+- `other/…`   → Bedrock Converse API (`bedrock-runtime.converse/converse_stream`), a
+  separate wire format used for Llama, Nova, Mistral, Cohere, DeepSeek, …
 
 Routed ids look like `bedrock:<family>/<bedrock model id>`; the router strips `bedrock:`
 and this provider splits the family segment:

@@ -1,5 +1,9 @@
 """Anthropic provider — native Claude Messages API.
 
+Wire Protocol: `anthropic` (Messages API). Platform Transport: `direct` (HTTPS) by
+default; also reused as a wire-protocol client by the `bedrock` and `vertex` platform
+transports (via `AnthropicBedrock` / `AnthropicVertex` SDK clients).
+
 The runtime's canonical message format is OpenAI-shaped (that is what the engine builds and
 persists), so this module is mostly a pair of pure converters: OpenAI-style messages → Anthropic
 `messages` + `system`, and OpenAI function schemas → Anthropic `tools`. The Messages API differs

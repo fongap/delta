@@ -68,6 +68,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           PR_URL: ${{ github.event.pull_request.html_url }}
         run: |
+          set -euo pipefail
+
+          already_enabled="$(
+            gh pr view "$PR_URL" \
+              --json autoMergeRequest \
+              --jq '.autoMergeRequest != null'
+          )"
+
+          if [ "$already_enabled" = "true" ]; then
+            echo "::notice::Auto-merge is already enabled."
+            exit 0
+          fi
+
           gh pr merge "$PR_URL" \
             --auto \
             --squash

@@ -1,5 +1,5 @@
 """SensitiveDataSanitizer — the one recursive scrubbing policy shared by audit rows,
-Run Event Ledger payloads, and any future log sink (docs/run-ledger-adr.md §2).
+Run Event Ledger payloads, and any future log sink (docs/architecture/adr/ADR-001-run-event-ledger.md §2).
 
 Contract:
 - secret-shaped keys are redacted at ANY nesting depth;

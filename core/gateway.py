@@ -1,7 +1,7 @@
 """Execution Gateway — the single classification point for every side effect.
 
 Slice 1 (observe): every authorized tool call is classified into the L0–L4 risk
-taxonomy (docs/approval-taxonomy-adr.md) BEFORE execution, and the level rides on
+taxonomy (docs/architecture/adr/ADR-002-approval-taxonomy.md) BEFORE execution, and the level rides on
 the audit trail. Slice 2 (policy): L4 is never auto-allowed — an irreversible call
 downgrades any rule-based allow to an explicit human decision. Slice 3 (guard):
 declared on-disk targets of side-effectful calls must land inside the session's

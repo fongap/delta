@@ -1,7 +1,7 @@
 """Execution Gateway slices 1–3: deterministic L0–L4 classification, audit levels,
 L4 never auto-allowed, and confinement of declared targets at the choke point.
 
-Behavior contract (docs/approval-taxonomy-adr.md):
+Behavior contract (docs/architecture/adr/ADR-002-approval-taxonomy.md):
 - fail closed — unclassifiable calls are L4, never "probably fine"
 - classification is deterministic and does not depend on model output
 """

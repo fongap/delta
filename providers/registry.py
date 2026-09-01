@@ -6,6 +6,25 @@ GUI, same `to_dict()` shape connectors use) and a `build(profile, secrets)` fact
 a `ProviderClient`. The `ProviderRouter` selects a descriptor by the `provider:` prefix of a
 model string and builds (and caches) its client from the matching SecretStore profile.
 
+Provider model (see docs/architecture/adr/ADR-003-provider-protocol-model.md):
+
+  1. Vendor / Preset — user-visible name: OpenAI, Anthropic, Gemini, Ollama, DeepSeek,
+     OpenRouter, MiniMax, … Determines default endpoint, default model, UI fields, and
+     API-key help text. Vendor names are profile presets; they do NOT select a distinct
+     client implementation.
+
+  2. Wire Protocol — the HTTP API contract the provider client speaks:
+     `openai` (Chat Completions + /v1/responses), `anthropic` (Messages API),
+     `gemini` (Google GenAI generateContent). These are the only first-class remote
+     protocols (`PROFILE_PROTOCOL_*`); every vendor preset maps to one of them.
+
+  3. Platform Transport — the access channel for cloud-hosted model backends:
+     `direct` (default HTTPS to the vendor's public API), `bedrock` (AWS — boto3 /
+     AnthropicBedrock / Converse), `vertex` (GCP — genai.Client(vertexai=True) /
+     AnthropicVertex / MaaS). Bedrock and Vertex are NOT wire protocols; they are
+     transports that may carry multiple wire protocols (e.g. Bedrock serves both
+     native Anthropic for Claude and Converse for everything else).
+
 Today: `openai` (the default — native models via the Responses API; an optional custom
 endpoint covering Azure OpenAI's `/openai/v1` and any OpenAI-compliant gateway keeps the
 Chat Completions path), `anthropic` (native Messages API via
