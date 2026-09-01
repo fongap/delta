@@ -44,8 +44,8 @@ dev = [
     # CI tools are project dependencies so uv.lock fixes the exact versions used
     # by all static/audit gates instead of resolving them separately at runtime.
     "pip-audit==2.10.1",
-    "pyright==1.1.397",
-    "ruff==0.11.13",
+    "pyright==1.1.411",
+    "ruff==0.16.5",
 ]
 # Inbound messaging listeners (outbound send_message needs only httpx, already a core dep).
 # aiohttp is slack-bolt's Socket Mode transport at runtime (and the FakeSlack test harness
@@ -74,6 +74,15 @@ core = ["personas/builtin/*.md"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+
+[tool.ruff.lint]
+# Pin the rule set to the same surface used by ruff ≤0.11 (E4/E7/E9/F).
+# Ruff 0.12+ expanded the default selection to include BLE, S, B, UP, PLR, PLW,
+# RUF, SIM, DTZ, FURB, C4, ISC, PERF, PIE, PYI, etc.  Enabling those broadly
+# in a Dependabot version-bump PR would conflate a tool upgrade with a policy
+# change.  Enable new rule families deliberately in a dedicated PR after
+# reviewing findings and deciding which are project-appropriate.
+select = ["E4", "E7", "E9", "F"]
 
 [tool.uv]
 # CI and release use this exact resolver so the committed uv.lock remains the
