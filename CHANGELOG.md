@@ -9,15 +9,44 @@ CHANGELOG 只记录用户可感知的变化和重要工程能力变化。
 
 ## [Unreleased]
 
+### 移除 (Removed)
+
+- **OpenWorker Cloud 运行时依赖** (ADR-004)
+  - 彻底删除 `integrations/cloud.py` (690 行): Auth0 PKCE 登录、/v1/me、managed OAuth broker、telemetry、persona gallery、GitHub installation token mint、relay routing、cloud disconnect。
+  - 删除 `packages/config.py` 5 个 `cloud_*` 字段 (`cloud_base_url`, `cloud_auth_domain`, `cloud_client_id`, `cloud_audience`, `cloud_relay_ws_url`)；默认值指向 `api.openworker.com` / `opencoworker.us.auth0.com` 已移除。
+  - 删除 `services/server/app.py` 12 个 cloud routes: `/v1/cloud/status`, `/v1/cloud/telemetry`, `/v1/cloud/login`, `/v1/cloud/logout`, `/auth/callback`, `/v1/connectors/*/connect-managed`, `/oauth/callback`, `/v1/cloud/gallery/*`。
+  - 删除 `services/server/manager_events.py` telemetry (`emit_session_created`, `install_id`, `telemetry_enabled`)。
+  - 删除 `services/server/manager_gateway.py` 对 `cloud.fresh_access_token` / `cloud.github_installation_token` / `cloud_relay_ws_url` 的 wiring；relay token 现默认空串。
+  - 删除 `apps/desktop/src/components/GalleryModal.tsx`、`CloudSignIn.tsx`、所有 cloud sign-in / telemetry / managed OAuth UI 引用 (127 处)。
+  - 删除 `tests/test_cloud.py`, `tests/test_cloud_server.py`, `tests/test_slack_workspaces.py`, 3 个 e2e spec (`cloud.spec.ts`, `cloud-status-pending.spec.ts`, `sidebar-account.spec.ts`)。
+  - 删除 `.github/workflows/upstream-sync.yml` (自动镜像 OpenWorker 上游)；`UPSTREAM.md` 重写为"独立项目，不再同步"。
+  - 删除 `pyright-report.before.json` 历史基线。
+
 ### 新增 (Added)
 
-- **仓库治理体系**
-  - 建立开发、质量、依赖和发布治理规则。
-  - 补充 GitHub 仓库运维说明、`CODEOWNERS` 和 Pull Request 模板。
-  - 明确 `main`、工作分支、Required Check、上游同步和正式发布的职责边界。
+- **Managed Capability Ports** (`integrations/managed/`)
+  - `OAuthBroker` / `NullOAuthBroker` (begin/exchange/refresh/disconnect)
+  - `RelayTransport` / `NullRelayTransport` (open/recv/close)
+  - `GitHubAppBroker` / `NullGitHubAppBroker` (get_installation_token/clear)
+  - `ExternalIdentityProvider` / `NullIdentityProvider` (verify_assertion)
+  - `ExternalIdentity` dataclass (issuer/subject/display_name)
+  - `ManagedConfig` (enabled=False, base_url="", device_token="", relay_ws_url="")
+  - `ManagedUnavailableError` (用户可见 "managed relay is unavailable because no managed service is configured")
+- **Federation Boundary** (`integrations/federation/openworker/`)
+  - 占位适配器: `OpenWorkerOAuthBroker`, `OpenWorkerRelayTransport`, `OpenWorkerGitHubAppBroker` (全部 `NotImplementedError`)
+  - README 明确: 删除此目录即完全移除 OpenWorker 支持，零影响
+- **架构文档**: `docs/architecture/hub-federation-boundary.md` (明确 OpenWorker 仅为可选适配器，Native Device Token 为基座)
 
-- **代码安全分析**
-  - 增加 CodeQL，对 Python 与 JavaScript/TypeScript 代码进行独立安全分析。
+### 变更 (Changed)
+
+- `packages/config.py`: 仅保留 `cloud_relay_ws_url` (默认空)，删除 4 个 cloud 字段
+- `integrations/connectors/relay_client.py`: `TokenProvider` 重命名为 `HubTokenProvider` 概念，默认空串
+- `integrations/connectors/integration_github.py`: relay 模式返回 "managed relay unavailable" 而非调用 cloud
+- 所有 connector detail 组件: 移除 cloud sign-in 检查，仅保留 manual connect
+
+### 变更 (Changed)
+
+- **仓库治理体系**
 
 
 ### 变更 (Changed)
