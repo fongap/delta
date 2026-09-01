@@ -14,13 +14,17 @@ permissions:
 jobs:
   enable-auto-merge:
     name: Enable auto-merge
-    if: >
-      github.event.pull_request.user.login == 'dependabot[bot]' &&
-      github.repository == 'fongap/delta'
+    if: github.repository == 'fongap/delta'
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
     steps:
+      - name: Bail if not Dependabot
+        if: github.event.pull_request.user.login != 'dependabot[bot]'
+        run: |
+          echo "::notice::PR author is not dependabot[bot]; auto-merge skipped."
+          exit 0
+
       - name: Fetch Dependabot metadata
         id: metadata
         uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3
@@ -54,10 +58,12 @@ jobs:
           echo "Dependency group: ${{ steps.metadata.outputs.dependency-group }}"
 
       - name: Enable squash auto-merge for safe patch update
+        id: auto-merge
         if: >
           steps.repo.outputs.enabled == 'true' &&
           steps.metadata.outputs.update-type == 'version-update:semver-patch' &&
           steps.metadata.outputs.dependency-group == ''
+        continue-on-error: true
         env:
           GH_TOKEN: ${{ github.token }}
           PR_URL: ${{ github.event.pull_request.html_url }}
@@ -65,6 +71,12 @@ jobs:
           gh pr merge "$PR_URL" \
             --auto \
             --squash
+
+      - name: Report auto-merge failure
+        if: steps.auto-merge.outcome == 'failure'
+        run: |
+          echo "::error::Could not enable auto-merge. PR remains mergeable via manual squash merge."
+          exit 0
 
       - name: Skip grouped update
         if: steps.metadata.outputs.dependency-group != ''
