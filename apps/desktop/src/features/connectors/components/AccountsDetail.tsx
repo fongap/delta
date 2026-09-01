@@ -1,6 +1,5 @@
 import { useState } from "react";
 import {
-  connectManaged,
   disconnectAccount,
   setDefaultAccount,
   type AccountRow,
@@ -15,22 +14,13 @@ import { useI18n } from "@delta/i18n/I18nContext";
 // The generic detail page for multi-account connectors on the accounts layer
 // (Notion, Attio, PostHog, Mixpanel, Amplitude, Apollo, Hunter — batch 2).
 // Same grammar as the Calendar page: an Accounts group with a Default badge,
-// make-default, per-account ×. "＋ Add account" launches managed OAuth when
-// the connector has it (and the user is signed in); the manual token form is
-// always available underneath — signed out or in, local-only stays first-class.
+// make-default, per-account ×. "＋ Add account" launches manual connect.
+// The manual token form is always available — local-only stays first-class.
 
-export function AccountsDetail({ c, cloud, slack: _slack, onChanged }: DetailProps) {
+export function AccountsDetail({ c, onChanged }: DetailProps) {
   const { t } = useI18n();
-  const [busy, setBusy] = useState(false);
   const [showManual, setShowManual] = useState(false);
   const accounts = (c.accounts ?? []) as AccountRow[];
-  const canOneClick = c.managed && !!cloud?.signed_in;
-
-  const addManaged = async () => {
-    setBusy(true);
-    await connectManaged(c.name); // completes in the system browser; the section poll picks it up
-    setTimeout(() => setBusy(false), 2500);
-  };
 
   return (
     <div data-testid="accounts-detail">
@@ -56,13 +46,10 @@ export function AccountsDetail({ c, cloud, slack: _slack, onChanged }: DetailPro
         <button
           className={PILL_ACCENT}
           data-testid="add-account-btn"
-          onClick={() => (canOneClick ? addManaged() : setShowManual((v) => !v))}
-          disabled={busy}
-          title={
-            c.managed && !cloud?.signed_in ? t("connectors.addAccountTitle") : ""
-          }
+          onClick={() => setShowManual((v) => !v)}
+          disabled={c.managed_paused}
         >
-          {busy ? t("connectors.checkBrowser") : t("connectors.addAccount")}
+          {t("connectors.addAccount")}
         </button>
       </div>
 
@@ -86,7 +73,6 @@ export function AccountsDetail({ c, cloud, slack: _slack, onChanged }: DetailPro
             <div className="px-1.5 py-1">
               <ConnectSetup
                 c={c}
-                cloud={cloud}
                 onConnected={() => {
                   setShowManual(false);
                   onChanged();

@@ -55,7 +55,7 @@ function relayHealth(slack: SlackStatus | null, t: T): { dot: string; text: stri
   return { dot: "bg-ok", text: t("connectors.healthLiveRelay") };
 }
 
-export function SlackDetail({ c, cloud, slack, onChanged }: DetailProps) {
+export function SlackDetail({ c, slack, onChanged }: DetailProps) {
   const { t } = useI18n();
   const [adding, setAdding] = useState(false);
   const [subs, setSubs] = useState<Subscription[]>([]);
@@ -109,7 +109,6 @@ export function SlackDetail({ c, cloud, slack, onChanged }: DetailProps) {
         <div className={GRP}>
           <div className={ROW + " text-[12.5px] text-muted"}>
             {t("connectors.slackNotConnectedBlurb")}
-            {cloud?.signed_in ? "" : t("connectors.oneClickCloudManual")}
           </div>
         </div>
       )}
@@ -170,7 +169,6 @@ export function SlackDetail({ c, cloud, slack, onChanged }: DetailProps) {
       {adding && (
         <AddConnectionModal
           c={c}
-          cloud={cloud}
           title={t("connectors.addWorkspace")}
           onClose={() => setAdding(false)}
           onChanged={changed}

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { type CloudStatus, type Connector } from "../../../api";
+import { type Connector } from "../../../api";
 import { ConnectorBadge } from "../ConnectorIcon";
 import { AddConnectionModal } from "./AddConnectionModal";
 import { FOOT, GRP, GRP_H, PILL_ACCENT, ROW, TAG_QUIET } from "./ui";
@@ -23,11 +23,9 @@ const accessLines = (c: Connector, t: T): string[] =>
 
 export function AvailableDetail({
   c,
-  cloud,
   onChanged,
 }: {
   c: Connector;
-  cloud: CloudStatus | null;
   onChanged: () => void;
 }) {
   const { t } = useI18n();
@@ -105,7 +103,6 @@ export function AvailableDetail({
       {connecting && (
         <AddConnectionModal
           c={c}
-          cloud={cloud}
           onClose={() => setConnecting(false)}
           onChanged={onChanged}
         />

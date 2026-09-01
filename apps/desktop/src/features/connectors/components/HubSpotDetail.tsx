@@ -20,7 +20,7 @@ import { useI18n } from "@delta/i18n/I18nContext";
 
 const LABEL = "text-[12.5px] text-muted w-24 shrink-0";
 
-export function HubSpotDetail({ c, cloud, slack: _slack, onChanged }: DetailProps) {
+export function HubSpotDetail({ c, onChanged }: DetailProps) {
   const { t } = useI18n();
   const [adding, setAdding] = useState(false);
   const portals = c.portals ?? [];
@@ -78,7 +78,6 @@ export function HubSpotDetail({ c, cloud, slack: _slack, onChanged }: DetailProp
       {adding && (
         <AddConnectionModal
           c={c}
-          cloud={cloud}
           title={t("connectors.addPortal")}
           onClose={() => setAdding(false)}
           onChanged={onChanged}

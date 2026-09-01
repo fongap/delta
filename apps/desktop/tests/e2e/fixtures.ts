@@ -227,15 +227,6 @@ const INBOX_ITEMS = [
   },
 ];
 
-// Mutable cloud sign-in state: POST /v1/cloud/login flips it (the real flow
-// goes through the browser; the mock completes instantly), logout flips back.
-export const CLOUD_STATE = {
-  signed_in: false,
-  account: "",
-  user_id: "",
-  telemetry_enabled: true,
-};
-
 const GALLERY_PERSONAS = [
   {
     slug: "sales",
