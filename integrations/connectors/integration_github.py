@@ -40,8 +40,6 @@ def _github_auth(
     if profile.get("token"):
         return _github_headers(profile["token"]), None
     if profile.get("mode") == "relay":
-        from integrations.cloud import github_installation_token
-        from packages.config import load_config
         from integrations.connectors import github_installs
 
         installation_id, _prof = github_installs.resolve(secrets, install)
@@ -49,15 +47,10 @@ def _github_auth(
             installation_id, _prof = github_installs.resolve(secrets, "")
         if not installation_id:
             return {}, {"error": "github is not connected; no App installation"}
-        token = github_installation_token(
-            secrets, load_config(), installation_id, force=force
-        )
-        if not token:
-            return {}, {
-                "error": "github installation token unavailable "
-                "(sign in to Delta Cloud and retry)"
-            }
-        return _github_headers(token), None
+        return {}, {
+            "error": "github managed relay is unavailable "
+            "(no managed service configured; use a PAT instead)"
+        }
     return {}, {"error": "github is not connected; missing token"}
 
 

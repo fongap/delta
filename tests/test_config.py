@@ -163,13 +163,12 @@ def test_build_engine_respects_max_iterations(tmp_path):
         engine.executor.close()
 
 
-def test_cloud_endpoints_default_to_production():
-    """A fresh install is local-first: no cloud traffic and no relaying until the user
-    opts in. The base URL is the default sign-in endpoint (an address — nothing is sent
-    until sign-in); the managed relay is DEFAULT-EMPTY so inbound relaying is OFF out of
-    the box (empty ⇒ relay disabled; the user enables it explicitly or via sign-in)."""
+def test_managed_config_defaults_to_disabled():
+    """A fresh install is local-first: no cloud traffic, no relaying, no
+    managed service. The relay URL is DEFAULT-EMPTY so inbound relaying is
+    OFF out of the box (empty => relay disabled; manual Socket Mode / PAT
+    paths are unaffected). No OpenWorker endpoint is configured."""
     from packages.config import Config
 
     cfg = Config()
-    assert cfg.cloud_base_url == "https://api.openworker.com"
     assert cfg.cloud_relay_ws_url == ""

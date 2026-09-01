@@ -7,7 +7,6 @@ mixin inheritance so behavior is unchanged.
 
 from __future__ import annotations
 
-import asyncio
 from typing import Any
 
 from integrations.connectors import (
@@ -365,22 +364,15 @@ class InboxApprovalsMixin(ManagerHostState):
 
 
     async def disconnect_slack_workspace(self, team_id: str) -> dict[str, Any]:
-        """Stop relaying ONE workspace: delete the cloud routing row (best-effort),
-        drop the local per-team token, and hot-reload the gateway. Removing the last
-        workspace also clears relay mode on slack:default so the connector reads
-        disconnected (the manual Socket Mode fields, if any, are left untouched)."""
+        """Stop relaying ONE workspace: drop the local per-team token and
+        hot-reload the gateway. Removing the last workspace also clears relay
+        mode on slack:default so the connector reads disconnected (the manual
+        Socket Mode fields, if any, are left untouched)."""
         team_id = str(team_id).strip()
         profile_key = f"slack:team:{team_id}"
         if not team_id or not self.secrets.get(profile_key):
             return {"ok": False, "error": "workspace not connected"}
-        import integrations.cloud as cloud
-        from packages.config import load_config
 
-        await asyncio.to_thread(
-            lambda: cloud.slack_disconnect_workspace(
-                self.secrets, load_config(), team_id
-            )
-        )
         self.secrets.delete(profile_key)
         remaining = [
             m["profile"]
@@ -411,15 +403,11 @@ class InboxApprovalsMixin(ManagerHostState):
 
 
     def slack_status(self) -> dict[str, Any]:
-        """Slack connection health in three honest layers (UX-DECISIONS §21):
-        the desktop↔relay socket, the cloud sign-in that authorizes it, and each
-        workspace's bot token. The desktop can't see the Slack↔cloud leg, so no
-        layer here ever claims it — event silence ≠ outage."""
-        import integrations.cloud as cloud
-
+        """Slack connection health in two honest layers (UX-DECISIONS §21):
+        the desktop↔relay socket and each workspace's bot token. The cloud
+        sign-in layer has been removed (ADR-004); signed_in is always False."""
         default = self.secrets.get("slack:default") or {}
         mode = default.get("mode") or ""
-        signin = cloud.status(self.secrets)
 
         relay: dict[str, Any] = {
             "state": "offline",
@@ -443,7 +431,7 @@ class InboxApprovalsMixin(ManagerHostState):
             "ok": True,
             "mode": mode,
             "relay": relay,
-            "signed_in": bool(signin.get("signed_in")),
+            "signed_in": False,
             "teams": teams,
         }
 
@@ -451,35 +439,27 @@ class InboxApprovalsMixin(ManagerHostState):
     async def disconnect_github_installation(
         self, installation_id: str
     ) -> dict[str, Any]:
-        """Stop relaying ONE GitHub installation: delete the cloud routing rows
-        (best-effort), drop the local profile, hot-reload the gateway. The Slack
-        per-workspace disconnect, GitHub flavour — a manual PAT stays untouched."""
+        """Stop relaying ONE GitHub installation: drop the local profile,
+        hot-reload the gateway. The Slack per-workspace disconnect, GitHub
+        flavour — a manual PAT stays untouched."""
         installation_id = str(installation_id).strip()
-        import integrations.cloud as cloud
-        from packages.config import load_config
         from integrations.connectors import github_installs
 
         if not installation_id or not self.secrets.get(
             github_installs.PREFIX + installation_id
         ):
             return {"ok": False, "error": "installation not connected"}
-        await asyncio.to_thread(
-            lambda: cloud.github_disconnect_installation(
-                self.secrets, load_config(), installation_id
-            )
-        )
+
         result = github_installs.disconnect_install(self.secrets, installation_id)
         await self.refresh_gateway()
         return result
 
 
     def github_status(self) -> dict[str, Any]:
-        """GitHub relay health, same three honest layers as Slack: the shared
-        relay socket, the cloud sign-in, and per-installation token health."""
-        import integrations.cloud as cloud
-
+        """GitHub relay health, two honest layers: the shared relay socket and
+        per-installation token health. The cloud sign-in layer has been
+        removed (ADR-004); signed_in is always False."""
         default = self.secrets.get("github:default") or {}
-        signin = cloud.status(self.secrets)
         relay: dict[str, Any] = {
             "state": "offline",
             "reconnects": 0,
@@ -502,7 +482,7 @@ class InboxApprovalsMixin(ManagerHostState):
             "ok": True,
             "mode": default.get("mode") or "",
             "relay": relay,
-            "signed_in": bool(signin.get("signed_in")),
+            "signed_in": False,
             "installs": installs,
             "missed": missed,
         }
