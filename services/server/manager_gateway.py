@@ -6,7 +6,6 @@ mixin inheritance so behavior is unchanged.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import re
 from typing import Any
@@ -55,20 +54,20 @@ class GatewayInboundMixin(ManagerHostState):
             interaction_handler=self._on_interaction,
             on_unauthorized=self._park_unauthorized,
         )
-        # Managed Slack relay wiring (only used when a connector picks relay mode):
-        # the cloud sign-in JWT authorizes the relay WebSocket, and the relay
-        # endpoint comes from config. Both are lazy — Socket Mode needs neither.
-        from integrations.cloud import fresh_access_token
+        # Managed relay wiring: only used when a connector picks relay mode.
+        # No cloud sign-in — relay stays off unless a managed service is configured.
+        # The token provider returns "" when no managed service is available; relay
+        # adapters skip cleanly (manual Socket Mode / PAT paths are unaffected).
         from packages.config import load_config
 
-        cloud_config = load_config()
+        managed_config = load_config()
 
         def _relay_token() -> str:
-            return fresh_access_token(self.secrets, cloud_config) or ""
+            return ""  # no managed service configured — relay unavailable
 
-        # Every relay-mode platform shares ONE cloud socket; the hub fans frames
+        # Every relay-mode platform shares ONE managed socket; the hub fans frames
         # out by provider tag. Built lazily on the first relay adapter.
-        relay_ws_url = getattr(cloud_config, "cloud_relay_ws_url", "") or None
+        relay_ws_url = getattr(managed_config, "cloud_relay_ws_url", "") or None
         relay_hub = None
         if relay_ws_url:
             from integrations.connectors.relay_client import RelayHub
@@ -76,11 +75,7 @@ class GatewayInboundMixin(ManagerHostState):
             relay_hub = RelayHub(relay_ws_url, _relay_token)
 
         async def _github_token(installation_id: str) -> str:
-            from integrations.cloud import github_installation_token
-
-            return await asyncio.to_thread(
-                github_installation_token, self.secrets, cloud_config, installation_id
-            )
+            return ""  # no managed GitHub App broker configured
 
         for platform, st in settings.items():
             if not st.enabled:
