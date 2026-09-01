@@ -16,7 +16,6 @@ from services.server.manager import SessionManager
 from integrations.skills import (
     SessionSkillStore,
     SkillLoader,
-    SkillStore,
     effective_skills,
     skill_catalog_text,
     skill_tools,

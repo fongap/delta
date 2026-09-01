@@ -117,7 +117,7 @@ def test_args_preview():
 
 def test_approval_body_includes_tool_args():
     from core.engine import PermissionRequest
-    from services.server.manager import _approval_body
+    from services.server.manager_support import _approval_body
 
     req = PermissionRequest(
         "write_file", {"path": "groceries.txt", "content": "buy milk"}, None, ""

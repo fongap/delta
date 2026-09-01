@@ -27,7 +27,6 @@ explicit classes:
   pid + detach flag, so it stays visible and stoppable via `shell_task_kill`.
 """
 
-# pyright: reportFunctionMemberAccess=false
 # (tool-builder module: attaches aisuite's dynamic metadata attributes
 # (__aisuite_tool_metadata__ / __delta_schema__) to plain functions —
 # the framework's plugin protocol, not a type error.)
@@ -45,9 +44,11 @@ import uuid
 from abc import ABC, abstractmethod
 from collections import deque
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import aisuite as ai
+
+from integrations.tools.metadata import attach_tool_metadata
 
 _IS_WINDOWS = sys.platform == "win32"
 
@@ -116,7 +117,7 @@ class _BackgroundTask:
         if _IS_WINDOWS:
             argv = ["powershell.exe", "-NoProfile", "-Command", command]
             spawn_kwargs: dict[str, Any] = {
-                "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP
+                "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP,  # type: ignore[attr-defined]
             }
         else:
             argv = ["/bin/bash", "-c", command]
@@ -243,7 +244,7 @@ class LocalExecutor(Executor):
             # New process group so a timeout can deliver Ctrl-Break to the child (and only
             # the child), without signaling our own process.
             spawn_kwargs: dict[str, Any] = {
-                "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP
+                "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP,  # type: ignore[attr-defined]
             }
         else:
             argv = [self._shell_path]
@@ -486,7 +487,7 @@ class LocalExecutor(Executor):
             # Ctrl-Break to the child's process group (best-effort). If the marker never
             # resyncs, run()'s grace timeout hard-closes the shell.
             try:
-                self._proc.send_signal(signal.CTRL_BREAK_EVENT)
+                self._proc.send_signal(signal.CTRL_BREAK_EVENT)  # type: ignore[attr-defined]
             except (OSError, ValueError):
                 pass
             return
@@ -707,7 +708,7 @@ def shell_tools(executor: Executor) -> list:
             requires_approval=True,
         ),
     )
-    wrapped_run.__delta_schema__ = _RUN_SHELL_SCHEMA
+    attach_tool_metadata(wrapped_run, schema=_RUN_SHELL_SCHEMA)
     wrapped_output = ai.tool(
         shell_task_output,
         metadata=ai.ToolMetadata(
@@ -717,7 +718,7 @@ def shell_tools(executor: Executor) -> list:
             requires_approval=False,
         ),
     )
-    wrapped_output.__delta_schema__ = _TASK_OUTPUT_SCHEMA
+    attach_tool_metadata(wrapped_output, schema=_TASK_OUTPUT_SCHEMA)
     wrapped_kill = ai.tool(
         shell_task_kill,
         metadata=ai.ToolMetadata(
@@ -727,5 +728,5 @@ def shell_tools(executor: Executor) -> list:
             requires_approval=False,
         ),
     )
-    wrapped_kill.__delta_schema__ = _TASK_KILL_SCHEMA
+    attach_tool_metadata(wrapped_kill, schema=_TASK_KILL_SCHEMA)
     return [wrapped_run, wrapped_output, wrapped_kill]

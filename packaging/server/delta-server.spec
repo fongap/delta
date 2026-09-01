@@ -128,18 +128,6 @@ if IS_WINDOWS:
         pass
 
 
-# [bedrock] extra — boto3 is lazy-imported (bedrock_provider.py), so static analysis
-# misses it, and botocore's service-model JSON data directory only ships via collect_all.
-for pkg in ("boto3", "botocore"):
-    try:
-        d, b, h = collect_all(pkg)
-        datas += d
-        binaries += b
-        hiddenimports += h
-    except Exception:
-        pass
-
-
 # [messaging] extras are optional.
 for pkg in ("slack_bolt", "telegram"):
     try:

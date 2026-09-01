@@ -1,7 +1,7 @@
 """Token-usage metering — provider capture, normalization, engine plumbing.
 
 Fakes follow the provider test convention: SimpleNamespace objects mimicking each
-SDK's response surface, dict events for Bedrock's Converse stream.
+supported SDK's response surface.
 """
 
 from __future__ import annotations
@@ -21,8 +21,6 @@ from providers import (
 )
 from providers.anthropic_provider import AnthropicProvider
 from providers.base import TokenUsage
-from providers.bedrock_provider import _BedrockConverseClient
-from providers.gemini_provider import GeminiProvider
 from providers.matrix import model_context_windows
 from providers.openai_provider import OpenAIProvider
 from integrations.tools import ToolRegistry
@@ -202,98 +200,6 @@ def test_openai_complete_captures_usage_without_cache_details():
     provider = OpenAIProvider(client=fake)
     turn = provider.complete(model="m", messages=[{"role": "user", "content": "x"}])
     assert turn.usage == TokenUsage(input=30, output=4)
-
-
-# -- Gemini -------------------------------------------------------------------------
-
-
-class _FakeGeminiClient:
-    def __init__(self, responses):
-        def generate_content_stream(**kwargs):
-            self.kwargs = kwargs
-            return iter(responses)
-
-        def generate_content(**kwargs):
-            self.kwargs = kwargs
-            return responses[0]
-
-        self.models = SimpleNamespace(
-            generate_content=generate_content,
-            generate_content_stream=generate_content_stream,
-        )
-
-
-def _gemini_response(text, usage_metadata=None):
-    return SimpleNamespace(
-        candidates=[
-            SimpleNamespace(
-                content=SimpleNamespace(
-                    parts=[SimpleNamespace(text=text, function_call=None)]
-                ),
-                finish_reason=SimpleNamespace(name="STOP"),
-            )
-        ],
-        usage_metadata=usage_metadata,
-    )
-
-
-def test_gemini_stream_keeps_last_usage_metadata():
-    responses = [
-        _gemini_response(
-            "he",
-            SimpleNamespace(
-                prompt_token_count=90,
-                candidates_token_count=1,
-                cached_content_token_count=50,
-                thoughts_token_count=0,
-            ),
-        ),
-        _gemini_response(
-            "y",
-            # Cumulative — the last chunk carries the final totals.
-            SimpleNamespace(
-                prompt_token_count=90,
-                candidates_token_count=12,
-                cached_content_token_count=50,
-                thoughts_token_count=6,
-            ),
-        ),
-    ]
-    provider = GeminiProvider(client=_FakeGeminiClient(responses))
-    turn = _final_turn(
-        list(provider.stream(model="m", messages=[{"role": "user", "content": "x"}]))
-    )
-    # input = prompt minus cached; thinking tokens fold into output.
-    assert turn.usage == TokenUsage(input=40, output=18, cache_read=50)
-
-
-# -- Bedrock (Converse) -------------------------------------------------------------
-
-
-def test_bedrock_converse_stream_captures_metadata_usage():
-    fake = SimpleNamespace(
-        converse_stream=lambda **kwargs: {
-            "stream": [
-                {"contentBlockDelta": {"delta": {"text": "hi"}, "contentBlockIndex": 0}},
-                {"messageStop": {"stopReason": "end_turn"}},
-                {
-                    "metadata": {
-                        "usage": {
-                            "inputTokens": 11,
-                            "outputTokens": 3,
-                            "cacheReadInputTokens": 8,
-                            "cacheWriteInputTokens": 2,
-                        }
-                    }
-                },
-            ]
-        }
-    )
-    client = _BedrockConverseClient(client=fake)
-    turn = _final_turn(
-        list(client.stream(model="m", messages=[{"role": "user", "content": "x"}]))
-    )
-    assert turn.usage == TokenUsage(input=11, output=3, cache_read=8, cache_write=2)
 
 
 # -- engine plumbing ----------------------------------------------------------------

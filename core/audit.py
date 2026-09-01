@@ -6,7 +6,7 @@ import json
 import sqlite3
 import threading
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from integrations.connectors import connector_for_tool
 from packages.sanitize import (

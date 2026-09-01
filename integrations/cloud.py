@@ -27,17 +27,16 @@ import os
 import secrets as _secrets
 import time
 import urllib.parse
-from typing import Any, Optional
+from typing import Any
 
 import httpx
 
+from core import __version__ as APP_VERSION
 from packages.config import Config
 from packages.secrets import SecretStore
 
 CLOUD_AUTH_PROFILE = "cloud:auth"
 LOGIN_SCOPES = "openid profile email offline_access"
-
-from core import __version__ as APP_VERSION
 
 # connector id (canonical, = descriptor name) -> broker provider key
 PROVIDER_FOR_CONNECTOR = {

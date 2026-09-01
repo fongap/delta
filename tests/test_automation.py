@@ -304,7 +304,8 @@ def test_update_and_delete_tools(tmp_path):
 # -- run persists as a continuable session -------------------------------------
 async def test_scheduled_run_persists_continuable_session(tmp_path, monkeypatch):
     from providers import AssistantTurn, ModelCapabilities, ProviderClient
-    from services.server.manager import SessionManager, _last_assistant_text
+    from services.server.manager import SessionManager
+    from services.server.manager_support import _last_assistant_text
 
     class ScriptedProvider(ProviderClient):
         def __init__(self, turns):

@@ -31,7 +31,7 @@ from __future__ import annotations
 import re
 from enum import IntEnum
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from core.risk import EGRESS_TOOLS
 
@@ -287,7 +287,7 @@ def enforce_level(level: RiskLevel, decision: Any) -> Any:
         decision.needs_user = True
         decision.rule = ""
         decision.reason = (
-            f"irreversible action (L4) — explicit approval required"
+            "irreversible action (L4) — explicit approval required"
             + (f"; was: {decision.reason}" if decision.reason else "")
         )
     return decision

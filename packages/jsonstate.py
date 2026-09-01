@@ -35,7 +35,7 @@ def load_json_state(path: Path, default: Any = None) -> Any:
         return default
     try:
         return json.loads(data)
-    except ValueError as exc:
+    except ValueError:
         ts = time.strftime("%Y%m%d%H%M%S")
         backup = path.with_name(path.name + f".corrupt-{ts}")
         try:

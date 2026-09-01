@@ -6,9 +6,7 @@ from providers.base import (
     StreamChunk,
     ToolCall,
 )
-from providers.bedrock_provider import BedrockProvider
 from providers.capabilities import capabilities_for
-from providers.gemini_provider import GeminiProvider
 from providers.openai_provider import OpenAIProvider, resolve_api_key
 from providers.openai_responses import OpenAIResponsesProvider
 from providers.registry import (
@@ -32,14 +30,11 @@ from providers.registry import (
     verify_provider_key,
 )
 from providers.router import ProviderRouter
-from providers.vertex_provider import VertexProvider
 
 __all__ = [
     "PROTOCOLS",
     "AnthropicProvider",
     "AssistantTurn",
-    "BedrockProvider",
-    "GeminiProvider",
     "ModelCapabilities",
     "OpenAIProvider",
     "OpenAIResponsesProvider",
@@ -49,7 +44,6 @@ __all__ = [
     "ProviderRouter",
     "StreamChunk",
     "ToolCall",
-    "VertexProvider",
     "build_provider_client",
     "core_protocol_descriptors",
     "capabilities_for",

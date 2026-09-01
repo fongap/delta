@@ -40,7 +40,6 @@ from core.permissions import Mode, PermissionEngine
 from providers import AssistantTurn, ProviderClient, ToolCall
 from providers.errors import friendly_model_error
 from providers.openai_provider import looks_like_unparsed_tool_call
-from core import request_log as _request_log
 from core import tool_selection as _tool_selection
 from integrations.tools import ToolRegistry
 
@@ -186,7 +185,9 @@ class TurnEngine:
         )
         self.agent_family = agent_family
         self.request_logger = request_logger
-        self.ttft_timeout = float(ttft_timeout) if (ttft_timeout or 0) > 0 else None
+        self.ttft_timeout = (
+            float(ttft_timeout) if ttft_timeout is not None and ttft_timeout > 0 else None
+        )
         self.max_retries = max(0, int(max_retries or 0))
         self._tool_expanded = False
         self._tools_minimal = False

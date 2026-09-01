@@ -1724,7 +1724,7 @@ export async function setMemorySettings(
   return res.json();
 }
 
-// -- model providers (OpenAI, Ollama, …) --------------------------------------
+// -- model providers -----------------------------------------------------------
 export interface ProviderField {
   key: string;
   label: string;
@@ -1753,12 +1753,12 @@ export interface ProviderInfo {
   last_used_at?: number | null; // epoch secs the provider last served a completion
   // custom-config-first markers (backend-emitted); null for built-in providers
   custom?: boolean | null; // true for a user-defined alias
-  protocol?: string | null; // protocol_id of a custom provider (e.g. "openai-compatible")
+  protocol?: string | null; // protocol_id of a custom provider ("openai" or "anthropic")
   alias?: string | null; // the alias name for a custom provider (=== name when custom)
 }
 
 export interface ProviderProtocol {
-  id: string; // protocol_id, e.g. "openai-compatible"
+  id: string; // "openai" or "anthropic"
   title: string; // dropdown label
   needs_key: boolean;
   fields: ProviderField[]; // the fields this protocol's form renders
@@ -1772,7 +1772,7 @@ export async function getProviders(): Promise<ProviderInfo[]> {
   return res.json();
 }
 
-/** The 7 protocol definitions for the custom-provider form's protocol dropdown. */
+/** The two protocol definitions for the custom-provider form's protocol dropdown. */
 export async function getProtocols(): Promise<ProviderProtocol[]> {
   const res = await fetch(`${httpBase()}/v1/protocols`);
   return res.json();
@@ -1877,7 +1877,6 @@ export function detectProvider(apiKey: string): string | null {
   if (!key) return null;
   if (key.startsWith("sk-ant-")) return "anthropic";
   if (key.startsWith("sk-or-")) return "openrouter";
-  if (key.startsWith("AIza")) return "gemini";
   if (key.startsWith("sk-") || key.startsWith("sk_")) return "openai";
   return null;
 }

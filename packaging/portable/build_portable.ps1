@@ -35,7 +35,7 @@
     - Node + npm (frontend build).
     - uv plus a locked Python environment at <repo>\.venv. Create it with the exact
       release dependency graph (including pyinstaller and Windows tzdata):
-        uv sync --locked --extra bedrock --extra build
+        uv sync --locked --extra build
     - tar.exe (system bsdtar, present on Windows 10 1803+) for a long-path / Unicode-safe ZIP.
 
   WebView2 is NOT bundled (tauri.conf.json uses downloadBootstrapper for installers). A portable

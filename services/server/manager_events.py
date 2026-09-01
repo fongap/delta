@@ -6,12 +6,15 @@ mixin inheritance so behavior is unchanged.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from services.server.contracts import runtime_event_v1
 
 
-class EventsMixin:
+from services.server.manager_contract import ManagerHostState
+
+
+class EventsMixin(ManagerHostState):
 
     def _emit_session_created(self, session_id: str, persona_id: str) -> None:
         """Phase 5 telemetry, fired once per brand-new session on a background thread

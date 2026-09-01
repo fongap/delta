@@ -13,7 +13,6 @@ import sqlite3
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
 from zoneinfo import ZoneInfo
 
 from core.automation.models import ScheduledTask, TaskRun

@@ -8,14 +8,11 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 from integrations.connectors import experimental_enabled
 
 from providers import (
-    ProviderClient,
-    ProviderRouter,
     descriptor_configured,
-    fetch_provider_models,
     get_descriptor,
     is_custom_provider,
     provider_descriptors,
@@ -27,12 +24,15 @@ from providers import (
 )
 
 
-class ProvidersSettingsMixin:
+from services.server.manager_contract import ManagerHostState
 
-    # -- model providers (OpenAI, Ollama, …) ------------------------------------
+
+class ProvidersSettingsMixin(ManagerHostState):
+
+    # -- model providers ---------------------------------------------------------
     def get_providers(self) -> list[dict[str, Any]]:
         """Descriptor + per-provider status for the Settings UI. Never returns secret values;
-        non-secret field values (e.g. the Ollama base URL) ARE returned so the form can prefill.
+        Non-secret field values (for example an endpoint) are returned so the form can prefill.
         """
         out: list[dict[str, Any]] = []
         for d in provider_descriptors():
@@ -101,10 +101,7 @@ class ProvidersSettingsMixin:
 
     def _suggested_models(self, name: str) -> list[str]:
         """Bare model-name suggestions for the 'add model' form (datalist), per provider.
-        Ollama → live `/api/tags` (best-effort); everyone else → the curated matrix,
-        topped up with the compat-vendor extras the matrix doesn't vouch for."""
-        if name == "ollama":
-            return [m.split(":", 1)[-1] for m in self._ollama_models()]
+        Uses the curated matrix plus compatible-vendor extras the matrix doesn't vouch for."""
         from providers.matrix import models_for_provider
 
         return list(
@@ -214,7 +211,8 @@ class ProvidersSettingsMixin:
         except ValueError as exc:
             return {"ok": False, "error": str(exc)}
         # Persist the registration so __init__ re-hydrates it after a restart.
-        canonical = get_descriptor(alias).protocol if get_descriptor(alias) else protocol
+        descriptor = get_descriptor(alias)
+        canonical = descriptor.protocol if descriptor is not None else protocol
         custom = dict(self._prefs.get("provider_profiles") or {})
         custom[alias] = {"protocol": canonical, "preset": False}
         self._prefs["provider_profiles"] = custom
@@ -293,8 +291,6 @@ class ProvidersSettingsMixin:
         if d.needs_key and has_key_field and not api_key:
             return {"ok": False, "error": "Enter an API key to test."}
         if d.needs_key and not has_key_field:
-            # Multi-field cloud providers (Bedrock): required fields must be present;
-            # actual credentials may be ambient (~/.aws, env) and are checked by the call.
             missing = [f.label for f in d.fields if f.required and not merged.get(f.key)]
             if missing:
                 return {"ok": False, "error": "missing: " + ", ".join(missing)}
@@ -355,53 +351,6 @@ class ProvidersSettingsMixin:
         return {"ok": True, "dm_session": self.dm_session()}
 
 
-    def _ollama_alive(self) -> bool:
-        """Best-effort local-Ollama liveness, cached 30s (get_settings runs on every GUI
-        fetch — no 2s probe inline). Keyless is not the same as PRESENT: `ollama:*` picker
-        entries render only when an Ollama actually answers, so a machine with no Ollama
-        never shows phantom local models (e.g. a stray pasted string saved as a model id,
-        caught 2026-07-21)."""
-        import time
-
-        now = time.monotonic()
-        cached = getattr(self, "_ollama_alive_cache", None)
-        if cached and now - cached[0] < 30:
-            return cached[1]
-        profile = self.secrets.get(provider_profile_key("ollama")) or {}
-        base = (profile.get("base_url") or "http://localhost:11434").strip().rstrip("/")
-        if base.endswith("/v1"):
-            base = base[: -len("/v1")]
-        try:
-            import httpx
-
-            alive = httpx.get(base + "/api/tags", timeout=0.8).status_code == 200
-        except Exception:
-            alive = False
-        self._ollama_alive_cache = (now, alive)
-        return alive
-
-
-    def _ollama_models(self) -> list[str]:
-        """Live list of models pulled into the configured Ollama server (via its native
-        `/api/tags`), as `ollama:<name>` so they're directly selectable. Empty if Ollama isn't
-        configured or unreachable — best-effort, never raises."""
-        profile = self.secrets.get(provider_profile_key("ollama"))
-        if not profile:
-            return []
-        base = (profile.get("base_url") or "http://localhost:11434").strip().rstrip("/")
-        if base.endswith("/v1"):
-            base = base[: -len("/v1")]
-        try:
-            import httpx
-
-            data = httpx.get(base + "/api/tags", timeout=2.0).json()
-            return [
-                f"ollama:{m['name']}" for m in data.get("models", []) if m.get("name")
-            ]
-        except Exception:
-            return []
-
-
     def _curated_models(self) -> list[str]:
         """The models offered in the composer's selector: every curated-matrix model
         (`get_settings` culls the ones whose provider has no key) plus custom ids the user
@@ -421,7 +370,7 @@ class ProvidersSettingsMixin:
 
 
     def add_model(self, model: str) -> dict[str, Any]:
-        """Add a model id (e.g. `gpt-4o`, `ollama:qwen2.5-coder:32b`) to the picker.
+        """Add a model id (for example `gpt-4o` or `my-gateway:model-id`) to the picker.
         Custom ids persist in prefs; a previously removed matrix model is just unhidden
         (storing it too would shadow future matrix updates)."""
         from providers.matrix import MATRIX
@@ -473,12 +422,8 @@ class ProvidersSettingsMixin:
         # Only surface models whose provider is actually configured — the composer picker
         # reflects exactly what's connected. The active default is always kept selectable
         # (it's hidden behind the "No model" state until a provider is connected anyway).
-        # Ollama is keyless, so "configured" is meaningless there — its models show only
-        # while a local Ollama answers (cached liveness probe).
         def _selectable(m: str) -> bool:
             provider = self._model_provider(m)
-            if provider == "ollama":
-                return self._ollama_alive()
             return self._provider_configured(provider)
 
         selectable = [m for m in self._curated_models() if _selectable(m)]

@@ -18,11 +18,26 @@ import uuid
 from collections import deque
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
+
+from core.attachments import (
+    MAX_ATTACHMENTS as _MAX_ATTACHMENTS,
+)
+from core.attachments import (
+    MAX_IMAGE_CHARS,
+    MAX_PDF_CHARS,
+    MAX_TEXT_CHARS,
+    build_user_content,
+)
+from core.engine import ApprovalOutcome
+from core.inbox import VIS_INBOX, VIS_INLINE, args_preview
+from providers import AssistantTurn, core_protocol_descriptors
+from services.server.contracts import error_envelope
+from services.server.manager import SessionManager
 
 # Origins allowed to talk to the local sidecar. It binds to 127.0.0.1, but a page in the
 # user's own browser can still reach loopback — so without an origin gate, any website they
@@ -160,21 +175,6 @@ _CONNECT_FAILED_DETAIL = (
     "Something went wrong finishing this connection. "
     "Close this tab and try again from Delta."
 )
-
-from core.attachments import (
-    MAX_ATTACHMENTS as _MAX_ATTACHMENTS,
-)
-from core.attachments import (
-    MAX_IMAGE_CHARS,
-    MAX_PDF_CHARS,
-    MAX_TEXT_CHARS,
-    build_user_content,
-)
-from core.engine import ApprovalOutcome
-from core.inbox import VIS_INBOX, VIS_INLINE, args_preview
-from providers import AssistantTurn, core_protocol_descriptors
-from services.server.contracts import error_envelope
-from services.server.manager import SessionManager
 
 
 def create_app(manager: SessionManager) -> FastAPI:
@@ -1410,7 +1410,7 @@ def create_app(manager: SessionManager) -> FastAPI:
             return {"ok": False, "error": "provider required"}
         return manager.set_web_search(provider, (body or {}).get("api_key"))
 
-    # -- model providers (OpenAI, Ollama, …) ------------------------------------
+    # -- model providers ---------------------------------------------------------
     @app.get("/v1/protocols")
     def protocols_get() -> list[dict[str, Any]]:
         """Protocol definitions for the custom-provider form (no callable fields)."""
@@ -1448,12 +1448,13 @@ def create_app(manager: SessionManager) -> FastAPI:
             return {"ok": False, "error": "name required"}
         # Custom-config-first: with `protocol` present this creates or updates a user-
         # defined alias; otherwise it hits the built-in provider path.
-        if (body or {}).get("protocol"):
+        protocol = (body or {}).get("protocol")
+        if isinstance(protocol, str) and protocol:
             alias = name.strip()
             if manager.is_custom_registered(alias):
                 return manager.set_provider(alias, (body or {}).get("fields"))
             return manager.create_custom_provider(
-                alias, (body or {}).get("protocol"), (body or {}).get("fields")
+                alias, protocol, (body or {}).get("fields")
             )
         return manager.set_provider(name, (body or {}).get("fields"))
 
@@ -1794,7 +1795,7 @@ def create_app(manager: SessionManager) -> FastAPI:
             # and update their header. Never rebind mid-turn — the running loop reads
             # `engine.model` per iteration and a mixed turn is exactly the breakage the
             # old lock existed to prevent.
-            if not model or manager.is_running(session_id):
+            if not model or runtime is None or manager.is_running(session_id):
                 return
             notice = runtime.switch_model(model)
             if notice is None:  # same model, or first bind on a fresh session
@@ -1968,8 +1969,10 @@ def create_app(manager: SessionManager) -> FastAPI:
                     # tail, so a stray frame is a no-op that still ends with turn_done).
                     await claim_turn(retry=True)
                 elif kind == "set_mode":
+                    mode = message.get("mode")
                     try:
-                        runtime.set_mode(message.get("mode"))
+                        if isinstance(mode, str):
+                            runtime.set_mode(mode)
                     except (TypeError, ValueError):
                         pass
                 elif kind == "set_model":

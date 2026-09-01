@@ -15,7 +15,7 @@ it back. Failures in the callback never fail the write.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 import aisuite as ai
 

@@ -4,7 +4,6 @@ The dependency is optional. If Playwright or its browser binaries are not instal
 tools return a clear setup error instead of breaking engine construction.
 """
 
-# pyright: reportFunctionMemberAccess=false
 # (tool-builder module: attaches aisuite's dynamic metadata attributes
 # (__aisuite_tool_metadata__ / __delta_schema__) to plain functions —
 # the framework's plugin protocol, not a type error.)
@@ -12,6 +11,7 @@ tools return a clear setup error instead of breaking engine construction.
 from __future__ import annotations
 
 import base64
+import importlib
 import re
 import tempfile
 import threading
@@ -23,6 +23,7 @@ from typing import Any, Callable, Optional
 import aisuite as ai
 
 from integrations.web.guard import check_url
+from integrations.tools.metadata import attach_tool_metadata
 
 
 def _meta(
@@ -60,8 +61,9 @@ def _attach(fn: Callable[..., Any], schema: dict[str, Any], *, approval: bool = 
     name = schema["function"]["name"]
     # §36: the tool registry's read/write kind wins for registered tools — reads never gate.
     approval = approval_for_tool(name, default=approval)
-    fn.__delta_schema__ = schema
-    fn.__aisuite_tool_metadata__ = _meta(name, approval=approval)
+    attach_tool_metadata(
+        fn, schema=schema, metadata=_meta(name, approval=approval)
+    )
     fn.__doc__ = schema["function"]["description"]
     return fn
 
@@ -126,8 +128,9 @@ class _BrowserController:
             if self._page is not None:
                 return self._page, None
             try:
-                from playwright.sync_api import sync_playwright
-
+                sync_playwright = importlib.import_module(
+                    "playwright.sync_api"
+                ).sync_playwright
                 self._playwright = sync_playwright().start()
                 self._browser = self._playwright.chromium.launch(headless=False)
                 self._context = self._browser.new_context(
@@ -183,6 +186,7 @@ class _BrowserController:
             page, err = self.page()
             if err:
                 return err
+            assert page is not None
             try:
                 png = page.screenshot(full_page=False)
                 data_url = "data:image/png;base64," + base64.b64encode(png).decode(

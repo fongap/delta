@@ -7,7 +7,7 @@ the skill catalog (progressive disclosure) + load_skill into a TurnEngine.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 from core.agents import Agent, AgentContext, code_agent
 from core.automation import scheduling_tools
@@ -193,14 +193,14 @@ def build_engine(
     # above auto memories; independent of the memory on/off switch. No tool writes it.
     # A CALLABLE is read per turn (the server passes one so a Settings edit reaches
     # conversations already open); a plain string is a fixed value for CLI/tests.
-    user_rules: Any | None = None,
+    user_rules: str | Callable[[], str] | None = None,
     # True when the user turned memory OFF in Settings (vs. memory simply not wired):
     # injects the honesty notice so the model says so instead of faking a save.
     memory_off: bool = False,
     # LIVE saving switch, consulted per write so turning memory off applies to
     # conversations already running (the registry is fixed at build, so the tool stays
     # and refuses). Same pattern as the skills menu's live filter.
-    memory_saving_enabled: Any | None = None,
+    memory_saving_enabled: Callable[[], bool] | None = None,
     messages: list[dict[str, Any]] | None = None,
     extra_tools: list[Any] | None = None,
     secrets: SecretStore | None = None,
@@ -293,7 +293,7 @@ def build_engine(
     # ask_user: the universal human-in-the-loop Q&A primitive (every agent; engine-intercepted).
     if question_asker is not None:
         registry.register(ask_user_tool())
-    # Route by the model's `provider:` prefix (OpenAI default, Ollama, …). The manager normally
+    # Route by the model's `provider:` prefix (OpenAI default or a configured alias). The manager normally
     # passes its shared router; this fallback covers the TUI / direct build_engine() callers.
     # Resolved here (not at engine construction) because the explorer subagent captures it.
     provider = provider or ProviderRouter(secrets, default_provider="openai")

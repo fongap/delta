@@ -14,6 +14,15 @@ from enum import Enum
 from pathlib import Path
 from typing import Any, Optional
 
+from core.gateway import write_paths
+from core.risk import (  # re-exported for back-compat (manager.py imports WRITE_TOOLS)
+    RiskClass,
+    RiskOverrides,
+    WRITE_TOOLS,  # noqa: F401 — re-exported for back-compat
+    classify,
+    is_consequential,
+)
+
 # Shell metacharacters that turn one "allowlisted" command into several. Any of these in a
 # command disqualifies it from allowlist auto-run — approval is required instead. Covers
 # chaining (`;` `&` `&&` `||`), pipes (`|`), redirection (`>` `<`), command substitution
@@ -23,16 +32,6 @@ _SHELL_OPERATORS = (";", "&", "|", ">", "<", "`", "$(", "(", "\n", "\r")
 
 def _has_shell_operators(command: str) -> bool:
     return any(op in command for op in _SHELL_OPERATORS)
-
-from core.gateway import write_paths
-from core.risk import (  # re-exported for back-compat (manager.py imports WRITE_TOOLS)
-    SHELL_TOOL,
-    WRITE_TOOLS,
-    RiskClass,
-    RiskOverrides,
-    classify,
-    is_consequential,
-)
 
 
 class Mode(str, Enum):

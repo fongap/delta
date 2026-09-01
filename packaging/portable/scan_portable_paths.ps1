@@ -95,14 +95,6 @@ Get-ChildItem -Path $Root -Recurse -Force -File | ForEach-Object {
                 $Info.Add("info: user-path fallback (runtime-resolved): $rel :: $trimmed")
                 continue
             }
-            # Vendored static SDK example data (botocore / boto3 bundled examples) uses sample
-            # filenames like "c:\HappyFace.jpg" as literal documentation literals — they are
-            # example strings, never build-machine paths, and cannot affect relocatability.
-            if ($rel -match 'botocore[\\/]data[\\/].*examples-[0-9]+\.json$' -and
-                $trimmed -match '"Body": "c:\\\\[A-Za-z0-9_.-]+\.jpg"') {
-                $Info.Add("info: vendored SDK sample literal: $rel")
-                continue
-            }
             $Failures.Add("absolute path: $rel :: $trimmed")
         }
     }

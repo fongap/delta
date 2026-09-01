@@ -5,7 +5,6 @@ from __future__ import annotations
 import sqlite3
 import threading
 from pathlib import Path
-from typing import Optional
 
 from core.memory.base import MemoryItem, MemoryStore, Scope
 
@@ -60,7 +59,9 @@ class SQLiteMemoryStore(MemoryStore):
                 (scope.value, key, content, summary, workspace, session_id),
             )
             self._conn.commit()
-            item = self.get(cursor.lastrowid)
+            item_id = cursor.lastrowid
+            assert item_id is not None
+            item = self.get(item_id)
         assert item is not None
         return item
 

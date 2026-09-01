@@ -359,9 +359,6 @@ const PROVIDERS = [
   { name: "anthropic", title: "Claude (Anthropic)", needs_key: true, fields: [{ key: "api_key", label: "API key", secret: true, required: true, help: "", placeholder: "sk-…" }], configured: true, values: {}, suggested_models: ["claude-opus-4-8"], key_set_at: null, last_used_at: null },
   // zai: an OpenAI-compatible vendor — unconfigured, with a prefilled editable endpoint + blurb.
   { name: "zai", title: "Z AI (GLM)", needs_key: true, blurb: "Uses Z AI's OpenAI-compatible API — the endpoint is prefilled, just add your key.", fields: [{ key: "api_key", label: "Z AI API key", secret: true, required: true, help: "", placeholder: "" }, { key: "base_url", label: "Endpoint", secret: false, required: false, help: "Prefilled with Z AI's international endpoint.", placeholder: "https://api.z.ai/api/paas/v4", default: "https://api.z.ai/api/paas/v4" }], configured: false, values: {}, suggested_models: ["glm-5.2"], key_set_at: null, last_used_at: null },
-  // ollama: keyless local provider — "configured" without proving anything runs; the
-  // onboarding gallery shows "No key needed" and its form is endpoint + Detect (§39).
-  { name: "ollama", title: "Ollama (local models)", needs_key: false, fields: [{ key: "base_url", label: "Endpoint", secret: false, required: false, help: "", placeholder: "http://127.0.0.1:11434", default: "http://127.0.0.1:11434" }], configured: true, values: {}, suggested_models: ["qwen3-coder:30b"], key_set_at: null, last_used_at: null },
 ];
 
 /** Install the API + WebSocket mocks on a page. Returns handles for assertions/seed data. */
@@ -1440,28 +1437,14 @@ export async function mockApi(page: import("@playwright/test").Page) {
     // custom-provider protocol definitions (create form's protocol dropdown).
     if (p.endsWith("/v1/protocols") && m === "GET") {
       return json([
-        { id: "openai-compatible", title: "OpenAI compatible", needs_key: true, fields: [
-          { key: "api_key", label: "API key", secret: true, required: true, help: "", placeholder: "sk-…", default: null },
-          { key: "base_url", label: "Server address", secret: false, required: false, help: "Base URL of an OpenAI-compatible API. Include /v1 if your endpoint uses it.", placeholder: "https://…/v1", default: null },
-        ], recommended_model: "gpt-4o" },
-        { id: "openai", title: "OpenAI", needs_key: true, fields: [
-          { key: "api_key", label: "OpenAI API key", secret: true, required: true, help: "", placeholder: "sk-…", default: null },
+        { id: "openai", title: "OpenAI", needs_key: false, fields: [
+          { key: "api_key", label: "API key", secret: true, required: false, help: "", placeholder: "sk-…", default: null },
+          { key: "base_url", label: "Endpoint", secret: false, required: true, help: "Base URL of an OpenAI-compatible API. Include /v1 if your endpoint uses it.", placeholder: "https://…/v1", default: null },
         ], recommended_model: "gpt-5.6-sol" },
         { id: "anthropic", title: "Anthropic", needs_key: true, fields: [
           { key: "api_key", label: "Anthropic API key", secret: true, required: true, help: "", placeholder: "sk-ant-…", default: null },
+          { key: "base_url", label: "Endpoint", secret: false, required: true, help: "Base URL of an Anthropic Messages API.", placeholder: "https://…", default: null },
         ], recommended_model: "claude-fable-5" },
-        { id: "gemini", title: "Gemini", needs_key: true, fields: [
-          { key: "api_key", label: "Gemini API key", secret: true, required: true, help: "", placeholder: "AIza…", default: null },
-        ], recommended_model: "gemini-2.5-pro" },
-        { id: "ollama", title: "Ollama (local models)", needs_key: false, fields: [
-          { key: "base_url", label: "Endpoint", secret: false, required: false, help: "", placeholder: "http://127.0.0.1:11434", default: "http://127.0.0.1:11434" },
-        ], recommended_model: "qwen3-coder:30b" },
-        { id: "bedrock", title: "Bedrock", needs_key: true, fields: [
-          { key: "region", label: "AWS region", secret: false, required: true, help: "", placeholder: "us-east-1", default: null },
-        ], recommended_model: null },
-        { id: "vertex", title: "Vertex", needs_key: true, fields: [
-          { key: "project", label: "GCP project id", secret: false, required: true, help: "", placeholder: "my-project", default: null },
-        ], recommended_model: null },
       ]);
     }
     // save a provider key / create a custom alias — flips `configured`, stamps key_set_at
@@ -1483,7 +1466,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
         prov.configured = true;
         prov.key_set_at = "2026-07-05";
       }
-      // Keyless (ollama) providers are "configured" without a key.
+      // Keyless compatible endpoints are configured once their required endpoint is present.
       if (prov.needs_key === false) prov.configured = true;
       // Backend parity: non-secret fields merge into `values` (empty clears them).
       for (const [k, v] of Object.entries(b.fields || {})) {
@@ -1513,7 +1496,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
       if (idx === -1) return json({ ok: false, error: `unknown provider: ${name}` });
       const prov = providers[idx];
       if (!prov.custom) {
-        prov.configured = !prov.needs_key; // keyless (ollama) stays "configured"
+        prov.configured = !prov.needs_key;
         prov.key_set_at = null;
       } else {
         providers.splice(idx, 1); // custom alias is fully removed (unregister + drop models)

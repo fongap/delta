@@ -9,14 +9,13 @@ never a marker committed with a project folder).
 from __future__ import annotations
 
 import io
-import json
 import os
 import zipfile
 from pathlib import Path
 
 import pytest
 
-from integrations.skills import SkillLoader, SkillStore, validate_name
+from integrations.skills import SkillLoader, SkillStore, save_skill_tool, validate_name
 
 
 @pytest.fixture()
@@ -313,9 +312,6 @@ def test_corrupt_settings_json_treated_as_empty(store):
 
 
 # -- save_skill tool (SKILLS-SPEC §5.2 — the worker-authors door) -------------------
-
-
-from integrations.skills import save_skill_tool
 
 
 @pytest.fixture()

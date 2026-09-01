@@ -22,30 +22,8 @@ def capabilities_for(model: str) -> ModelCapabilities:
     provider = model.split(":", 1)[0].lower() if ":" in model else ""
     name = model.split(":", 1)[-1].lower()  # strip a provider prefix if present
 
-    # Ollama (local) models vary widely and many fake/mishandle parallel tool calls — assume
-    # tools work (we only point at tool-capable models) but stay conservative otherwise.
-    if provider == "ollama":
-        return ModelCapabilities(
-            tools=True, vision=False, parallel_tool_calls=False, streaming=True
-        )
-
-    # Cloud-account providers (custom-added ids; curated ones answered from the matrix).
-    # The family segment decides: Claude keeps its native capabilities; everything else
-    # stays conservative until probed (Converse tool calling works across families, but
-    # parallel calls and vision vary per model).
-    if provider in ("bedrock", "vertex"):
-        if name.startswith(("claude/", "gemini/")):
-            return ModelCapabilities(
-                tools=True, vision=True, pdf=True, parallel_tool_calls=True, streaming=True
-            )
-        return ModelCapabilities(
-            tools=True, vision=False, parallel_tool_calls=False, streaming=True
-        )
-
-    # Claude / Gemini (both native): tools + vision + parallel tool calls + streaming. The
-    # engine executes parallel calls sequentially and each converter folds the results into
-    # the single next user message — exactly what both APIs require.
-    if provider in ("anthropic", "gemini"):
+    # Anthropic Messages: tools + vision + parallel tool calls + streaming.
+    if provider == "anthropic":
         return ModelCapabilities(
             tools=True, vision=True, pdf=True, parallel_tool_calls=True, streaming=True
         )

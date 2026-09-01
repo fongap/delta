@@ -26,7 +26,6 @@ from __future__ import annotations
 
 import ipaddress
 import socket
-from typing import Optional
 from urllib.parse import urljoin, urlsplit, urlunsplit
 
 MAX_REDIRECTS = 5
@@ -37,7 +36,9 @@ MAX_REDIRECTS = 5
 _CGNAT = ipaddress.ip_network("100.64.0.0/10")
 
 
-def _blocked_reason(ip: ipaddress._BaseAddress) -> str | None:
+def _blocked_reason(
+    ip: ipaddress.IPv4Address | ipaddress.IPv6Address,
+) -> str | None:
     if ip.is_loopback:
         return "loopback"
     if ip.is_link_local:
@@ -85,7 +86,7 @@ def _vet(url: str) -> tuple[str | None, str | None]:
 
     pin: str | None = None
     for info in infos:
-        raw = info[4][0]
+        raw = str(info[4][0])
         try:
             ip = ipaddress.ip_address(raw)
         except ValueError:
@@ -121,6 +122,8 @@ def _pinned(url: str, ip: str) -> tuple[str, dict, dict]:
     """
     parts = urlsplit(url)
     host = parts.hostname
+    if host is None:
+        raise ValueError("url has no host")
     addr = f"[{ip}]" if ":" in ip else ip
     userinfo, _, _ = parts.netloc.rpartition("@")
     netloc = (f"{userinfo}@" if userinfo else "") + addr

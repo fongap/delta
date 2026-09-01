@@ -10,10 +10,12 @@ for surfaces without an approver.
 
 from __future__ import annotations
 
+from typing import Any, Callable
+
 from aisuite.agents import ToolMetadata, tool
 
 
-def propose_plan_tool() -> object:
+def propose_plan_tool() -> Callable[..., dict[str, Any]]:
     def propose_plan(plan: str) -> dict:
         """Present your implementation plan to the user for approval. Use this once you
         have explored enough to commit to an approach: summarize what you'll change, in

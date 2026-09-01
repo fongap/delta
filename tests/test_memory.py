@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import sqlite3
 
-import aisuite as ai
 
 from core.conversations import ConversationStore
 from core.memory import (

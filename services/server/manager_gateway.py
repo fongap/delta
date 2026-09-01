@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-from typing import Any, Optional
+from typing import Any
 
 from integrations.connectors import (
     Gateway,
@@ -21,7 +21,10 @@ from integrations.connectors import (
 from services.server.manager_support import _inbound_epoch, logger
 
 
-class GatewayInboundMixin:
+from services.server.manager_contract import ManagerHostState
+
+
+class GatewayInboundMixin(ManagerHostState):
 
     async def start_gateway(self) -> list[str]:
         """Build the messaging gateway and start enabled listeners. Inbound messages route to

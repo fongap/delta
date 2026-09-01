@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from typing import Optional
 
 from packages.secrets import SecretStore
 from integrations.connectors.base import SessionSource

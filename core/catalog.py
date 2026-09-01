@@ -14,7 +14,7 @@ catalog (see ``PERMISSIONS-AND-INBOX.md``).
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Callable
 
 import aisuite as ai
@@ -71,12 +71,14 @@ def _files(context: AgentContext) -> list:
     aisuite's `read_file`/`read_file_lines`. Only our `grep` replaces the slow `search_files`.
     """
     ws = str(context.workspace)
-    file_kwargs = (
-        {"roots": context.roots} if context.roots else {"root": ws, "allow_write": True}
+    toolkit = (
+        ai.toolkits.files(roots=context.roots)
+        if context.roots
+        else ai.toolkits.files(root=ws, allow_write=True)
     )
     return [
         t
-        for t in ai.toolkits.files(**file_kwargs)
+        for t in toolkit
         if getattr(t, "__name__", "") != "search_files"
     ]
 
@@ -91,10 +93,12 @@ def _search(context: AgentContext) -> list:
 
 
 def _shell(context: AgentContext) -> list:
+    assert context.executor is not None
     return shell_tools(context.executor)  # run_shell + background task tools
 
 
 def _todo(context: AgentContext) -> list:
+    assert context.todo is not None
     return todo_tools(context.todo)  # todo_write (drives the Progress panel)
 
 

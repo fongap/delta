@@ -5,22 +5,23 @@ Stateless: parses the `target` token, pulls the bot token from the SecretStore a
 gated (`requires_approval=True` → asks outside Auto mode).
 """
 
-# pyright: reportFunctionMemberAccess=false
 # (tool-builder module: attaches aisuite's dynamic metadata attributes
 # (__aisuite_tool_metadata__ / __delta_schema__) to plain functions —
 # the framework's plugin protocol, not a type error.)
 
 from __future__ import annotations
 
+import importlib
 import re
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 import aisuite as ai
 
 from packages.secrets import SecretStore
 from integrations.connectors.base import parse_target
 from integrations.connectors.senders import DEFAULT_FILE_SENDERS, DEFAULT_SENDERS, FileSender, Sender
+from integrations.tools.metadata import attach_tool_metadata
 
 _SCHEMA = {
     "type": "function",
@@ -154,9 +155,11 @@ def make_send_message_tool(
             return {"error": f"unknown platform: {platform}"}
         # §36: a channel NAME resolves to its address (the user says "#general", not C0123).
         if platform == "slack" and _slack_channel_name_like(chat_id):
-            chat_id, err = _resolve_slack_channel(secrets, chat_id)
+            resolved_chat_id, err = _resolve_slack_channel(secrets, chat_id)
             if err:
                 return {"error": err}
+            assert resolved_chat_id is not None
+            chat_id = resolved_chat_id
         token = _resolve_token(secrets, platform, chat_id)
         if not token:
             return {"error": f"no bot token for {platform} — connect it first"}
@@ -171,14 +174,17 @@ def make_send_message_tool(
 
     send_message.__name__ = "send_message"
     send_message.__doc__ = _SCHEMA["function"]["description"]
-    send_message.__aisuite_tool_metadata__ = ai.ToolMetadata(
-        name="send_message",
-        category="messaging",
-        risk_level="medium",
-        capabilities=["messaging"],
-        requires_approval=True,
+    attach_tool_metadata(
+        send_message,
+        schema=_SCHEMA,
+        metadata=ai.ToolMetadata(
+            name="send_message",
+            category="messaging",
+            risk_level="medium",
+            capabilities=["messaging"],
+            requires_approval=True,
+        ),
     )
-    send_message.__delta_schema__ = _SCHEMA
     return send_message
 
 
@@ -254,7 +260,7 @@ def _resolve_within(path: str, bases: list[Path]) -> Path | None:
 def _render_html_png(path: Path) -> bytes:
     """Headless render of a local HTML artifact → viewport PNG (1280×800). Uses the
     Playwright chromium we already ship for the browser connector."""
-    from playwright.sync_api import sync_playwright
+    sync_playwright = importlib.import_module("playwright.sync_api").sync_playwright
 
     with sync_playwright() as pw:
         browser = pw.chromium.launch()
@@ -300,9 +306,11 @@ def make_send_file_tool(
             return {"error": f"file sending is not supported on {platform} yet"}
         # §36: channel names resolve here too — same rule as send_message.
         if platform == "slack" and _slack_channel_name_like(chat_id):
-            chat_id, err = _resolve_slack_channel(secrets, chat_id)
+            resolved_chat_id, err = _resolve_slack_channel(secrets, chat_id)
             if err:
                 return {"error": err}
+            assert resolved_chat_id is not None
+            chat_id = resolved_chat_id
         if not bases:
             return {"error": "no workspace folders available to read from"}
         resolved = _resolve_within(path, bases)
@@ -342,12 +350,15 @@ def make_send_file_tool(
 
     send_file.__name__ = "send_file"
     send_file.__doc__ = _FILE_SCHEMA["function"]["description"]
-    send_file.__aisuite_tool_metadata__ = ai.ToolMetadata(
-        name="send_file",
-        category="messaging",
-        risk_level="medium",
-        capabilities=["messaging", "files"],
-        requires_approval=True,
+    attach_tool_metadata(
+        send_file,
+        schema=_FILE_SCHEMA,
+        metadata=ai.ToolMetadata(
+            name="send_file",
+            category="messaging",
+            risk_level="medium",
+            capabilities=["messaging", "files"],
+            requires_approval=True,
+        ),
     )
-    send_file.__delta_schema__ = _FILE_SCHEMA
     return send_file

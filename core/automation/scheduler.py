@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable
 
 from core.automation.models import ScheduledTask, TaskRun
 from core.automation.store import TaskStore
@@ -27,7 +27,7 @@ class Scheduler:
         runner: Runner,
         *,
         tick_seconds: float = 30.0,
-        extra_tick: Callable[[], Awaitable[None]] | None = None,
+        extra_tick: Callable[[], Awaitable[Any]] | None = None,
     ) -> None:
         self.store = store
         self.runner = runner

@@ -16,7 +16,7 @@ import json
 import shutil
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Callable
 
 from core.agents.base import Agent
 from core.agents.chat import chat_agent

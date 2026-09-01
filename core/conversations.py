@@ -16,7 +16,6 @@ import re
 import sqlite3
 import threading
 from pathlib import Path
-from typing import Optional
 
 from core.sessions import SessionRecord
 

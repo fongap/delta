@@ -14,7 +14,6 @@ Socket-Mode targets (single workspace) keep the bare `slack:C0123` form.
 
 from __future__ import annotations
 
-from typing import Optional
 
 
 def qualify(team_id: str | None, channel: str) -> str:

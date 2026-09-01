@@ -12,7 +12,7 @@ import re
 import subprocess
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from core.inbox import args_preview
 from core.memory import Scope

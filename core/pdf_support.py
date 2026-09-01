@@ -22,12 +22,12 @@ import base64
 import hashlib
 import io
 import logging
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
 MAX_EXTRACT_CHARS = 200_000  # match attachments.MAX_TEXT_CHARS
-RASTER_SCALE = 2.0  # ~144 dpi; readable text without giant payloads
+RASTER_SCALE = 2  # ~144 dpi; readable text without giant payloads
 RASTER_MAX_PAGES = 100  # hard ceiling; the user's page threshold gates at attach time
 
 FALLBACK_MODES = ("text", "images")
@@ -244,7 +244,7 @@ def adapt_content(content: list[dict[str, Any]], caps: Any) -> list[dict[str, An
                     "type": "text",
                     "text": (
                         f"[Attached PDF: {name} — no extractable text (likely scanned). "
-                        "A model with native PDF support (Claude, GPT, Gemini) can read it.]"
+                        "A model with native PDF support (Claude or GPT) can read it.]"
                     ),
                 }
             )

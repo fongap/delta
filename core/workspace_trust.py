@@ -11,7 +11,6 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
-from typing import Optional
 
 from packages.secrets import state_dir, verify_user_restricted, write_private_text
 

@@ -334,8 +334,8 @@ def test_compat_builder_never_leaks_the_openai_key(monkeypatch):
 
     monkeypatch.setenv("OPENAI_API_KEY", "sk-openai-real")
     monkeypatch.delenv("MOONSHOT_API_KEY", raising=False)
-    with pytest.raises(RuntimeError, match="Kimi"):
-        build_provider_client("kimi", {}, None)
+    with pytest.raises(RuntimeError, match="API key"):
+        build_provider_client("kimi", {}, None)._ensure_client()
 
 
 def test_compat_models_route_and_get_tool_capabilities():
@@ -420,7 +420,7 @@ def test_reseller_descriptors_and_matrix_stay_in_lockstep():
 
 
 def test_foreign_sidecars_stripped_from_outbound_messages():
-    """Provider-private sidecars (`_gemini` thought signatures et al) must never reach the
+    """Provider-private sidecars must never reach the
     OpenAI wire — it and its compat servers reject unknown message fields."""
     client = _FakeClient(_response(content="ok"))
     provider = OpenAIProvider(client=client)
@@ -428,7 +428,7 @@ def test_foreign_sidecars_stripped_from_outbound_messages():
         model="gpt-5.5",
         messages=[
             {"role": "user", "content": "hi"},
-            {"role": "assistant", "content": "prev", "_gemini": {"call_sigs": ["x"]}},
+            {"role": "assistant", "content": "prev", "_foreign": {"signature": "x"}},
         ],
     )
     sent = client.chat.completions.calls[0]["messages"]

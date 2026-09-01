@@ -11,7 +11,7 @@ import pytest
 from integrations.connectors import relay_client
 from integrations.connectors.adapters import make_adapter
 from integrations.connectors.base import InteractionEvent, MessageEvent
-from integrations.connectors.config import ConnectorSettings, load_settings
+from integrations.connectors.config import load_settings
 from integrations.connectors.relay_client import SlackRelayAdapter
 from integrations.connectors.slack_addr import qualify, split
 from integrations.connectors.tools import make_send_message_tool

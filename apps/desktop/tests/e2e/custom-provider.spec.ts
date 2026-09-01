@@ -16,9 +16,9 @@ test.describe("custom provider", () => {
     await expect(page.getByTestId("set-alias")).toBeVisible();
   });
 
-  test("add a custom OpenAI-compatible provider, fetch models, save", async ({ page }) => {
-    // 1. The inline create form is already open (alias + protocol dropdown default OpenAI-compatible).
-    await expect(page.getByTestId("set-protocol")).toHaveValue("openai-compatible");
+  test("add a custom OpenAI provider, fetch models, save", async ({ page }) => {
+    // 1. The inline create form is already open with the OpenAI protocol selected.
+    await expect(page.getByTestId("set-protocol")).toHaveValue("openai");
 
     // 2. Type the alias.
     await page.getByTestId("set-alias").fill("myapi");

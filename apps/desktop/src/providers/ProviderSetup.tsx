@@ -27,9 +27,7 @@ import { PROVIDER_LOGOS, providerRank } from "./providerLogos";
 export const KEY_HELP: Record<string, { url: string; label: string }> = {
   anthropic: { url: "https://console.anthropic.com/settings/keys", label: "console.anthropic.com" },
   openai: { url: "https://platform.openai.com/api-keys", label: "platform.openai.com" },
-  gemini: { url: "https://aistudio.google.com/apikey", label: "aistudio.google.com" },
   openrouter: { url: "https://openrouter.ai/keys", label: "openrouter.ai" },
-  bedrock: { url: "https://console.aws.amazon.com/bedrock/home#/api-keys", label: "the AWS Bedrock console" },
   fireworks: { url: "https://fireworks.ai/account/api-keys", label: "fireworks.ai" },
   together: { url: "https://api.together.xyz/settings/api-keys", label: "together.xyz" },
   zai: { url: "https://z.ai/manage-apikey/apikey-list", label: "z.ai" },
@@ -54,7 +52,6 @@ export function localizeVerifyMsg(msg: string | undefined, t: (k: string, v?: Re
   if (msg === "Invalid API key.") return t("providers.invalidKey");
   if (msg === "Server rejected the request.") return t("providers.serverRejected");
   if (msg === "Enter an API key to test.") return t("providers.enterKeyToTest");
-  if (msg === "Reached the server, but no OpenAI-compatible /v1 API there.") return t("providers.noOpenAiApi");
   if ((m = msg.match(/^(.+) returned HTTP (\d+)\.$/))) return t("providers.httpError", { name: m[1], code: m[2] });
   if ((m = msg.match(/^unknown provider: (.+)$/))) return t("providers.unknownProvider", { name: m[1] });
   if ((m = msg.match(/^provider already exists: (.+)$/))) return t("providers.providerExists", { name: m[1] });
@@ -68,16 +65,7 @@ type Translate = (key: string, vars?: Record<string, string | number>, fallback?
 const SEC_H = "text-[11px] uppercase tracking-[0.05em] text-faint font-semibold";
 const FIELD_KEYS: Record<string, string> = {
   base_url: "serverAddress",
-  region: "awsRegion",
   auth_method: "authMethod",
-  bedrock_api_key: "bedrockApiKey",
-  aws_profile: "awsProfile",
-  aws_access_key_id: "accessKeyId",
-  aws_secret_access_key: "secretAccessKey",
-  project: "gcpProject",
-  location: "location",
-  service_account_json: "serviceAccountJson",
-  vertex_api_key: "vertexApiKey",
 };
 const fieldLabel = (field: ProviderFieldT, t: Translate) => {
   if (field.key === "api_key") {
@@ -163,9 +151,7 @@ export interface ProviderSetupState {
   fieldSaved: string | null; // field key flashing "✓ Saved"
 
   // -- custom-config-first (F1+F2) -------------------------------------------------
-  // The 7 protocol definitions (openai-compatible, openai, anthropic, gemini, ollama,
-  // bedrock, vertex) loaded from /v1/protocols; the create form's protocol dropdown reads
-  // these to render its dynamic field table.
+  // The OpenAI and Anthropic protocol definitions loaded from /v1/protocols.
   protocols: ProviderProtocol[];
   // True while the "Add custom provider" form is open (no alias saved yet). The gallery's
   // surfaces render the create form in place of ProviderCards when this is set.
@@ -173,7 +159,7 @@ export interface ProviderSetupState {
   // The alias the user is typing for a not-yet-created custom provider.
   alias: string;
   setAlias: (v: string) => void;
-  // The selected protocol_id for the create form; defaults to "openai-compatible".
+  // The selected protocol_id for the create form; defaults to "openai".
   protoId: string;
   setProtoId: (id: string) => void;
   // The resolved protocol definition for `protoId` (undefined until /v1/protocols loads).
@@ -208,8 +194,7 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
   const [dirty, setDirty] = useState(false);
   const [showEndpoint, setShowEndpoint] = useState(false);
   const [verify, setVerify] = useState<Verify>({ state: "idle" });
-  // Keyless providers (Ollama) report configured without proving anything runs —
-  // a passing Detect this session is what marks them live.
+  // A passing Detect this session marks a keyless compatible endpoint live.
   const [keylessOk, setKeylessOk] = useState<Set<string>>(new Set());
   // Unsaved per-provider input survives switching cards (owner complaint 2026-07-16).
   const [drafts, setDrafts] = useState<Record<string, Record<string, string>>>({});
@@ -242,7 +227,7 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
   };
   const [creating, setCreating] = useState(false);
   const [alias, setAlias] = useState("");
-  const [protoId, setProtoIdState] = useState("openai-compatible");
+  const [protoId, setProtoIdState] = useState("openai");
   const [fetching, setFetching] = useState(false);
   const [fetchedModels, setFetchedModels] = useState<string[]>([]);
   const [fetchMsg, setFetchMsg] = useState<{ state: "ok" | "error"; text: string } | null>(null);
@@ -266,7 +251,7 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
   const protoDef = protocols.find((p) => p.id === protoId);
 
   // Reset the create form to a fresh protocol's field defaults whenever the dropdown
-  // changes (so switching OpenAI-compatible → Anthropic doesn't carry stale fields over).
+  // changes (so switching OpenAI → Anthropic doesn't carry stale fields over).
   const setProtoId = (id: string) => {
     setProtoIdState(id);
     const def = protocols.find((p) => p.id === id);
@@ -298,8 +283,8 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
     setSel(null);
     setCreating(true);
     setAlias("");
-    setProtoIdState("openai-compatible");
-    const def = protocols.find((p) => p.id === "openai-compatible");
+    setProtoIdState("openai");
+    const def = protocols.find((p) => p.id === "openai");
     const next: Record<string, string> = {};
     for (const f of def?.fields || []) next[f.key] = f.default || "";
     setFields(next);
@@ -581,8 +566,7 @@ export function useProviderSetup(opts?: { onSaved?: () => void }): ProviderSetup
     // The in-field saved state (§39): green border + pill INSIDE the key box — shown
     // for stored credentials and fresh test-passes alike; typing clears it.
     savedState: (credentialed && !dirty) || verify.state === "ok",
-    // Only REQUIRED secrets gate the Test button — cloud providers (Bedrock, Vertex)
-    // have optional key fields whose credentials may live in ~/.aws or ADC instead.
+    // Only required secrets gate the Test button; OpenAI-compatible endpoints may be keyless.
     secretFilled: (info?.fields || []).every(
       (f) => !f.secret || !f.required || (fields[f.key] || "").trim(),
     ),
@@ -658,7 +642,7 @@ export function ProviderCards({
               {t("providers.addCustomProvider", undefined, "Add custom provider")}
             </span>
             <span className="block text-[11.5px] text-faint truncate">
-              {t("providers.customProviderHint", undefined, "Any OpenAI-compatible · or native protocol")}
+              {t("providers.customProviderHint", undefined, "OpenAI-compatible or Anthropic Messages")}
             </span>
           </span>
           <span className="text-faint text-[14px]">＋</span>
@@ -905,20 +889,6 @@ export function ProviderForm({
           {t("providers.takesAboutAMinute", undefined, "— takes about a minute.")}
         </p>
       )}
-      {/* Ollama-specific hint ONLY for the ollama protocol — a keyless openai-compatible
-          custom provider (LM Studio/vLLM…) must not see "Install Ollama" copy. */}
-      {info && !info.needs_key && (info as { protocol?: string }).protocol === "ollama" && (
-        <p className="text-[11.5px] text-faint mt-2">
-          {t("providers.noApiKeyNeeded", undefined, "No API key needed — Ollama runs models on this computer. ")}
-          <button
-            className="text-muted underline decoration-line underline-offset-2 hover:text-ink"
-            onClick={() => openExternal("https://ollama.com/download")}
-          >
-            {t("providers.installOllama", undefined, "Install Ollama ↗")}
-          </button>
-        </p>
-      )}
-
       {/* Test connection: one secondary action covering the WHOLE provider config
           (protocol + base_url + key), with an explicit status line — ● Connected /
           ● Failed + the server's reason. Replaces the old per-field inline Test and
@@ -1051,7 +1021,7 @@ export function CustomCreateForm({ ps, tp, inline = false }: { ps: ProviderSetup
           </span>
           {proto && (
             <span className="block text-[13px] font-normal text-faint truncate">
-              {t("providers.customProviderFormSub", undefined, "Configure an OpenAI-compatible or native-protocol service")}
+              {t("providers.customProviderFormSub", undefined, "Configure an OpenAI or Anthropic endpoint")}
             </span>
           )}
         </span>
@@ -1122,7 +1092,7 @@ export function CustomCreateForm({ ps, tp, inline = false }: { ps: ProviderSetup
 
       {/* Fallback API Key + Base URL: when the protocol's field definitions haven't
           loaded yet (or the endpoint failed), still show the two most common fields
-          so the user can start typing. The default openai-compatible protocol always
+          so the user can start typing. The default OpenAI protocol always
           needs an API key + base URL; rendering them as a fallback ensures the form
           is never empty. Only shows when no secret field was already rendered above. */}
       {fieldsAll.filter((f) => f.secret).length === 0 && !ps.protocolsLoading && (
@@ -1156,8 +1126,7 @@ export function CustomCreateForm({ ps, tp, inline = false }: { ps: ProviderSetup
         </>
       )}
 
-      {/* Auth-method segmented control (bedrock/vertex protocols) — same control as the
-          edit path, but the panel's footer is the create action instead of Test & save. */}
+      {/* Protocol-defined choices use the same control as the edit path. */}
       {choice && (
         <div>
           <label className={label}>{fieldLabel(choice, t)}</label>

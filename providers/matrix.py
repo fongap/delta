@@ -24,14 +24,13 @@ deferred to bound how much needs verifying at once.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
 
 from providers.base import ModelCapabilities
 
 _AGENTIC = ModelCapabilities(
     tools=True, vision=False, parallel_tool_calls=True, streaming=True
 )
-# The native three (OpenAI, Anthropic, Gemini) all take PDFs directly; every
+# The native OpenAI and Anthropic implementations take PDFs directly; every
 # OpenAI-compatible vendor and reseller in the matrix does not (their chat APIs have
 # no inline file part — checked 2026-07-17), so those fall back via pdf_support.py.
 _AGENTIC_VISION = ModelCapabilities(
@@ -70,20 +69,6 @@ MATRIX: dict[str, ModelEntry] = {
     ),
     "anthropic:claude-haiku-4-5": ModelEntry(
         "Claude Haiku 4.5 · Anthropic", _AGENTIC_VISION, 200_000
-    ),
-    # Gemini 3 (thought signatures required in tool loops — carried via the `_gemini`
-    # message sidecar, see gemini_provider.py; ids from the vendor catalog 2026-07-22).
-    "gemini:gemini-3.1-pro-preview": ModelEntry(
-        "Gemini 3.1 Pro · Google", _AGENTIC_VISION, 1_048_576
-    ),
-    "gemini:gemini-3.6-flash": ModelEntry(
-        "Gemini 3.6 Flash · Google", _AGENTIC_VISION, 1_048_576
-    ),
-    "gemini:gemini-2.5-pro": ModelEntry(
-        "Gemini 2.5 Pro · Google", _AGENTIC_VISION, 1_048_576
-    ),
-    "gemini:gemini-2.5-flash": ModelEntry(
-        "Gemini 2.5 Flash · Google", _AGENTIC_VISION, 1_048_576
     ),
     # -- direct OpenAI-compatible vendors ----------------------------------------
     # Muse Spark (Meta Model API, public preview 2026-07-09): multimodal + tools via
@@ -156,53 +141,6 @@ MATRIX: dict[str, ModelEntry] = {
     ),
     "openrouter:meta-llama/llama-4-maverick": ModelEntry(
         "Llama 4 Maverick · via OpenRouter", _AGENTIC, 1_000_000
-    ),
-    # -- cloud accounts (models running in the user's own AWS/GCP) ----------------
-    # Bedrock ids carry a family segment (claude/ → native Anthropic path, other/ →
-    # Converse) plus AWS's own `-v<n>:<m>` version suffix. Some regions require the
-    # `us.`/`eu.` cross-region inference-profile prefix — custom add-model accepts those.
-    "bedrock:claude/anthropic.claude-sonnet-4-6-v1:0": ModelEntry(
-        "Claude Sonnet 4.6 · AWS Bedrock", _AGENTIC_VISION, 200_000
-    ),
-    "bedrock:claude/anthropic.claude-haiku-4-5-v1:0": ModelEntry(
-        "Claude Haiku 4.5 · AWS Bedrock", _AGENTIC_VISION, 200_000
-    ),
-    "bedrock:other/amazon.nova-2-pro-v1:0": ModelEntry(
-        "Nova 2 Pro · AWS Bedrock", _AGENTIC, 300_000
-    ),
-    "bedrock:other/meta.llama4-maverick-17b-instruct-v1:0": ModelEntry(
-        "Llama 4 Maverick · AWS Bedrock", _AGENTIC, 1_000_000
-    ),
-    "bedrock:other/mistral.mistral-large-3-v1:0": ModelEntry(
-        "Mistral Large 3 · AWS Bedrock", _AGENTIC, 128_000
-    ),
-    # Live-verified on Converse 2026-07-26 (complete/stream/tool round trip); asked for
-    # two tool calls it emits them one at a time, so parallel stays off.
-    "bedrock:other/nvidia.nemotron-super-3-120b": ModelEntry(
-        "Nemotron Super 3 120B · AWS Bedrock",
-        ModelCapabilities(
-            tools=True, vision=False, parallel_tool_calls=False, streaming=True
-        ),
-    ),
-    # Vertex ids carry a family segment too (gemini/ and claude/ → native paths,
-    # openweight/ → the MaaS OpenAI-compat endpoint, keeping the publisher segment).
-    "vertex:gemini/gemini-3.1-pro-preview": ModelEntry(
-        "Gemini 3.1 Pro · Vertex AI", _AGENTIC_VISION, 1_048_576
-    ),
-    "vertex:gemini/gemini-3.6-flash": ModelEntry(
-        "Gemini 3.6 Flash · Vertex AI", _AGENTIC_VISION, 1_048_576
-    ),
-    "vertex:claude/claude-sonnet-4-6": ModelEntry(
-        "Claude Sonnet 4.6 · Vertex AI", _AGENTIC_VISION, 200_000
-    ),
-    "vertex:claude/claude-haiku-4-5": ModelEntry(
-        "Claude Haiku 4.5 · Vertex AI", _AGENTIC_VISION, 200_000
-    ),
-    "vertex:openweight/meta/llama-4-maverick-17b-128e-instruct-maas": ModelEntry(
-        "Llama 4 Maverick · Vertex AI", _AGENTIC, 1_000_000
-    ),
-    "vertex:openweight/qwen/qwen3-coder-480b-a35b-instruct-maas": ModelEntry(
-        "Qwen3 Coder · Vertex AI", _AGENTIC, 256_000
     ),
 }
 

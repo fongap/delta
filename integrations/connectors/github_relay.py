@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import Any, Awaitable, Callable, Optional
+from typing import Any, Awaitable, Callable
 
 from integrations.connectors.base import BasePlatformAdapter, MessageEvent, SendResult, SessionSource
 from integrations.connectors.relay_client import RelayHub

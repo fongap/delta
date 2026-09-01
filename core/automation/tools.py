@@ -7,16 +7,17 @@ the launching session and runs in its workspace, so the origin conversation can 
 results (the artifacts are real files in that folder).
 """
 
-# pyright: reportFunctionMemberAccess=false
 # (tool-builder module: attaches aisuite's dynamic metadata attributes
 # (__aisuite_tool_metadata__ / __delta_schema__) to plain functions —
 # the framework's plugin protocol, not a type error.)
 
 from __future__ import annotations
 
-from typing import Any, Callable, Optional
+from typing import Any, Callable
 
 import aisuite as ai
+
+from integrations.tools.metadata import attach_tool_metadata
 
 from core.automation.models import Schedule, ScheduledTask, grant_entries
 from core.automation.store import TaskStore
@@ -142,14 +143,17 @@ _LIST_SCHEMA = {
 def _gated(func: Callable, schema: dict, *, approval: bool) -> Callable:
     func.__name__ = schema["function"]["name"]
     func.__doc__ = schema["function"]["description"]
-    func.__aisuite_tool_metadata__ = ai.ToolMetadata(
-        name=schema["function"]["name"],
-        category="automation",
-        risk_level="medium" if approval else "low",
-        capabilities=["scheduling"],
-        requires_approval=approval,
+    attach_tool_metadata(
+        func,
+        schema=schema,
+        metadata=ai.ToolMetadata(
+            name=schema["function"]["name"],
+            category="automation",
+            risk_level="medium" if approval else "low",
+            capabilities=["scheduling"],
+            requires_approval=approval,
+        ),
     )
-    func.__delta_schema__ = schema
     return func
 
 

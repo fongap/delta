@@ -7,7 +7,7 @@ from pathlib import Path
 import aisuite as ai
 import pytest
 
-from core.permissions import Decision, Mode, PermissionEngine
+from core.permissions import Mode, PermissionEngine
 from integrations.tools import ToolRegistry
 
 

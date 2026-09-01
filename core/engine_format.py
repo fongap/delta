@@ -31,7 +31,7 @@ def _assistant_message(turn: AssistantTurn, model: str | None = None) -> dict[st
         # (`_outbound_messages`); provider-private replay blocks go via `extras` instead.
         message["reasoning"] = turn.reasoning
     if turn.extras:
-        # Provider-private sidecars (e.g. `_gemini` thought signatures) persist with the
+        # Provider-private sidecars persist with the
         # message; the owning provider reattaches them, the rest strip them (base.py).
         message.update(turn.extras)
     if turn.tool_calls:

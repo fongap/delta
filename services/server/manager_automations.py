@@ -19,7 +19,10 @@ from core.runtime import RuntimePort
 from services.server.manager_support import _approval_body, _epoch, _last_assistant_text, _recent_files
 
 
-class AutomationsMixin:
+from services.server.manager_contract import ManagerHostState
+
+
+class AutomationsMixin(ManagerHostState):
 
     def _scheduled_approver(self, task, session_id: str):
         from core.engine import ApprovalOutcome

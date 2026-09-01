@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable, Optional, Union
+from typing import Callable, Sequence, Union
 
 import aisuite as ai
 
@@ -26,7 +26,7 @@ class Skill:
 
 
 class SkillLoader:
-    def __init__(self, dirs: list[str | Path]) -> None:
+    def __init__(self, dirs: Sequence[str | Path]) -> None:
         self._dirs = [Path(d) for d in dirs]
         self._skills: dict[str, Skill] = {}
         self.rescan()

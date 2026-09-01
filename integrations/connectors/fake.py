@@ -6,7 +6,6 @@ and handler loop can be exercised end-to-end with no network or real tokens.
 
 from __future__ import annotations
 
-from typing import Optional
 
 from integrations.connectors.base import BasePlatformAdapter, MessageEvent, SendResult, SessionSource
 

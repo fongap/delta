@@ -83,7 +83,7 @@ def _watch_parent_windows(parent: int) -> None:
     INFINITE = 0xFFFF_FFFF
     WAIT_OBJECT_0 = 0x0000_0000
 
-    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)  # type: ignore[attr-defined]
     kernel32.OpenProcess.restype = wintypes.HANDLE
     kernel32.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
     kernel32.WaitForSingleObject.restype = wintypes.DWORD
@@ -113,7 +113,7 @@ def build_app(workspace: str | None, model: str, mode: str):
     # Cold-start recovery (docs/architecture/adr/ADR-001-run-event-ledger.md): any run left without a terminal
     # event by a crash/quit gets a synthetic `run.interrupted` — its durable prefix
     # survives as the factual record of what it did before dying.
-    recovered = manager.run_ledger.recover_stale()
+    recovered = list(manager.run_ledger.recover_stale())
     if recovered:
         logging.getLogger("services.server").warning(
             "run ledger: recovered %d stale run(s) with synthetic interrupted events",

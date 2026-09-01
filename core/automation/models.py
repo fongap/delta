@@ -8,7 +8,7 @@ from __future__ import annotations
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any
 
 # Indexed by cron day-of-week: 0 and 7 are Sunday, 1 is Monday … 6 is Saturday. Must start
 # at Sunday — indexing a Monday-first list by the cron dow labelled every weekly schedule one
@@ -87,14 +87,14 @@ class Schedule:
         try:
             t = _human_time(int(hour), int(minute))
         except ValueError:
-            return self.cron  # non-trivial cron (ranges/steps) — show as-is
+            return self.cron or "?"  # non-trivial cron (ranges/steps) — show as-is
         if dom == "*" and dow == "*":
             return f"Every day at ~{t}"
         if dom == "*" and dow.isdigit():
             return f"Every {_DOW[int(dow) % 7]} at ~{t}"
         if dom.isdigit() and dow == "*":
             return f"Monthly on day {dom} at ~{t}"
-        return self.cron
+        return self.cron or "?"
 
     def to_dict(self) -> dict:
         return {

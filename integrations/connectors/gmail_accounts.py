@@ -17,7 +17,7 @@ audit row (rule + count, never content).
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from packages.secrets import SecretStore
 
@@ -159,7 +159,7 @@ def set_filters(
     if senders is not None:
         current["senders"] = sorted({_norm(s) for s in senders if _norm(s)})
     if labels is not None:
-        current["labels"] = sorted({str(l).strip() for l in labels if str(l).strip()})
+        current["labels"] = sorted({str(label).strip() for label in labels if str(label).strip()})
     pointer = secrets.get(DEFAULT_KEY) or {}
     pointer["filters"] = current
     pointer.setdefault("type", "oauth")

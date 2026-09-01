@@ -99,7 +99,8 @@ def test_wait_then_deliver_resolves():
         assert mcp_oauth.deliver_callback("c0de", "st4te") is True
         return await task
 
-    assert asyncio.run(run()) == ("c0de", "st4te")
+    result = asyncio.run(run())
+    assert result.code == "c0de" and result.state == "st4te"
 
 
 def test_state_from_url():
@@ -123,7 +124,8 @@ def test_deliver_rejects_mismatched_state_without_consuming_flow():
         assert mcp_oauth.deliver_callback("c0de", "good-state") is True
         return await task
 
-    assert asyncio.run(run()) == ("c0de", "good-state")
+    result = asyncio.run(run())
+    assert result.code == "c0de" and result.state == "good-state"
 
 
 # -- status surfacing over REST ---------------------------------------------------
@@ -195,6 +197,7 @@ def test_callback_route(tmp_path, monkeypatch):
         mcp_oauth._pending = future
         r = client.get("/mcp/oauth/callback", params={"code": "c1", "state": "s1"})
         assert r.status_code == 200 and "close this tab" in r.text.lower()
-        assert future.result() == ("c1", "s1")
+        code, state = future.result()
+        assert code == "c1" and state == "s1"
     finally:
         loop.close()

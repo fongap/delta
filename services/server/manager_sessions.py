@@ -13,7 +13,7 @@ import os
 import shutil
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from core.agent import build_engine
 from core.agents import get_agent
@@ -25,7 +25,10 @@ from core.sessions import SessionRecord
 from services.server.manager_support import logger
 
 
-class SessionsMixin:
+from services.server.manager_contract import ManagerHostState
+
+
+class SessionsMixin(ManagerHostState):
 
     def _bind_runtime(self, engine: TurnEngine, session_id: str) -> RuntimePort:
         """Wrap a freshly built TurnEngine into the application-layer RuntimePort.

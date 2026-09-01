@@ -4,7 +4,7 @@ We pass messages straight to the OpenAI SDK, which accepts `content` as either a
 array of parts: `{"type": "text", ...}`, `{"type": "image_url", "image_url": {"url": ...}}`
 (data: URLs work, and vision models read them), and `{"type": "file", "file": {"filename",
 "file_data"}}` for PDFs. So image/PDF attachments are just parts appended to the user turn —
-the Anthropic/Gemini providers convert them to their own block shapes.
+the Anthropic provider converts them to its own block shape.
 
 `build_user_content` returns a plain string when there are no attachments (back-compat with the
 text-only path), else the parts list.
@@ -12,7 +12,7 @@ text-only path), else the parts list.
 
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 MAX_ATTACHMENTS = 8
 MAX_IMAGE_CHARS = 12_000_000  # data-URL length cap (~8–9 MB decoded); keeps a turn sane

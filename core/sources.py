@@ -19,7 +19,7 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Literal
 
 from packages.jsonstate import load_json_state, save_json_state
 
@@ -50,7 +50,7 @@ class SourceRef:
     fingerprint: str  # sha256 of content bytes at capture time
     captured_at: str = field(default_factory=_now)
     checked_at: str | None = None
-    status: str = FRESH_CURRENT
+    status: Literal["current", "changed", "missing"] = FRESH_CURRENT
     # Per-run citations ({run_id, ranges}) linking runs → this source.
     cited_ranges: list[dict[str, Any]] = field(default_factory=list)
     # Which sessions/personas may cite it (optional, v1 free-form).

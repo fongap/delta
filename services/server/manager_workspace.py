@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from core.agents import get_agent
 from packages.config import load_config, workspace_allowed_commands
@@ -17,7 +17,10 @@ from core.workspace_trust import WorkspaceTrustStore
 from services.server.manager_support import _git_branch
 
 
-class WorkspaceTrustMixin:
+from services.server.manager_contract import ManagerHostState
+
+
+class WorkspaceTrustMixin(ManagerHostState):
 
     # -- workspaces -------------------------------------------------------------
     def open_workspace(self, path: str, *, create: bool = False) -> dict[str, Any]:

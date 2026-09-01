@@ -11,7 +11,7 @@ import asyncio
 import logging
 import os
 import re
-from typing import Any, Optional
+from typing import Any
 
 from integrations.connectors.base import (
     BasePlatformAdapter,
@@ -115,7 +115,13 @@ class TelegramAdapter(BasePlatformAdapter):
         )
         await self._app.initialize()
         await self._app.start()
-        await self._app.updater.start_polling(drop_pending_updates=True)
+        updater = self._app.updater
+        if updater is None:
+            await self._app.stop()
+            await self._app.shutdown()
+            self._app = None
+            return False
+        await updater.start_polling(drop_pending_updates=True)
         logger.info("telegram adapter polling")
         return True
 
@@ -123,7 +129,9 @@ class TelegramAdapter(BasePlatformAdapter):
         if self._app is None:
             return
         try:
-            await self._app.updater.stop()
+            updater = self._app.updater
+            if updater is not None:
+                await updater.stop()
             await self._app.stop()
             await self._app.shutdown()
         finally:
@@ -283,6 +291,8 @@ class SlackAdapter(BasePlatformAdapter):
                 alive = False
             if alive:
                 continue
+            if client is None:
+                continue
             logger.warning(
                 "slack socket mode connection down — reconnecting (watchdog)"
             )
@@ -304,8 +314,11 @@ class SlackAdapter(BasePlatformAdapter):
             return None
         if uid in self._name_cache:
             return self._name_cache[uid]
+        app = self._app
+        if app is None:
+            return None
         try:
-            info = await self._app.client.users_info(user=uid)
+            info = await app.client.users_info(user=uid)
             u = info.get("user") or {}
             prof = u.get("profile") or {}
             name = (
@@ -338,8 +351,11 @@ class SlackAdapter(BasePlatformAdapter):
             return None
         if chat_id in self._channel_cache:
             return self._channel_cache[chat_id]
+        app = self._app
+        if app is None:
+            return None
         try:
-            info = await self._app.client.conversations_info(channel=chat_id)
+            info = await app.client.conversations_info(channel=chat_id)
             chan = info.get("channel") or {}
             name = chan.get("name") or chan.get("name_normalized")
         except Exception:

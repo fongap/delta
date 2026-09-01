@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 from integrations.connectors.browser_automation import (
     browser_close_session,
@@ -19,7 +19,10 @@ from integrations.connectors.browser_automation import (
 from services.server.manager_support import _artifact_kind
 
 
-class ArtifactsBrowserAuditMixin:
+from services.server.manager_contract import ManagerHostState
+
+
+class ArtifactsBrowserAuditMixin(ManagerHostState):
 
     def list_audit(
         self,

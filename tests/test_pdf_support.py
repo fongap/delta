@@ -35,10 +35,9 @@ def _reset_mode():
 # -- capability flag ------------------------------------------------------------
 
 
-def test_native_three_have_pdf_capability():
+def test_native_protocols_have_pdf_capability():
     assert capabilities_for("gpt-5.6-sol").pdf
     assert capabilities_for("anthropic:claude-fable-5").pdf
-    assert capabilities_for("gemini:gemini-2.5-pro").pdf
 
 
 def test_compat_vendors_lack_pdf_capability():
@@ -46,7 +45,7 @@ def test_compat_vendors_lack_pdf_capability():
         "zai:glm-5.2",
         "kimi:kimi-k2.6",
         "together:zai-org/GLM-5.2",
-        "ollama:qwen3",
+        "local:qwen3",
     ):
         assert not capabilities_for(model).pdf, model
 

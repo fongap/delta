@@ -4,7 +4,6 @@ ripgrep respects `.gitignore`, so it skips `node_modules`/`target`/`dist` automa
 fallback skips a hardcoded set of heavy dirs. Read-only, workspace-scoped. Returns file:line:text.
 """
 
-# pyright: reportFunctionMemberAccess=false
 # (tool-builder module: attaches aisuite's dynamic metadata attributes
 # (__aisuite_tool_metadata__ / __delta_schema__) to plain functions —
 # the framework's plugin protocol, not a type error.)
@@ -17,9 +16,11 @@ import re
 import shutil
 import subprocess
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 
 import aisuite as ai
+
+from integrations.tools.metadata import attach_tool_metadata
 
 # Per-OS application data directories. These are not build noise: on macOS 14+ merely
 # *descending* into ~/Library/Application Support (other apps' containers) trips the App
@@ -140,14 +141,17 @@ def search_tools(workspace: str) -> list:
 
     grep.__name__ = "grep"
     grep.__doc__ = _SCHEMA["function"]["description"]
-    grep.__aisuite_tool_metadata__ = ai.ToolMetadata(
-        name="grep",
-        category="search",
-        risk_level="low",
-        capabilities=["search"],
-        requires_approval=False,
+    attach_tool_metadata(
+        grep,
+        schema=_SCHEMA,
+        metadata=ai.ToolMetadata(
+            name="grep",
+            category="search",
+            risk_level="low",
+            capabilities=["search"],
+            requires_approval=False,
+        ),
     )
-    grep.__delta_schema__ = _SCHEMA
     return [grep]
 
 

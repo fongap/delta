@@ -237,7 +237,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          uv sync --locked --extra messaging --extra dev --extra bedrock
+          uv sync --locked --extra messaging --extra dev
           uv pip check --python .venv/bin/python
 
       - name: Runtime contract schemas
@@ -271,7 +271,7 @@ jobs:
       - name: Install
         shell: pwsh
         run: |
-          uv sync --locked --extra messaging --extra dev --extra bedrock
+          uv sync --locked --extra messaging --extra dev
           uv pip check --python .venv\Scripts\python.exe
 
       - name: Test
@@ -379,7 +379,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          uv sync --locked --extra messaging --extra dev --extra bedrock
+          uv sync --locked --extra messaging --extra dev
           uv pip check --python .venv/bin/python
 
       - name: Dependency advisories
@@ -487,11 +487,9 @@ jobs:
           tests
           --select E9,F63,F7,F82
 
-      # Existing lint debt is tolerated, but the number of findings may not increase.
-      # Baselines should normally only move downward as debt is repaired.
-      # Any upward revision of RUFF_BASELINE / PYRIGHT_BASELINE below must be
-      # explained in the PR description (why the debt increased, and the
-      # follow-up plan to pay it down).
+      # Existing Ruff debt is tolerated, but the number of findings may not increase.
+      # The baseline should normally only move downward as debt is repaired. Any upward
+      # revision must be explained in the PR description with a follow-up plan.
 
       - name: Ruff full scan — baseline gate
         env:
@@ -533,52 +531,15 @@ jobs:
               )
           PY
 
-      - name: Pyright — baseline gate
-        env:
-          PYRIGHT_BASELINE: "577"
-        shell: bash
+      - name: Pyright — zero-error gate
         run: |
-          set -euo pipefail
-
           uv run --locked pyright \
             core \
             providers \
             integrations \
             packages \
             services/server \
-            apps/tui \
-            --outputjson \
-            > pyright-report.json || true
-
-          uv run --locked python - <<'PY'
-          import json
-          import os
-
-          baseline = int(os.environ["PYRIGHT_BASELINE"])
-
-          with open("pyright-report.json", "r", encoding="utf-8") as fh:
-              report = json.load(fh)
-
-          summary = report.get("summary")
-          if not isinstance(summary, dict):
-              raise SystemExit(
-                  "invalid Pyright JSON report: summary missing"
-              )
-
-          count = summary.get("errorCount")
-          if not isinstance(count, int):
-              raise SystemExit(
-                  "invalid Pyright JSON report: errorCount missing"
-              )
-
-          print(f"pyright errors: {count} (baseline {baseline})")
-
-          if count > baseline:
-              raise SystemExit(
-                  f"pyright errors {count} > baseline {baseline} — "
-                  "clean up the regression or deliberately revise the baseline"
-              )
-          PY
+            apps/tui
 
 
   rust:

@@ -9,7 +9,6 @@ Pure mechanical move: each function's body is identical to what lived in integra
 and the factory re-imports them by the same names, so no behavior changes.
 """
 
-# pyright: reportFunctionMemberAccess=false
 # (tool-builder plumbing: _attach stamps aisuite's dynamic metadata attributes
 # (__aisuite_tool_metadata__ / __delta_schema__) onto plain functions —
 # the framework's plugin protocol, not a type error.)
@@ -24,6 +23,8 @@ from integrations.connectors.tool_defs import approval_for_tool
 from integrations.web.guard import get_checked
 
 import aisuite as ai
+
+from integrations.tools.metadata import attach_tool_metadata
 
 
 def _meta(
@@ -67,8 +68,11 @@ def _attach(
     # registered tools — connector READS never gate. The explicit arg only governs
     # tools without a registry entry.
     approval = approval_for_tool(name, default=approval)
-    fn.__delta_schema__ = schema
-    fn.__aisuite_tool_metadata__ = _meta(name, approval=approval, capabilities=caps)
+    attach_tool_metadata(
+        fn,
+        schema=schema,
+        metadata=_meta(name, approval=approval, capabilities=caps),
+    )
     fn.__doc__ = schema["function"]["description"]
     return fn
 
