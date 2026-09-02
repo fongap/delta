@@ -6,19 +6,13 @@ import { test } from "./fixtures";
 
 async function openSlackPage(page) {
   await page.goto("/");
-  await page.getByTestId("account-row").click(); // triggers login
-  await expect(page.getByTestId("account-row")).toContainText("Rohit", { timeout: 10_000 });
-  await page.getByTestId("account-row").click(); // now signed in → opens menu
-  await page.getByRole("button", { name: "Connectors", exact: true }).click();
+  await page.getByTestId("sidebar-footer-integrations").click();
   await page.getByTestId("connector-slack").click();
 }
 
 test("list row status + navigation to the Slack page", async ({ page }) => {
   await page.goto("/");
-  await page.getByTestId("account-row").click(); // triggers login
-  await expect(page.getByTestId("account-row")).toContainText("Rohit", { timeout: 10_000 });
-  await page.getByTestId("account-row").click(); // now signed in → opens menu
-  await page.getByRole("button", { name: "Connectors", exact: true }).click();
+  await page.getByTestId("sidebar-footer-integrations").click();
 
   const row = page.getByTestId("connector-slack");
   await expect(row).toContainText("2 workspaces · relay");
