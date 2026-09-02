@@ -227,6 +227,11 @@ class TurnEngineAdapter:
         # records and the idempotency log all share ONE identity. Interactive
         # turns leave this None and mint a fresh uuid per driven turn.
         self._run_id = run_id
+        # Resume path: keep the same run_id across the suspension so the
+        # idempotency log (keyed on run_id) sees a replay, not a fresh call.
+        # Set lazily on the first run, reused on every resume of the same
+        # session.
+        self._last_run_id: str | None = run_id
 
     @property
     def engine(self) -> TurnEngine:
@@ -283,8 +288,16 @@ class TurnEngineAdapter:
 
         # One identity across the run: an automation supplies run_id at build so
         # the ledger narrative joins the TaskRun row; an interactive turn mints
-        # a fresh id per driven turn.
-        run_id = self._run_id or uuid.uuid4().hex
+        # a fresh id per driven turn. A resume of the same session reuses the
+        # last id so the idempotency log (keyed on run_id) sees a replay
+        # instead of a brand-new call.
+        if self._run_id:
+            run_id = self._run_id
+        elif kind == "resume" and self._last_run_id:
+            run_id = self._last_run_id
+        else:
+            run_id = uuid.uuid4().hex
+        self._last_run_id = run_id
         token = runscope.set_current(run_id, self._session_id or "")
         try:
             self._ledger.append(
