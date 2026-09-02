@@ -1121,7 +1121,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
         ok: true,
         mode: slackState.mode,
         relay: { state: "live", reconnects: 0, last_event_at: Date.now() / 1000 - 30, last_error: "" },
-        signed_in: false,
+        signed_in: true,
         teams: Object.fromEntries(
           slackState.workspaces.map((w) => [w.team_id, { token_ok: true }]),
         ),
@@ -1171,7 +1171,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
         ok: true,
         mode: githubState.mode,
         relay: { state: "live", reconnects: 0, last_event_at: Date.now() / 1000 - 30, last_error: "" },
-        signed_in: false,
+        signed_in: true,
         installs: Object.fromEntries(
           githubState.installations.map((x) => [x.installation_id, { token_ok: true }]),
         ),
