@@ -22,7 +22,8 @@ test("Settings opens as a full page and navigates sections", async ({ page }) =>
   await expect(page.getByText("Each conversation gets its own folder")).toBeVisible();
 
   await page.getByRole("button", { name: "Models", exact: true }).click();
-  await page.getByTestId("set-add-provider-link").click();
+  // Models tab opens with the inline create form visible by default when no
+  // custom provider exists (ModelsTab: createOpen = !hasCustom || ...).
   await expect(page.getByTestId("set-alias")).toBeVisible();
 });
 

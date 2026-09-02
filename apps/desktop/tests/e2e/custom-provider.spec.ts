@@ -12,8 +12,10 @@ test.describe("custom provider", () => {
     await page.goto("/");
     await page.getByTestId("sidebar-footer-settings").click();
     await page.getByRole("button", { name: "Models", exact: true }).click();
-    // Click the quiet "Add provider" link to expand the inline create form.
-    await page.getByTestId("set-add-provider-link").click();
+    // The inline create form is open by default when no custom provider exists
+    // (ModelsTab: `createOpen = !hasCustom || fetchedModels.length > 0`).
+    // The "Add provider" link is a quiet toggle to collapse/expand it; here it
+    // is already visible, so the test does not need to click it.
     await expect(page.getByTestId("set-alias")).toBeVisible();
   });
 

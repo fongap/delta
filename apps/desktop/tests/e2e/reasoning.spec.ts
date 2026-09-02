@@ -13,14 +13,15 @@ test("thinking streams live, then persists as a collapsed disclosure on the answ
   await box.fill("think hard about this");
   await box.press("Enter");
 
-  // Live phase: the Thinking… block is up while deltas tick in; expanding shows the trace.
-  await expect(page.getByText("Thinking…").first()).toBeVisible({ timeout: 10_000 });
+  // Live phase: the Thinking block is up while deltas tick in; expanding shows the trace.
+  // (The trailing "…" is now DOM dots, not text — see styles.css `.thinking-dots`.)
+  await expect(page.getByText("Thinking", { exact: true }).first()).toBeVisible({ timeout: 10_000 });
   await page.getByTestId("thinking-toggle").click();
   await expect(page.getByTestId("thinking-body")).toContainText("Weighing options.");
 
   // Finalized: the answer bubble carries a collapsed "Thought process" disclosure.
   await expect(page.getByText("Decision made.").first()).toBeVisible({ timeout: 10_000 });
-  await expect(page.getByText("Thinking…")).toHaveCount(0);
+  await expect(page.getByText("Thinking", { exact: true })).toHaveCount(0);
   const toggle = page.getByTestId("thinking-toggle");
   await expect(toggle).toHaveText(/Thought process/);
   await expect(page.getByTestId("thinking-body")).toHaveCount(0); // collapsed by default
