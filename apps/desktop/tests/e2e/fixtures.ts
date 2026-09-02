@@ -1311,12 +1311,6 @@ export async function mockApi(page: import("@playwright/test").Page) {
     if (/\/v1\/cloud\/gallery\/[^/]+$/.test(p)) {
       return json({ ok: false, error: "managed service not configured" });
     }
-        },
-        recommends: [
-          { kind: "connector", ref: "hubspot", reason: "read deals and contacts", tier: "core" },
-        ],
-      });
-    }
     // credential check (read-only) — an api_key containing "bad" fails, else ok.
     if (p.endsWith("/v1/providers/verify") && m === "POST") {
       const key = String(req.postDataJSON()?.fields?.api_key || "");
