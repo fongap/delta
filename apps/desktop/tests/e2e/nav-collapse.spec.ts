@@ -45,7 +45,7 @@ test("RECENT header group/filter popover: switch grouping + see delta filters", 
   await expect(menu).toContainText("Group by");
   await expect(menu).toContainText("Filter by Delta agent");
 
-  // Switch to Chronological → the persona accordion collapses into a flat list (the "OpenWorker"
+  // Switch to Chronological → the persona accordion collapses into a flat list (the "Delta"
   // persona group header is no longer a row; sessions list directly).
   await menu.getByText("Chronological").click();
   await expect(menu.getByText("Chronological").locator("xpath=..")).toContainText("✓");

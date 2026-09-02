@@ -10,7 +10,7 @@ export function isProjectScoped(p?: { workspace?: string; family?: string }): bo
 // Persona naming: the product is "Delta"; the personas are a "Delta" family — Delta (general),
 // Delta Code, Delta Ops. In lists/chrome we use the SHORT label (Delta / Code / Ops); the persona
 // detail page uses the FULL family name. Backend names are left untouched (the API + tests keep
-// "OpenWorker" / "Ops Delta"); this is purely the display layer.
+// "Delta" / "Ops Delta"); this is purely the display layer.
 
 // Short label for the sidebar + top bar: "Delta" / "Code" / "Ops" / "Chat".
 export function shortPersonaName(name?: string, id?: string): string {

@@ -68,12 +68,20 @@ CHANGELOG 只记录用户可感知的变化和重要工程能力变化。
 - **首页示例卡片**：`apps/desktop/src/components/SessionIntro.tsx` 整文件简化为单 `<h1 class="greeting">"我能帮您做点什么？"</h1>`；`App.tsx` 的 code/chat idle hero 的 `SUGGESTIONS` 数组与 `.suggestions` 区块删除；相应 CSS（`.task-card`, `.task-dot`, `.task-card-act`, `.intro-tasks`, `.intro-addfolder`, `.suggestions`, `.suggest*`）整段删除。
 - **首页 e2e 测试**：`apps/desktop/tests/e2e/session-intro.spec.ts`（3 个用例）整文件删除（任务卡片已不存在）。
 - **Dead CSS**：`styles.css` 中 `boot-pulse` keyframes / `.thinking-live` animation / `.waiting-spinner` rotation 删除。
-- **Dead TS comments**：`integrations/connectors/{relay_client,catalog_copy,descriptors}.py` 与 `services/server/manager_events.py` 中 "OpenWorker Cloud" 历史引用全部更新为"managed service / future Federation Adapter"中性格式。
+  - **Dead TS comments**：`integrations/connectors/{relay_client,catalog_copy,descriptors}.py` 与 `services/server/manager_events.py` 中 "OpenWorker Cloud" 历史引用全部更新为"managed service / future Federation Adapter"中性格式。
+- **用户可见 OpenWorker 产品身份残留**
+  - `integrations/mcp/oauth.py`: DCR `CLIENT_NAME` 由 `"OpenWorker"` 改为 `"Delta"`（OAuth 同意页与 MCP 服务器看到的 client_name）。
+  - `apps/desktop/tests/e2e/fixtures.ts`: 顶层 persona 列表的 `cowork` 节点 `name` 字段由 `"OpenWorker"` 改为 `"Delta"`；`PERSONA_DETAIL` 同步更新。
+  - `apps/desktop/src/components/Sidebar.test.tsx`: `{ id: "cowork", name: "OpenWorker" }` 测试 fixture 改为 `"Delta"`。
+  - `apps/desktop/src/personaScope.ts`: 注释中"API + tests keep 'OpenWorker' / 'Ops Delta'"与实际不符，更新为"keep 'Delta' / 'Ops Delta'"。
+  - `apps/desktop/tests/e2e/nav-collapse.spec.ts`: 注释"the 'OpenWorker' persona group header"更新为"the 'Delta' persona group header"。
+  - `tests/test_connectors.py`: 测试 fixture `account: "rohit@openworker.com"` 改为 `"rohit@example.com"`。
 
 #### 新增 (Added)
 
 - **Federation 边界的最终语义**：`docs/architecture/hub-federation-boundary.md` 重写为"Delta 是独立、本地优先运行时；Federation 是可选开放边界；OpenWorker 只是潜在外部适配对象之一"。
 - **ADR-004 附录 A**：`docs/architecture/adr/ADR-004-openworker-decouple-hub-boundary.md` 追加"附录 A：P0 后置清理（2026-09）"，记录 Federation 边界与 `cloud_relay_ws_url` 的进一步收紧；历史决策 D-1 至 D-9 保留不改写。
+- **`mode: "relay"` 运行时路径清理前置承诺**：`docs/architecture/relay-mode-removal.md` 新文件，记录 P0 之后必须由 P1 阶段清理的 `mode: "relay"` 死路径、Slack/GitHub relay 适配器、Inbox `[ow:…]` 回复 token 写入方向。**当前 P0 范围内仅保证**：production 路由不会写入 `mode: "relay"`、`managed_connect_*` 三个函数已是 unreachable code、所有 161 个单元测试与 73 个 Python 测试通过。P1 必须删除 `relay_client.py` / `adapters.py` relay 分支 / `setup.py` 三个 `managed_connect_*` 函数 / `github_installs.py` 的 `managed_connect_install` / UI relay 分支 / 配套测试。
 
 #### 变更 (Changed)
 
@@ -91,6 +99,7 @@ CHANGELOG 只记录用户可感知的变化和重要工程能力变化。
   - Onboarding 同步：同样的"自定义服务商"大卡片 → "添加提供商 ›"链接；`openNewCustom()` 唤起 `ProviderForm`。
   - 已配置服务商（`ProviderCards`）成为视觉主体；新建 / 编辑 / 删除 / 模型选择能力完全保留。
   - E2E 测试 `custom-provider.spec.ts` 与 `settings.spec.ts` 同步更新（点击 "Add provider" 链接再展开表单）。
+- `apps/desktop/tests/e2e/nav-collapse.spec.ts`: 注释与 persona 名称同步。
 
 ### 变更 (Changed)
 
