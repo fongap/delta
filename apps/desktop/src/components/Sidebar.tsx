@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AUTOMATIONS_CHANGED,
   getAutomations,
@@ -220,7 +220,6 @@ const compactAge = (iso?: string | null): string => {
 
 export function Sidebar(props: Props) {
   const { t } = useI18n();
-  const [appMenuOpen, setAppMenuOpen] = useState(false);
   // A2 (revised): the global search icon lives in the sidebar brand row (right of the wordmark).
   // Clicking opens the command-palette SearchModal directly — the topbar instance was both
   // unresponsive (its parent drag surface swallowed the pointerdown) and the user wants it here.
@@ -378,31 +377,6 @@ export function Sidebar(props: Props) {
   // §31 (revised 2026-07-21): mention-spawned sessions list chronologically in Recent like any
   // other session — the OriginIcon in the row's indicator cluster marks where they came from.
   // The separate collapsed "From Slack" band hid fresh mentions below week-old sessions.
-  // A row in the account menu (§26): closes the menu, then runs the destination.
-  const appMenuItem = (
-    icon: IconName,
-    label: string,
-    onClick: () => void,
-    active?: boolean,
-    trailing?: ReactNode,
-  ) => (
-    <button
-      className={
-        "w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] text-left " +
-        (active ? "text-ink bg-paper" : "hover:bg-paper")
-      }
-      onClick={() => {
-        setAppMenuOpen(false);
-        onClick();
-      }}
-    >
-      <Icon name={icon} size={15} className="shrink-0 text-muted" />
-      <span className="flex-1">{label}</span>
-      {/* aria-hidden: the badge/shortcut must not leak into the accessible name (the old
-          Inbox row's name-includes-the-badge-count nuisance, not repeated). */}
-      {trailing != null && <span aria-hidden>{trailing}</span>}
-    </button>
-  );
 
   // Roll the per-session attention/liveness up to the persona header and the footer Inbox: the
   // accent count bubbles (sum), the liveness dot aggregates (working wins over sleeping).

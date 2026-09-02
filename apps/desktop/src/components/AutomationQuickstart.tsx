@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   getConnectors,
   getRecentChannels,
+  connectConnector,
   type Connector,
   type RecentChannel,
 } from "../api";
@@ -165,7 +166,6 @@ export function AutomationQuickstart({
   const picked = TEMPLATES.find((x) => x.key === pickedKey) || null;
 
   const [connectors, setConnectors] = useState<Connector[]>([]);
-  const [pendingConn, setPendingConn] = useState<string | null>(null);
   // §30 connect states: "opening" while the broker POST is in flight (the browser hasn't
   // appeared yet), "waiting" once it has — the handoff strip explains the out-of-band finish.
   const [connFlow, setConnFlow] = useState<{ name: string; phase: "opening" | "waiting" } | null>(
@@ -349,7 +349,7 @@ export function AutomationQuickstart({
                   ) : (
                     <button
                       className="px-3.5 py-1 rounded-full border border-line text-[12.5px] hover:bg-paper"
-                      onClick={() => startConnect(name)}
+                      onClick={() => connectConnector(name, {}).catch(() => {})}
                       data-testid={`ob-connect-${name}`}
                     >
                       {t("connectors.connect")}
