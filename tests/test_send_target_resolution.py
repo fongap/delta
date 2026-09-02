@@ -57,7 +57,10 @@ def test_browser_automation_reads_are_free_interactions_gate():
 # -- slack channel-name resolution ------------------------------------------------------
 def _secrets_with_team(tmp_path) -> SecretStore:
     s = SecretStore(tmp_path / "secrets.json")
-    s.put("slack:default", {"mode": "relay", "enabled": True})
+    s.put(
+        "slack:default",
+        {"type": "manual", "bot_token": "xoxb-default", "app_token": "xapp-default", "enabled": True},
+    )
     s.put("slack:team:T1", {"bot_token": "xoxb-t1", "account": "acme"})
     return s
 

@@ -97,9 +97,9 @@ if not INCLUDE_EXPERIMENTAL:
     ]
 
 
-# `websockets` powers the managed Slack relay client (relay_client.py). It is
-# lazy-imported inside a function, so PyInstaller's static analysis misses it —
-# collect it explicitly or the packaged relay adapter fails to open its socket.
+# `websockets` is used by integrations/managed Capability Port tests and
+# reserved for a future managed-relay adapter. It is lazy-imported, so
+# PyInstaller's static analysis misses it — collect it explicitly.
 #
 # `pypdf` / `pypdfium2` are lazy-imported the same way (pdf_support.py), and
 # pypdfium2 carries the libpdfium binary, which collect_all is what stages.

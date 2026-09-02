@@ -46,7 +46,7 @@ def test_deliver_to_channel_embeds_item_id(tmp_path):
 
     assert deliver(item, routing.binding_for("ops"), sender) is True
     assert sent["channel"] == "slack" and sent["target"] == "#ops"
-    assert f"[ow:{item.id}]" in sent["text"]  # rebrand: emits [ow:…] since 2026-07-22
+    assert f"[d:{item.id}]" in sent["text"]  # P1: write direction is now [d:…] (Delta brand)
 
 
 def test_in_app_only_binding_delivers_nothing(tmp_path):

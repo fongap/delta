@@ -31,26 +31,12 @@ def _github_base() -> str:
 def _github_auth(
     secrets: SecretStore, install: str = "", *, force: bool = False
 ) -> tuple[dict[str, str], dict[str, str] | None]:
-    """(headers, err). A manual PAT (`github:default.token`) wins, untouched;
-    a managed relay profile mints a short-lived installation token instead —
-    memory-cached, never stored (github-relay-spec §4). `install` picks the
-    installation by account login (pass the repo owner) or id; unknown values
-    fall back to the default installation."""
+    """(headers, err). A manual PAT (`github:default.token`) is the only auth
+    path now — the managed relay was removed in P1. `install` is accepted for
+    API compatibility but is not used to mint installation tokens."""
     profile = secrets.get("github:default") or {}
     if profile.get("token"):
         return _github_headers(profile["token"]), None
-    if profile.get("mode") == "relay":
-        from integrations.connectors import github_installs
-
-        installation_id, _prof = github_installs.resolve(secrets, install)
-        if not installation_id and install:
-            installation_id, _prof = github_installs.resolve(secrets, "")
-        if not installation_id:
-            return {}, {"error": "github is not connected; no App installation"}
-        return {}, {
-            "error": "github managed relay is unavailable "
-            "(no managed service configured; use a PAT instead)"
-        }
     return {}, {"error": "github is not connected; missing token"}
 
 

@@ -59,25 +59,6 @@ class GatewayInboundMixin(ManagerHostState):
         # and manual Socket Mode / PAT paths are unaffected. The token
         # provider returns "" when no managed service is available; relay
         # adapters skip cleanly.
-        from integrations.managed import ManagedConfig
-
-        managed_config = ManagedConfig()
-
-        def _relay_token() -> str:
-            return ""  # no managed service configured — relay unavailable
-
-        # Every relay-mode platform shares ONE managed socket; the hub fans frames
-        # out by provider tag. Built lazily on the first relay adapter.
-        relay_ws_url = managed_config.relay_ws_url or None
-        relay_hub = None
-        if relay_ws_url:
-            from integrations.connectors.relay_client import RelayHub
-
-            relay_hub = RelayHub(relay_ws_url, _relay_token)
-
-        async def _github_token(installation_id: str) -> str:
-            return ""  # no managed GitHub App broker configured
-
         for platform, st in settings.items():
             if not st.enabled:
                 continue
@@ -86,10 +67,6 @@ class GatewayInboundMixin(ManagerHostState):
                 platform,
                 profile,
                 secrets=self.secrets,
-                token_provider=_relay_token,
-                relay_url=relay_ws_url,
-                relay_hub=relay_hub,
-                github_token_client=_github_token,
             )
             if adapter is not None:
                 self.gateway.register(adapter)
@@ -201,7 +178,7 @@ class GatewayInboundMixin(ManagerHostState):
             else:
                 await self.gateway.deliver(
                     target,
-                    f"{body}\n(Open the app to respond.)\n[ow:{item.id}]".strip(),
+                    f"{body}\n(Open the app to respond.)\n[d:{item.id}]".strip(),
                 )
         except Exception:
             pass
@@ -258,8 +235,9 @@ class GatewayInboundMixin(ManagerHostState):
     # -- inbox replies over messaging connectors --------------------------------
     def _resolve_inbox_reply(self, event) -> bool:
         """Try to handle an inbound Slack/Telegram message as an Inbox reply. Returns True if the
-        message carried an `[ow:<id>]` token (so it's consumed here, not routed as a new turn) —
-        resolving the item also releases any agent suspended on it."""
+        message carried a `[d:<id>]` token (or legacy `[ow:…]` / `[ocw:…]` — the parser still
+        accepts those) so it's consumed here, not routed as a new turn — resolving the item
+        also releases any agent suspended on it."""
         from core.inbox_routing import resolve_from_reply
 
         text = getattr(event, "text", "") or ""
@@ -420,7 +398,7 @@ class GatewayInboundMixin(ManagerHostState):
 
     # -- mention router (§31) ----------------------------------------------------
     async def _route_mention(self, event, ms: MessageSource, subs) -> None:
-        """@OpenWorker tagged in a channel. A subscribed (user-connected) delta owns the channel
+        """@Delta tagged in a channel. A subscribed (user-connected) delta owns the channel
         and must answer; otherwise the per-thread delta session handles it — spawned on the
         first tag, steered by follow-ups (deduped on the thread target)."""
         from integrations.connectors.base import format_target

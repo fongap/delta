@@ -1235,12 +1235,10 @@ def test_outlook_calendar_tools_hit_the_right_graph_endpoints(tmp_path, monkeypa
     provided fields, respond posts to the accept/decline/tentativelyAccept
     action endpoints."""
     import integrations.connectors.integration_tools as it
-    from integrations.connectors.setup import managed_connect_connector
 
     secrets = SecretStore(tmp_path / "secrets.json")
-    managed_connect_connector(
-        secrets,
-        "outlook",
+    secrets.put(
+        "outlook:default",
         {
             "type": "oauth",
             "enabled": True,

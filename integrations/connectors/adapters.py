@@ -441,61 +441,14 @@ def make_adapter(
     profile: dict,
     *,
     secrets=None,
-    token_provider=None,
-    relay_url: str | None = None,
-    relay_hub=None,
-    github_token_client=None,
 ) -> BasePlatformAdapter | None:
     """Build the adapter for a connected platform from its SecretStore profile.
 
-    Slack supports two mutually-exclusive modes, the user's choice:
-    - `mode == "relay"` → managed relay (`SlackRelayAdapter`): needs the
-      `token_provider` + `relay_url` (a future managed service — currently
-      unconfigured, so the branch is dead). Per-team tokens come from
-      `slack:team:*` profiles. No manual tokens.
-    - otherwise → Socket Mode (`SlackAdapter`): manual bot + app tokens, one
-      workspace.
-
-    Relay adapters share ONE managed socket: pass the same `relay_hub` to every
-    relay-mode platform (the caller owns it); without one, each adapter builds
-    its own (fine for a single relay platform).
+    Slack: Socket Mode (`SlackAdapter`) with manual bot + app tokens, one workspace.
     """
     if platform == "telegram" and profile.get("bot_token"):
         return TelegramAdapter(profile["bot_token"])
     if platform == "slack":
-        if profile.get("mode") == "relay":
-            if not (relay_url and token_provider):
-                logger.warning(
-                    "slack managed-relay configured but no managed service is available; "
-                    "skipping (use Socket Mode for direct Slack)"
-                )
-                return None
-            from integrations.connectors.relay_client import SlackRelayAdapter
-
-            return SlackRelayAdapter(
-                relay_url,
-                token_provider,
-                teams=_load_slack_teams(secrets),
-                hub=relay_hub,
-            )
         if profile.get("bot_token") and profile.get("app_token"):
             return SlackAdapter(profile["bot_token"], profile["app_token"])
-    if platform == "github" and profile.get("mode") == "relay":
-        if not (relay_url and token_provider):
-            logger.warning(
-                "github managed-relay configured but no managed service is available; "
-                "skipping (use a PAT for direct GitHub)"
-            )
-            return None
-        from integrations.connectors.github_installs import list_installs
-        from integrations.connectors.github_relay import GitHubRelayAdapter
-        from integrations.connectors.relay_client import RelayHub
-
-        hub = relay_hub or RelayHub(relay_url, token_provider)
-        installs = (
-            {iid: prof for iid, prof in list_installs(secrets)} if secrets else {}
-        )
-        return GitHubRelayAdapter(
-            hub, installs=installs, token_client=github_token_client
-        )
     return None

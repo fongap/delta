@@ -202,8 +202,6 @@ class InboxApprovalsMixin(ManagerHostState):
         if team_id:
             installer = str(profile.get("slack_user_id") or "").strip()
             return {installer} if installer else set()
-        if profile.get("mode") == "relay":
-            return set()
         return {
             str(user_id).strip()
             for user_id in (profile.get("approval_owner_ids") or [])
@@ -225,11 +223,6 @@ class InboxApprovalsMixin(ManagerHostState):
         profile = self.secrets.get("slack:default")
         if not profile:
             return {"ok": False, "error": "Slack is not connected in Manual mode."}
-        if profile.get("mode") == "relay" or profile.get("managed"):
-            return {
-                "ok": False,
-                "error": "Relay approval ownership is set by the Slack installer.",
-            }
 
         owners = self.slack_approval_owner_ids()
         if add:
@@ -381,57 +374,35 @@ class InboxApprovalsMixin(ManagerHostState):
         ]
         if not remaining:
             default = self.secrets.get("slack:default") or {}
-            if default.get("mode") == "relay":
-                default.pop("mode", None)
-                default.pop("managed", None)
-                if default.get("bot_token"):
-                    # Manual Socket Mode creds predating the relay switch: keep them
-                    # stored but DISABLED — removing the last workspace must never
-                    # silently start listening with old tokens.
-                    default["type"] = "token"
-                    default["enabled"] = False
+            if default.get("bot_token"):
+                # Manual Socket Mode creds predating the relay switch: keep them
+                # stored but DISABLED — removing the last workspace must never
+                # silently start listening with old tokens.
+                default["type"] = "token"
+                default["enabled"] = False
+                self.secrets.put("slack:default", default)
+            else:
+                default.pop("type", None)
+                default.pop("enabled", None)
+                if default:  # e.g. a flat allow-list worth keeping
                     self.secrets.put("slack:default", default)
                 else:
-                    default.pop("type", None)
-                    default.pop("enabled", None)
-                    if default:  # e.g. a flat allow-list worth keeping
-                        self.secrets.put("slack:default", default)
-                    else:
-                        self.secrets.delete("slack:default")
+                    self.secrets.delete("slack:default")
         await self.refresh_gateway()
         return {"ok": True, "remaining_workspaces": len(remaining)}
 
 
     def slack_status(self) -> dict[str, Any]:
-        """Slack connection health in two honest layers (UX-DECISIONS §21):
-        the desktop↔relay socket and each workspace's bot token. The
-        cloud-sign-in layer was removed (ADR-004); the endpoint reports
-        only what the desktop can observe."""
-        default = self.secrets.get("slack:default") or {}
-        mode = default.get("mode") or ""
+        """Slack connection health: socket mode + per-workspace bot token state.
 
-        relay: dict[str, Any] = {
-            "state": "offline",
-            "reconnects": 0,
-            "last_event_at": None,
-            "last_error": "",
-        }
+        The desktop↔relay socket and cloud-sign-in layers were removed in P1;
+        the endpoint reports only what the desktop can observe locally.
+        """
         teams: dict[str, Any] = {}
-        adapter = (
-            self.gateway._adapters.get("slack") if self.gateway is not None else None
-        )
-        snapshot = getattr(
-            adapter, "status", None
-        )  # relay adapter only; Socket Mode has none
-        if callable(snapshot):
-            result = snapshot()
-            if isinstance(result, dict):
-                relay = result
-                teams = relay.pop("teams", {})
         return {
             "ok": True,
-            "mode": mode,
-            "relay": relay,
+            "mode": "",
+            "relay": {"state": "offline", "reconnects": 0, "last_event_at": None, "last_error": ""},
             "teams": teams,
         }
 
@@ -439,9 +410,7 @@ class InboxApprovalsMixin(ManagerHostState):
     async def disconnect_github_installation(
         self, installation_id: str
     ) -> dict[str, Any]:
-        """Stop relaying ONE GitHub installation: drop the local profile,
-        hot-reload the gateway. The Slack per-workspace disconnect, GitHub
-        flavour — a manual PAT stays untouched."""
+        """Drop one GitHub installation profile (manual metadata only)."""
         installation_id = str(installation_id).strip()
         from integrations.connectors import github_installs
 
@@ -456,34 +425,17 @@ class InboxApprovalsMixin(ManagerHostState):
 
 
     def github_status(self) -> dict[str, Any]:
-        """GitHub relay health, two honest layers: the shared relay socket and
-        per-installation token health. The cloud-sign-in layer was removed
-        (ADR-004); the endpoint reports only what the desktop can observe."""
-        default = self.secrets.get("github:default") or {}
-        relay: dict[str, Any] = {
-            "state": "offline",
-            "reconnects": 0,
-            "last_event_at": None,
-            "last_error": "",
-        }
-        installs: dict[str, Any] = {}
-        missed: dict[str, Any] = {}
-        adapter = (
-            self.gateway._adapters.get("github") if self.gateway is not None else None
-        )
-        snapshot = getattr(adapter, "status", None)
-        if callable(snapshot):
-            result = snapshot()
-            if isinstance(result, dict):
-                relay = result
-                installs = relay.pop("installs", {})
-                missed = relay.pop("missed", {})
+        """GitHub connection health: per-installation metadata + manual PAT state.
+
+        The shared relay socket and cloud-sign-in layers were removed in P1;
+        the endpoint reports only what the desktop can observe locally.
+        """
         return {
             "ok": True,
-            "mode": default.get("mode") or "",
-            "relay": relay,
-            "installs": installs,
-            "missed": missed,
+            "mode": "",
+            "relay": {"state": "offline", "reconnects": 0, "last_event_at": None, "last_error": ""},
+            "installs": {},
+            "missed": {},
         }
 
 

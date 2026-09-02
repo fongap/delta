@@ -53,7 +53,7 @@ export function GithubDetail({ c, onChanged }: DetailProps) {
     load();
   }, [c.name]);
 
-  const relay = c.mode === "relay";
+  const relay = false;
   const installations = c.installations ?? [];
   const changed = () => {
     onChanged();

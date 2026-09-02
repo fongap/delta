@@ -62,7 +62,7 @@ export function SlackDetail({ c, slack, onChanged }: DetailProps) {
     loadSubs();
   }, [c.name]);
 
-  const relay = c.mode === "relay";
+  const relay = false;
   const workspaces = c.workspaces ?? [];
   const changed = () => {
     onChanged();
