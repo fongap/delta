@@ -14,4 +14,4 @@
 
 相关架构文档：
 - `hub-federation-boundary.md` – Delta Hub 联邦化边界设计，明确 OpenWorker 仅为可选适配器。
-- `relay-mode-removal.md` – `mode: "relay"` 运行时路径与 Inbox 回复 token 写入方向的最终清理（接续 [ADR-004](./ADR-004-openworker-decouple-hub-boundary.md) 附录 A）。
+- `relay-mode-removal.md` – `mode: "relay"` 运行时路径最终移除的完成记录（2026-09 已 closed；未来 Federation Adapter 位于 `integrations/managed/adapters/<provider>.py`）。

@@ -1,14 +1,13 @@
-"""Per-workspace allow-list (managed Slack relay, M3.5).
+"""Per-workspace allow-list and authorization for the Slack connector.
 
-Slack user ids are workspace-scoped, so each connected workspace (`slack:team:*`)
-carries its OWN allow-list; a relay event is authorized against ITS team's list alone.
-Team-less sources (manual Socket Mode) keep the flat `slack:default` list — these tests
-guard both paths so neither regresses the other.
+The managed relay path was removed in P1. Slack now has ONE mode: manual Socket
+Mode (bot_token+app_token in `slack:default`). Per-workspace allow-lists are
+still possible for users who run multiple manual installs (one per workspace)
+keyed by `slack:team:<team_id>` profiles, but the relay-driven install flow
+no longer exists.
 """
 
 from __future__ import annotations
-
-from fastapi.testclient import TestClient
 
 from integrations.connectors import (
     ConnectorSettings,
@@ -21,7 +20,6 @@ from integrations.connectors import (
 from integrations.connectors.config import is_authorized
 from providers import ModelCapabilities, ProviderClient
 from packages.secrets import SecretStore
-from services.server import create_app
 from services.server.manager import SessionManager
 
 
@@ -33,17 +31,34 @@ class ScriptedProvider(ProviderClient):
         return ModelCapabilities()
 
 
-def _relay_manager(tmp_path, *, teams=("T1",)) -> SessionManager:
+def _manual_manager(tmp_path) -> SessionManager:
     m = SessionManager(data_dir=tmp_path / "data", provider=ScriptedProvider())
+    m.secrets.put(
+        "slack:default",
+        {
+            "type": "manual",
+            "bot_token": "xoxb-default",
+            "app_token": "xapp-default",
+            "enabled": True,
+        },
+    )
+    return m
+
+
+def _team_manager(tmp_path, *, teams=("T1",)) -> SessionManager:
+    """A manager with both a default profile and per-workspace team profiles."""
+    m = _manual_manager(tmp_path)
     for t in teams:
         m.secrets.put(
             f"slack:team:{t}",
-            {"type": "oauth", "managed": True, "bot_token": f"xoxb-{t}", "team_id": t},
+            {
+                "type": "oauth",
+                "managed": True,
+                "bot_token": f"xoxb-{t}",
+                "team_id": t,
+                "allowed_users": [],
+            },
         )
-    m.secrets.put(
-        "slack:default",
-        {"type": "oauth", "managed": True, "mode": "relay", "enabled": True},
-    )
     return m
 
 
@@ -92,7 +107,10 @@ def test_is_authorized_flat_path_unchanged():
 # -- load_settings ---------------------------------------------------------------
 def test_load_settings_populates_teams(tmp_path):
     secrets = SecretStore(tmp_path / "secrets.json")
-    secrets.put("slack:default", {"type": "oauth", "mode": "relay", "enabled": True})
+    secrets.put(
+        "slack:default",
+        {"bot_token": "xoxb-default", "app_token": "xapp-default", "enabled": True},
+    )
     secrets.put(
         "slack:team:T1",
         {"bot_token": "xoxb-1", "allowed_users": ["U_A", "U_B"]},
@@ -108,7 +126,7 @@ def test_load_settings_populates_teams(tmp_path):
 
 # -- manager write path ----------------------------------------------------------
 def test_set_allowed_with_team_writes_team_profile(tmp_path):
-    m = _relay_manager(tmp_path, teams=("T1", "T2"))
+    m = _team_manager(tmp_path, teams=("T1", "T2"))
     m.gateway = Gateway(
         secrets=m.secrets, settings={"slack": load_settings(m.secrets)["slack"]}
     )
@@ -131,7 +149,7 @@ def test_set_allowed_with_team_writes_team_profile(tmp_path):
 
 
 def test_set_allowed_without_team_keeps_flat_behavior(tmp_path):
-    m = _relay_manager(tmp_path)
+    m = _team_manager(tmp_path)
     assert m.allow_user("slack", "U_FLAT")["allowed_users"] == ["U_FLAT"]
     assert m.secrets.get("slack:default")["allowed_users"] == ["U_FLAT"]
     assert not m.secrets.get("slack:team:T1").get("allowed_users")
@@ -139,7 +157,7 @@ def test_set_allowed_without_team_keeps_flat_behavior(tmp_path):
 
 # -- park + resolve --------------------------------------------------------------
 async def test_park_carries_team_and_resolve_allows_into_team(tmp_path):
-    m = _relay_manager(tmp_path, teams=("T1",))
+    m = _team_manager(tmp_path, teams=("T1",))
     delivered: list[MessageEvent] = []
 
     async def _capture(event: MessageEvent) -> None:
@@ -170,7 +188,7 @@ async def test_park_carries_team_and_resolve_allows_into_team(tmp_path):
 
 async def test_resolve_teamless_parked_uses_flat_list(tmp_path):
     # Manual-mode parked items (no team_id) keep resolving into slack:default.
-    m = _relay_manager(tmp_path)
+    m = _team_manager(tmp_path)
 
     async def _noop(event) -> None:
         pass
@@ -187,78 +205,3 @@ async def test_resolve_teamless_parked_uses_flat_list(tmp_path):
     assert (await m.resolve_unauthorized("slack", item["id"], "allow"))["ok"] is True
     assert m.secrets.get("slack:default")["allowed_users"] == ["U_M"]
     assert not m.secrets.get("slack:team:T1").get("allowed_users")
-
-
-# -- REST + connector_list surface ------------------------------------------------
-def test_rest_allow_with_team_and_workspaces_field(tmp_path):
-    m = _relay_manager(tmp_path, teams=("T1", "T2"))
-    client = TestClient(create_app(m))
-
-    r = client.post(
-        "/v1/connectors/slack/allow", json={"user_id": "U_W", "team_id": "T1"}
-    )
-    assert r.json()["ok"] is True
-    slack = next(
-        c
-        for c in client.get("/v1/connectors").json()["connectors"]
-        if c["name"] == "slack"
-    )
-    assert slack["connected"] is True and slack["mode"] == "relay"
-    ws = {w["team_id"]: w for w in slack["workspaces"]}
-    assert ws["T1"]["allowed_users"] == ["U_W"]
-    assert ws["T2"]["allowed_users"] == []
-
-    r = client.post(
-        "/v1/connectors/slack/disallow", json={"user_id": "U_W", "team_id": "T1"}
-    )
-    assert r.json()["allowed_users"] == []
-
-
-# -- installer pre-add on managed install (UX-027) --------------------------------
-def test_managed_install_preadds_the_installer(tmp_path):
-    from integrations.connectors.setup import managed_connect_slack_install
-
-    s = SecretStore(tmp_path / "secrets.json")
-    managed_connect_slack_install(
-        s, {"team_id": "T1", "access_token": "xoxb-t1", "slack_user_id": "U_ME"}
-    )
-    assert s.get("slack:team:T1")["allowed_users"] == ["U_ME"]
-    src = SessionSource("slack", "T1/C1", user_id="U_ME", team_id="T1")
-    assert is_authorized(load_settings(s)["slack"], src) is True
-
-
-def test_reinstall_preserves_the_existing_allow_list(tmp_path):
-    from integrations.connectors.setup import managed_connect_slack_install
-
-    s = SecretStore(tmp_path / "secrets.json")
-    s.put(
-        "slack:team:T1",
-        {
-            "bot_token": "xoxb-old",
-            "allowed_users": ["U_ANNA", "U_ME"],
-            "sender_name": "Rohit",
-        },
-    )
-    managed_connect_slack_install(
-        s, {"team_id": "T1", "access_token": "xoxb-new", "slack_user_id": "U_ME"}
-    )
-    profile = s.get("slack:team:T1")
-    assert profile["allowed_users"] == ["U_ANNA", "U_ME"]
-    assert profile["bot_token"] == "xoxb-new"
-    assert profile["sender_name"] == "Rohit"
-
-
-def test_workspace_listing_carries_installer_identity(tmp_path):
-    from integrations.connectors.setup import (
-        _slack_workspaces,
-        managed_connect_slack_install,
-    )
-
-    s = SecretStore(tmp_path / "secrets.json")
-    managed_connect_slack_install(
-        s, {"team_id": "T1", "access_token": "xoxb-t1", "slack_user_id": "U_ME"}
-    )
-    (w,) = _slack_workspaces(s)
-    assert w["installer_user_id"] == "U_ME"
-    assert w["approval_owner_ids"] == ["U_ME"]
-    assert w["installer_name"] == ""

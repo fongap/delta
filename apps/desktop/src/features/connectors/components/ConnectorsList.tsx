@@ -2,7 +2,7 @@ import { useState } from "react";
 import { type Connector, type SlackStatus } from "../../../api";
 import { ConnectorBadge } from "../ConnectorIcon";
 import { AddConnectionModal } from "./AddConnectionModal";
-import { CHIP_OK, CHIP_OFF, CHIP_WARN, GRP, GRP_H, FOOT, PILL_QUIET, ROW } from "./ui";
+import { CHIP_OK, GRP, GRP_H, FOOT, PILL_QUIET, ROW } from "./ui";
 import { useI18n } from "@delta/i18n/I18nContext";
 
 /** The `t` function shape, for the module-level helpers below. */
@@ -129,28 +129,13 @@ export function ConnectorsList({
 }
 
 function statusLine(c: Connector, t: T): string {
-  if (c.name === "slack" && c.mode === "relay") {
-    const n = c.workspaces?.length ?? 0;
-    return t("connectors.statusRelayWorkspaces", { n });
-  }
   if ((c.accounts?.length ?? 0) > 1) return t("connectors.accountCount", { n: c.accounts!.length });
   if ((c.portals?.length ?? 0) > 1) return t("connectors.portalCount", { n: c.portals!.length });
   if (c.auth === "none") return t("connectors.statusBuiltIn");
   return c.account || t("connectors.connected");
 }
 
-function healthChip(c: Connector, slack: SlackStatus | null, t: T) {
-  // Slack relay gets a LIVE chip from /v1/connectors/slack/status — problems
-  // surface in the list, never one click deep. Named honestly per layer; we
-  // never claim "Slack↔cloud down" (the desktop can't see that leg).
-  if (c.name === "slack" && c.mode === "relay" && slack) {
-    if (slack.relay.state === "offline") return <span className={CHIP_OFF}>{t("connectors.healthOffline")}</span>;
-    if (slack.relay.state === "reconnecting")
-      return <span className={CHIP_WARN}>{t("connectors.healthReconnecting")}</span>;
-    if (Object.values(slack.teams).some((t) => !t.token_ok))
-      return <span className={CHIP_WARN}>{t("connectors.healthToken")}</span>;
-    return <span className={CHIP_OK}>{t("connectors.healthLive")}</span>;
-  }
+function healthChip(c: Connector, _slack: SlackStatus | null, t: T) {
   if (c.two_way && c.connected) return <span className={CHIP_OK}>{t("connectors.healthLive")}</span>;
   return <span className={CHIP_OK}>{t("connectors.healthReady")}</span>;
 }

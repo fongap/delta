@@ -1,15 +1,11 @@
-"""Managed GitHub App installations: per-installation profiles + allow-lists.
+"""GitHub installation metadata store.
 
-`github:install:<installation_id>` holds ONE installation's routing metadata —
-account_login (org/user the App is installed on), the connecting user's own
-github_login, repo_selection, and that installation's inbound allow-list.
-There is deliberately NO token field: API access runs on short-lived
-installation tokens minted from the broker and cached in memory only
-(github-relay-spec §4); the manual PAT path keeps living in `github:default`.
+`github:install:<installation_id>` holds ONE installation's metadata — account_login
+(org/user the App is installed on), the connecting user's own github_login,
+repo_selection, and that installation's inbound allow-list.
 
-`github:default` doubles as the manual connector profile (token=PAT) and the
-managed-relay switch (`mode="relay"`), exactly like Slack's default profile
-carries Socket-Mode creds alongside the relay flag.
+`github:default` is the manual connector profile (token=PAT). It does NOT carry
+a relay flag — the managed relay path was removed in P1.
 """
 
 from __future__ import annotations
@@ -59,49 +55,49 @@ def resolve(
     return "", None
 
 
-def managed_connect_install(
-    secrets: SecretStore, form: dict[str, Any]
+def connect_install(
+    secrets: SecretStore, profile: dict[str, Any]
 ) -> dict[str, Any]:
-    """Store a managed GitHub App install from the broker's form-POST.
+    """Store a GitHub installation profile (metadata only — no token fields).
 
-    Writes `github:install:<id>` (metadata only — the loopback POST carries no
-    token by design) and flips `github:default` to relay mode so the gateway
-    builds the GitHubRelayAdapter. A manual PAT in the default profile stays
-    untouched. Re-install refreshes metadata, keeps the allow-list.
-    """
-    installation_id = _norm(form.get("installation_id"))
+    Used for both manual PAT installs and installation metadata. Returns
+    {ok, installation_id, account}. The caller is responsible for the token
+    field if it's a manual PAT install."""
+    installation_id = _norm(profile.get("installation_id"))
     if not installation_id:
-        return {"ok": False, "error": "installation_id missing from callback"}
+        return {"ok": False, "error": "installation_id missing"}
     existing = secrets.get(PREFIX + installation_id) or {}
-    profile = {
-        "type": "oauth",
-        "managed": True,
+    merged = {
+        "type": profile.get("type", "manual"),
+        "managed": bool(profile.get("managed", False)),
         "installation_id": installation_id,
-        "account_login": form.get("account_login", ""),
-        "account_type": form.get("account_type", ""),
-        "github_login": form.get("github_login", ""),
-        "repo_selection": form.get("repo_selection", ""),
-        "connection_id": form.get("connection_id", ""),
+        "account_login": profile.get("account_login", ""),
+        "account_type": profile.get("account_type", ""),
+        "github_login": profile.get("github_login", ""),
+        "repo_selection": profile.get("repo_selection", ""),
+        "connection_id": profile.get("connection_id", ""),
     }
     if existing.get("allowed_users"):
-        profile["allowed_users"] = list(existing["allowed_users"])
+        merged["allowed_users"] = list(existing["allowed_users"])
+    elif profile.get("allowed_users"):
+        merged["allowed_users"] = list(profile["allowed_users"])
     if existing.get("allow_all"):
-        profile["allow_all"] = True
-    secrets.put(PREFIX + installation_id, profile)
+        merged["allow_all"] = True
+    elif profile.get("allow_all"):
+        merged["allow_all"] = True
+    secrets.put(PREFIX + installation_id, merged)
     default = secrets.get(DEFAULT_KEY) or {}
-    default.update({"type": "oauth", "managed": True, "mode": "relay", "enabled": True})
     default.setdefault("default_install", installation_id)
     secrets.put(DEFAULT_KEY, default)
     return {
         "ok": True,
-        "account": form.get("account_login") or installation_id,
+        "account": merged["account_login"] or installation_id,
         "installation_id": installation_id,
     }
 
 
 def disconnect_install(secrets: SecretStore, installation_id: str) -> dict[str, Any]:
-    """Drop one installation. The LAST removal turns relay mode off without
-    resurrecting a stored manual PAT (the Slack last-workspace rule)."""
+    """Drop one installation. If no installations remain, clear default_install."""
     installation_id = _norm(installation_id)
     if not secrets.get(PREFIX + installation_id):
         return {"ok": False, "error": "installation not connected"}
@@ -113,10 +109,7 @@ def disconnect_install(secrets: SecretStore, installation_id: str) -> dict[str, 
         if remaining:
             default["default_install"] = remaining[0]
     if not remaining:
-        # Relay off; a manual PAT (token) stays stored but disabled — the user
-        # re-enables it explicitly, it never starts listening on its own.
-        default.pop("mode", None)
-        default["enabled"] = False
+        default.pop("default_install", None)
         if not any(default.get(k) for k in ("token", "access_token")):
             secrets.delete(DEFAULT_KEY)
             return {"ok": True, "remaining_installs": 0}

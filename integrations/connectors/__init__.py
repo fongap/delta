@@ -24,7 +24,6 @@ from integrations.connectors.descriptors import ConnectorDescriptor, get_descrip
 from integrations.connectors.fake import FakeAdapter
 from integrations.connectors.gateway import Gateway
 from integrations.connectors.integration_tools import make_integration_tools
-from integrations.connectors.relay_client import SlackRelayAdapter
 from integrations.connectors.senders import DEFAULT_SENDERS
 from integrations.connectors.setup import (
     connect_connector,
@@ -52,7 +51,6 @@ __all__ = [
     "SendResult",
     "SessionSource",
     "SlackAdapter",
-    "SlackRelayAdapter",
     "TeamAuth",
     "TelegramAdapter",
     "connect_connector",

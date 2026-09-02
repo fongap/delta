@@ -32,11 +32,6 @@ def _profile_connected(descriptor, profile: dict[str, Any]) -> bool:
         return False
     if descriptor.auth == "none":
         return True
-    # Managed relay (e.g. Slack cloud relay) carries no manual credential in the
-    # :default profile — the tokens live per-team (slack:team:*). The relay-mode
-    # flag is what marks it connected, so don't require the manual fields.
-    if profile.get("mode") == "relay":
-        return True
     required = [
         f.key for f in descriptor.fields if f.required and f.key != "allowed_users"
     ]
@@ -103,17 +98,10 @@ def connector_list(secrets: SecretStore) -> list[dict[str, Any]]:
             "managed_paused": d.managed_paused,
             # Whether THIS profile came from managed OAuth (vs manual paste).
             "managed_profile": bool(profile.get("managed")),
-            # "relay" for the managed cloud path; empty for manual/token connect.
             "mode": profile.get("mode") or "",
         }
         if d.name == "slack":
-            # Managed relay is multi-workspace: each `slack:team:*` profile is one
-            # connected workspace with its OWN allow-list (ids are workspace-scoped).
             entry["workspaces"] = _slack_workspaces(secrets)
-            if profile.get("mode") == "relay":
-                # Dormant Manual-mode owners may remain beside preserved Socket
-                # Mode credentials; they never authorize a bare Relay target.
-                entry["approval_owner_ids"] = []
         if d.name == "gmail":
             # Multi-account: each `gmail:account:*` profile is one mailbox; the
             # :default profile is just the default pointer + privacy filters.
@@ -144,11 +132,8 @@ def connector_list(secrets: SecretStore) -> list[dict[str, Any]]:
                 a["email"] == default_email and a["managed"] for a in accounts
             )
         if d.name == "github":
-            # Managed relay is multi-installation: each `github:install:*`
-            # profile is one App installation with its OWN allow-list of
-            # sender logins. The manual PAT path stays on the default profile.
             entry["installations"] = _github_installations(secrets)
-            if entry["installations"] and profile.get("mode") == "relay":
+            if entry["installations"]:
                 first = entry["installations"][0]
                 entry["account"] = entry["account"] or first["account_login"]
         if d.account_field:
@@ -383,93 +368,6 @@ def connect_connector(
         return {"ok": True, "account": identity or account_id, "account_id": account_id}
     secrets.put(f"{name}:default", profile)
     return {"ok": True, "account": identity}
-
-
-def managed_connect_connector(
-    secrets: SecretStore, name: str, profile: dict[str, Any]
-) -> dict[str, Any]:
-    """Store a profile produced by managed OAuth (cloud.managed_profile_from_callback).
-
-    Field-compatible with a manual connect for the same connector, so tools and
-    session gating can't tell the paths apart; preserves an existing allow-list
-    on reconnect just like the manual path does.
-    """
-    d = get_descriptor(name)
-    if d is None or not d.available:
-        return {"ok": False, "error": "unknown or unavailable connector"}
-    if not d.managed:
-        return {"ok": False, "error": f"{name} does not support managed connect"}
-    if d.account_field:
-        from integrations.connectors import accounts as _accounts
-
-        account_id = _accounts.derive_account_id(d, profile)
-        result = _accounts.add_account(secrets, name, account_id, profile)
-        if not result.get("ok"):
-            return result
-        return {
-            "ok": True,
-            "account": profile.get("account") or account_id,
-            "account_id": account_id,
-        }
-    existing = secrets.get(f"{name}:default") or {}
-    if existing.get("allowed_users"):
-        profile = {**profile, "allowed_users": list(existing["allowed_users"])}
-    secrets.put(f"{name}:default", profile)
-    return {"ok": True, "account": profile.get("account") or None}
-
-
-def managed_connect_slack_install(
-    secrets: SecretStore, form: dict[str, Any]
-) -> dict[str, Any]:
-    """Store a managed Slack install (relay mode) from the broker's form-POST.
-
-    Slack managed install is multi-workspace and inbound-via-relay, so unlike a
-    single-token connector it writes:
-    - `slack:team:<team_id>` — that workspace's bot token + bot_user_id (used for
-      replies and to ignore the bot's own posts);
-    - `slack:default` flipped to `mode="relay"` so the gateway builds the
-      `SlackRelayAdapter` (Socket Mode's manual bot_token/app_token untouched if
-      the user later switches back). Existing allow-list preserved.
-    """
-    team_id = form.get("team_id", "")
-    bot_token = form.get("access_token", "")
-    if not team_id or not bot_token:
-        return {"ok": False, "error": "missing team_id or bot token"}
-    # A reinstall replaces the token but must not reset authorization state.
-    existing = secrets.get(f"slack:team:{team_id}") or {}
-    allowed = set(existing.get("allowed_users") or [])
-    installer = form.get("slack_user_id", "")
-    if installer:
-        # Pre-add the installer (UX-027): connecting the workspace is consent to
-        # talk to your own bot — without this, the connector's very first mention
-        # comes from the installer and parks.
-        allowed.add(installer)
-    secrets.put(
-        f"slack:team:{team_id}",
-        {
-            "type": "oauth",
-            "managed": True,
-            "bot_token": bot_token,
-            "bot_user_id": form.get("bot_user_id", ""),
-            # The INSTALLER's Slack member id (authed_user) — who this workspace's
-            # outbound posts speak for (attribution.py resolves + caches the name).
-            "slack_user_id": installer,
-            "team_id": team_id,
-            "account": form.get("account", ""),
-            # The workspace's slack.com subdomain (broker resolves it via auth.test)
-            # — the unique human handle when two workspaces share a display name.
-            "domain": form.get("team_domain", ""),
-            "scope": form.get("scope", ""),
-            "connection_id": form.get("connection_id", ""),
-            "allowed_users": sorted(allowed),
-            "allow_all": bool(existing.get("allow_all")),
-            "sender_name": existing.get("sender_name", ""),
-        },
-    )
-    default = secrets.get("slack:default") or {}
-    default.update({"type": "oauth", "managed": True, "mode": "relay", "enabled": True})
-    secrets.put("slack:default", default)
-    return {"ok": True, "account": form.get("account") or team_id}
 
 
 def disconnect_connector(secrets: SecretStore, name: str) -> dict[str, Any]:

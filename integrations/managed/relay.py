@@ -1,13 +1,12 @@
 """RelayTransport — managed relay capability port.
 
 The frame contract is decoded JSON dicts. Implementations lazy-import their
-WebSocket library. The desktop's RelayHub (in integrations/connectors/relay_client.py)
-fans frames out by their `provider` tag.
+WebSocket library.
 
-This module defines only the transport interface + a Null default. The actual
-RelayHub implementation lives in integrations/connectors/relay_client.py and
-will be updated to accept a HubTokenProvider instead of a cloud-specific
-TokenProvider.
+This module defines only the transport interface + a Null default. The relay
+code path was removed from the desktop in P1; if/when a managed relay adapter
+is implemented, it will live in `integrations/managed/adapters/<provider>.py`
+and provide a `RelayTransport` implementation.
 
 When no managed relay is configured, NullRelayTransport is used and the relay
 stays disconnected — manual Socket Mode / PAT paths are unaffected.

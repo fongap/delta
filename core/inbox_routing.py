@@ -20,10 +20,11 @@ from typing import Callable
 from packages.jsonstate import load_json_state, save_json_state
 
 DEFAULT_INBOX = "default"
-# Embeds the item id in a delivered message. Emitted as [ow:…] since the bot's rebrand
-# to OpenWorker (2026-07-22); the legacy [ocw:…] spelling stays parseable so replies to
-# messages sent before the rename still resolve.
-_ID_TOKEN = re.compile(r"\[o(?:c)?w:([0-9a-f]{6,})\]")
+# Embeds the item id in a delivered message. Write direction: `[d:<id>]`
+# (Delta brand). Parse direction: still accepts `[d:…]` (current), `[ow:…]`
+# (OpenWorker rebrand 2026-07-22), and `[ocw:…]` (legacy before that rebrand)
+# so replies to old messages still resolve.
+_ID_TOKEN = re.compile(r"\[(?:d|ow|ocw):([0-9a-f]{6,})\]")
 
 
 @dataclass
@@ -109,7 +110,7 @@ def deliver(item, binding: InboxBinding, sender: Sender | None) -> bool:
     channel message was sent."""
     if not binding.channel or sender is None:
         return False
-    text = f"{item.title}\n{item.body}\n[ow:{item.id}]".strip()
+    text = f"{item.title}\n{item.body}\n[d:{item.id}]".strip()
     sender(binding.channel, binding.target, text)
     return True
 
@@ -148,10 +149,12 @@ def resolve_from_reply(
 ) -> bool | None:
     """Correlate an inbound channel reply to its item (by the embedded id) and resolve it.
 
-    Looks for the ``[ow:<id>]`` token (or legacy ``[ocw:…]``) and an allow/deny intent in
-    the reply's leading word; falls back to treating the whole message as a free-text
-    answer. ``resolve(item_id, resolution)`` is the InboxStore.resolve.
-    Returns the resolve() result, or None if no item id was found."""
+    Looks for the ``[d:<id>]`` token (current write form), the legacy ``[ow:…]``
+    spelling (OpenWorker rebrand 2026-07-22), and the original ``[ocw:…]``
+    spelling, then an allow/deny intent in the reply's leading word; falls back
+    to treating the whole message as a free-text answer. ``resolve(item_id,
+    resolution)`` is the InboxStore.resolve. Returns the resolve() result, or
+    None if no item id was found."""
     m = _ID_TOKEN.search(reply or "")
     if not m:
         return None

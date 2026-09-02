@@ -80,13 +80,10 @@ def load_settings(
         allow_all = bool(profile.get("allow_all")) or os.environ.get(
             f"{platform.upper()}_ALLOW_ALL_USERS", ""
         ).lower() in ("1", "true", "yes")
-        # Managed relays carry no bot_token in the default profile (Slack tokens
-        # are per-team; GitHub tokens are minted, never stored); they enable on
-        # `mode == "relay"` instead of on a token. GitHub's manual PAT profile
-        # is a request/response connector, not a listener — never gateway-enabled.
-        if profile.get("mode") == "relay":
-            enabled = bool(profile.get("enabled", True))
-        elif platform == "github":
+        # Slack's manual Socket Mode profile enables on bot_token+app_token.
+        # GitHub's manual PAT profile is a request/response connector, not a
+        # listener — never gateway-enabled.
+        if platform == "github":
             enabled = False
         else:
             enabled = bool(token) and profile.get("enabled", True)

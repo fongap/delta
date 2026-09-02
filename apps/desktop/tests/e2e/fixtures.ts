@@ -339,7 +339,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
   // the slack:team:* profiles, each with its OWN allow-list.
   const slackState = {
     connected: true,
-    mode: "relay" as "" | "relay",
+    mode: "" as "" | "relay", // P1: manual Socket Mode (no managed relay)
     account: "deeplearning.ai",
     allowed_users: [] as string[], // flat list (manual Socket Mode only)
     approval_owner_ids: [] as string[],
@@ -369,7 +369,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
   ];
   const githubState = {
     connected: true,
-    mode: "relay" as "" | "relay",
+    mode: "" as "" | "relay", // P1: manual (no managed relay)
     installations: [
       { installation_id: "101", account_login: "acme", account_type: "Organization", repo_selection: "selected", github_login: "rohit-dev", allowed_users: ["rohit-dev"], allow_all: false },
     ],

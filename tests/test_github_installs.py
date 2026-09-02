@@ -1,23 +1,17 @@
-﻿"""Managed GitHub relay, desktop side (github-relay-spec 搂13 Step 3, MG3a).
+﻿"""GitHub integration tests (manual PAT path + GitHub installation metadata).
 
-Install callback 鈫?per-installation profiles (metadata only, NO tokens at
-rest), the shared-hub adapter (fan-out by provider tag), the memory-only
-installation-token client, and tool auth resolution (minted token for managed,
-PAT untouched for manual). Hermetic: fake transports, stubbed broker calls.
+The managed relay path was removed in P1 — install/install-callback/relay-adapter
+code in github_installs / github_relay / relay_client is gone. The remaining code
+under test: per-installation metadata, manual PAT auth, and tools that read PAT
+profiles.
 """
 
 from __future__ import annotations
 
-import asyncio
-
 import pytest
 from fastapi.testclient import TestClient
 
-from integrations.connectors import github_installs
-from integrations.connectors.base import MessageEvent
 from integrations.connectors.config import is_authorized, load_settings
-from integrations.connectors.github_relay import GitHubRelayAdapter, split_thread
-from integrations.connectors.relay_client import RelayHub, SlackRelayAdapter
 from packages.secrets import SecretStore
 from services.server import SessionManager, create_app
 
@@ -52,13 +46,25 @@ def _install_form(installation_id: str, *, login="octocat", account="acme") -> d
 def test_github_settings_carry_per_installation_allowlists(tmp_path, monkeypatch):
     monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
     secrets = SecretStore()
-    github_installs.managed_connect_install(secrets, _install_form("101"))
+    # Manual installation profile (no managed_connect_install):
     secrets.put(
         "github:install:101",
-        {**secrets.get("github:install:101"), "allowed_users": ["octocat"]},
+        {
+            "type": "oauth",
+            "managed": False,
+            "installation_id": "101",
+            "account_login": "acme",
+            "account_type": "Organization",
+            "github_login": "octocat",
+            "repo_selection": "selected",
+            "connection_id": "conn_101",
+            "allowed_users": ["octocat"],
+        },
     )
     settings = load_settings(secrets)["github"]
-    assert settings.enabled is True
+    # GitHub is a request/response connector (not a listener) — gateway never
+    # enables it; tools resolve against per-installation allow-lists instead.
+    assert settings.enabled is False
 
     class Src:
         platform = "github"
@@ -72,133 +78,7 @@ def test_github_settings_carry_per_installation_allowlists(tmp_path, monkeypatch
     assert is_authorized(settings, Src()) is False  # unknown installation
 
 
-# --- adapter: shared hub fan-out, dispatch, lifecycle frames -------------------
-
-
-class FakeTransport:
-    def __init__(self, frames):
-        self._q: asyncio.Queue = asyncio.Queue()
-        for f in frames:
-            self._q.put_nowait(f)
-
-    async def open(self):
-        pass
-
-    async def recv(self):
-        if not self._q.empty():
-            return self._q.get_nowait()
-        await asyncio.Event().wait()
-
-    async def close(self):
-        pass
-
-
-def _gh_frame(**over):
-    frame = {
-        "provider": "github",
-        "installation_id": "101",
-        "owner_repo": "acme/site",
-        "number": 7,
-        "kind": "mention",
-        "sender": "octocat",
-        "title": "Broken build",
-        "body": "@ocw please take a look",
-        "url": "https://github.com/acme/site/issues/7",
-        "address": "github:acme/site#7",
-        "event_id": "d-1",
-    }
-    frame.update(over)
-    return frame
-
-
-def _slack_frame():
-    return {
-        "provider": "slack",
-        "team_id": "T1",
-        "channel": "C1",
-        "event_id": "Ev1",
-        "event": {"type": "app_mention", "user": "U_A", "channel": "C1", "text": "hi"},
-    }
-
-
-async def test_one_hub_fans_out_to_both_adapters(monkeypatch):
-    """THE step-3 invariant: slack + github share one relay socket; frames land
-    on their own adapter by provider tag."""
-    monkeypatch.setenv("SLACK_API_URL", "http://127.0.0.1:9/")
-    hub = RelayHub(
-        "wss://relay.test/ws",
-        lambda: "jwt",
-        transport_factory=lambda: FakeTransport([_gh_frame(), _slack_frame()]),
-    )
-    slack = SlackRelayAdapter(
-        "wss://relay.test/ws",
-        lambda: "jwt",
-        teams={"T1": {"bot_token": "xoxb-1", "bot_user_id": "UBOT"}},
-        hub=hub,
-    )
-    github = GitHubRelayAdapter(hub, installs={"101": {"account_login": "acme"}})
-    slack_events: list[MessageEvent] = []
-    github_events: list[MessageEvent] = []
-
-    async def on_slack(e):
-        slack_events.append(e)
-
-    async def on_github(e):
-        github_events.append(e)
-
-    slack.set_message_handler(on_slack)
-    github.set_message_handler(on_github)
-    assert await slack.connect() is True
-    assert await github.connect() is True  # joins the running socket
-    try:
-        await hub.wait_dispatched(2, timeout=30.0)
-    finally:
-        await github.disconnect()
-        await slack.disconnect()
-
-    assert len(slack_events) == 1 and slack_events[0].source.platform == "slack"
-    assert len(github_events) == 1
-    gh = github_events[0]
-    assert gh.source.platform == "github"
-    assert gh.source.chat_id == "acme/site#7"
-    assert gh.source.target == "github:acme/site#7"  # reply handle roundtrip
-    assert gh.source.team_id == "101"  # allow-list scope = installation
-    assert gh.source.user_id == "octocat"
-    assert "Broken build" in gh.text and "@ocw please take a look" in gh.text
-
-
-async def test_adapter_missed_and_revoked_frames():
-    hub = RelayHub(
-        "wss://x",
-        lambda: "jwt",
-        transport_factory=lambda: FakeTransport(
-            [
-                {
-                    "provider": "github",
-                    "kind": "missed",
-                    "channel": "acme/site",
-                    "count": 3,
-                },
-                {"provider": "github", "kind": "revoked", "installation_id": "101"},
-            ]
-        ),
-    )
-    adapter = GitHubRelayAdapter(hub, installs={"101": {"account_login": "acme"}})
-    await adapter.connect()
-    try:
-        await hub.wait_dispatched(2, timeout=30.0)
-    finally:
-        await adapter.disconnect()
-    assert adapter.missed == {"acme/site": 3}
-    assert adapter.status()["installs"] == {}  # revoked 鈫?dropped
-
-
-def test_addressing_roundtrip():
-    assert split_thread("acme/site#7") == ("acme/site", 7)
-    assert split_thread("acme/site") == ("acme/site", None)
-
-
-# --- tools: minted token for managed, PAT untouched for manual -----------------
+# --- tools: PAT auth (manual) -------------------------------------------------
 
 
 def _capture_requests(monkeypatch):

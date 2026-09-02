@@ -19,7 +19,6 @@ import {
 import { ConnectorBadge } from "../ConnectorIcon";
 import { AddConnectionModal } from "./AddConnectionModal";
 import type { DetailProps } from "./ConnectorsSection";
-import { SlackHowItWorks } from "./SlackHowItWorks";
 import { ToolsDisclosure } from "./ToolsDisclosure";
 import { FOOT, GRP, GRP_H, PILL_ACCENT, PILL_LINE, ROW, TAG_WARN, XBTN } from "./ui";
 import { useI18n } from "@delta/i18n/I18nContext";
@@ -62,7 +61,7 @@ export function SlackDetail({ c, slack, onChanged }: DetailProps) {
     loadSubs();
   }, [c.name]);
 
-  const relay = c.mode === "relay";
+  const relay = false;
   const workspaces = c.workspaces ?? [];
   const changed = () => {
     onChanged();
@@ -111,24 +110,19 @@ export function SlackDetail({ c, slack, onChanged }: DetailProps) {
         </div>
       )}
 
-      {/* UX-027: post-connect orientation — status line + animated how-it-works
-          carousel (collapsible; collapsed state is the local "seen" flag). */}
-      {relay && workspaces.length > 0 && <SlackHowItWorks workspaces={workspaces} />}
-
-      {relay &&
-        workspaces.map((w) => (
-          <WorkspaceGroup
-            key={w.team_id}
-            c={c}
-            w={w}
-            subs={subs}
-            tokenOk={slack?.teams?.[w.team_id]?.token_ok !== false}
-            onChanged={changed}
-          />
-        ))}
+      {workspaces.map((w) => (
+        <WorkspaceGroup
+          key={w.team_id}
+          c={c}
+          w={w}
+          subs={subs}
+          tokenOk={slack?.teams?.[w.team_id]?.token_ok !== false}
+          onChanged={changed}
+        />
+      ))}
 
       {/* Manual Socket Mode: one workspace, the flat allow-list (unchanged semantics). */}
-      {c.connected && !relay && (
+      {c.connected && workspaces.length === 0 && (
         <div data-testid="slack-manual-card">
           <div className={GRP_H}>{c.account || t("connectors.workspace")} <span className="font-normal text-faint">{t("connectors.manualTokens")}</span></div>
           <div className={GRP}>

@@ -60,14 +60,7 @@ export function ChannelPicker({
       .then((cs) => {
         const s = cs.find((c) => c.name === "slack");
         if (!s?.connected) return setTeams([]);
-        setTeams(
-          s.mode === "relay"
-            ? (s.workspaces || []).map((w) => ({
-                team_id: w.team_id,
-                account: w.account || w.team_id,
-              }))
-            : [{ team_id: "default", account: s.account || "workspace" }],
-        );
+        setTeams([{ team_id: "default", account: s.account || "workspace" }]);
       })
       .catch(() => setTeams([]));
   }, [open, teams]);

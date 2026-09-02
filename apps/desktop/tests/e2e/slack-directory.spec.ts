@@ -1,6 +1,9 @@
 // The Slack rosters: pick people from the workspace directory (instead of the
 // park→approve-only flow) and resolve channel NAMES to ids in the channel picker.
 // Both are reads on scopes every install already granted — no consent bump.
+// P1: Slack is single-workspace manual Socket Mode. The "workspace" panels
+// remain in the UI for future Federation Adapter parity, but the fixture
+// mocks only one connected workspace (T1DL) — T2AC is dropped.
 import { expect } from "@playwright/test";
 import { test } from "./fixtures";
 
@@ -23,8 +26,6 @@ test("people picker: type a name, pick it, chip lands with the display name", as
   const group = page.getByTestId("slack-workspace-T1DL");
   await expect(group).toContainText("Rohit Prasad");
   await expect(page.getByTestId("person-picker")).toHaveCount(0);
-  // The other workspace is untouched.
-  await expect(page.getByTestId("slack-workspace-T2AC")).toContainText("No one allowed yet");
 });
 
 test("people picker: guests are tagged, allowed users drop out of the list", async ({
@@ -54,15 +55,14 @@ test("channel typeahead: a NAME resolves to the workspace's id-address", async (
 
   const input = page.getByPlaceholder("slack:C0123 or channel link");
   await input.fill("launch");
-  // Two workspaces are connected → the hit is labeled with its workspace.
-  const hit = page.getByTestId("roster-channel-slack:T1DL/C9LAUNCH");
+  // P1: single-workspace manual mode uses `slack:<id>` (no team prefix).
+  const hit = page.getByTestId("roster-channel-slack:C9LAUNCH");
   await expect(hit).toContainText("#launch-team");
-  await expect(hit).toContainText("deeplearning.ai");
   await hit.click();
   // Display = the NAME after a pick (owner catch 2026-07-11: raw ids leaked into the box);
   // the raw address survives underneath — the tooltip carries it and Add subscribes by id.
   await expect(input).toHaveValue("#launch-team");
-  await expect(input).toHaveAttribute("title", "slack:T1DL/C9LAUNCH");
+  await expect(input).toHaveAttribute("title", "slack:C9LAUNCH");
   await page.getByRole("button", { name: "Add", exact: true }).click();
   await expect(page.getByText(/Subscribed channels · 1/)).toBeVisible();
 });
@@ -74,8 +74,8 @@ test("channel typeahead: private and not-a-member states are honest", async ({ p
   await page.getByRole("button", { name: /Channels · 0/ }).click();
 
   await page.getByPlaceholder("slack:C0123 or channel link").fill("l");
-  await expect(page.getByTestId("roster-channel-slack:T1DL/C8LEADS")).toContainText("🔒");
-  await expect(page.getByTestId("roster-channel-slack:T1DL/C7LOBBY")).toContainText(
+  await expect(page.getByTestId("roster-channel-slack:C8LEADS")).toContainText("🔒");
+  await expect(page.getByTestId("roster-channel-slack:C7LOBBY")).toContainText(
     "invite @ocw",
   );
 });
