@@ -9,13 +9,11 @@ reads — model-facing policy (HubSpot permission sets are the human ACL).
 from __future__ import annotations
 
 import pytest
-from fastapi.testclient import TestClient
 
 from integrations.connectors import hubspot_portals
 from integrations.connectors.integration_tools import make_integration_tools
 from integrations.connectors.setup import connector_list
 from packages.secrets import SecretStore
-from services.server import SessionManager, create_app
 
 
 @pytest.fixture
@@ -186,68 +184,3 @@ def test_write_tools_carry_portal_and_no_stripping_needed(secrets, monkeypatch):
     assert payload["properties"]["hs_note_body"] == "call went well"
     assert payload["associations"][0]["to"] == {"id": "77"}
 
-
-# --- server routes -------------------------------------------------------------
-
-
-@pytest.fixture
-def client(tmp_path, monkeypatch):
-    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
-    manager = SessionManager(workspace=tmp_path)
-    app = create_app(manager)
-    with TestClient(app) as c:
-        c.manager = manager
-        yield c
-
-
-def test_managed_callback_lands_in_portal_profile(client):
-    import integrations.cloud as cloud
-
-    cloud._pending_managed_states["s"] = cloud._now()
-    resp = client.post(
-        "/oauth/callback",
-        data={
-            "provider": "hubspot",
-            "connector": "hubspot",
-            "connection_id": "conn_hs",
-            "access_token": "hs-at",
-            "refresh_token": "hs-rt",
-            "expires_in": "1800",
-            "scope": "crm.objects.contacts.read tickets",
-            "account": "Acme Inc",
-            "hub_id": "424242",
-            "sandbox": "1",
-            "app_state": "s",
-        },
-    )
-    assert resp.status_code == 200 and "HubSpot connected" in resp.text
-    profile = client.manager.secrets.get("hubspot:portal:424242")
-    assert profile["access_token"] == "hs-at" and profile["sandbox"] is True
-    listed = {c["name"]: c for c in client.manager.list_connectors()}
-    row = listed["hubspot"]["portals"][0]
-    assert row == {
-        "hub_id": "424242",
-        "name": "Acme Inc",
-        "sandbox": True,
-        "default": True,
-        "managed": True,
-        "access": "read",
-    }
-
-
-def test_portal_routes_default_and_disconnect(client, monkeypatch):
-    import integrations.cloud as cloud
-
-    monkeypatch.setattr(cloud, "cloud_disconnect", lambda *a, **k: None)
-    for hub in ("111", "222"):
-        hubspot_portals.managed_connect_portal(client.manager.secrets, _portal(hub))
-
-    assert client.post("/v1/connectors/hubspot/portals/222/default").json()["ok"]
-    r = client.post("/v1/connectors/hubspot/portals/222/disconnect").json()
-    assert r["ok"] and r["remaining_portals"] == 1
-
-    r = client.patch(
-        "/v1/connectors/hubspot/hidden-fields",
-        json={"hidden_fields": ["Salary", "ssn "]},
-    ).json()
-    assert r["hidden_fields"] == ["salary", "ssn"]  # normalized

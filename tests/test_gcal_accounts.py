@@ -8,8 +8,6 @@ account on every success so approvals/transcripts say whose calendar moved.
 
 from __future__ import annotations
 
-import time
-
 import pytest
 
 from integrations.connectors import gcal_accounts
@@ -217,37 +215,3 @@ def test_write_tools_require_approval(secrets):
     assert needs_approval("gcal_create_event")
     assert needs_approval("gcal_update_event")
     assert needs_approval("gcal_delete_event")
-
-
-# --- managed refresh targets the account profile ------------------------------
-
-
-def test_account_profile_refreshes_in_place(secrets, monkeypatch):
-    from integrations import cloud
-
-    secrets.put(
-        cloud.CLOUD_AUTH_PROFILE, {"access_token": "jwt", "expires": time.time() + 3600}
-    )
-    gcal_accounts.managed_connect_account(
-        secrets,
-        _account(
-            "me@x.com",
-            provider="google",
-            refresh_token="1//r",
-            connection_id="conn_7",
-            expires=time.time() - 10,
-        ),
-    )
-
-    class _Resp:
-        status_code = 200
-
-        def json(self):
-            return {"access_token": "fresh", "expires_in": 3600}
-
-    monkeypatch.setattr(cloud.httpx, "post", lambda *a, **k: _Resp())
-    _fake_gcal(monkeypatch, {"/events": {"ok": True, "data": {"items": []}}})
-    out = _tool(secrets, "gcal_list_events")()
-    assert out["ok"]
-    assert secrets.get("google_calendar:account:me@x.com")["access_token"] == "fresh"
-    assert not (secrets.get("google_calendar:default") or {}).get("access_token")

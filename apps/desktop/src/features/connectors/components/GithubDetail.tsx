@@ -42,7 +42,7 @@ function relayHealth(gh: GithubStatus | null, t: T): { dot: string; text: string
   return { dot: "bg-ok", text: t("connectors.healthLiveRelay") };
 }
 
-export function GithubDetail({ c, cloud, onChanged }: DetailProps) {
+export function GithubDetail({ c, onChanged }: DetailProps) {
   const { t } = useI18n();
   const [adding, setAdding] = useState(false);
   const [subs, setSubs] = useState<Subscription[]>([]);
@@ -105,7 +105,6 @@ export function GithubDetail({ c, cloud, onChanged }: DetailProps) {
         <div className={GRP}>
           <div className={ROW + " text-[12.5px] text-muted"}>
             {t("connectors.githubNotConnectedBlurb")}
-            {cloud?.signed_in ? "" : t("connectors.oneClickCloudPat")}
           </div>
         </div>
       )}
@@ -147,7 +146,6 @@ export function GithubDetail({ c, cloud, onChanged }: DetailProps) {
       {adding && (
         <AddConnectionModal
           c={c}
-          cloud={cloud}
           title={t("connectors.addInstallation")}
           onClose={() => setAdding(false)}
           onChanged={changed}

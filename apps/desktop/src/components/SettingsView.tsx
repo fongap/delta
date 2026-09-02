@@ -43,7 +43,6 @@ import { Icon } from "./Icon";
 import { PanelHead } from "./IntegrationsView";
 import { ModelsTab } from "./ManageTabs";
 import { MemorySection } from "./MemorySection";
-import { GalleryModal } from "./GalleryModal";
 import { PersonasTab } from "./PersonasTab";
 import { SkillsTab } from "./SkillsTab";
 import { showPersonas } from "../flags";
@@ -394,12 +393,8 @@ function VoiceInputSection() {
   );
 }
 
-// -- Personas: installed/enabled/delete management, the dir/Git importer, and the
-// entry point to the Persona Gallery (a screen-sized modal — installs finish back
-// here, disabled pending consent; a gallery install re-mounts the list in place).
+// -- Personas: installed/enabled/delete management, the dir/Git importer.
 function PersonasSection({ onOpenPersona }: { onOpenPersona?: (id: string) => void }) {
-  const [galleryBump, setGalleryBump] = useState(0);
-  const [galleryOpen, setGalleryOpen] = useState(false);
   const { t } = useI18n();
 
   return (
@@ -408,27 +403,7 @@ function PersonasSection({ onOpenPersona }: { onOpenPersona?: (id: string) => vo
         title={t("settings.personas.title")}
         sub={t("settings.personas.sub")}
       />
-      <PersonasTab key={galleryBump} onOpenPersona={onOpenPersona} />
-      <button
-        className="mt-6 w-full rounded-xl2 border border-line bg-panel px-4 py-3.5 flex items-center gap-3 text-left hover:border-lineStrong"
-        data-testid="gallery-link"
-        onClick={() => setGalleryOpen(true)}
-      >
-        <Icon name="sparkle" size={16} className="text-accent shrink-0" />
-        <span className="min-w-0 flex-1">
-          <span className="block text-[13.5px] font-medium">{t("settings.personas.browseGallery")}</span>
-          <span className="block text-[12px] text-muted">
-            {t("settings.personas.browseGallerySub")}
-          </span>
-        </span>
-        <span className="text-[12.5px] text-accent shrink-0">{t("settings.personas.open")} →</span>
-      </button>
-      {galleryOpen && (
-        <GalleryModal
-          onClose={() => setGalleryOpen(false)}
-          onInstalled={() => setGalleryBump((b) => b + 1)}
-        />
-      )}
+      <PersonasTab onOpenPersona={onOpenPersona} />
     </section>
   );
 }

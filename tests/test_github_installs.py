@@ -9,12 +9,10 @@ PAT untouched for manual). Hermetic: fake transports, stubbed broker calls.
 from __future__ import annotations
 
 import asyncio
-import json
 
 import pytest
 from fastapi.testclient import TestClient
 
-from integrations import cloud
 from integrations.connectors import github_installs
 from integrations.connectors.base import MessageEvent
 from integrations.connectors.config import is_authorized, load_settings
@@ -22,13 +20,6 @@ from integrations.connectors.github_relay import GitHubRelayAdapter, split_threa
 from integrations.connectors.relay_client import RelayHub, SlackRelayAdapter
 from packages.secrets import SecretStore
 from services.server import SessionManager, create_app
-
-
-@pytest.fixture(autouse=True)
-def _fresh_token_cache():
-    cloud._GITHUB_TOKEN_CACHE.clear()
-    yield
-    cloud._GITHUB_TOKEN_CACHE.clear()
 
 
 @pytest.fixture
@@ -42,9 +33,7 @@ def client(tmp_path, monkeypatch):
 
 
 def _install_form(installation_id: str, *, login="octocat", account="acme") -> dict:
-    """The broker's loopback POST 鈥?deliberately NO token fields (搂4)."""
-    state = f"github-{installation_id}"
-    cloud._pending_managed_states[state] = cloud._now()
+    """The broker's loopback POST — deliberately NO token fields (§4)."""
     return {
         "connector": "github",
         "installation_id": installation_id,
@@ -53,88 +42,8 @@ def _install_form(installation_id: str, *, login="octocat", account="acme") -> d
         "github_login": login,
         "repo_selection": "selected",
         "connection_id": f"conn_{installation_id}",
-        "app_state": state,
+        "app_state": f"github-{installation_id}",
     }
-
-
-def _no_cloud(monkeypatch):
-    calls: list[str] = []
-    monkeypatch.setattr(
-        cloud,
-        "github_disconnect_installation",
-        lambda s, c, installation_id: calls.append(installation_id),
-    )
-    return calls
-
-
-# --- install callback 鈫?profiles (mirror of the Slack workspace tests) --------
-
-
-def test_managed_callback_installs_and_hot_reloads(client, monkeypatch):
-    refreshes = []
-
-    async def _refresh():
-        refreshes.append(True)
-        return []
-
-    monkeypatch.setattr(client.manager, "refresh_gateway", _refresh)
-    resp = client.post("/oauth/callback", data=_install_form("101"))
-    assert resp.status_code == 200 and "GitHub connected" in resp.text
-
-    profile = client.manager.secrets.get("github:install:101")
-    assert profile["account_login"] == "acme"
-    assert profile["github_login"] == "octocat"
-    assert profile["repo_selection"] == "selected"
-    # No token of any shape at rest 鈥?installation tokens are minted on demand.
-    blob = json.dumps(profile)
-    assert "ghs_" not in blob and "ghu_" not in blob and "token" not in blob
-    assert client.manager.secrets.get("github:default")["mode"] == "relay"
-    assert refreshes  # hot-add, like a Slack workspace
-
-    gh = [
-        c
-        for c in client.get("/v1/connectors").json()["connectors"]
-        if c["name"] == "github"
-    ][0]
-    assert gh["connected"] is True
-    assert [i["installation_id"] for i in gh["installations"]] == ["101"]
-    assert gh["installations"][0]["account_login"] == "acme"
-
-    # a second installation lands alongside, not instead
-    client.post("/oauth/callback", data=_install_form("202", account="hooli"))
-    assert client.manager.secrets.get("github:install:101") is not None
-    assert client.manager.secrets.get("github:install:202") is not None
-
-
-def test_disconnect_one_installation_keeps_the_other(client, monkeypatch):
-    cloud_calls = _no_cloud(monkeypatch)
-    for iid in ("101", "202"):
-        client.post("/oauth/callback", data=_install_form(iid))
-
-    body = client.post("/v1/connectors/github/installations/101/disconnect").json()
-    assert body["ok"] is True and body["remaining_installs"] == 1
-    assert cloud_calls == ["101"]
-    assert client.manager.secrets.get("github:install:101") is None
-    assert client.manager.secrets.get("github:install:202") is not None
-    gh = next(c for c in client.manager.list_connectors() if c["name"] == "github")
-    assert gh["connected"] is True
-    assert [i["installation_id"] for i in gh["installations"]] == ["202"]
-
-
-def test_disconnect_last_installation_never_resurrects_manual_pat(client, monkeypatch):
-    _no_cloud(monkeypatch)
-    # A manual PAT stored BEFORE the managed install must stay stored but the
-    # relay must not survive the last installation's removal.
-    client.manager.secrets.put(
-        "github:default", {"type": "token", "token": "ghp_manual", "enabled": True}
-    )
-    client.post("/oauth/callback", data=_install_form("101"))
-    body = client.post("/v1/connectors/github/installations/101/disconnect").json()
-    assert body["ok"] is True and body["remaining_installs"] == 0
-
-    default = client.manager.secrets.get("github:default")
-    assert default["token"] == "ghp_manual"  # kept for a manual re-enable
-    assert default["enabled"] is False and "mode" not in default
 
 
 # --- allow-list: per-installation scope (the per-workspace pattern) -----------
@@ -289,99 +198,6 @@ def test_addressing_roundtrip():
     assert split_thread("acme/site") == ("acme/site", None)
 
 
-async def test_send_posts_comment_with_minted_token(monkeypatch):
-    """Replies mint the right installation's token and post as the bot."""
-    hub = RelayHub(
-        "wss://x", lambda: "jwt", transport_factory=lambda: FakeTransport([])
-    )
-    minted: list[str] = []
-
-    async def token_client(installation_id: str) -> str:
-        minted.append(installation_id)
-        return "ghs_live-token"
-
-    adapter = GitHubRelayAdapter(
-        hub, installs={"101": {"account_login": "acme"}}, token_client=token_client
-    )
-    adapter._repo_installs["acme/site"] = "101"
-
-    posted = {}
-
-    class FakeResp:
-        status_code = 201
-
-        def json(self):
-            return {"id": 987}
-
-    class FakeClient:
-        def __init__(self, **kw):
-            pass
-
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, *a):
-            return False
-
-        async def post(self, url, **kw):
-            posted.update({"url": url, **kw})
-            return FakeResp()
-
-    import httpx
-
-    monkeypatch.setattr(httpx, "AsyncClient", FakeClient)
-    result = await adapter.send("acme/site#7", "on it 鈥?as ocw[bot]")
-    assert result.ok and result.message_id == "987"
-    assert minted == ["101"]
-    assert posted["url"].endswith("/repos/acme/site/issues/7/comments")
-    assert posted["json"] == {"body": "on it 鈥?as ocw[bot]"}
-    assert posted["headers"]["Authorization"] == "Bearer ghs_live-token"
-
-
-# --- token client: memory cache + re-mint (fake broker) ------------------------
-
-
-def _stub_broker_mint(monkeypatch, tokens: list[str]):
-    """cloud.github_installation_token's HTTP leg, one token per mint call."""
-    calls = []
-    it = iter(tokens)
-
-    class Resp:
-        status_code = 200
-
-        def json(self):
-            return {"token": next(it), "expires_at": "2099-01-01T00:00:00Z"}
-
-    def fake_post(url, **kw):
-        calls.append(url)
-        assert url.endswith("/v1/github/token")
-        return Resp()
-
-    monkeypatch.setattr(cloud.httpx, "post", fake_post)
-    monkeypatch.setattr(cloud, "fresh_access_token", lambda s, c: "signin-jwt")
-    return calls
-
-
-def test_token_client_caches_and_force_remints(tmp_path, monkeypatch):
-    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
-    from packages.config import load_config
-
-    secrets = SecretStore()
-    calls = _stub_broker_mint(monkeypatch, ["ghs_first", "ghs_second"])
-
-    t1 = cloud.github_installation_token(secrets, load_config(), "101")
-    t2 = cloud.github_installation_token(secrets, load_config(), "101")
-    assert t1 == t2 == "ghs_first"
-    assert len(calls) == 1  # cache hit, no second mint
-
-    t3 = cloud.github_installation_token(secrets, load_config(), "101", force=True)
-    assert t3 == "ghs_second" and len(calls) == 2
-
-    # NEVER at rest: nothing github-token-shaped in the secret store.
-    blob = json.dumps([m for m in secrets.status()])
-    assert "ghs_" not in blob
-
-
 # --- tools: minted token for managed, PAT untouched for manual -----------------
 
 
@@ -415,50 +231,6 @@ def test_manual_pat_path_untouched(tmp_path, monkeypatch):
     out = _tool(secrets, "github_get_issue")("acme", "site", 7)
     assert out["ok"] is True
     assert seen[0]["headers"]["Authorization"] == "Bearer ghp_manual"
-
-
-def test_managed_tools_use_minted_token_by_owner(tmp_path, monkeypatch):
-    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
-    secrets = SecretStore()
-    github_installs.managed_connect_install(secrets, _install_form("101"))
-    github_installs.managed_connect_install(
-        secrets, _install_form("202", account="hooli")
-    )
-    seen = _capture_requests(monkeypatch)
-    minted = []
-
-    def fake_mint(s, c, installation_id, *, force=False):
-        minted.append((installation_id, force))
-        return f"ghs_for-{installation_id}"
-
-    monkeypatch.setattr(cloud, "github_installation_token", fake_mint)
-
-    # The repo owner picks the installation (hooli 鈮?the default 101).
-    out = _tool(secrets, "github_reply")("hooli", "app", 3, "done")
-    assert out["ok"] is True
-    assert minted == [("202", False)]
-    assert seen[0]["headers"]["Authorization"] == "Bearer ghs_for-202"
-    assert seen[0]["url"].endswith("/repos/hooli/app/issues/3/comments")
-
-
-def test_managed_401_reminted_once(tmp_path, monkeypatch):
-    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
-    from integrations.connectors import integration_github
-
-    secrets = SecretStore()
-    github_installs.managed_connect_install(secrets, _install_form("101"))
-    minted = []
-    monkeypatch.setattr(
-        cloud,
-        "github_installation_token",
-        lambda s, c, iid, *, force=False: minted.append(force) or "ghs_x",
-    )
-    responses = iter([{"error": "HTTP 401"}, {"ok": True, "data": {}}])
-    monkeypatch.setattr(integration_github, "_request", lambda *a, **k: next(responses))
-
-    out = _tool(secrets, "github_review")("acme", "site", 5, "APPROVE")
-    assert out["ok"] is True
-    assert minted == [False, True]  # expired cache 鈫?one forced re-mint
 
 
 def test_review_event_validated(tmp_path, monkeypatch):
@@ -552,38 +324,6 @@ def _clone_tools(secrets, tmp_path):
     tools = make_integration_tools(secrets, roots=[RootDir(granted, writable=True)])
     by_name = {t.__name__: t for t in tools}
     return granted, by_name
-
-
-def test_clone_pull_roundtrip_and_no_token_at_rest(tmp_path, monkeypatch, _origin):
-    """Clone into the granted root, then pull a new upstream commit. The
-    minted-token header must never persist anywhere in the clone."""
-    monkeypatch.setenv("DELTA_STATE_DIR", str(tmp_path / "state"))
-    monkeypatch.setenv("GITHUB_GIT_URL", f"file://{_origin['base']}")
-    secrets = SecretStore()
-    github_installs.managed_connect_install(secrets, _install_form("101"))
-    monkeypatch.setattr(
-        cloud, "github_installation_token", lambda s, c, iid, *, force=False: "ghs_live"
-    )
-    granted, tools = _clone_tools(secrets, tmp_path)
-
-    out = tools["github_clone"]("acme", "site")
-    assert out.get("ok") is True, out
-    clone = granted / "site"
-    assert (clone / "README.md").read_text() == "hello"
-    # The no-token-at-rest rule, verified on disk (not just in code review):
-    for f in (clone / ".git").rglob("*"):
-        if f.is_file() and f.stat().st_size < 100_000:
-            blob = f.read_bytes()
-            assert b"ghs_" not in blob and b"AUTHORIZATION" not in blob, f
-
-    (_origin["work"] / "next.txt").write_text("more")
-    _git(["add", "."], cwd=_origin["work"])
-    _git(["commit", "-m", "second"], cwd=_origin["work"])
-    _git(["push", "origin", "main"], cwd=_origin["work"])
-
-    out = tools["github_pull"](str(clone))
-    assert out.get("ok") is True, out
-    assert (clone / "next.txt").read_text() == "more"
 
 
 def test_clone_refuses_paths_outside_granted_roots(tmp_path, monkeypatch, _origin):

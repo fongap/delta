@@ -17,32 +17,11 @@ from services.server.manager_contract import ManagerHostState
 class EventsMixin(ManagerHostState):
 
     def _emit_session_created(self, session_id: str, persona_id: str) -> None:
-        """Phase 5 telemetry, fired once per brand-new session on a background thread
-        (never blocks session start). cloud.emit_session_created is a hard no-op when
-        signed out or opted out, and sends only content-free facts."""
-        import threading
-
-        import integrations.cloud as cloud
-        from packages.config import load_config
-
-        entry = self.personas.get(persona_id)
-        family = entry.family if entry else ""
-        workspace_kind = entry.workspace if entry else ""
-
-        def _send() -> None:
-            try:
-                cloud.emit_session_created(
-                    self.secrets,
-                    load_config(),
-                    session_id=session_id,
-                    persona_id=persona_id,
-                    persona_family=family,
-                    workspace_kind=workspace_kind,
-                )
-            except Exception:
-                pass  # telemetry must never surface as a session error
-
-        threading.Thread(target=_send, daemon=True).start()
+        """No-op stub. OpenWorker Cloud telemetry has been removed (ADR-004 §D-2).
+        A future Delta Hub diagnostics layer, if needed, will be independently
+        designed — this hook is kept as a no-op so manager_sessions.py:218
+        continues to call it without modification."""
+        pass
 
 
     # -- per-session live view --------------------------------------------------

@@ -67,14 +67,6 @@ def _profile(
     secrets: SecretStore, name: str, *keys: str
 ) -> tuple[dict[str, Any], dict[str, str] | None]:
     profile = secrets.get(f"{name}:default") or {}
-    if profile.get("managed"):
-        # Managed-OAuth profiles renew through the cloud broker just before
-        # expiry; manual token profiles are never touched (no-op inside).
-        from integrations.cloud import ensure_fresh_connector_token
-        from packages.config import load_config
-
-        ensure_fresh_connector_token(secrets, load_config(), name)
-        profile = secrets.get(f"{name}:default") or {}
     missing = [k for k in keys if not profile.get(k)]
     if missing:
         # profile stays a (possibly empty) dict — callers branch on err, and an
@@ -99,12 +91,6 @@ def _account_profile(
             else f"{connector} is not connected"
         )
         return "", {}, {"error": hint}
-    if profile.get("managed"):
-        from integrations.cloud import ensure_fresh_connector_token
-        from packages.config import load_config
-
-        ensure_fresh_connector_token(secrets, load_config(), connector, profile_key=key)
-        profile = secrets.get(key) or profile
     missing = [k for k in keys if not profile.get(k)]
     if missing:
         return (
@@ -144,12 +130,6 @@ def _gmail_profile(
             else "gmail is not connected"
         )
         return "", {}, {"error": hint}
-    if profile.get("managed"):
-        from integrations.cloud import ensure_fresh_connector_token
-        from packages.config import load_config
-
-        ensure_fresh_connector_token(secrets, load_config(), "gmail", profile_key=key)
-        profile = secrets.get(key) or profile
     if not profile.get("access_token"):
         return "", {}, {"error": f"gmail account {email} has no usable token"}
     return email, profile, None
@@ -171,14 +151,6 @@ def _gcal_profile(
             else "google calendar is not connected"
         )
         return "", {}, {"error": hint}
-    if profile.get("managed"):
-        from integrations.cloud import ensure_fresh_connector_token
-        from packages.config import load_config
-
-        ensure_fresh_connector_token(
-            secrets, load_config(), "google_calendar", profile_key=key
-        )
-        profile = secrets.get(key) or profile
     if not profile.get("access_token"):
         return (
             "",
@@ -207,12 +179,6 @@ def _hubspot_profile(
             else "hubspot is not connected"
         )
         return "", "", {"error": hint}
-    if profile.get("managed"):
-        from integrations.cloud import ensure_fresh_connector_token
-        from packages.config import load_config
-
-        ensure_fresh_connector_token(secrets, load_config(), "hubspot", profile_key=key)
-        profile = secrets.get(key) or profile
     # Manual private-app profiles carry `token`; managed OAuth carries
     # `access_token` (which is what the broker refresh rotates).
     token = profile.get("token") or profile.get("access_token") or ""

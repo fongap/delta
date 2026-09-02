@@ -1,12 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import {
-  cloudLogin,
-  connectManaged,
-  getCloudStatus,
   getConnectors,
   getRecentChannels,
-  waitForCloudSignIn,
-  type CloudStatus,
+  connectConnector,
   type Connector,
   type RecentChannel,
 } from "../api";
@@ -170,14 +166,11 @@ export function AutomationQuickstart({
   const picked = TEMPLATES.find((x) => x.key === pickedKey) || null;
 
   const [connectors, setConnectors] = useState<Connector[]>([]);
-  const [cloud, setCloud] = useState<CloudStatus | null>(null);
-  const [pendingConn, setPendingConn] = useState<string | null>(null);
   // §30 connect states: "opening" while the broker POST is in flight (the browser hasn't
   // appeared yet), "waiting" once it has — the handoff strip explains the out-of-band finish.
   const [connFlow, setConnFlow] = useState<{ name: string; phase: "opening" | "waiting" } | null>(
     null,
   );
-  const [signinPhase, setSigninPhase] = useState<"opening" | "waiting" | null>(null);
   const [recent, setRecent] = useState<RecentChannel[]>([]);
   const [repo, setRepo] = useState("");
   const [channel, setChannel] = useState("");
@@ -188,10 +181,9 @@ export function AutomationQuickstart({
 
   const refresh = () => {
     getConnectors().then(setConnectors).catch(() => {});
-    getCloudStatus().then(setCloud).catch(() => {});
   };
   // Connector state drives the card dots, so load once up front; poll only while a template
-  // is being configured (connects and the cloud sign-in land out-of-band).
+  // is being configured (connects land out-of-band).
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   useEffect(() => {
     refresh();
@@ -237,50 +229,6 @@ export function AutomationQuickstart({
     setTime(tmpl.time);
     setConsent(true);
     setConnFlow(null);
-  };
-
-  const startConnect = async (name: string) => {
-    if (!cloud?.signed_in) {
-      setPendingConn(name); // the pane appears; sign-in completes it
-      return;
-    }
-    // §30: the broker round-trip takes seconds — narrate it on the row itself.
-    setConnFlow({ name, phase: "opening" });
-    // GitHub is authorize-first at the BROKER: one connect links an existing
-    // installation or lands on the install page — no flow choice here anymore.
-    await connectManaged(name).catch(() => {});
-    // The POST resolves once the system browser is off; the poll ends the waiting state.
-    setConnFlow((f) => (f?.name === name ? { name, phase: "waiting" } : f));
-    refresh();
-  };
-
-  const signinPollRef = useRef<(() => void) | null>(null);
-  const cancelSignin = () => {
-    signinPollRef.current?.();
-    signinPollRef.current = null;
-    setSigninPhase(null);
-  };
-  useEffect(() => cancelSignin, []); // never leave the poll running after unmount
-
-  const signInThenConnect = async () => {
-    setSigninPhase("opening");
-    await cloudLogin().catch(() => {});
-    setSigninPhase("waiting");
-    // Poll until the browser flow lands, then finish the pending connect (bounded).
-    signinPollRef.current = waitForCloudSignIn(async (s) => {
-      signinPollRef.current = null;
-      setSigninPhase(null);
-      if (!s?.signed_in) return;
-      setCloud(s);
-      if (pendingConn) {
-        const name = pendingConn;
-        setConnFlow({ name, phase: "opening" });
-        await connectManaged(name).catch(() => {});
-        setConnFlow((f) => (f?.name === name ? { name, phase: "waiting" } : f));
-        setPendingConn(null);
-        refresh();
-      }
-    });
   };
 
   const create = () => {
@@ -401,7 +349,7 @@ export function AutomationQuickstart({
                   ) : (
                     <button
                       className="px-3.5 py-1 rounded-full border border-line text-[12.5px] hover:bg-paper"
-                      onClick={() => startConnect(name)}
+                      onClick={() => connectConnector(name, {}).catch(() => {})}
                       data-testid={`ob-connect-${name}`}
                     >
                       {t("connectors.connect")}
@@ -434,50 +382,6 @@ export function AutomationQuickstart({
               </div>
             );
           })}
-
-          {pendingConn && !cloud?.signed_in && (
-            <div
-              className="bg-accentSoft/50 rounded-xl px-4 py-3 mt-3 text-[12.5px] text-muted"
-              data-testid="ob-cloudpane"
-            >
-              <span className="block text-[13px] text-ink font-medium">
-                {t("automation.oneSignIn")}
-              </span>
-              {t("automation.brokeredCloud")}
-              <div className="flex items-center gap-3 mt-2">
-                {signinPhase ? (
-                  <>
-                    <span className="inline-flex items-center gap-2 text-[12px]">
-                      <Spinner />
-                      {signinPhase === "opening"
-                        ? t("automation.openingBrowser")
-                        : t("automation.waitingSignIn")}
-                    </span>
-                    {signinPhase === "waiting" && (
-                      <span className="text-[11.5px] text-faint">
-                        {t("automation.finishSignIn")}{" "}
-                        <button
-                          className="underline hover:text-muted"
-                          onClick={cancelSignin}
-                          data-testid="ob-signin-cancel"
-                        >
-                          {t("common.cancel")}
-                        </button>
-                      </span>
-                    )}
-                  </>
-                ) : (
-                  <button
-                    className="px-3.5 py-1 rounded-full border border-line text-[12.5px] text-accent hover:bg-panel"
-                    onClick={signInThenConnect}
-                    data-testid="ob-cloud-signin"
-                  >
-                    {t("nav.signInCloud")}
-                  </button>
-                )}
-              </div>
-            </div>
-          )}
 
           {allConnected && (
             <div className={picked.conns.length ? "bg-paper rounded-xl px-4 py-3.5 mt-3" : ""} data-testid="ob-recipe">

@@ -1,19 +1,12 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
-  announceCloudChanged,
   AUTOMATIONS_CHANGED,
-  CLOUD_CHANGED,
-  cloudLogin,
-  cloudLogout,
   getAutomations,
-  getCloudStatus,
   getPersonas,
   getSettings,
   PERSONAS_CHANGED,
   setNavLayout,
-  waitForCloudSignIn,
   type Automation,
-  type CloudStatus,
   type Persona,
   type RecentWorkspace,
   type SurfaceVisibility,
@@ -227,26 +220,10 @@ const compactAge = (iso?: string | null): string => {
 
 export function Sidebar(props: Props) {
   const { t } = useI18n();
-  const [appMenuOpen, setAppMenuOpen] = useState(false);
   // A2 (revised): the global search icon lives in the sidebar brand row (right of the wordmark).
   // Clicking opens the command-palette SearchModal directly — the topbar instance was both
   // unresponsive (its parent drag surface swallowed the pointerdown) and the user wants it here.
   const [searchOpen, setSearchOpen] = useState(false);
-  // The Sign-in icon (§26): cloud sign-in status drives its label/tooltip and whether the
-  // account menu shows identity + Sign out; refreshed on focus and whenever the menu opens
-  // (sign-in completes out-of-band in the browser).
-  const [cloud, setCloud] = useState<CloudStatus | null>(null);
-  const refreshCloud = () => getCloudStatus().then(setCloud).catch(() => {});
-  useEffect(() => {
-    refreshCloud();
-    const onFocus = () => refreshCloud();
-    window.addEventListener("focus", onFocus);
-    window.addEventListener(CLOUD_CHANGED, onFocus);
-    return () => {
-      window.removeEventListener("focus", onFocus);
-      window.removeEventListener(CLOUD_CHANGED, onFocus);
-    };
-  }, []);
   // UX-023: automations feed the nav row's badge + the Scheduled band. The 15s poll
   // is the baseline; mutations announce AUTOMATIONS_CHANGED for an instant refresh
   // (mark-seen must clear the badge the moment the detail opens).
@@ -400,38 +377,6 @@ export function Sidebar(props: Props) {
   // §31 (revised 2026-07-21): mention-spawned sessions list chronologically in Recent like any
   // other session — the OriginIcon in the row's indicator cluster marks where they came from.
   // The separate collapsed "From Slack" band hid fresh mentions below week-old sessions.
-  // A row in the account menu (§26): closes the menu, then runs the destination.
-  const appMenuItem = (
-    icon: IconName,
-    label: string,
-    onClick: () => void,
-    active?: boolean,
-    trailing?: ReactNode,
-  ) => (
-    <button
-      className={
-        "w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] text-left " +
-        (active ? "text-ink bg-paper" : "hover:bg-paper")
-      }
-      onClick={() => {
-        setAppMenuOpen(false);
-        onClick();
-      }}
-    >
-      <Icon name={icon} size={15} className="shrink-0 text-muted" />
-      <span className="flex-1">{label}</span>
-      {/* aria-hidden: the badge/shortcut must not leak into the accessible name (the old
-          Inbox row's name-includes-the-badge-count nuisance, not repeated). */}
-      {trailing != null && <span aria-hidden>{trailing}</span>}
-    </button>
-  );
-
-  // Display identity for the account row: the cloud profile only carries the email, so the
-  // row shows the capitalized local part ("rohit@…" → "Rohit"); the menu header shows it all.
-  const accountEmail = cloud?.signed_in ? cloud.account : "";
-  const accountName = accountEmail
-    ? accountEmail.split("@")[0].replace(/^./, (c) => c.toUpperCase())
-    : "";
 
   // Roll the per-session attention/liveness up to the persona header and the footer Inbox: the
   // accent count bubbles (sum), the liveness dot aggregates (working wins over sleeping).
@@ -1213,46 +1158,11 @@ export function Sidebar(props: Props) {
         </div>
       </div>
 
-      {/* A3 (§26): sidebar footer = four uniform icon actions — Inbox, Activity, Sign-in, Settings.
+      {/* A3 (§26): sidebar footer = four uniform icon actions — Inbox, Activity, Integrations, Settings.
           Each carries a hover tooltip (title/aria-label) that names it one-to-one (no misalignment).
-          The Sign-in icon doubles as the account anchor: signed in → opens the account menu (email,
-          Connectors, Sign out); not signed in → triggers Delta Cloud login directly. Inbox keeps its
-          attention badge. Order, spacing, and selected style are uniform across all four; the account
-          menu only carries account-specific items (identity + Connectors + Sign out) since Inbox,
-          Activity and Settings are now direct footer icons. */}
+          Inbox keeps its attention badge. Order, spacing, and selected style are uniform across all four. */}
       <div className="px-2.5 py-2 border-t border-line">
         <div className="relative flex items-center justify-between gap-1">
-          {/* account menu — only when signed in (identity + Sign out only make sense
-              authenticated; when not signed in the icon triggers login directly). */}
-          {appMenuOpen && cloud?.signed_in && (
-            <>
-              <div className="fixed inset-0 z-30" onClick={() => setAppMenuOpen(false)} />
-              <div
-                className="absolute z-40 bottom-full left-0 right-0 mb-1 rounded-xl border border-line bg-panel shadow-2xl py-1"
-                data-testid="account-menu"
-                role="menu"
-              >
-                <div
-                  className="px-3 py-1.5 mb-1 text-[11px] text-faint truncate border-b border-line"
-                  title={`${accountEmail} · Delta Cloud`}
-                >
-                  {accountEmail} · Delta Cloud
-                </div>
-                {appMenuItem(
-                  "plug",
-                  t("nav.integrations", undefined, "Connectors"),
-                  props.onOpenIntegrations,
-                  props.integrationsActive,
-                )}
-                <div className="h-px bg-line my-1 mx-2" />
-                {appMenuItem("signOut", t("common.signOut", undefined, "Sign out"), async () => {
-                  await cloudLogout().catch(() => {});
-                  announceCloudChanged();
-                })}
-              </div>
-            </>
-          )}
-
           <SidebarFooterIcon
             icon="inbox"
             label={t("nav.inbox", undefined, "Inbox")}
@@ -1273,61 +1183,13 @@ export function Sidebar(props: Props) {
             onClick={() => props.onOpenAudit()}
             testid="sidebar-footer-activity"
           />
-
-          {/* Sign-in / Account — the account anchor. Signed in: opens the account menu
-              (identity, Connectors, Sign out). Not signed in: triggers cloud login directly.
-              The sr-only span carries identity text so the accessible name (and the row's text
-              identity) stays in sync with sign-in state. */}
-          <button
-            className={
-              "tip tip-nowrap relative w-8 h-8 grid place-items-center rounded-lg text-muted transition-colors " +
-              (appMenuOpen && cloud?.signed_in ? "bg-paper text-ink" : "hover:bg-paper")
-            }
-            data-testid="account-row"
-            data-tip={
-              cloud?.signed_in
-                ? t("nav.accountWithEmail", { account: accountName }, `Account: ${accountName}`)
-                : t("nav.signInCloud", undefined, "Sign in to Delta Cloud")
-            }
-            aria-label={
-              cloud?.signed_in
-                ? t("nav.accountWithEmail", { account: accountName }, `Account: ${accountName}`)
-                : t("nav.signInCloud", undefined, "Sign in to Delta Cloud")
-            }
-            aria-haspopup={cloud?.signed_in ? "menu" : undefined}
-            aria-expanded={cloud?.signed_in ? appMenuOpen : undefined}
-            onClick={async () => {
-              if (cloud?.signed_in) {
-                if (!appMenuOpen) refreshCloud();
-                setAppMenuOpen((v) => !v);
-              } else {
-                // Not signed in → the icon IS the sign-in trigger (opens the system browser
-                // server-side; completion lands out-of-band, so poll until it flips — refocusing
-                // the window also refetches).
-                await cloudLogin().catch(() => {});
-                waitForCloudSignIn((s) => {
-                  if (s) setCloud(s);
-                  // Other always-mounted consumers (Settings' telemetry card, connector panes)
-                  // refetch on CLOUD_CHANGED.
-                  if (s?.signed_in) announceCloudChanged();
-                });
-              }
-            }}
-          >
-            <Icon name="plug" size={16} />
-            {/* sr-only: identity text for assistive tech + text-based assertions. */}
-            <span className="sr-only">
-              {cloud?.signed_in ? accountName : t("common.notSignedIn", undefined, "Not signed in")}
-            </span>
-            {cloud?.signed_in && (
-              <span
-                className="absolute top-1 right-1 w-[7px] h-[7px] rounded-full bg-ok"
-                title={t("nav.signedInToCloud", undefined, "Signed in to Delta Cloud")}
-                aria-hidden
-              />
-            )}
-          </button>
-
+          <SidebarFooterIcon
+            icon="plug"
+            label={t("nav.integrations", undefined, "Connectors")}
+            active={props.integrationsActive}
+            onClick={() => props.onOpenIntegrations()}
+            testid="sidebar-footer-integrations"
+          />
           <SidebarFooterIcon
             icon="gear"
             label={t("nav.settings", undefined, "Settings")}

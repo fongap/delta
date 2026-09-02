@@ -1,52 +1,32 @@
 import { useEffect, useState } from "react";
 import {
-  connectConnector,
-  connectManaged,
   connectMcpBacked,
   getConnectors,
-  type CloudStatus,
   type Connector,
 } from "../../../api";
 import { ConnectorBadge } from "../ConnectorIcon";
 import { ConnectSetup } from "../../../components/ManageTabs";
-import { CloudSignInInline, CloudStatusPending } from "./CloudSignIn";
-import { PILL_ACCENT, PILL_LINE, TAG_ACCENT } from "./ui";
+import { PILL_ACCENT } from "./ui";
 import { useI18n } from "@delta/i18n/I18nContext";
 
 // The ONE place a connection gets added (UX-DECISIONS §21): the detail page's header
-// button (or the list's Connect pill) opens this sheet. Connectors with two connect
-// modes get a One click | Manual pill switcher; single-mode connectors render their
-// existing ConnectSetup directly (Gmail's managed flow skips the modal entirely).
-
-const INPUT =
-  "w-full px-3 py-2 rounded-lg border border-line bg-paper text-[13px] text-ink outline-none focus:border-accent";
+// button (or the list's Connect pill) opens this sheet. Managed OAuth removed (ADR-004);
+// only manual connect remains. MCP-backed connectors still offer local one-click.
 
 export function AddConnectionModal({
   c,
-  cloud,
   title,
   onClose,
   onChanged,
 }: {
   c: Connector;
-  cloud: CloudStatus | null;
   title?: string; // e.g. "Add a workspace" — defaults to "Connect {title}"
   onClose: () => void;
   onChanged: () => void;
 }) {
-  // MCP-backed one-click (§42): local OAuth against the vendor's hosted MCP server —
-  // with manual fields alongside (jira, asana) it's a second mode; alone (monday)
-  // it IS the connect flow.
-  const mcpBacked = !!c.mcp;
-  const twoModes =
-    c.name === "slack" ||
-    c.name === "hubspot" ||
-    c.name === "github" ||
-    c.name === "notion" ||
-    c.name === "attio" ||
-    (mcpBacked && c.fields.length > 0);
-  const [pane, setPane] = useState<"one" | "manual">("one");
   const { t } = useI18n();
+  // MCP-backed one-click (§42): local OAuth against the vendor's hosted MCP server.
+  const mcpBacked = !!c.mcp;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && onClose();
@@ -76,52 +56,12 @@ export function AddConnectionModal({
           </button>
         </div>
 
-        {twoModes ? (
-          <>
-            <div className="px-5 pt-4">
-              <div className="inline-flex rounded-full p-0.5 bg-paper text-[12.5px] font-medium">
-                {(["one", "manual"] as const).map((p) => (
-                  <button
-                    key={p}
-                    data-testid={`modal-pane-${p}`}
-                    className={
-                      "px-3.5 py-1 rounded-full " +
-                      (pane === p ? "bg-panel shadow-sm text-ink border border-line" : "text-muted")
-                    }
-                    onClick={() => setPane(p)}
-                  >
-                    {p === "one" ? t("connectors.oneClick") : t("connectors.manual")}
-                  </button>
-                ))}
-              </div>
-            </div>
-            {pane === "one" ? (
-              mcpBacked ? (
-                <McpOneClick c={c} onConnected={() => { onChanged(); onClose(); }} />
-              ) : c.name === "hubspot" ? (
-                <HubSpotOneClick c={c} cloud={cloud} />
-              ) : c.name === "github" ? (
-                <GithubOneClick c={c} cloud={cloud} />
-              ) : c.name === "slack" ? (
-                <SlackOneClick c={c} cloud={cloud} />
-              ) : (
-                <GenericOneClick c={c} cloud={cloud} />
-              )
-            ) : c.name === "slack" ? (
-              <SlackManual onConnected={() => { onChanged(); onClose(); }} />
-            ) : (
-              <div className="px-1.5 pb-2">
-                <ConnectSetup c={c} cloud={cloud} onConnected={() => { onChanged(); onClose(); }} manualOnly />
-              </div>
-            )}
-          </>
-        ) : mcpBacked ? (
+        {mcpBacked ? (
           /* MCP-backed with no manual fields (monday): one-click IS the flow. */
           <McpOneClick c={c} onConnected={() => { onChanged(); onClose(); }} />
         ) : (
           <div className="px-1.5 pb-2">
-            {/* Existing combined setup (managed button + manual fields) for everything else. */}
-            <ConnectSetup c={c} cloud={cloud} onConnected={() => { onChanged(); onClose(); }} />
+            <ConnectSetup c={c} onConnected={() => { onChanged(); onClose(); }} manualOnly />
           </div>
         )}
       </div>
@@ -148,220 +88,35 @@ function McpOneClick({ c, onConnected }: { c: Connector; onConnected: () => void
       }
     }, 2000);
     return () => clearInterval(t);
-  }, [waiting, c.name, onConnected]);
-  const go = async () => {
+  }, [c.name, onConnected, waiting]);
+
+  const start = async () => {
+    setWaiting(true);
     setError(null);
     const res = await connectMcpBacked(c.name);
-    if (res.ok) setWaiting(true);
-    else setError(res.error || t("connectors.errorStartConnect"));
+    if (!res.ok) {
+      setWaiting(false);
+      setError(res.error || "MCP connect failed");
+    }
+    // On ok=true the sidecar accepts the connect; the poll above closes the modal
+    // when /v1/connectors reports connected. We must NOT setWaiting(false) here or
+    // the effect's interval tears down and the modal never auto-closes.
   };
-  return (
-    <div className="px-5 py-4 space-y-3">
-      <p className="text-[13px] text-muted">
-        {t("connectors.mcpOneClickBlurb", { name: c.title })}
-      </p>
-      <button
-        className={PILL_ACCENT + " w-full !py-2"}
-        data-testid="modal-mcp-one-click"
-        onClick={go}
-        disabled={waiting}
-      >
-        {waiting ? t("connectors.checkBrowser") : t("connectors.connectTitle", { name: c.title })}
-      </button>
-      {error && <div className="text-[12.5px] text-danger">{error}</div>}
-      <p className="text-[12px] text-faint text-center flex items-center justify-center gap-1.5">
-        <span className={TAG_ACCENT}>{t("connectors.recommended")}</span>
-        {t("connectors.mcpCuratedTools", { name: c.title })}
-      </p>
-    </div>
-  );
-}
 
-// One-click pane for generic managed connectors (Notion, Attio, …): sign in
-// with the service in the browser; each consent lands as its own account.
-function GenericOneClick({ c, cloud }: { c: Connector; cloud: CloudStatus | null }) {
-  const { t } = useI18n();
-  const [waiting, setWaiting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const go = async () => {
-    setError(null);
-    const res = await connectManaged(c.name);
-    if (res.ok) setWaiting(true);
-    else setError(res.error || t("connectors.errorStartConnect"));
-  };
   return (
     <div className="px-5 py-4 space-y-3">
-      <p className="text-[13px] text-muted">
-        {t("connectors.genericOneClickBlurb", { name: c.title })}
-      </p>
-      {cloud?.signed_in ? (
-        <button
-          className={PILL_ACCENT + " w-full !py-2"}
-          data-testid="modal-generic-one-click"
-          onClick={go}
-          disabled={waiting}
-        >
-          {waiting ? t("connectors.checkBrowser") : t("connectors.connectTitle", { name: c.title })}
-        </button>
-      ) : cloud ? (
-        <CloudSignInInline />
-      ) : (
-        <CloudStatusPending />
-      )}
-      {error && <div className="text-[12.5px] text-danger">{error}</div>}
-      <p className="text-[12px] text-faint text-center flex items-center justify-center gap-1.5">
-        <span className={TAG_ACCENT}>{t("connectors.recommended")}</span>
-        {t("connectors.tokensStayLocal")}
-      </p>
-    </div>
-  );
-}
-
-function SlackOneClick({ c, cloud }: { c: Connector; cloud: CloudStatus | null }) {
-  const { t } = useI18n();
-  const [waiting, setWaiting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const go = async () => {
-    setError(null);
-    const res = await connectManaged(c.name);
-    if (res.ok) setWaiting(true);
-    else setError(res.error || t("connectors.errorStartInstall"));
-  };
-  return (
-    <div className="px-5 py-4 space-y-3">
-      <p className="text-[13px] text-muted">{t("connectors.slackOneClickBlurb")}</p>
-      {cloud?.signed_in ? (
-        <button className={PILL_ACCENT + " w-full !py-2"} data-testid="modal-add-to-slack" onClick={go} disabled={waiting}>
-          {waiting ? t("connectors.checkBrowser") : t("connectors.addToSlack")}
-        </button>
-      ) : cloud ? (
-        <CloudSignInInline />
-      ) : (
-        <CloudStatusPending />
-      )}
-      {error && <div className="text-[12.5px] text-danger">{error}</div>}
-      <p className="text-[12px] text-faint text-center flex items-center justify-center gap-1.5">
-        <span className={TAG_ACCENT}>{t("connectors.recommended")}</span>
-        {t("connectors.slackRelayNote")}
-      </p>
-    </div>
-  );
-}
-
-function GithubOneClick({ c, cloud }: { c: Connector; cloud: CloudStatus | null }) {
-  const { t } = useI18n();
-  const [waiting, setWaiting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const go = async () => {
-    setError(null);
-    const res = await connectManaged(c.name);
-    if (res.ok) setWaiting(true);
-    else setError(res.error || t("connectors.errorStartInstall"));
-  };
-  return (
-    <div className="px-5 py-4 space-y-3">
-      <p className="text-[13px] text-muted">{t("connectors.githubOneClickBlurb")}</p>
-      {cloud?.signed_in ? (
-        /* One button: the broker is authorize-first — it links an existing installation or
-           redirects the same tab on to the install page (the old "Already installed? Link
-           it" question and the Configure dead-end are gone). */
-        <button className={PILL_ACCENT + " w-full !py-2"} data-testid="modal-install-github-app" onClick={() => go()} disabled={waiting}>
-          {waiting ? t("connectors.checkBrowser") : t("connectors.connectGitHub")}
-        </button>
-      ) : cloud ? (
-        <CloudSignInInline />
-      ) : (
-        <CloudStatusPending />
-      )}
-      {error && <div className="text-[12.5px] text-danger">{error}</div>}
-      <p className="text-[12px] text-faint text-center flex items-center justify-center gap-1.5">
-        <span className={TAG_ACCENT}>{t("connectors.recommended")}</span>
-        {t("connectors.githubRelayNote")}
-      </p>
-    </div>
-  );
-}
-
-function HubSpotOneClick({ c, cloud }: { c: Connector; cloud: CloudStatus | null }) {
-  const { t } = useI18n();
-  const [access, setAccess] = useState<"read" | "write">("read");
-  const [waiting, setWaiting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const go = async () => {
-    setError(null);
-    const res = await connectManaged(c.name, { access });
-    if (res.ok) setWaiting(true);
-    else setError(res.error || t("connectors.errorStartConnect"));
-  };
-  return (
-    <div className="px-5 py-4 space-y-3">
-      <p className="text-[13px] text-muted">{t("connectors.hubspotOneClickBlurb")}</p>
-      <div className="space-y-1.5" data-testid="hubspot-access">
-        {(
-          [
-            ["read", t("connectors.hubspotReadOnly"), t("connectors.hubspotReadOnlyBlurb")],
-            ["write", t("connectors.hubspotReadWrite"), t("connectors.hubspotReadWriteBlurb")],
-          ] as const
-        ).map(([value, label, blurb]) => (
-          <label key={value} className="flex items-start gap-2 text-[13px] cursor-pointer">
-            <input
-              type="radio"
-              name="hubspot-access"
-              className="mt-0.5"
-              checked={access === value}
-              data-testid={`hubspot-access-${value}`}
-              onChange={() => setAccess(value)}
-            />
-            <span>
-              <span className="font-medium">{label}</span>
-              <span className="block text-[12px] text-muted">{blurb}</span>
-            </span>
-          </label>
-        ))}
+      <div className="text-[12.5px] text-muted">
+        {t("connectors.mcpOneClickDesc")}
       </div>
-      {cloud?.signed_in ? (
-        <button className={PILL_ACCENT + " w-full !py-2"} data-testid="modal-connect-hubspot" onClick={go} disabled={waiting}>
-          {waiting ? t("connectors.checkBrowser") : t("connectors.connectHubSpot")}
-        </button>
-      ) : cloud ? (
-        <CloudSignInInline />
-      ) : (
-        <CloudStatusPending />
-      )}
-      {error && <div className="text-[12.5px] text-danger">{error}</div>}
-      <p className="text-[12px] text-faint text-center">{t("connectors.hubspotNote")}</p>
-    </div>
-  );
-}
-
-function SlackManual({ onConnected }: { onConnected: () => void }) {
-  const { t } = useI18n();
-  const [bot, setBot] = useState("");
-  const [app, setApp] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const submit = async () => {
-    setBusy(true);
-    setError(null);
-    const res = await connectConnector("slack", { bot_token: bot.trim(), app_token: app.trim() });
-    setBusy(false);
-    if (res.ok) onConnected();
-    else setError(res.error || t("connectors.errorCouldNotConnect"));
-  };
-  return (
-    <div className="px-5 py-4 space-y-3">
-      <ol className="list-decimal pl-4 text-[13px] text-muted space-y-1">
-        <li>{t("connectors.slackManualStep1")}</li>
-        <li>{t("connectors.slackManualStep2")}</li>
-        <li>{t("connectors.slackManualStep3")}</li>
-      </ol>
-      <input className={INPUT} type="password" placeholder={t("connectors.botTokenPlaceholder")} value={bot} spellCheck={false} onChange={(e) => setBot(e.target.value)} />
-      <input className={INPUT} type="password" placeholder={t("connectors.appTokenPlaceholder")} value={app} spellCheck={false} onChange={(e) => setApp(e.target.value)} />
-      <button className={PILL_LINE + " w-full !py-2"} onClick={submit} disabled={busy || !bot.trim() || !app.trim()}>
-        {busy ? t("connectors.validating") : t("connectors.connect")}
+      <button
+        className={PILL_ACCENT}
+        onClick={start}
+        disabled={waiting}
+        data-testid="mcp-one-click"
+      >
+        {waiting ? t("connectors.checkBrowser") : t("connectors.connectWithOneClick", { name: c.title })}
       </button>
-      {error && <div className="text-[12.5px] text-danger">{error}</div>}
-      <p className="text-[12px] text-warnInk text-center">{t("connectors.oneModeAtATime")}</p>
+      {error && <p className="text-[12px] text-warn">{error}</p>}
     </div>
   );
 }

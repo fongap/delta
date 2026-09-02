@@ -3,7 +3,6 @@ import {
   addMcpServer,
   allowUser,
   connectConnector,
-  connectManaged,
   connectMcpBacked,
   connectMcp,
   deleteMcpServer,
@@ -18,13 +17,11 @@ import {
   patchMcpServer,
   reloadMcp,
   updateConnectorTools,
-  type CloudStatus,
   type Connector,
   type Subscription,
   type McpServer,
   type ModelSettings,
 } from "../api";
-import { CloudSignInInline, CloudStatusPending } from "../features/connectors/components/CloudSignIn";
 import { ModelChecklist } from "./ModelChecklist";
 import { CustomCreateForm, ProviderCards, ProviderForm, useProviderSetup } from "../providers/ProviderSetup";
 import { Toggle } from "./Toggle";
@@ -849,12 +846,10 @@ export function ConnectorTools({ c, onChanged }: { c: Connector; onChanged: () =
 // recommended connector can be connected without leaving the session (owner ask, 2026-07-03).
 export function ConnectSetup({
   c,
-  cloud,
   onConnected,
   manualOnly = false,
 }: {
   c: Connector;
-  cloud: CloudStatus | null;
   onConnected: () => void;
   // The add-modal's Manual pane: the one-click button lives on the sibling
   // pill, so don't render the managed block again here.
@@ -863,7 +858,7 @@ export function ConnectSetup({
   const { t } = useI18n();
   const [values, setValues] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
-  const [waiting, setWaiting] = useState(false); // managed flow: browser is open
+  const [waiting, setWaiting] = useState(false); // MCP flow: browser is open
   const [error, setError] = useState<string | null>(null);
 
   const submit = async () => {
@@ -873,15 +868,6 @@ export function ConnectSetup({
     setBusy(false);
     if (res.ok) onConnected();
     else setError(res.error || t("connectors.errorCouldNotConnect"));
-  };
-
-  const oneClick = async () => {
-    setError(null);
-    const res = await connectManaged(c.name);
-    // Completion arrives via the tab's poll: the broker form-POSTs the profile
-    // to the sidecar, the connector flips to connected, this card closes itself.
-    if (res.ok) setWaiting(true);
-    else setError(res.error || t("connectors.errorStartConnect"));
   };
 
   const mcpOneClick = async () => {
@@ -896,7 +882,7 @@ export function ConnectSetup({
   return (
     <div className="border-t border-line px-3.5 py-3 space-y-3">
       {c.mcp && !manualOnly && (
-        /* MCP-backed one-click needs no cloud sign-in — the OAuth flow is local. */
+        /* MCP-backed one-click: local OAuth, no cloud account needed. */
         <div className="space-y-2" data-testid="mcp-connect">
           <button className={BTN_ACCENT} onClick={mcpOneClick} disabled={waiting}>
             {waiting
@@ -904,42 +890,6 @@ export function ConnectSetup({
               : t("connectors.connectWithOneClick", { name: c.title })}
           </button>
           {c.fields.length > 0 && (
-            <div className="text-[11.5px] text-faint">{t("connectors.orConnectManually")}</div>
-          )}
-        </div>
-      )}
-      {c.managed && !c.mcp && !manualOnly && (
-        <div className="space-y-2" data-testid="managed-connect">
-          {c.managed_paused ? (
-            // One-click temporarily off (e.g. Google pending CASA verification):
-            // a visibly-parked button, and the manual path below stays fully live.
-            <>
-              <button className={BTN_ACCENT + " opacity-50"} disabled data-testid="managed-coming-soon">
-                {t("connectors.connectWithOneClick", { name: c.title })}
-                <span className="ml-2 text-[11px] font-medium px-1.5 py-0.5 rounded-full bg-white/25">
-                  {t("onboarding.comingSoon")}
-                </span>
-              </button>
-              <div className="text-[11.5px] text-faint">
-                {t("connectors.oneClickComingSoon")}
-              </div>
-            </>
-          ) : cloud?.signed_in ? (
-            <button className={BTN_ACCENT} onClick={oneClick} disabled={waiting}>
-              {waiting
-                ? t("connectors.checkBrowser")
-                : t("connectors.connectWithOneClick", { name: c.title })}
-            </button>
-          ) : cloud ? (
-            <CloudSignInInline
-              blurb={t("connectors.signInUnlocksOneClick", { name: c.title })}
-            />
-          ) : (
-            // Status unknown (fetch pending/failed): never show the sign-in ask to a
-            // possibly-signed-in user (FB-013); the host keeps polling.
-            <CloudStatusPending />
-          )}
-          {!c.managed_paused && cloud?.signed_in && (
             <div className="text-[11.5px] text-faint">{t("connectors.orConnectManually")}</div>
           )}
         </div>

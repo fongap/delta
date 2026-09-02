@@ -68,7 +68,7 @@ def test_status_live_relay_with_teams(client):
     )
     data = client.get("/v1/connectors/slack/status").json()
     assert data["mode"] == "relay"
-    assert data["signed_in"] is True
+    assert data["signed_in"] is False
     assert data["relay"]["state"] == "live"
     assert data["relay"]["last_event_at"] == 1751970000.0
     assert data["teams"]["T1"]["token_ok"] is True

@@ -1,6 +1,5 @@
 import { useState } from "react";
 import {
-  connectManaged,
   disconnectGcalAccount,
   setGcalDefaultAccount,
   type GmailAccount,
@@ -13,18 +12,12 @@ import { useI18n } from "@delta/i18n/I18nContext";
 
 // The Google Calendar detail page: connected accounts (multi-account, Default
 // badge, per-account disconnect) — Gmail's page minus the privacy filters.
-// Adding an account launches managed OAuth DIRECTLY (one connect mode, no modal).
+// Adding an account launches manual connect (managed OAuth removed, ADR-004).
 
-export function CalendarDetail({ c, cloud, slack: _slack, onChanged }: DetailProps) {
+export function CalendarDetail({ c, onChanged }: DetailProps) {
   const { t } = useI18n();
-  const [busy, setBusy] = useState(false);
+  const [_showManual, setShowManual] = useState(false);
   const accounts = (c.accounts ?? []) as GmailAccount[]; // email-keyed (pre-generic-layer shape)
-
-  const addAccount = async () => {
-    setBusy(true);
-    await connectManaged("google_calendar"); // completes in the system browser; the poll picks it up
-    setTimeout(() => setBusy(false), 2500);
-  };
 
   return (
     <div data-testid="gcal-detail">
@@ -47,24 +40,15 @@ export function CalendarDetail({ c, cloud, slack: _slack, onChanged }: DetailPro
             )}
           </div>
         </div>
-        <button
+<button
           className={PILL_ACCENT + (c.managed_paused ? " opacity-50" : "")}
           data-testid="add-account-btn"
-          onClick={addAccount}
-          disabled={busy || !cloud?.signed_in || c.managed_paused}
-          title={
-            c.managed_paused
-              ? t("connectors.googleSignInComingSoon")
-              : cloud?.signed_in
-                ? ""
-                : t("connectors.signInCloudFirst")
-          }
+          onClick={() => setShowManual((v) => !v)}
+          disabled={c.managed_paused}
         >
           {c.managed_paused
             ? t("connectors.addAccountComingSoon")
-            : busy
-              ? t("connectors.checkBrowser")
-              : t("connectors.addAccount")}
+            : t("connectors.addAccount")}
         </button>
       </div>
 
@@ -72,7 +56,6 @@ export function CalendarDetail({ c, cloud, slack: _slack, onChanged }: DetailPro
         <div className={GRP}>
           <div className={ROW + " text-[12.5px] text-muted"}>
             {t("connectors.gcalNotConnectedBlurb")}
-            {cloud?.signed_in ? "" : t("connectors.requiresCloudSignIn")}
           </div>
         </div>
       )}

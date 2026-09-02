@@ -1,6 +1,5 @@
 import { useState } from "react";
 import {
-  connectManaged,
   disconnectGmailAccount,
   setGmailDefaultAccount,
   setGmailFilters,
@@ -14,21 +13,14 @@ import { useI18n } from "@delta/i18n/I18nContext";
 
 // The Gmail detail page (UX-DECISIONS §21): connected mailboxes (multi-account,
 // Default badge, per-account disconnect) + "Never show agents" privacy filters.
-// Adding an account launches managed OAuth DIRECTLY — Gmail has one connect mode,
-// so no modal (the pill-modal is only for ≥2-mode connectors like Slack).
+// Adding an account launches manual connect (managed OAuth removed, ADR-004).
 
 const LABEL = "text-[12.5px] text-muted w-24 shrink-0";
 
-export function GmailDetail({ c, cloud, slack: _slack, onChanged }: DetailProps) {
+export function GmailDetail({ c, onChanged }: DetailProps) {
   const { t } = useI18n();
-  const [busy, setBusy] = useState(false);
+  const [_showManual, setShowManual] = useState(false);
   const accounts = (c.accounts ?? []) as GmailAccount[]; // email-keyed (pre-generic-layer shape)
-
-  const addAccount = async () => {
-    setBusy(true);
-    await connectManaged("gmail"); // completes in the system browser; the poll picks it up
-    setTimeout(() => setBusy(false), 2500);
-  };
 
   return (
     <div data-testid="gmail-detail">
@@ -49,24 +41,15 @@ export function GmailDetail({ c, cloud, slack: _slack, onChanged }: DetailProps)
             )}
           </div>
         </div>
-        <button
+<button
           className={PILL_ACCENT + (c.managed_paused ? " opacity-50" : "")}
           data-testid="add-account-btn"
-          onClick={addAccount}
-          disabled={busy || !cloud?.signed_in || c.managed_paused}
-          title={
-            c.managed_paused
-              ? t("connectors.googleSignInComingSoon")
-              : cloud?.signed_in
-                ? ""
-                : t("connectors.signInCloudFirst")
-          }
+          onClick={() => setShowManual((v) => !v)}
+          disabled={c.managed_paused}
         >
           {c.managed_paused
             ? t("connectors.addAccountComingSoon")
-            : busy
-              ? t("connectors.checkBrowser")
-              : t("connectors.addAccount")}
+            : t("connectors.addAccount")}
         </button>
       </div>
 
@@ -74,7 +57,6 @@ export function GmailDetail({ c, cloud, slack: _slack, onChanged }: DetailProps)
         <div className={GRP}>
           <div className={ROW + " text-[12.5px] text-muted"}>
             {t("connectors.gmailNotConnectedBlurb")}
-            {cloud?.signed_in ? "" : t("connectors.requiresCloudSignIn")}
           </div>
         </div>
       )}
