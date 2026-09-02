@@ -217,10 +217,16 @@ class TurnEngineAdapter:
         *,
         ledger: Any = None,
         session_id: str | None = None,
+        run_id: str | None = None,
     ) -> None:
         self._engine = engine
         self._ledger = ledger
         self._session_id = session_id
+        # ADR-005 (Reliable Task Runtime): an automation run supplies its own
+        # durable run id so the TaskRun row, the ledger narrative, the artifact
+        # records and the idempotency log all share ONE identity. Interactive
+        # turns leave this None and mint a fresh uuid per driven turn.
+        self._run_id = run_id
 
     @property
     def engine(self) -> TurnEngine:
@@ -275,7 +281,10 @@ class TurnEngineAdapter:
 
         from core import runscope
 
-        run_id = uuid.uuid4().hex
+        # One identity across the run: an automation supplies run_id at build so
+        # the ledger narrative joins the TaskRun row; an interactive turn mints
+        # a fresh id per driven turn.
+        run_id = self._run_id or uuid.uuid4().hex
         token = runscope.set_current(run_id, self._session_id or "")
         try:
             self._ledger.append(

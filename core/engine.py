@@ -119,9 +119,17 @@ class TurnEngine:
         # Codex-style exponential backoff. Never retries stream truncation (finish_reason
         # guard) or context overflow (compaction's job). 0/None disables auto-retry.
         max_retries: int = 2,
+        # ADR-005 WS4: side-effect idempotency log. When set, every
+        # consequential tool call consults the log before executing and
+        # commits a row + `side_effect.committed` event after a successful
+        # execution. `resume()` then skips calls that already committed
+        # (the previous run's side effects are not re-played). None
+        # disables the log (tests, read-only subagents).
+        idem_log: Any | None = None,
     ) -> None:
         self.provider = provider
         self.registry = registry
+        self.idem_log = idem_log
         self.permissions = permissions
         self.model = model
         self.approver = approver or _deny_all
@@ -1200,10 +1208,46 @@ class TurnEngine:
 
     def _execute_sync(self, tool_call: ToolCall) -> tuple[Any, str]:
         """Execute one authorized call (runs in a worker thread)."""
+        # ADR-005 WS4: if a previous run committed this exact call, the side
+        # effect already happened — replay the recorded result. The args_sha256
+        # check ensures we never paper over an argument change.
+        if self.idem_log is not None:
+            from core import runscope
+
+            scope = runscope.current()
+            if scope is not None:
+                run_id, _session_id = scope
+                if run_id:
+                    hit = self.idem_log.lookup(
+                        run_id, tool_call.id, tool_call.arguments
+                    )
+                    if hit is not None:
+                        return hit["result"], "replayed"
         try:
-            return self.registry.execute(tool_call.name, tool_call.arguments), "ok"
+            result = self.registry.execute(tool_call.name, tool_call.arguments)
         except Exception as exc:
             return {"error": str(exc), "error_type": type(exc).__name__}, "error"
+        # Successful execution: record the commit so a future resume() on
+        # the same (run_id, tool_call_id, args) replays rather than re-runs.
+        # Errors do NOT commit — the side effect never happened.
+        if self.idem_log is not None and result is not None:
+            from core import runscope
+
+            scope = runscope.current()
+            if scope is not None:
+                run_id, _session_id = scope
+                if run_id:
+                    try:
+                        self.idem_log.commit(
+                            run_id,
+                            tool_call.id,
+                            tool_call.name,
+                            tool_call.arguments,
+                            result,
+                        )
+                    except Exception:
+                        pass
+        return result, "ok"
 
     def _record_result(self, tool_call: ToolCall, result: Any, status: str) -> Event:
         # A `_display` key on a tool result is user-facing metadata the AGENT must

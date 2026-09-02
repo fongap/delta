@@ -19,6 +19,7 @@ if TYPE_CHECKING:
     from core.connections import PersonaConnectionStore, SessionConnectionStore
     from core.conversations import ConversationStore
     from core.engine import Approver, TurnEngine
+    from core.idemlog import IdempotencyLog
     from core.inbox import InboxStore
     from core.inbox_routing import InboxRouting
     from core.ledger import RunEventLedger
@@ -55,6 +56,8 @@ if TYPE_CHECKING:
         memory_settings: MemorySettingsStore
         audit_store: AuditStore
         run_ledger: RunEventLedger
+        idem_log: IdempotencyLog
+        audit_sink: Callable[[dict[str, Any]], None]
         session_store: ConversationStore
         workspace_trust: WorkspaceTrustStore
         secrets: SecretStore
@@ -93,7 +96,7 @@ if TYPE_CHECKING:
         _app_event_sequences: dict[str | None, int]
         _event_clients: set[EventSender]
 
-        def _bind_runtime(self, engine: TurnEngine, session_id: str) -> RuntimePort: ...
+        def _bind_runtime(self, engine: TurnEngine, session_id: str, *, run_id: str | None = None) -> RuntimePort: ...
         def _emit_session_created(self, session_id: str, persona_id: str) -> None: ...
         @staticmethod
         def _extra_roots_of(runtime: RuntimePort) -> list[dict[str, Any]]: ...

@@ -114,6 +114,22 @@ class SessionManager(
         self.memory_settings = MemorySettingsStore(base / "memory-settings.json")
         self.audit_store = AuditStore(base / "core.db")
         self.run_ledger = RunEventLedger(base / "run-events.db")
+        # ADR-005 WS4: durable dedupe of side effects. Survives a crash so
+        # resume() can tell "this call's effect already happened" from "this
+        # call is new". Lives next to the run ledger.
+        from core.idemlog import IdempotencyLog
+
+        self.idem_log = IdempotencyLog(base / "side-effects.db")
+        # ADR-005: collapse tool/approval facts into the run ledger. The audit sink
+        # still writes to AuditStore for backward compatibility; the mirroring
+        # helper additionally appends a ledger event when an ambient run scope
+        # names the owning run.
+        from core.ledger_event import make_mirroring_audit_sink
+
+        self.audit_sink = make_mirroring_audit_sink(
+            self.audit_store.append,
+            ledger_append=self.run_ledger.append,
+        )
         self.session_store = ConversationStore(base)
         self.session_store.canonicalize_workspaces()  # collapse /tmp vs /private/tmp etc.
         if self.default_workspace:

@@ -141,6 +141,11 @@ class ScheduledTask:
     # Sidebar unread tracking (UX-023): runs started after this mark count as
     # "unseen"; opening the automation's detail advances it. 0.0 = never opened.
     seen_runs_at: float = 0.0
+    # ADR-005 WS3: the deterministic completion contract for this task.
+    # Stored as a plain dict for forward compatibility — the engine converts
+    # it to `core.validation.ValidationCriteria` at run time. None means
+    # "use the safe floor" (artifact count >= 1, all complete).
+    validation_criteria: dict | None = None
 
     def __post_init__(self) -> None:
         if not self.task_session_id:
@@ -223,9 +228,13 @@ class TaskRun:
     run_id: str = field(default_factory=lambda: "run-" + uuid.uuid4().hex[:10])
     started_at: float = field(default_factory=_now)
     finished_at: float | None = None
-    status: str = "running"  # running | ok | error | skipped
+    status: str = "running"  # running | ok | error | skipped | validation_failed
     result_text: str | None = None
-    artifacts: list[str] = field(default_factory=list)
+    # ADR-005 WS2: artifacts are first-class objects (sha256, kind, size,
+    # incomplete flag) instead of opaque paths inferred by mtime. Stored as
+    # dicts in the SQLite record for backward compatibility with existing
+    # automation.db rows; rebuild Artifact on read.
+    artifacts: list[dict] = field(default_factory=list)
     error: str | None = None
     trigger: str = "schedule"  # schedule | manual | catchup
     session_id: str = ""  # the run's own conversation thread — persisted + continuable
@@ -239,4 +248,23 @@ class TaskRun:
 
     @classmethod
     def from_dict(cls, d: dict) -> TaskRun:
+        # Accept both list[dict] (new) and list[str] (old) artifacts rows so
+        # pre-WS2 automation.db records still load. Old rows are upgraded to
+        # bare dicts with the minimum Artifact fields; the consumer (manager)
+        # will rehash them on the next save to upgrade sha256/kind/size.
+        if "artifacts" in d and d["artifacts"] and isinstance(d["artifacts"][0], str):
+            d = dict(d)
+            d["artifacts"] = [
+                {
+                    "path": p,
+                    "name": p.rsplit("/", 1)[-1],
+                    "kind": "text",
+                    "size": 0,
+                    "modified_at": 0.0,
+                    "run_id": d.get("run_id", ""),
+                    "sha256": None,
+                    "incomplete": True,  # upgrade-needed marker
+                }
+                for p in d["artifacts"]
+            ]
         return cls(**d)
