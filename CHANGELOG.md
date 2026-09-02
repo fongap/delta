@@ -9,6 +9,30 @@ CHANGELOG 只记录用户可感知的变化和重要工程能力变化。
 
 ## [Unreleased]
 
+### 新增 (Added)
+
+- **Reliable Task Runtime** (ADR-005 — DELTA_BLUEPRINT §7.1 "Reliable")
+  - **Ledger 词汇表扩展** (`core/ledger.py`)：固定 `KNOWN_EVENT_TYPES` 集合（tool/approval/artifact/validation/side_effect/run.*），并新增 `close()` 以支持测试释放。
+  - **`make_mirroring_audit_sink`** (`core/ledger_event.py`)：把现有 `audit_sink` 字典（来自 `core/engine.py:_audit`）在 runscope 命名 run 时镜像为 ledger 事件（`tool.proposed/started/finished/denied`、`approval.requested/granted/denied`）。AuditStore 仍保留为旧数据访问层。
+  - **Artifact 领域对象** (`core/artifact.py`)：`Artifact` dataclass（path, name, kind, size, sha256, run_id, incomplete, registered_at），`register_run_artifacts` 在 run 结束时遍历 workspace 计算 sha256，无法读取的文件标记 `incomplete=True`，并向 ledger 发 `artifact.registered` + `artifact.completed`。`TaskRun.artifacts` 从 `list[str]`（按 mtime 猜测）改为 `list[dict]`（结构化），`from_dict` 自动升级旧数据。
+  - **Validation 门控** (`core/validation.py`)：`ValidationCriteria`（min/max_artifacts, required_paths, required_substrings, min/max_size, require_complete, csv_required_headers）+ `run_validation` + `gate_status`。`TaskRun.status` 现在可取 `"validation_failed"`（与 `"error"` 区分），验证结果以 `validation.passed/failed` 事件入 ledger。`ScheduledTask.validation_criteria` 字段为任务作者提供"该任务算完成了吗"的确定性合约。
+  - **副作用安全 Durable Resume** (`core/idemlog.py`)：`IdempotencyLog` 持久化 `(run_id, tool_call_id, args_sha256, result)`；`core/engine.py:_execute_sync` 在 `idem_log` 注入时先查询（命中则返回 `("replayed", result)`）后提交。`build_engine` 与 manager 注入 `idem_log`；生产路径中 `side-effects.db` 与 `run-events.db` 同目录。
+  - **单一 Task / Run 身份收敛**：`TurnEngineAdapter` 接受可选 `run_id`；自动化路径在 `_run_scheduled_task` 中传入 `TaskRun.run_id`，使 TaskStore、ledger、artifact、validation、idemlog 五者共享一个身份（`mgr.run_ledger.runs() == [run.run_id]`）。交互路径仍使用 uuid。
+  - **架构文档**：`docs/architecture/adr/ADR-005-reliable-task-runtime.md`；`README.md` 索引同步。
+
+- **Reference Task e2e 验收**（CSV/XLSX→分析→Markdown 报告）：`tests/test_reference_task.py` 覆盖 DELTA_BLUEPRINT §7.1 短期验收 8 条（端到端流 / 高后果经 Approval / Artifact 真实有效 / Validation 判定 / 关键事件可回放 / 同一 ledger run_id / 权限与手动一致 / 已 commit 副作用不重放）。
+
+### 变更 (Changed)
+
+- **TaskRun**：`status` 增加 `"validation_failed"` 枚举值；`artifacts: list[str]` → `artifacts: list[dict]`（带 sha256/incomplete/registered_at；旧数据通过 `from_dict` 自动升级）。
+- **ScheduledTask**：新增可选 `validation_criteria: dict` 字段（持久化为 dict；engine 启动时转换为 `ValidationCriteria`）。
+- **`services/server/manager_automations.py`**：`_run_scheduled_task` 在执行后调 `register_run_artifacts`，再调 `run_validation` 决定 `run.status`（不再无条件 `= "ok"`）；`notify_on_completion` 仅在 `status == "ok"` 时触发。
+- **`core/runtime.py`**：adapter 接受 `run_id=` 覆盖以供自动化调用方使用。
+- **`services/server/manager.py`**：实例化 `self.idem_log` (IdempotencyLog) 与 `self.audit_sink` (mirroring 闭包)，`audit_sink` 在 build_engine 调用中替换 `audit_store.append`。
+- **`services/server/manager_contract.py`**：声明 `idem_log: IdempotencyLog` 与 `_bind_runtime(..., *, run_id=None)`。
+
+### P0 — Post-Decoupling 收尾
+
 ### 移除 (Removed)
 
 - **OpenWorker Cloud 运行时依赖** (ADR-004)
@@ -44,9 +68,7 @@ CHANGELOG 只记录用户可感知的变化和重要工程能力变化。
 - `integrations/connectors/integration_github.py`: relay 模式返回 "managed relay unavailable" 而非调用 cloud
 - 所有 connector detail 组件: 移除 cloud sign-in 检查，仅保留 manual connect
 
-### P0 — Post-Decoupling 收尾
-
-#### 移除 (Removed)
+### 移除 (Removed)
 
 - **OpenWorker / Cloud 运行时残留收尾**
   - `packages/config.py`: 删除最后一个遗留 `cloud_*` 字段 `cloud_relay_ws_url`；`manager_gateway.py` 直接读取 `integrations.managed.ManagedConfig.relay_ws_url`。

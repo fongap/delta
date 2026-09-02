@@ -30,17 +30,19 @@ from services.server.manager_contract import ManagerHostState
 
 class SessionsMixin(ManagerHostState):
 
-    def _bind_runtime(self, engine: TurnEngine, session_id: str) -> RuntimePort:
+    def _bind_runtime(self, engine: TurnEngine, session_id: str, *, run_id: str | None = None) -> RuntimePort:
         """Wrap a freshly built TurnEngine into the application-layer RuntimePort.
         The ledger binding makes every driven turn a durable run (docs/architecture/adr/ADR-001-run-event-ledger.md);
         storing ONLY adapters means the business layer never holds a bare TurnEngine.
         The executor's process-event observer rides along, so background-process
-        spawn/kill facts land in the run ledger of the turn that caused them."""
+        spawn/kill facts land in the run ledger of the turn that caused them.
+        ADR-005: an automation passes `run_id` so the adapter's ledger narrative
+        shares the TaskRun's identity instead of minting a fresh uuid."""
         executor = getattr(engine, "executor", None)
         if executor is not None:
             executor.process_event_sink = self._record_process_event
         return TurnEngineAdapter(
-            engine, ledger=self.run_ledger, session_id=session_id
+            engine, ledger=self.run_ledger, session_id=session_id, run_id=run_id
         )
 
     def _record_process_event(self, event: dict[str, Any]) -> None:
@@ -171,7 +173,7 @@ class SessionsMixin(ManagerHostState):
             task_store=self.task_store,
             wake_store=self.wakes,
             session_id=session_id,
-            audit_sink=self.audit_store.append,
+            audit_sink=self.audit_sink,
             roots=roots,
             # WS sessions pass mode-aware callbacks (attended → live prompt, unattended → Inbox).
             # Background / self-wake / durable-resume runs have no live socket → default to the
@@ -191,6 +193,9 @@ class SessionsMixin(ManagerHostState):
             # Per-session skill menu, LIVE (SKILLS-SPEC §3): a callable so load_skill sees
             # disables/new skills immediately; the catalog snapshot is taken at build.
             skill_filter=lambda sid=session_id, w=ws: self.effective_skill_names(sid, w),
+            # ADR-005 WS4: side-effect idempotency so a crash between
+            # `_execute_sync` and `_record_result` does not replay writes.
+            idem_log=self.idem_log,
         )
         # Wrap into the RuntimePort immediately: every later touch (task grants,
         # mention rules, persistence, turn driving) goes through the port surface.

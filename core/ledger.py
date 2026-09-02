@@ -27,6 +27,40 @@ from typing import Any, Iterable
 
 TERMINAL_EVENTS = frozenset({"run.completed", "run.failed", "run.interrupted"})
 
+# Event vocabulary (ADR-005). All `tool.*` / `approval.*` / `artifact.*` / `validation.*`
+# / `side_effect.*` / `run.resumed` events flow through the same hash chain and use the
+# same payload scrubbing as `run.*` events. Sanitizer is the single source of truth.
+KNOWN_EVENT_TYPES = frozenset(
+    {
+        # Run lifecycle
+        "run.started",
+        "run.completed",
+        "run.failed",
+        "run.interrupted",
+        "run.resumed",
+        # Tool calls
+        "tool.proposed",
+        "tool.started",
+        "tool.finished",
+        "tool.denied",
+        # Approval flow
+        "approval.requested",
+        "approval.granted",
+        "approval.denied",
+        # Artifacts (WS2)
+        "artifact.registered",
+        "artifact.completed",
+        # Validation (WS3)
+        "validation.started",
+        "validation.passed",
+        "validation.failed",
+        # Side-effect idempotency (WS4)
+        "side_effect.committed",
+        "side_effect.replayed",
+        "side_effect.uncommitted",
+    }
+)
+
 
 def _canonical(payload: Any) -> str:
     return json.dumps(payload or {}, sort_keys=True, separators=(",", ":"), default=str)
@@ -123,6 +157,9 @@ class RunEventLedger:
             "SELECT DISTINCT run_id FROM run_events ORDER BY rowid"
         ).fetchall()
         return [r["run_id"] for r in rows]
+
+    def close(self) -> None:
+        self._conn.close()
 
     def open_runs(self) -> list[str]:
         """Run ids that have at least one event but no terminal event."""

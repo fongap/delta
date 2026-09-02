@@ -218,6 +218,11 @@ def build_engine(
     connector_filter: set[str] | None = None,
     # A set (static snapshot) or a zero-arg callable (live, re-evaluated per load_skill).
     skill_filter: set[str] | Callable[[], set[str]] | None = None,
+    # ADR-005 WS4: side-effect idempotency log. When set, every consequential
+    # tool call consults the log before executing and commits a row + ledger
+    # event after a successful execution. `resume()` then skips calls that
+    # already committed. None disables the log (tests, read-only subagents).
+    idem_log: Any | None = None,
 ) -> TurnEngine:
     ws = Path(workspace).expanduser().resolve() if workspace else None
     if agent.needs_workspace and ws is None:
@@ -493,6 +498,7 @@ def build_engine(
         request_logger=_request_log.default_logger(),
         ttft_timeout=config.ttft_timeout,
         max_retries=config.max_retries,
+        idem_log=idem_log,
     )
     engine.executor = executor  # type: ignore[attr-defined]
     engine.todo = todo  # type: ignore[attr-defined]

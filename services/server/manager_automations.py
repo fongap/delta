@@ -16,7 +16,7 @@ from core.agents import get_agent
 from core.automation import Schedule, ScheduledTask, TaskRun
 from core.permissions import Mode
 from core.runtime import RuntimePort
-from services.server.manager_support import _approval_body, _epoch, _last_assistant_text, _recent_files
+from services.server.manager_support import _approval_body, _epoch, _last_assistant_text
 
 
 from services.server.manager_contract import ManagerHostState
@@ -66,7 +66,7 @@ class AutomationsMixin(ManagerHostState):
             runtime.grant_tool(tool)
 
 
-    def _build_task_engine(self, task, *, session_id: str) -> RuntimePort:
+    def _build_task_engine(self, task, *, session_id: str, run_id: str | None = None) -> RuntimePort:
         ag = get_agent(task.agent)
         Path(task.workspace).mkdir(parents=True, exist_ok=True)
         engine = build_engine(
@@ -89,15 +89,18 @@ class AutomationsMixin(ManagerHostState):
             # it to create another automation instead of running this one.
             task_store=None,
             session_id=session_id,
-            audit_sink=self.audit_store.append,
+            audit_sink=self.audit_sink,
             # Scheduled runs respect the same per-session connection hierarchy as live sessions:
             # expose only the persona's effective-enabled connectors' tools (§4.3).
             connector_filter=self.effective_connectors(session_id, task.agent),
             skill_filter=lambda sid=session_id, w=task.workspace: (
                 self.effective_skill_names(sid, w)
             ),
+            # ADR-005 WS4: scheduled tasks are exactly where the
+            # crash-after-side-effect window matters (long unattended runs).
+            idem_log=self.idem_log,
         )
-        runtime = self._bind_runtime(engine, session_id)
+        runtime = self._bind_runtime(engine, session_id, run_id=run_id)
         self._seed_task_permissions(runtime, task)
         return runtime
 
@@ -125,7 +128,9 @@ class AutomationsMixin(ManagerHostState):
         # Each run is a real, persisted conversation thread: it runs the instructions under its
         # own session id, then saves the transcript. The user can reopen that session and ask a
         # follow-up — the scheduled agent is no longer fire-and-forget.
-        runtime = self._build_task_engine(task, session_id=run.session_id)
+        runtime = self._build_task_engine(
+            task, session_id=run.session_id, run_id=run.run_id
+        )
         # Register the live runtime up-front: a parked approval persists the session
         # mid-run (durable suspend), and resolving from the Inbox must find this engine.
         # The adapter (built with the run ledger) makes this a durable, ledgered run.
@@ -143,9 +148,22 @@ class AutomationsMixin(ManagerHostState):
             async for _event in runtime.run(opening):
                 pass
             run.result_text = _last_assistant_text(runtime.messages)
-            run.artifacts = _recent_files(task.workspace, since=run.started_at)
-            run.status = "ok"
-            if task.notify_on_completion:
+            from core.artifact import register_run_artifacts
+
+            artifacts = register_run_artifacts(
+                task.workspace,
+                run_id=run.run_id,
+                since=run.started_at,
+                ledger=self.run_ledger,
+            )
+            run.artifacts = [a.to_dict() for a in artifacts]
+            # ADR-005 WS3: deterministic validation gate. The engine returning
+            # without raising is necessary but NOT sufficient — the result must
+            # also satisfy the task's validation_criteria (defaults to the safe
+            # floor: at least one artifact, all complete). Validation runs
+            # before notify so a validation failure does not look "done".
+            run.status = self._validate_run(run, task, artifacts)
+            if run.status == "ok" and task.notify_on_completion:
                 await self._notify_task_done(task, run)
         except Exception as exc:
             run.status, run.error = "error", str(exc)
@@ -160,6 +178,46 @@ class AutomationsMixin(ManagerHostState):
                 pass
             self.task_store.add_run(run)
         return run
+
+
+    def _validate_run(
+        self,
+        run: TaskRun,
+        task,
+        artifacts: list,
+    ) -> str:
+        """Run the task's validation criteria against the produced artifacts.
+
+        The engine succeeded (`run.error is None` at the call site) — this
+        returns one of `"ok"`, `"validation_failed"`. The criterion check is
+        deterministic (artifact count, paths, size, substrings, CSV headers)
+        and is recorded into the run ledger so the verdict is replayable.
+        """
+        from core.validation import (
+            DEFAULT_CRITERIA,
+            ValidationCriteria,
+            gate_status,
+            run_validation,
+        )
+
+        criteria_dict = task.validation_criteria
+        if criteria_dict is None:
+            criteria = DEFAULT_CRITERIA
+        else:
+            criteria = ValidationCriteria.from_dict(criteria_dict)
+
+        result = run_validation(artifacts, criteria, workspace=task.workspace)
+        # Ledger the verdict so a follow-up can replay the gate decision.
+        try:
+            self.run_ledger.append(
+                run.run_id,
+                "validation.passed" if result.ok else "validation.failed",
+                actor="system",
+                payload=result.to_dict(),
+            )
+        except Exception:
+            pass
+        return gate_status(result, engine_succeeded=True)
 
 
     async def _notify_task_done(self, task, run: TaskRun) -> None:
@@ -359,7 +417,15 @@ class AutomationsMixin(ManagerHostState):
         if run.status == "running":
             record = self.session_store.load(run.session_id)
             run.result_text = _last_assistant_text(record.messages) if record else None
-            run.artifacts = _recent_files(task.workspace, since=run.started_at)
+            from core.artifact import register_run_artifacts
+
+            artifacts = register_run_artifacts(
+                task.workspace,
+                run_id=run.run_id,
+                since=run.started_at,
+                ledger=self.run_ledger,
+            )
+            run.artifacts = [a.to_dict() for a in artifacts]
             run.status = "ok"
             run.finished_at = _epoch()
             self.task_store.add_run(run)
