@@ -38,10 +38,23 @@ _STAGE_TO_LEDGER_TYPE: dict[str, str] = {
     "finished": "tool.finished",
     "denied": "tool.denied",
     "approval_requested": "approval.requested",
+    # engine emits `approval_resolved {status: approved|denied}` after the
+    # user decides; we map it to the canonical approval.* pair by status.
     "approval_granted": "approval.granted",
     "approval_denied": "approval.denied",
     "standing_rule_minted": "approval.granted",
 }
+
+
+def _resolve_approval(stage: str, status: str | None) -> str | None:
+    """Return the canonical approval.* type for a resolved approval, or None
+    if this stage isn't a resolved approval event."""
+    if stage == "approval_resolved":
+        if status == "approved":
+            return "approval.granted"
+        if status == "denied":
+            return "approval.denied"
+    return None
 
 
 def _ledger_type(stage: str) -> str:
@@ -83,7 +96,7 @@ def make_mirroring_audit_sink(
         run_id, session_id = scope
         if not run_id:
             return
-        event_type = _ledger_type(stage)
+        event_type = _resolve_approval(stage, event.get("status")) or _ledger_type(stage)
         payload = {
             "tool": event.get("tool") or event.get("tool_name") or "",
             "stage": stage,
