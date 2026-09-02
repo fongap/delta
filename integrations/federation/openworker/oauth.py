@@ -1,6 +1,7 @@
 # OpenWorker OAuth Broker (Not Implemented)
 
 from integrations.managed.oauth import OAuthBroker
+from typing import Any
 
 
 class OpenWorkerOAuthBroker(OAuthBroker):
@@ -18,15 +19,15 @@ class OpenWorkerOAuthBroker(OAuthBroker):
         flow: str = "",
         redirect: str = "",
         app_state: str = "",
-    ) -> dict[str, any]:
+    ) -> dict[str, Any]:
         raise NotImplementedError("OpenWorker Federation Adapter not implemented")
 
-    async def exchange(self, form: dict[str, str]) -> dict[str, any]:
+    async def exchange(self, form: dict[str, str]) -> dict[str, Any]:
         raise NotImplementedError("OpenWorker Federation Adapter not implemented")
 
     async def refresh(
         self, connector: str, *, profile_key: str | None = None
-    ) -> dict[str, any] | None:
+    ) -> dict[str, Any] | None:
         raise NotImplementedError("OpenWorker Federation Adapter not implemented")
 
     async def disconnect(
