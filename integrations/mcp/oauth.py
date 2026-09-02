@@ -41,7 +41,7 @@ CALLBACK_PATH = "/mcp/oauth/callback"
 # How long the connect waits for the user to finish the browser sign-in.
 FLOW_TIMEOUT_SECONDS = 300
 
-CLIENT_NAME = "OpenWorker"
+CLIENT_NAME = "Delta"
 
 
 def redirect_base() -> str:

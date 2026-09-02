@@ -248,3 +248,22 @@ Connector (integrations/connectors/*.py)
 - Rust CI（apps/desktop/src-tauri, packaging/portable/launcher, services/stt）期望：全绿
 - 离线验证（任务书 §19）：阻断 `api.openworker.com` / `opencoworker.us.auth0.com` / 任意 `cloud_*` endpoint 后，Desktop 启动 + 跑通一个 session 完整
 - 二次扫描（任务书 §22）：`rg "api\.openworker\.com|opencoworker|cloud_auth_domain|cloud_client_id|cloud_audience|cloud_relay_ws_url|cloud:auth|OpenWorker Cloud"` 运行时代码 = 0 命中（仅允许在 `UPSTREAM.md` / `CHANGELOG.md` / `LICENSE` / `docs/architecture/hub-federation-boundary.md` / `integrations/federation/openworker/*` 占位）
+
+## 附录 A：P0 后置清理（2026-09）
+
+本 ADR 阶段 10 落地后，进入 P0 收尾阶段。Federation 的语义被进一步清理：
+
+- `integrations/federation/openworker/` 整目录已删除（全部为 `NotImplementedError` 占位）。
+  Capability Port 协议继续在 `integrations/managed/` 中定义；任何未来的具体 Federation
+  适配器若实现，将位于 `integrations/managed/adapters/<provider>.py`。
+- Federation 边界描述重写为"开放、供应商无关、可选"；OpenWorker 降级为
+  若干潜在适配对象之一（不再拥有专门的架构位置）。
+- `cloud_relay_ws_url` 单一遗留 `cloud_*` 字段已从 `packages/config.py` 删除；
+  `manager_gateway.py` 直接读取 `ManagedConfig.relay_ws_url`（`ManagedConfig`
+  早已是 `integrations/managed/models.py` 的事实字段，PR #71 阶段未完成替换）。
+- `cloud_relay_ws_url`、`cloud_auth_domain`、`cloud_client_id`、`cloud_audience`、
+  `cloud:auth` 等运行时符号的所有引用已在 PR #71 完成后二次扫描 = 0。
+
+> 历史保留：本附录仅说明本 ADR 决策"已如何在 P0 中被进一步收紧"；
+> ADR 主体决策（D-1 至 D-9）未被改写，CHANGELOG 与本 ADR 的早期条目是当时的事实记录。
+

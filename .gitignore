@@ -30,3 +30,8 @@ packaging/release/
 
 # Local ruff linter cache
 .ruff_cache/
+
+# Diagnostic / static-analysis reports — produced by local ad-hoc runs.
+# Quality status is proven by CI, not by committed scan artifacts.
+pyright-report*.json
+ruff-report*.json

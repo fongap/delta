@@ -556,10 +556,10 @@ export interface ParkedMessage {
   chat_type: string;
   text: string;
   ts: number;
-  team_id?: string | null; // workspace (managed Slack relay); null on manual Socket Mode
+  team_id?: string | null; // workspace (multi-workspace legacy); null on manual Socket Mode
 }
 
-// One connected Slack workspace (managed relay is multi-workspace; ids are workspace-scoped,
+// One connected Slack workspace (legacy multi-workspace; ids are workspace-scoped,
 // so each workspace carries its OWN allow-list).
 export interface SlackWorkspace {
   team_id: string;
@@ -647,7 +647,7 @@ export interface Connector {
   brand_color: string; // hex brand color, e.g. "#611f69" (fallback gray "#6b7280")
   logo: string; // stable logo id keyed into the frontend registry (empty → fallback glyph)
   aliases?: string[]; // extra typeahead terms ("calendar" surfaces Outlook)
-  mcp?: boolean; // MCP-backed one-click (vendor-hosted MCP + local OAuth — no cloud sign-in)
+  mcp?: boolean; // MCP-backed one-click (vendor-hosted MCP + local OAuth)
   allowed_users: string[]; // the allow-list (managed inline in the Connectors tab)
   allowed_user_names?: Record<string, string | null>; // id → display name (people directory)
   approval_owner_ids?: string[]; // Manual Slack: humans allowed to resolve approvals
@@ -655,22 +655,33 @@ export interface Connector {
   recent?: RecentSender[]; // recently-seen senders on a connected two-way connector
   unauthorized?: ParkedMessage[]; // parked messages from unallowed senders (§19)
   tools: ConnectorTool[];
-  managed: boolean; // one-click managed OAuth available (needs cloud sign-in)
-  managed_paused?: boolean; // one-click temporarily off (e.g. Google CASA pending) — badge "Coming soon"
-  managed_profile: boolean; // current profile came from managed OAuth (vs manual paste)
-  mode?: string; // "relay" for the managed cloud path; "" for manual/token connect
-  workspaces?: SlackWorkspace[]; // Slack only: connected workspaces (managed relay)
+  // Whether a future Federation adapter could offer a no-token install for
+  // this connector. Always false today; the field stays so descriptors can
+  // declare capability without a runtime change.
+  managed: boolean;
+  // One-click temporarily off (e.g. Google CASA pending) — badge "Coming soon"
+  managed_paused?: boolean;
+  // Current profile came from managed OAuth (vs manual paste) — only true
+  // for legacy profiles installed before the broker was removed; new profiles
+  // are always manual.
+  managed_profile: boolean;
+  // "mcp" for MCP-backed profiles; "" (default) for manual connect.
+  // The "relay" value was used by the now-removed managed relay and is no
+  // longer set.
+  mode?: string;
+  // Slack only: connected workspaces (legacy managed-relay multi-workspace)
+  workspaces?: SlackWorkspace[];
   // Gmail/Calendar: email-keyed rows; generic account connectors (notion,
   // attio, posthog, …): AccountRow. The detail pages narrow by connector.
   accounts?: GmailAccount[] | AccountRow[];
   filters?: GmailFilters; // Gmail only: "Never show agents" senders/labels
   portals?: HubSpotPortal[]; // HubSpot only: connected portals (multi-portal)
   hidden_fields?: string[]; // HubSpot only: properties stripped from agent reads
-  installations?: GithubInstallation[]; // GitHub only: App installations (managed relay)
+  // GitHub only: App installations (legacy managed-relay multi-install)
+  installations?: GithubInstallation[];
 }
 
-// --- Delta Cloud (optional sign-in; manual token paste always works) ---
-// DELETED: All OpenWorker Cloud backend routes have been removed.
+// --- Connector connect helpers ---
 
 /** One-click connect for an MCP-backed connector (monday, asana, jira): the sidecar
  * opens the vendor's sign-in in the browser (local OAuth, no cloud account needed);
@@ -1016,10 +1027,8 @@ export async function deletePersona(
   return out;
 }
 
-// DELETED: Cloud gallery interfaces and functions (OpenWorker Cloud backend removed).
-
 export async function installPersona(
-  body: { dir?: string; git_url?: string; gallery_slug?: string },
+  body: { dir?: string; git_url?: string },
 ): Promise<{ ok: boolean; consent?: PersonaConsent[]; personas?: Persona[]; error?: string }> {
   const res = await fetch(`${httpBase()}/v1/personas/install`, {
     method: "POST",
@@ -2031,7 +2040,7 @@ export async function removeSlackApprovalOwner(
   return res.json();
 }
 
-/** Stop relaying one managed Slack workspace (the app stays installed in Slack). */
+/** Disconnect one legacy managed Slack workspace (the app stays installed in Slack). */
 export async function disconnectSlackWorkspace(teamId: string): Promise<{ ok: boolean; error?: string; remaining_workspaces?: number }> {
   const res = await fetch(
     `${httpBase()}/v1/connectors/slack/workspaces/${encodeURIComponent(teamId)}/disconnect`,
@@ -2102,13 +2111,11 @@ export async function setGmailFilters(filters: { senders?: string[]; labels?: st
   return res.json();
 }
 
-// GitHub relay health, the Slack three-layer shape: shared relay socket /
-// cloud sign-in / per-installation token health (+ missed-event counts).
+// GitHub health: socket (legacy) and per-installation token health (+ missed-event counts).
 export interface GithubStatus {
   ok: boolean;
   mode: string;
   relay: { state: string; reconnects: number; last_event_at: number | null; last_error: string };
-  signed_in: boolean;
   installs: Record<string, { token_ok: boolean }>;
   missed: Record<string, number>;
 }
@@ -2154,7 +2161,7 @@ export async function setHubSpotHiddenFields(fields: string[]): Promise<{ ok: bo
   return res.json();
 }
 
-/** Slack health, three honest layers: relay socket / cloud sign-in / per-team tokens. */
+/** Slack health: relay socket (legacy) and per-team token health. */
 export interface SlackStatus {
   mode: string; // "relay" | "" (manual/off)
   relay: {
@@ -2163,7 +2170,6 @@ export interface SlackStatus {
     last_event_at: number | null;
     last_error: string;
   };
-  signed_in: boolean;
   teams: Record<string, { token_ok: boolean }>;
 }
 

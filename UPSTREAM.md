@@ -22,10 +22,12 @@ Delta 起源于 OpenWorker 项目（MIT 许可证）。感谢 OpenWorker 的所�
 
 ## 未来联邦化边界
 
-OpenWorker 未来**可作为可选的联邦化适配器**接入 Delta Hub，但：
+Federation 是一条开放、供应商无关的可选能力边界。OpenWorker、第三方、自建等
+都是潜在的 Federation 适配对象之一。
 
-- 这需要显式的适配器实现（在 `integrations/federation/openworker/`）
-- 删除该适配器目录即可完全移除 OpenWorker 支持，不影响 Delta Hub 或 Delta Desktop
-- OpenWorker **绝不**成为 Delta Hub 的运行时依赖
+- OpenWorker 仅为若干潜在 Federation 适配对象之一，**绝非** Delta 的核心
+- Delta Core 不依赖、不感知任何特定 Federation 适配器
+- `integrations/managed/` 中定义 Capability Port 协议；具体适配器若实现，
+  将位于 `integrations/managed/adapters/<provider>.py`
 
 详见 `docs/architecture/hub-federation-boundary.md`。

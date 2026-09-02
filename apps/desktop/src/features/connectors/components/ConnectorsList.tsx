@@ -144,7 +144,6 @@ function healthChip(c: Connector, slack: SlackStatus | null, t: T) {
   // surface in the list, never one click deep. Named honestly per layer; we
   // never claim "Slack↔cloud down" (the desktop can't see that leg).
   if (c.name === "slack" && c.mode === "relay" && slack) {
-    if (!slack.signed_in) return <span className={CHIP_WARN}>{t("connectors.healthSignInNeeded")}</span>;
     if (slack.relay.state === "offline") return <span className={CHIP_OFF}>{t("connectors.healthOffline")}</span>;
     if (slack.relay.state === "reconnecting")
       return <span className={CHIP_WARN}>{t("connectors.healthReconnecting")}</span>;

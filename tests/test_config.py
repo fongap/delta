@@ -165,10 +165,14 @@ def test_build_engine_respects_max_iterations(tmp_path):
 
 def test_managed_config_defaults_to_disabled():
     """A fresh install is local-first: no cloud traffic, no relaying, no
-    managed service. The relay URL is DEFAULT-EMPTY so inbound relaying is
-    OFF out of the box (empty => relay disabled; manual Socket Mode / PAT
-    paths are unaffected). No OpenWorker endpoint is configured."""
-    from packages.config import Config
+    managed service. The managed config (relay URL, base URL, device token)
+    is all DEFAULT-EMPTY so inbound relaying is OFF out of the box
+    (empty => relay disabled; manual Socket Mode / PAT paths are unaffected).
+    No OpenWorker endpoint is configured."""
+    from integrations.managed import ManagedConfig
 
-    cfg = Config()
-    assert cfg.cloud_relay_ws_url == ""
+    cfg = ManagedConfig()
+    assert cfg.enabled is False
+    assert cfg.relay_ws_url == ""
+    assert cfg.base_url == ""
+    assert cfg.device_token == ""

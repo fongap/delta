@@ -449,13 +449,14 @@ def make_adapter(
     """Build the adapter for a connected platform from its SecretStore profile.
 
     Slack supports two mutually-exclusive modes, the user's choice:
-    - `mode == "relay"` → managed cloud relay (`SlackRelayAdapter`): needs the
-      cloud sign-in `token_provider` + `relay_url`; per-team tokens come from
+    - `mode == "relay"` → managed relay (`SlackRelayAdapter`): needs the
+      `token_provider` + `relay_url` (a future managed service — currently
+      unconfigured, so the branch is dead). Per-team tokens come from
       `slack:team:*` profiles. No manual tokens.
     - otherwise → Socket Mode (`SlackAdapter`): manual bot + app tokens, one
       workspace.
 
-    Relay adapters share ONE cloud socket: pass the same `relay_hub` to every
+    Relay adapters share ONE managed socket: pass the same `relay_hub` to every
     relay-mode platform (the caller owns it); without one, each adapter builds
     its own (fine for a single relay platform).
     """
@@ -465,8 +466,8 @@ def make_adapter(
         if profile.get("mode") == "relay":
             if not (relay_url and token_provider):
                 logger.warning(
-                    "slack managed-relay configured but relay endpoint / sign-in unavailable "
-                    "— sign in and set cloud_relay_ws_url; skipping"
+                    "slack managed-relay configured but no managed service is available; "
+                    "skipping (use Socket Mode for direct Slack)"
                 )
                 return None
             from integrations.connectors.relay_client import SlackRelayAdapter
@@ -482,8 +483,8 @@ def make_adapter(
     if platform == "github" and profile.get("mode") == "relay":
         if not (relay_url and token_provider):
             logger.warning(
-                "github managed-relay configured but relay endpoint / sign-in "
-                "unavailable — sign in and set cloud_relay_ws_url; skipping"
+                "github managed-relay configured but no managed service is available; "
+                "skipping (use a PAT for direct GitHub)"
             )
             return None
         from integrations.connectors.github_installs import list_installs

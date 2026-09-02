@@ -1,8 +1,9 @@
-// Custom-config-first provider flow (F1 + F2): the Models tab shows ONE first-class
-// "Custom provider" card with the create form inline (alias + protocol dropdown +
-// fields + Fetch models + Create & save) — no "Add" button to click first. Fill →
-// Fetch models (auto-adds `alias:{id}`) → Create & save → the new provider's card
-// appears below with alias as identity and protocol/status as secondary information.
+// Custom-config-first provider flow (F1 + F2): the Models tab shows your saved
+// providers first; the "Add provider" entry is a quiet one-line link. Open it
+// → the create form (alias + protocol dropdown + fields + Fetch models +
+// Create & save) is inline. Fill → Fetch models (auto-adds `alias:{id}`) →
+// Create & save → the new provider's card appears below with alias as identity
+// and protocol/status as secondary information.
 import { expect } from "@playwright/test";
 import { test } from "./fixtures";
 
@@ -11,8 +12,10 @@ test.describe("custom provider", () => {
     await page.goto("/");
     await page.getByTestId("sidebar-footer-settings").click();
     await page.getByRole("button", { name: "Models", exact: true }).click();
-    // Built-in providers are no longer listed — readiness is the always-visible inline
-    // create form's alias field (no "Add custom provider" button to click first).
+    // The inline create form is open by default when no custom provider exists
+    // (ModelsTab: `createOpen = !hasCustom || fetchedModels.length > 0`).
+    // The "Add provider" link is a quiet toggle to collapse/expand it; here it
+    // is already visible, so the test does not need to click it.
     await expect(page.getByTestId("set-alias")).toBeVisible();
   });
 

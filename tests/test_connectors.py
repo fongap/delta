@@ -1246,7 +1246,7 @@ def test_outlook_calendar_tools_hit_the_right_graph_endpoints(tmp_path, monkeypa
             "enabled": True,
             "managed": True,
             "access_token": "tok",
-            "account": "rohit@openworker.com",
+            "account": "rohit@example.com",
             "provider": "microsoft",
         },
     )

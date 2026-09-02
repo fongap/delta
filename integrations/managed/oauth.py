@@ -71,7 +71,6 @@ class NullOAuthBroker:
         return {
             "ok": False,
             "error": ManagedUnavailableError.DEFAULT_MESSAGE,
-            "signed_in": False,
         }
 
     async def exchange(self, form: dict[str, str]) -> dict[str, Any]:

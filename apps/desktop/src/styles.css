@@ -312,18 +312,6 @@ body {
 .hero { max-width: 720px; margin: 6vh auto 0; }
 .greeting { font-family: var(--serif); font-size: 40px; line-height: 1.1; margin: 0 0 18px; }
 .greeting .mark { color: var(--accent); margin-right: 10px; }
-.suggestions { margin-top: 40px; display: flex; flex-direction: column; }
-.suggest-head { font-size: 13px; color: var(--muted); margin-bottom: 6px; }
-.suggest {
-  display: flex; align-items: center; gap: 11px; padding: 11px 6px;
-  border-top: 1px solid var(--line); cursor: pointer; color: var(--ink); font-size: 14.5px;
-}
-.suggest:hover { color: var(--accent); }
-.suggest .ico {
-  width: 28px; height: 28px; border: 1px solid var(--line); border-radius: 7px;
-  display: grid; place-items: center; background: var(--panel); font-size: 13.5px;
-  color: var(--muted); flex: none;
-}
 
 /* transcript */
 /* Conversation column — mock's `max-w-3xl mx-auto space-y-5` (the px-6/py-6 gutter is supplied by
@@ -388,13 +376,26 @@ body {
 @keyframes blink { to { opacity: 0; } }
 .waiting-transcript { max-width: 760px; margin: 18px auto 0; display: flex; }
 .waiting-row {
-  display: inline-flex; align-items: center; gap: 9px; align-self: flex-start;
+  display: inline-flex; align-items: center; gap: 5px; align-self: flex-start;
   color: var(--muted); font-size: 13px; line-height: 1;
 }
-.waiting-spinner {
-  width: 14px; height: 14px; border-radius: 50%;
-  border: 2px solid var(--line-strong); border-top-color: var(--accent);
-  animation: spin 0.8s linear infinite; flex: none;
+
+/* Quiet thinking-dots animation: 3 fixed dots cycle opacity (no scale, no rotation,
+   no layout shift). Cycle ~1.2s. Uses --faint (secondary text color) — no
+   high-saturation brand blue. Reduced-motion: static dots. */
+.thinking-dots { display: inline-flex; gap: 3px; margin-left: 1px; line-height: 1; }
+.thinking-dots span {
+  width: 4px; height: 4px; border-radius: 50%; background: var(--faint);
+  opacity: 0.2; animation: thinking-dot 1.2s ease-in-out infinite;
+}
+.thinking-dots span:nth-child(2) { animation-delay: 0.2s; }
+.thinking-dots span:nth-child(3) { animation-delay: 0.4s; }
+@keyframes thinking-dot {
+  0%, 60%, 100% { opacity: 0.2; }
+  30% { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .thinking-dots span { animation: none; opacity: 0.6; }
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
@@ -786,50 +787,6 @@ button.btn.danger { color: var(--accent); }
 .intro .greeting .mark { color: var(--accent); }
 .intro-lede { color: var(--muted); font-size: 14px; line-height: 1.5; margin: 8px 0 0; }
 
-/* Template tasks on the Cowork start screen (§27): flat hairline rows, no icon tiles — the
-   title is the row. Connector dots on the sub-line (brand color = live for this session,
-   grayscale = not; §23's vocabulary); sub-line copy is the task's OUTCOME, never connection
-   state. Ready row: hover colors the title and reveals the action. Gated row: "Configure ›"
-   stays visible at rest — the setup action IS the row's meaning. Staggered entrance. */
-.intro-tasks { margin-top: 30px; display: flex; flex-direction: column; }
-.task-card {
-  display: flex; align-items: center; gap: 14px;
-  width: 100%; text-align: left; cursor: pointer;
-  padding: 13px 6px;
-  background: none; border: none; border-top: 1px solid var(--line);
-  font: inherit; color: var(--ink);
-  opacity: 0; transform: translateY(4px);
-  animation: task-rise 0.35s ease forwards;
-}
-.task-card:nth-of-type(1) { animation-delay: 0.10s; }
-.task-card:nth-of-type(2) { animation-delay: 0.22s; }
-.task-card:nth-of-type(3) { animation-delay: 0.34s; }
-@keyframes task-rise { to { opacity: 1; transform: none; } }
-@media (prefers-reduced-motion: reduce) {
-  .task-card { animation: none; opacity: 1; transform: none; }
-}
-.task-card:first-child { border-top: none; }
-.task-card-body { flex: 1; min-width: 0; }
-.task-card-title { display: block; font-size: 14.5px; transition: color 0.12s; }
-.task-card:hover .task-card-title { color: var(--accent); }
-.task-card-sub {
-  display: flex; align-items: center; gap: 7px;
-  font-size: 12.5px; color: var(--faint); margin-top: 3px;
-}
-.task-dot {
-  width: 18px; height: 18px; border-radius: 50%; flex: none;
-  display: grid; place-items: center;
-  background: var(--panel); border: 1px solid var(--line);
-}
-.task-dot + .task-dot { margin-left: -4px; }
-.task-dot.off { filter: grayscale(1); opacity: 0.7; }
-.task-card-act {
-  color: var(--accent); font-size: 12.5px; flex: none;
-  opacity: 1; transition: opacity 0.12s;
-}
-.task-card:hover .task-card-act { opacity: 1; color: var(--accent); }
-.task-card.gated .task-card-act { opacity: 1; color: var(--accent); }
-
 /* Topbar "Artifacts (N)" affordance, shown when the side panel is hidden */
 .topbar-artifacts-btn {
   display: inline-flex; align-items: center; gap: 6px;
@@ -843,9 +800,6 @@ button.btn.danger { color: var(--accent); }
   min-width: 17px; padding: 0 5px; border-radius: 9px;
   background: var(--accent); color: var(--on-accent); font-size: 11px; font-weight: 600; text-align: center;
 }
-/* the inline add-folder form sits under the "Analyze the files in a directory" task row */
-.intro-addfolder { padding: 4px 6px 14px 6px; border-top: 1px solid var(--line); }
-
 /* request_directory prompt (agent-initiated) */
 .dirreq-card {
   background: var(--panel); border: 1px solid var(--accent); border-radius: 12px;
@@ -1682,7 +1636,6 @@ html[data-platform="linux"] ::-webkit-scrollbar-thumb:hover { background-color: 
 .thinking-head:hover { color: var(--muted); }
 .thinking-caret { transition: transform 0.15s; transform: rotate(-90deg); }
 .thinking-caret.open { transform: rotate(0); }
-.thinking-live { animation: boot-pulse 1.4s ease-in-out infinite; }
 .thinking-body {
   max-width: 100%; min-width: 0;
   font-size: 12px; line-height: 1.55; color: var(--muted);

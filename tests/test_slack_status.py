@@ -60,15 +60,12 @@ def _gateway_with(adapter) -> SimpleNamespace:
 
 def test_status_live_relay_with_teams(client):
     client.manager.secrets.put("slack:default", {"mode": "relay", "enabled": True})
-    client.manager.secrets.put(
-        "cloud:auth", {"access_token": "jwt", "account": "rohit@x.com"}
-    )
     client.manager.gateway = _gateway_with(
         _StubAdapter("live", {"T1": {"token_ok": True}, "T2": {"token_ok": False}})
     )
     data = client.get("/v1/connectors/slack/status").json()
     assert data["mode"] == "relay"
-    assert data["signed_in"] is False
+    assert "signed_in" not in data
     assert data["relay"]["state"] == "live"
     assert data["relay"]["last_event_at"] == 1751970000.0
     assert data["teams"]["T1"]["token_ok"] is True
@@ -82,7 +79,6 @@ def test_status_reconnecting_carries_last_error(client):
     data = client.get("/v1/connectors/slack/status").json()
     assert data["relay"]["state"] == "reconnecting"
     assert data["relay"]["last_error"] == "boom"
-    assert data["signed_in"] is False
 
 
 def test_status_offline_when_no_adapter(client):

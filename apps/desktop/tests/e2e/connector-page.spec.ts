@@ -18,8 +18,7 @@ test("list row status + navigation to the Slack page", async ({ page }) => {
   await expect(row).toContainText("2 workspaces · relay");
   await row.click();
   await expect(page.getByTestId("slack-workspaces")).toBeVisible();
-  // Signed in (the nav requires it) → the relay badge reports the live state;
-  // "sign-in paused" only shows for a signed-out cloud account.
+  // The relay badge reports the live state when the adapter is connected.
   await expect(page.getByTestId("slack-mode-badge")).toContainText("Live");
 });
 

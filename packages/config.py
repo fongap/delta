@@ -60,10 +60,6 @@ class Config:
     port: int = 8765
     # Web search provider: "duckduckgo" (keyless default) | "tavily" | "brave" (need a key).
     web_search_provider: str = "duckduckgo"
-    # Managed relay WebSocket endpoint (optional, empty = disabled). A future
-    # Delta Hub deployment fills this in; until then, relay stays off and
-    # manual Socket Mode / PAT paths are unaffected. No OpenWorker endpoint.
-    cloud_relay_ws_url: str = ""
 
 
 _FIELDS = {
@@ -79,7 +75,6 @@ _FIELDS = {
     "host",
     "port",
     "web_search_provider",
-    "cloud_relay_ws_url",
 }
 
 # These fields change what consequential actions can run without a prompt, so the normal

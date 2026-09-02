@@ -46,8 +46,6 @@ type T = (key: string, vars?: Record<string, string | number>) => string;
  * Dot color + text; never a synthetic "Slack is down" claim. */
 function relayHealth(slack: SlackStatus | null, t: T): { dot: string; text: string } {
   if (!slack) return { dot: "bg-ok", text: t("connectors.healthLiveRelay") };
-  if (!slack.signed_in)
-    return { dot: "bg-warnInk", text: t("connectors.healthSignInPaused") };
   if (slack.relay.state === "offline")
     return { dot: "bg-faint/60", text: t("connectors.healthOfflineRelay") };
   if (slack.relay.state === "reconnecting")

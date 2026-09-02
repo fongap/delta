@@ -22,10 +22,13 @@ test("Settings opens as a full page and navigates sections", async ({ page }) =>
   await expect(page.getByText("Each conversation gets its own folder")).toBeVisible();
 
   await page.getByRole("button", { name: "Models", exact: true }).click();
+  // Models tab opens with the inline create form visible by default when no
+  // custom provider exists (ModelsTab: createOpen = !hasCustom || ...).
   await expect(page.getByTestId("set-alias")).toBeVisible();
 });
 
-// The launch flag brings the Personas tab back (the gallery/persona suites rely on it).
+// The launch flag brings the Personas tab back (local persona install, not the
+// removed cloud gallery).
 test("Settings: Personas tab returns behind the launch flag", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("ocw.flag.personas", "1"));
   await page.goto("/");

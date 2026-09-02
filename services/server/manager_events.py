@@ -17,10 +17,10 @@ from services.server.manager_contract import ManagerHostState
 class EventsMixin(ManagerHostState):
 
     def _emit_session_created(self, session_id: str, persona_id: str) -> None:
-        """No-op stub. OpenWorker Cloud telemetry has been removed (ADR-004 §D-2).
-        A future Delta Hub diagnostics layer, if needed, will be independently
-        designed — this hook is kept as a no-op so manager_sessions.py:218
-        continues to call it without modification."""
+        """No-op stub. Telemetry has been removed (ADR-004 §D-2). A future
+        Delta Hub diagnostics layer, if needed, will be independently designed
+        — this hook is kept as a no-op so manager_sessions.py:218 continues to
+        call it without modification."""
         pass
 
 
