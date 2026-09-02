@@ -246,8 +246,9 @@ export function ThinkingBlock({ text, live }: { text: string; live?: boolean }) 
         data-testid="thinking-toggle"
       >
         <Icon name="chevronDown" size={12} className={"thinking-caret" + (open ? " open" : "")} />
-        <span className={live ? "thinking-live" : undefined}>
-          {live ? t("transcript.thinkingLive", undefined, "Thinking…") : t("transcript.thoughtProcess", undefined, "Thought process")}
+        <span>
+          {live ? t("transcript.thinkingLive", undefined, "Thinking") : t("transcript.thoughtProcess", undefined, "Thought process")}
+          {live && <span className="thinking-dots" aria-hidden="true"><span /><span /><span /></span>}
         </span>
       </button>
       {open && (

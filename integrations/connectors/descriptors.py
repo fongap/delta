@@ -77,10 +77,10 @@ class ConnectorDescriptor:
     # (connectors/experimental/) that release builds exclude entirely.
     experimental: bool = False
     risk_notice: str = ""
-    # One-click managed OAuth via OpenWorker Cloud (requires cloud sign-in).
-    # Manual token paste ALWAYS remains available — signed out or in — managed
-    # is an extra path, never a replacement (local-only open-source flow is
-    # sacred).
+    # Whether a future managed OAuth broker could one-click install this
+    # connector. Always False today (the broker is not wired) — the field
+    # stays so descriptors can declare capability without a runtime change.
+    # Manual token paste is the only live path.
     managed: bool = False
     # One-click temporarily unavailable (e.g. Google pending CASA verification):
     # the GUI shows a disabled button with a "Coming soon" badge, the server
@@ -456,10 +456,9 @@ DESCRIPTORS: list[ConnectorDescriptor] = [
         channels=True,
         brand_color="#611f69",
         logo="slack",
-        # One-click managed OAuth (the cloud relay): signed in, the GUI shows
-        # "Connect Slack with one click" (no tokens). The manual Socket-Mode
-        # fields below stay as the always-available fallback (slack → slack in
-        # PROVIDER_FOR_CONNECTOR drives the broker start).
+        # Manual Socket-Mode fields below are the only live path today; the
+        # managed broker is not wired. `managed` flags the descriptor for a
+        # future Federation adapter that could offer a no-token install.
         managed=True,
         fields=[
             Field(

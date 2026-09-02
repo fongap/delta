@@ -15,8 +15,7 @@ test("connected connectors come first with status + health chip", async ({ page 
 
   const slack = page.getByTestId("connector-slack");
   await expect(slack).toContainText("2 workspaces · relay");
-  // Reaching this page requires signing in (§26 nav), so the relay reports healthy:
-  // the "Sign-in needed" warn chip only appears for a signed-out cloud account.
+  // The relay reports healthy when the adapter is connected.
   await expect(slack).toContainText("Live");
   // available section renders the not-connected connectors with a Connect pill
   await expect(

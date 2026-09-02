@@ -1,10 +1,10 @@
-"""Managed-relay inbound adapter — the cloud-relay alternative to Socket Mode.
+"""Managed-relay inbound adapter — the alternative to Socket Mode.
 
 The desktop offers the user two ways to receive Slack:
 - **Socket Mode** (`SlackAdapter`): manual bot + app tokens, one workspace, a
-  direct WebSocket to Slack. No cloud involved.
+  direct WebSocket to Slack. No managed service involved.
 - **Managed relay** (`SlackRelayAdapter`, here): "Add to Slack" OAuth, no tokens
-  typed, *many* workspaces, events pushed from OpenWorker Cloud over one
+  typed, *many* workspaces, events pushed from a managed service over one
   authenticated WebSocket. Replies still go desktop → Slack Web API directly
   with the per-team bot token (the relay is inbound-only).
 
@@ -17,6 +17,10 @@ delivered a message. Managed-relay reply handles are **team-qualified**
 The socket transport is injectable so the frame-handling logic is tested with a
 fake relay (no live WebSocket); the default transport is a thin ``websockets``
 client, lazy-imported like the Socket-Mode SDK.
+
+A fresh install has no managed service configured, so the relay branch in
+``adapters.make_adapter`` never fires. The module is preserved for a future
+Delta Hub / Federation adapter that may implement ``RelayTransport``.
 """
 
 from __future__ import annotations

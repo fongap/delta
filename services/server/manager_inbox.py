@@ -404,8 +404,9 @@ class InboxApprovalsMixin(ManagerHostState):
 
     def slack_status(self) -> dict[str, Any]:
         """Slack connection health in two honest layers (UX-DECISIONS §21):
-        the desktop↔relay socket and each workspace's bot token. The cloud
-        sign-in layer has been removed (ADR-004); signed_in is always False."""
+        the desktop↔relay socket and each workspace's bot token. The
+        cloud-sign-in layer was removed (ADR-004); the endpoint reports
+        only what the desktop can observe."""
         default = self.secrets.get("slack:default") or {}
         mode = default.get("mode") or ""
 
@@ -431,7 +432,6 @@ class InboxApprovalsMixin(ManagerHostState):
             "ok": True,
             "mode": mode,
             "relay": relay,
-            "signed_in": False,
             "teams": teams,
         }
 
@@ -457,8 +457,8 @@ class InboxApprovalsMixin(ManagerHostState):
 
     def github_status(self) -> dict[str, Any]:
         """GitHub relay health, two honest layers: the shared relay socket and
-        per-installation token health. The cloud sign-in layer has been
-        removed (ADR-004); signed_in is always False."""
+        per-installation token health. The cloud-sign-in layer was removed
+        (ADR-004); the endpoint reports only what the desktop can observe."""
         default = self.secrets.get("github:default") or {}
         relay: dict[str, Any] = {
             "state": "offline",
@@ -482,7 +482,6 @@ class InboxApprovalsMixin(ManagerHostState):
             "ok": True,
             "mode": default.get("mode") or "",
             "relay": relay,
-            "signed_in": False,
             "installs": installs,
             "missed": missed,
         }

@@ -44,6 +44,54 @@ CHANGELOG 只记录用户可感知的变化和重要工程能力变化。
 - `integrations/connectors/integration_github.py`: relay 模式返回 "managed relay unavailable" 而非调用 cloud
 - 所有 connector detail 组件: 移除 cloud sign-in 检查，仅保留 manual connect
 
+### P0 — Post-Decoupling 收尾
+
+#### 移除 (Removed)
+
+- **OpenWorker / Cloud 运行时残留收尾**
+  - `packages/config.py`: 删除最后一个遗留 `cloud_*` 字段 `cloud_relay_ws_url`；`manager_gateway.py` 直接读取 `integrations.managed.ManagedConfig.relay_ws_url`。
+  - `integrations/connectors/adapters.py`: 删除"sign in and set cloud_relay_ws_url"日志。
+  - `apps/desktop/src/api.ts`: 删除 `DELETED: All OpenWorker Cloud backend routes...` 注释块、`CloudSignIn` 引用、`cloud/gallery` 注释、Connector 类型中 `cloud sign-in` 描述。
+  - `services/server/manager_inbox.py`: 删除 `slack_status` / `github_status` 中的 `signed_in: False` 字段。
+  - `apps/desktop/src/{api.ts,features/connectors/components/{ConnectorsList,SlackDetail,GithubDetail}.tsx}`: 删除 `signed_in` 运行时 guard。
+  - `apps/desktop/tests/e2e/fixtures.ts`: 删除 `/v1/connectors/*/connect-managed` / `/v1/cloud/gallery*` mock handler；`hubspotState.nextAccess` 字段删除；`signed_in: true` 假数据删除。
+  - `services/server/app.py`: 删除 `/v1/personas/install` 中的 `gallery_slug` 分支及错误消息。
+  - `apps/desktop/src/api.ts`: `installPersona` 形参删除 `gallery_slug`。
+  - `tests/test_server.py`: 删除"managed connect 路由已返回 404"断言。
+  - `apps/desktop/src/components/Onboarding.tsx` + `App.tsx`: 删除 `finish("gallery")` 与 `next === "gallery"` 已死代码。
+  - 38 个 `gallery.*` i18n 键（仅 persona gallery 副本）整块删除于 `packages/i18n/{en,zh}.ts`。
+  - 7 个 `connectors.{signInCloud,signInCloudFirst,requiresCloudSignIn,checkingCloudSignIn,healthSignInNeeded,healthSignInPaused,addAccountComingSoon_legacy}` 及 3 个 `nav.{signInCloud,cloudOneClickNote,accountWithEmail}` i18n 键删除。
+  - 11 个 `sessionIntro.{task.*,prompt.*,start,configure}` + `app.tryATask` i18n 键删除（首页示例卡片收尾）。
+  - 2 个 `providers.{customProviderCard,customProviderCardSub}` i18n 键删除（"自定义服务商"大卡片 → "添加服务商"链接）。
+- **Federation 整目录删除**：`integrations/federation/openworker/` 全部 5 个文件（仅 `NotImplementedError` 占位）；`docs/architecture/hub-federation-boundary.md` 改写为 Federation = "开放、供应商无关、可选"边界，OpenWorker 降级为若干潜在适配对象之一。
+- **诊断产物清理**：`pyright-report*.json`（7 个）+ `ruff-report.json` 共 8 个本地扫描报告从仓库删除；`.gitignore` 新增 `pyright-report*.json` / `ruff-report*.json` 规则。
+- **首页示例卡片**：`apps/desktop/src/components/SessionIntro.tsx` 整文件简化为单 `<h1 class="greeting">"我能帮您做点什么？"</h1>`；`App.tsx` 的 code/chat idle hero 的 `SUGGESTIONS` 数组与 `.suggestions` 区块删除；相应 CSS（`.task-card`, `.task-dot`, `.task-card-act`, `.intro-tasks`, `.intro-addfolder`, `.suggestions`, `.suggest*`）整段删除。
+- **首页 e2e 测试**：`apps/desktop/tests/e2e/session-intro.spec.ts`（3 个用例）整文件删除（任务卡片已不存在）。
+- **Dead CSS**：`styles.css` 中 `boot-pulse` keyframes / `.thinking-live` animation / `.waiting-spinner` rotation 删除。
+- **Dead TS comments**：`integrations/connectors/{relay_client,catalog_copy,descriptors}.py` 与 `services/server/manager_events.py` 中 "OpenWorker Cloud" 历史引用全部更新为"managed service / future Federation Adapter"中性格式。
+
+#### 新增 (Added)
+
+- **Federation 边界的最终语义**：`docs/architecture/hub-federation-boundary.md` 重写为"Delta 是独立、本地优先运行时；Federation 是可选开放边界；OpenWorker 只是潜在外部适配对象之一"。
+- **ADR-004 附录 A**：`docs/architecture/adr/ADR-004-openworker-decouple-hub-boundary.md` 追加"附录 A：P0 后置清理（2026-09）"，记录 Federation 边界与 `cloud_relay_ws_url` 的进一步收紧；历史决策 D-1 至 D-9 保留不改写。
+
+#### 变更 (Changed)
+
+- **Connector 状态字段收敛**：`SlackStatus` / `GithubStatus` 删除 `signed_in` 字段；`connect-managed` mock 行为从"返回 404"升级为"彻底不挂 mock handler"。E2E fixture 不再返回 `signed_in: true` 假数据 — 反映真实 runtime。
+- **首页**：首屏只保留 `intro` 内的 greeting + 任务输入区；code/chat idle hero 同样只保留 greeting。
+- **"思考中"动画降噪**：
+  - `WaitingForAgent`（`App.tsx`）：删除旋转的 `.waiting-spinner` 圆环；改为静态文字 "思考中" + 3 个固定点（`thinking-dots`）opacity 循环（1.2s，无 scale、无 rotation、无 layout shift，使用 `--faint` 灰蓝，无高饱和）。
+  - `ThinkingBlock`（`Transcript.tsx`）：删除 `.thinking-live` 的 `boot-pulse`（含 `scale(0.96)→scale(1.04)`）；live 分支同样改为 3 个点的 opacity 循环；文字 "思考中…" 改为 "思考中"。
+  - `prefers-reduced-motion: reduce` 下：3 个点保持 opacity: 0.6 静态。
+  - CSS keyframes: 删除 `@keyframes spin` 的 `waiting-spinner` 用户（保留为 `.spinner` 步骤指示器）；删除 `boot-pulse`。
+- **模型设置页**：
+  - "自定义服务商" 大卡片删除（`ManageTabs.tsx`），改为安静的一行 "添加服务商 ›" 链接。
+  - 卡片副文 "添加 OpenAI 兼容端点或原生协议。别名将成为模型前缀（别名:模型）。" 删除。
+  - "自定义服务商" → "添加服务商"（更自然的产品语言）。
+  - Onboarding 同步：同样的"自定义服务商"大卡片 → "添加提供商 ›"链接；`openNewCustom()` 唤起 `ProviderForm`。
+  - 已配置服务商（`ProviderCards`）成为视觉主体；新建 / 编辑 / 删除 / 模型选择能力完全保留。
+  - E2E 测试 `custom-provider.spec.ts` 与 `settings.spec.ts` 同步更新（点击 "Add provider" 链接再展开表单）。
+
 ### 变更 (Changed)
 
 - **仓库治理体系**

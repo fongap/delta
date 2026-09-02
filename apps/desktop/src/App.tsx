@@ -78,12 +78,6 @@ import { WorkspaceTrustPrompt } from "./components/WorkspaceTrustPrompt";
 const newId = () =>
   (crypto as any).randomUUID ? crypto.randomUUID().slice(0, 12) : Math.random().toString(36).slice(2, 14);
 
-const SUGGESTIONS = [
-  { ico: "⚙", text: "Run the test suite and summarize any failures." },
-  { ico: "✦", text: "Read the project and give me a 5-bullet overview." },
-  { ico: "↻", text: "Find and fix the failing build." },
-];
-
 // Tools whose success means a new/changed file should show up under Artifacts right away.
 const FILE_WRITE_TOOLS = new Set(["write_file", "apply_patch", "apply_unified_diff", "replace_in_file"]);
 
@@ -1418,10 +1412,7 @@ export function App() {
             setOnboarding(false);
             getHealth().then((h) => setModel(h.model)).catch(() => {});
             loadSettings(); // pick up a model connected during setup (clears the composer chip)
-            if (next === "gallery") {
-              // The specialists tip: land on Settings ▸ Personas, where the Gallery link lives.
-              openSettings("personas");
-            } else if (next === "automations") {
+            if (next === "automations") {
               // "Create your first automation" (§29) lands on the Automations quickstart.
               setSurface("scheduled");
             } else if (next === "work") {
@@ -1619,24 +1610,10 @@ export function App() {
               {idle ? (
                 agent === "cowork" ? (
                   <SessionIntro
-                    sessionId={sessionId}
-                    onOpenSessionSettings={openAccess}
-                    onPrefill={prefillComposer}
                   />
                 ) : (
                   <div className="hero">
                     <h1 className="greeting">{agent === "chat" ? tr("sessionIntro.greeting") : "Let's build something."}</h1>
-                    {needsWorkspace(agent) && (
-                      <div className="suggestions">
-                        <div className="suggest-head">{tr("app.tryATask")}</div>
-                        {SUGGESTIONS.map((s, i) => (
-                          <div className="suggest" key={i} onClick={() => workspace && send(s.text)}>
-                            <span className="ico">{s.ico}</span>
-                            {s.text}
-                          </div>
-                        ))}
-                      </div>
-                    )}
                   </div>
                 )
               ) : (
@@ -1836,8 +1813,8 @@ function WaitingForAgent({ label }: { label?: string }) {
   return (
     <div className="waiting-transcript">
       <div className="waiting-row" aria-live="polite">
-        <span className="waiting-spinner" />
         <span>{label || t("transcript.waitingAgent", undefined, "Thinking…")}</span>
+        <span className="thinking-dots" aria-hidden="true"><span /><span /><span /></span>
       </div>
     </div>
   );

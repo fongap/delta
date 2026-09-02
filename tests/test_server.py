@@ -1282,11 +1282,6 @@ def test_google_one_click_paused_but_manual_alive(tmp_path):
         assert c["fields"], f"{name} lost its manual fields"
     assert connectors["slack"]["managed_paused"] is False  # only Google is paused
 
-    # Managed connect route has been removed (ADR-004); manual fields stay.
-    assert client.post(
-        "/v1/connectors/gmail/connect-managed", json={}
-    ).status_code == 404
-
 
 def test_set_provider_persists_extra_fields(tmp_path):
     """Non-secret descriptor extras (a compatible endpoint) round-trip: saved into the

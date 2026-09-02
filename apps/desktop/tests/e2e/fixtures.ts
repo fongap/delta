@@ -227,37 +227,6 @@ const INBOX_ITEMS = [
   },
 ];
 
-const GALLERY_PERSONAS = [
-  {
-    slug: "sales",
-    version: 1,
-    name: "Sales Delta",
-    icon: "chart",
-    tagline: "Research accounts, prep meetings, draft follow-ups",
-    description: "A sales-focused delta.",
-    family: "knowledge",
-    workspace: "deliverable",
-    publisher: "OpenWorker",
-    recommended_connectors: ["hubspot", "gmail"],
-    risk_summary: "Declarative manifest; no executable code.",
-    featured: true,
-  },
-  {
-    slug: "recruiter",
-    version: 1,
-    name: "Recruiter",
-    icon: "search",
-    tagline: "Sourcing summaries and scheduling loops",
-    description: "A recruiting delta.",
-    family: "knowledge",
-    workspace: "deliverable",
-    publisher: "OpenWorker",
-    recommended_connectors: ["gmail"],
-    risk_summary: "Declarative manifest; no executable code.",
-    featured: false,
-  },
-];
-
 // Persona detail (GET /v1/personas/:id) — SourcesDrawer/PersonaView read `recommends` and
 // `default_connections` as arrays, so these must be present (not the catch-all {}).
 const PERSONA_DETAIL = {
@@ -501,7 +470,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
       accounts: outlookState.accounts.map((a) => ({ ...a })),
     };
   };
-  // HubSpot — PER-TEST multi-portal state (starts disconnected; managed connects add
+  // HubSpot — PER-TEST multi-portal state (starts disconnected; connects add
   // portals instantly, mirroring the backend's hubspot:portal:<hub_id> profiles).
   const hubspotState = {
     portals: [] as {
@@ -509,7 +478,6 @@ export async function mockApi(page: import("@playwright/test").Page) {
       managed: boolean; access: string;
     }[],
     hidden_fields: [] as string[],
-    nextAccess: "read", // captured from the last connect-managed body
   };
   const HUBSPOT_NEXT = [
     { hub_id: "111", name: "Acme Inc", sandbox: false },
@@ -1001,10 +969,6 @@ export async function mockApi(page: import("@playwright/test").Page) {
     }
     // must precede the /v1/personas/{id} catch-all (install matches it too)
     if (p.endsWith("/v1/personas/install") && m === "POST") {
-      const b = req.postDataJSON();
-      if (b.gallery_slug) {
-        return json({ ok: false, error: "managed service not configured" });
-      }
       return json({ ok: false, error: "unsupported in mock" });
     }
     if (/\/v1\/personas\/[^/]+$/.test(p) && m === "POST") {
@@ -1113,15 +1077,14 @@ export async function mockApi(page: import("@playwright/test").Page) {
       ].filter((c) => !q || c.name.includes(q));
       return json({ ok: true, channels, team });
     }
-    // Slack health, three layers (M3.6 Step 2): socket live + all tokens good by
-    // default. Specs force reconnecting/offline/dead
-    // tokens by registering a later page.route override (later routes match first).
+    // Slack health, two layers: socket live + all tokens good by default.
+    // Specs force reconnecting/offline/dead tokens by registering a later
+    // page.route override (later routes match first).
     if (p.endsWith("/v1/connectors/slack/status"))
       return json({
         ok: true,
         mode: slackState.mode,
         relay: { state: "live", reconnects: 0, last_event_at: Date.now() / 1000 - 30, last_error: "" },
-        signed_in: true,
         teams: Object.fromEntries(
           slackState.workspaces.map((w) => [w.team_id, { token_ok: true }]),
         ),
@@ -1171,7 +1134,6 @@ export async function mockApi(page: import("@playwright/test").Page) {
         ok: true,
         mode: githubState.mode,
         relay: { state: "live", reconnects: 0, last_event_at: Date.now() / 1000 - 30, last_error: "" },
-        signed_in: true,
         installs: Object.fromEntries(
           githubState.installations.map((x) => [x.installation_id, { token_ok: true }]),
         ),
@@ -1300,16 +1262,6 @@ export async function mockApi(page: import("@playwright/test").Page) {
         return json({ ok: true, started: true });
       }
       return json({ ok: false, error: `${name} has no MCP connect path` });
-    }
-    if (/\/v1\/connectors\/[^/]+\/connect-managed$/.test(p) && m === "POST") {
-      // Managed OAuth removed (ADR-004). Return 404.
-      return json({ ok: false, error: "managed service not configured" }, 404);
-    }
-    if (p.endsWith("/v1/cloud/gallery")) {
-      return json({ ok: false, error: "managed service not configured", personas: [] });
-    }
-    if (/\/v1\/cloud\/gallery\/[^/]+$/.test(p)) {
-      return json({ ok: false, error: "managed service not configured" });
     }
     // credential check (read-only) — an api_key containing "bad" fails, else ok.
     if (p.endsWith("/v1/providers/verify") && m === "POST") {

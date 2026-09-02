@@ -469,12 +469,10 @@ def create_app(manager: SessionManager) -> FastAPI:
                 summaries = reg.install_from_git(str(body["git_url"]))
             elif body.get("dir"):
                 summaries = reg.install_from_dir(str(body["dir"]))
-            elif body.get("gallery_slug"):
-                return {"ok": False, "error": "gallery install requires a managed service (not configured)"}
             else:
                 return {
                     "ok": False,
-                    "error": "provide a `dir`, `git_url`, or `gallery_slug`",
+                    "error": "provide a `dir` or `git_url`",
                 }
         except Exception as e:  # surface manifest/clone errors to the caller
             return {"ok": False, "error": str(e)}
@@ -846,25 +844,24 @@ def create_app(manager: SessionManager) -> FastAPI:
 
     @app.post("/v1/connectors/slack/workspaces/{team_id}/disconnect")
     async def slack_workspace_disconnect(team_id: str) -> dict[str, Any]:
-        """Stop relaying one workspace (managed relay). Cloud routing row deleted
-        best-effort, local per-team token removed, gateway hot-reloaded."""
+        """Disconnect one legacy managed Slack workspace. Local per-team token
+        removed, gateway hot-reloaded."""
         return await manager.disconnect_slack_workspace(team_id)
 
     @app.get("/v1/connectors/slack/status")
     async def slack_status() -> dict[str, Any]:
-        """Slack health, three layers: relay socket / cloud sign-in / per-team tokens."""
+        """Slack health: relay socket (legacy) and per-team token health."""
         return manager.slack_status()
 
     @app.post("/v1/connectors/github/installations/{installation_id}/disconnect")
     async def github_installation_disconnect(installation_id: str) -> dict[str, Any]:
-        """Stop relaying one GitHub App installation (managed relay). Cloud
-        routing rows deleted best-effort, local profile removed, gateway
-        hot-reloaded."""
+        """Disconnect one legacy managed GitHub App installation. Local
+        profile removed, gateway hot-reloaded."""
         return await manager.disconnect_github_installation(installation_id)
 
     @app.get("/v1/connectors/github/status")
     async def github_status() -> dict[str, Any]:
-        """GitHub health: relay socket / cloud sign-in / per-installation tokens."""
+        """GitHub health: relay socket (legacy) and per-installation token health."""
         return manager.github_status()
 
     @app.post("/v1/connectors/gmail/accounts/{email}/disconnect")
@@ -962,7 +959,8 @@ def create_app(manager: SessionManager) -> FastAPI:
 
     @app.post("/v1/connectors/{name}/allow")
     def connector_allow(name: str, body: dict) -> dict[str, Any]:
-        # `team_id` scopes the edit to one workspace (managed relay); absent → flat list.
+        # `team_id` scopes the edit to one workspace (legacy managed relay);
+        # absent → flat list (the only path on Socket Mode today).
         # `name` (optional) seeds the people directory so a directory-picked user's
         # chip shows their display name before they've ever sent a message.
         return manager.allow_user(

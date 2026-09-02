@@ -1,108 +1,96 @@
-# Delta Hub 联邦化边界设计
+# Delta 联邦化边界设计
 
-本文档描述 Delta Hub 的架构边界，以及 OpenWorker Cloud 作为可选联邦化适配器的定位。
+本文档描述 Delta 的联邦化（Federation）边界：Delta 是独立、本地优先的运行时；
+Federation 是一条开放、供应商无关的可选边界；任何外部系统（包括 OpenWorker Cloud）
+都只是潜在的 Federation 适配对象之一。
 
 ## 核心原则
 
-> **Delta Hub MUST operate independently of OpenWorker Cloud.**
+> **Delta MUST operate independently of any external Federation provider.**
 >
-> **OpenWorker Cloud MAY be supported as an optional federation or managed-service adapter.**
+> **Federation is an open, provider-neutral, optional capability boundary.**
 >
-> **Removal or failure of the OpenWorker integration MUST NOT affect native Delta Hub or Delta Desktop functionality.**
+> **Removal or failure of any Federation adapter MUST NOT affect native Delta functionality.**
 
 中文：
 
-> Delta Hub 必须能够完全独立于 OpenWorker Cloud 运行。
+> Delta 必须完全独立于任何外部 Federation 提供方运行。
 >
-> OpenWorker Cloud 可以作为可选身份联邦、OAuth、Relay 或其他 Managed Capability Adapter。
+> Federation 是一条开放、供应商无关、可选的能力边界。
 >
-> OpenWorker 集成被删除、不可达或失效时，Delta Hub 与 Delta Desktop 的原生能力必须保持完整。
+> 任何 Federation 适配器被删除、不可达或失效时，Delta 的原生能力必须保持完整。
 
 ## 架构边界
 
 ```
-Delta Desktop
-     │
-     │ HTTPS / WSS
-     ▼
-Delta Hub (未来、可选、自托管)
-├── Native Auth
-│   └── Device Token (架构基座)
-├── Identity Adapters
-│   ├── OpenWorker (可选、可删除)
-│   ├── OIDC (未来)
-│   └── Future (未来)
-├── OAuth Brokers
-│   ├── Native
-│   └── Optional External
-└── Relay Adapters
-    ├── Native Hub Relay
-    └── Optional External
+Delta (Core)
+    │
+    │ optional, provider-neutral
+    ▼
+Federation Boundary
+    ├── OpenWorker Adapter        (potential external)
+    ├── Delta-operated Adapter    (potential self-hosted)
+    ├── Self-hosted Adapter       (potential self-hosted)
+    ├── Third-party Adapter       (potential external)
+    └── Custom Adapter            (potential user-defined)
 ```
+
+Federation 是开放、供应商无关的能力边界。任何实现 Federation 能力协议的适配器
+（Delta 自营的、第三方、用户自建）都可以接入。任何单一适配器（包括 OpenWorker）
+都不是 Federation 的核心，只是若干候选之一。
 
 ### 依赖方向（正确）
 
 ```
-OpenWorker Cloud
-      ↓ optional
-Delta Hub
-      ↓ optional
-Delta Desktop
+Any Federation Provider
+        ↓ optional
+Delta Core
 ```
 
 ### 依赖方向（禁止）
 
 ```
-Delta Desktop
-      ↓
-OpenWorker Cloud
+Delta Core
+        ↓
+OpenWorker Cloud (or any single provider)
 ```
+
+Delta Core 不依赖任何特定 Federation 提供方；Federation 协议不绑定 OpenWorker。
 
 ## 核心 Capability Ports
 
-Delta Hub 通过以下 Capability Ports 与 Delta Desktop 交互。Desktop 侧已在 `integrations/managed/` 中定义 Protocol：
+Federation 边界通过 `integrations/managed/` 中定义的 Capability Port 协议与 Delta 交互：
 
 | Port | Protocol | 默认实现 | 说明 |
 |------|----------|----------|------|
-| Native Auth | `ExternalIdentityProvider` | `NullIdentityProvider` | Device Token 验证 |
-| OAuth Broker | `OAuthBroker` | `NullOAuthBroker` | Managed OAuth (begin/exchange/refresh/disconnect) |
-| Relay Transport | `RelayTransport` | `NullRelayTransport` | WebSocket Relay |
+| OAuth Broker | `OAuthBroker` | `NullOAuthBroker` | 代理 OAuth 流程（begin/exchange/refresh/disconnect） |
+| Relay Transport | `RelayTransport` | `NullRelayTransport` | WebSocket Relay 入站事件 |
 | GitHub App Broker | `GitHubAppBroker` | `NullGitHubAppBroker` | Installation Token Mint |
+| External Identity | `ExternalIdentityProvider` | `NullIdentityProvider` | 身份联邦 / Device Token 验证 |
 
-**默认 = Null***：未配置 Hub 时，所有 managed 能力返回 "unavailable"，manual/local 路径完全不受影响。
+**默认 = Null***：未配置任何 Federation 适配器时，所有 managed 能力返回 "unavailable"，
+manual/local 路径完全不受影响。
 
-## OpenWorker 联邦化适配器
-
-### 位置
-
-```
-integrations/federation/openworker/
-├── __init__.py
-├── oauth.py        # OpenWorkerOAuthBroker (实现 OAuthBroker)
-├── relay.py        # OpenWorkerRelayTransport (实现 RelayTransport)
-├── github_app.py   # OpenWorkerGitHubAppBroker (实现 GitHubAppBroker)
-└── README.md       # 说明：删除此目录即可完全移除 OpenWorker 支持
-```
-
-### 关键约束
-
-1. **不实现**：当前目录仅为占位，所有实现抛出 `NotImplementedError`
-2. **可删除**：删除整个 `integrations/federation/openworker/` 目录不影响任何原生功能
-3. **无运行时依赖**：Desktop 和 Hub 核心代码**绝不** import 此目录
-4. **显式启用**：仅当用户显式配置并启用时才加载
+> **Federation 适配器位置（未来）**：
+> 若一个具体 Federation 适配器（如 OpenWorker）被实现，它将位于
+> `integrations/managed/adapters/<provider>.py`，与 Capability Port 并列；
+> Core 不感知、不依赖任何具体实现。
+>
+> 截至当前（2026-09），所有 Capability Port 的实现都是 `Null*`；
+> 没有真实的 Federation 适配器被实现。Capability Port 保留用于未来扩展。
 
 ## Native Device Token：架构基座
 
-Native Device Token 是 Delta Hub 的**原生认证基座**，而非普通用户唯一 UI 方式。作用包括：
+Native Device Token 是 Delta 的**原生认证基座**。作用包括：
 
 - 完全自托管 / 局域网 / NAS / Tailscale / 企业内网 / 离线私网
 - Break-glass access（紧急访问）
-- 外部 Federation 全部失效时仍可管理 Hub
-- **绝不**把 OpenWorker Cloud 变成 Delta Hub 的认证根
+- 任何 Federation 失效时仍可管理 Hub
+- **绝不**把任何单一外部 Federation 提供方变成 Delta 的认证根
 
-## Delta Hub 的未来职责
+## Delta Hub 的未来职责（仅限 Federation 边界内）
 
-Delta Hub（未来实现）仅负责：
+Delta Hub（未来实现）若存在，仅负责：
 
 - Device Authentication（Native Device Token）
 - OAuth Broker（代理 OAuth 流程、刷新）
@@ -121,7 +109,7 @@ Delta Hub（未来实现）仅负责：
 ## 模型请求永久绕过 Hub
 
 ```
-Delta Desktop
+Delta
       ↓
 OpenAI / Anthropic / AI Gateway (直接连接)
 ```
@@ -129,18 +117,19 @@ OpenAI / Anthropic / AI Gateway (直接连接)
 **永远禁止**：
 
 ```
-Delta Desktop
-      ↓
+Delta
+  ↓
 Delta Hub
-      ↓
+  ↓
 Model
 ```
 
-Delta Hub 与 AI Gateway 是两个独立系统。
+Delta Hub 与 AI Gateway 是两个独立系统；Delta 直接与模型提供方通信。
 
 ## Hub 数据边界
 
 **可保存**：
+
 - device metadata
 - OAuth pending state / temporary exchange code
 - connection metadata
@@ -149,22 +138,21 @@ Delta Hub 与 AI Gateway 是两个独立系统。
 - federation subject mapping
 
 **禁止保存**：
+
 - conversation / prompts / model outputs
 - workspace files / memory / user documents
 - Delta session history
 - 长期模型 API Key
 
-Connector token 长期存储策略应单独设计安全模型，不因当前 OpenWorker 代码直接继承。
+Connector token 长期存储策略应单独设计安全模型，不因任何具体 Federation
+实现而直接继承。
 
 ## 验收标准
 
 | 检查项 | 标准 |
 |--------|------|
-| OpenWorker Cloud 运行时依赖 | = 0 |
-| Auth0 运行时依赖 | = 0 |
-| OpenWorker Telemetry | = 0 |
-| OpenWorker Relay 依赖 | = 0 |
+| 任何单一 Federation 提供方运行时依赖 | = 0 |
+| Core 包含特定 Federation 提供方专属语义 | = 0 |
 | Native Device Token | = architecture baseline |
-| OpenWorker Federation | = optional future adapter |
-| 删除 `integrations/federation/openworker/` | 不影响 Desktop/Hub 原生功能 |
-| 离线验证（阻断 OpenWorker endpoints） | Desktop 核心功能完整 |
+| Federation 适配器 | = optional, provider-neutral |
+| 离线验证（阻断所有外部 Federation endpoints） | Delta 核心功能完整 |

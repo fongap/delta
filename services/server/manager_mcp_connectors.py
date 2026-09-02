@@ -307,8 +307,9 @@ class McpConnectorsMixin(ManagerHostState):
             if not (c.get("two_way") and c.get("connected")):
                 continue
             allowed = set(c.get("allowed_users") or [])
-            # Per-workspace allow-lists (managed relay) — a sender is judged against
-            # ITS workspace's list; the flat list only governs team-less (socket) events.
+            # Per-workspace allow-lists (legacy managed relay) — a sender is judged
+            # against ITS workspace's list; the flat list only governs team-less
+            # (Socket Mode) events.
             team_allowed = {
                 w["team_id"]: set(w.get("allowed_users") or [])
                 for w in (c.get("workspaces") or [])

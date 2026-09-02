@@ -55,19 +55,20 @@ class GatewayInboundMixin(ManagerHostState):
             on_unauthorized=self._park_unauthorized,
         )
         # Managed relay wiring: only used when a connector picks relay mode.
-        # No cloud sign-in — relay stays off unless a managed service is configured.
-        # The token provider returns "" when no managed service is available; relay
-        # adapters skip cleanly (manual Socket Mode / PAT paths are unaffected).
-        from packages.config import load_config
+        # A fresh install has no managed service configured — relay stays off
+        # and manual Socket Mode / PAT paths are unaffected. The token
+        # provider returns "" when no managed service is available; relay
+        # adapters skip cleanly.
+        from integrations.managed import ManagedConfig
 
-        managed_config = load_config()
+        managed_config = ManagedConfig()
 
         def _relay_token() -> str:
             return ""  # no managed service configured — relay unavailable
 
         # Every relay-mode platform shares ONE managed socket; the hub fans frames
         # out by provider tag. Built lazily on the first relay adapter.
-        relay_ws_url = getattr(managed_config, "cloud_relay_ws_url", "") or None
+        relay_ws_url = managed_config.relay_ws_url or None
         relay_hub = None
         if relay_ws_url:
             from integrations.connectors.relay_client import RelayHub

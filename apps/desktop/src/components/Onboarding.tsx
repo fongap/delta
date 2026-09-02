@@ -6,7 +6,7 @@ import {
   type Connector,
 } from "../api";
 import { ConnectorBadge } from "../features/connectors/ConnectorIcon";
-import { CustomCreateForm, ProviderCards, ProviderForm, useProviderSetup } from "../providers/ProviderSetup";
+import { ProviderCards, ProviderForm, useProviderSetup } from "../providers/ProviderSetup";
 import { useI18n } from "@delta/i18n/I18nContext";
 
 // First-run onboarding (UX-DECISIONS §24 → §29 → §39): model → your tools → go.
@@ -34,7 +34,7 @@ const TOOL_ROWS = [
 ];
 const TOOLS_SOON = ["gmail", "google_calendar"];
 
-export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "automations") => void }) {
+export function Onboarding({ onDone }: { onDone: (next?: "work" | "automations") => void }) {
   const [step, setStep] = useState(0);
   const { t } = useI18n();
 
@@ -90,7 +90,7 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
     if (!res.ok) setPendingTool((cur) => (cur === name ? null : cur)); // silent reset
   };
 
-  const finish = async (next?: "work" | "gallery" | "automations") => {
+  const finish = async (next?: "work" | "automations") => {
     await setOnboarded(true).catch(() => {});
     onDone(next);
   };
@@ -120,20 +120,22 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
             </p>
 
             {!ps.sel && !ps.creating ? (
-              /* ---- the provider GALLERY: inline custom-provider create card + custom-only cards ---- */
+              /* ---- the provider GALLERY: custom-only cards + a quiet "Add provider" link ---- */
               <div className="flex-1 min-h-0 overflow-y-auto pr-1" data-testid="ob-provider-gallery">
-                <div className="rounded-xl border border-line bg-panel p-4" data-testid="ob-custom-card">
-                  <div className="text-[15px] font-semibold">{t("providers.customProviderCard")}</div>
-                  <p className="text-[12px] text-muted mt-0.5 mb-3 leading-relaxed">
-                    {t("providers.customProviderCardSub")}
-                  </p>
-                  <CustomCreateForm ps={ps} tp="ob" inline />
-                </div>
                 {ps.orderedCustom.length > 0 && (
-                  <div className="mt-4">
+                  <div className="mb-3">
                     <ProviderCards ps={ps} tp="ob" customOnly hideAdd />
                   </div>
                 )}
+                <button
+                  type="button"
+                  className="text-[13px] text-accent hover:underline inline-flex items-center gap-1"
+                  onClick={() => ps.openNewCustom()}
+                  data-testid="ob-add-provider-link"
+                >
+                  {t("providers.addCustomProvider")}
+                  <span aria-hidden="true">›</span>
+                </button>
               </div>
             ) : (
               /* ---- one provider's key form, or the new-custom-provider form, same box ---- */
@@ -289,9 +291,6 @@ export function Onboarding({ onDone }: { onDone: (next?: "work" | "gallery" | "a
               </span>
               <span className="text-faint self-center">›</span>
             </button>
-
-            {/* The Specialist-deltas gallery card and the per-session-scope line stay HIDDEN
-                (owner call 2026-07-12); the finish("gallery") plumbing remains for their return. */}
 
             <p className="text-[11px] text-faint text-center mt-auto pt-5">
               {t("onboarding.replay")}

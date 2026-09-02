@@ -25,7 +25,6 @@ import {
 import { ModelChecklist } from "./ModelChecklist";
 import { CustomCreateForm, ProviderCards, ProviderForm, useProviderSetup } from "../providers/ProviderSetup";
 import { Toggle } from "./Toggle";
-import { Icon } from "./Icon";
 import { useI18n } from "@delta/i18n/I18nContext";
 
 type T = (key: string, vars?: Record<string, string | number>) => string;
@@ -91,8 +90,9 @@ export function ModelsTab() {
   const knownNames = ps.providers.map((p) => p.name);
 
   if (ps.sel === null && !ps.creating) {
-    // "你的服务商" first once any custom provider exists; the create form then collapses
-    // into an expandable card (null = undecided → expanded only while nothing is saved).
+    // "你的服务商" first once any custom provider exists; the add-provider
+    // entry sits below as a quiet one-line link (no large card, no always-on
+    // copy). The form only appears when the user opts in.
     const hasCustom = ps.orderedCustom.length > 0;
     // Keep the create form expanded while a Fetch just returned models (the user is
     // still picking a default); otherwise hasCustom flips true the instant Fetch
@@ -107,26 +107,20 @@ export function ModelsTab() {
             <ProviderCards ps={ps} tp="set" gridClass="grid grid-cols-2 xl:grid-cols-3 gap-2.5" lastUsed customOnly hideAdd />
           </div>
         )}
-        <div className="rounded-xl border border-line bg-panel p-4" data-testid="set-custom-card">
-          <button
-            type="button"
-            className="w-full flex items-center gap-2 text-left"
-            aria-expanded={createOpen}
-            data-testid="set-custom-toggle"
-            onClick={() => setCreateToggle(!createOpen)}
-          >
-            <Icon name="chevronDown" size={14} className={"text-faint shrink-0 transition-transform" + (createOpen ? "" : " -rotate-90")} />
-            <span className="text-[15px] font-semibold leading-[22px] flex-1">{t("providers.customProviderCard")}</span>
-          </button>
-          <p className="text-[13px] font-normal text-muted mt-1 leading-[20px]">
-            {t("providers.customProviderCardSub")}
-          </p>
-          {createOpen && (
-            <div className="mt-3">
-              <CustomCreateForm ps={ps} tp="set" inline />
-            </div>
-          )}
-        </div>
+        <button
+          type="button"
+          className="text-[13px] text-accent hover:underline inline-flex items-center gap-1"
+          onClick={() => setCreateToggle(!createOpen)}
+          data-testid="set-add-provider-link"
+        >
+          {t("providers.addCustomProvider")}
+          <span aria-hidden="true">›</span>
+        </button>
+        {createOpen && (
+          <div className="mt-3">
+            <CustomCreateForm ps={ps} tp="set" inline />
+          </div>
+        )}
       </div>
     );
   }

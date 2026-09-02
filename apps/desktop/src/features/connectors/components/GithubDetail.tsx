@@ -33,8 +33,6 @@ type T = (key: string, vars?: Record<string, string | number>) => string;
 /** The relay status line, one honest layer at a time (the Slack rule). */
 function relayHealth(gh: GithubStatus | null, t: T): { dot: string; text: string } {
   if (!gh) return { dot: "bg-ok", text: t("connectors.healthLiveRelay") };
-  if (!gh.signed_in)
-    return { dot: "bg-warnInk", text: t("connectors.healthSignInPaused") };
   if (gh.relay.state === "offline")
     return { dot: "bg-faint/60", text: t("connectors.healthOfflineRelay") };
   if (gh.relay.state === "reconnecting")
