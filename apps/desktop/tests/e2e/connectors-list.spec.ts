@@ -14,8 +14,10 @@ test("connected connectors come first with status + health chip", async ({ page 
   await openConnectors(page);
 
   const slack = page.getByTestId("connector-slack");
-  await expect(slack).toContainText("2 workspaces · relay");
-  // The relay reports healthy when the adapter is connected.
+  // P1: manual Socket Mode (single workspace). The status line is the
+  // workspace account name; no "2 workspaces · relay" suffix.
+  await expect(slack).toContainText("Slack");
+  // Manual Socket Mode shows "Live" health chip.
   await expect(slack).toContainText("Live");
   // available section renders the not-connected connectors with a Connect pill
   await expect(
@@ -28,7 +30,8 @@ test("row navigates to the detail subpage; breadcrumb returns", async ({ page })
   await page.getByTestId("connector-slack").click();
   await expect(page.getByTestId("slack-workspaces")).toBeVisible();
   await page.getByTestId("connectors-breadcrumb").click();
-  await expect(page.getByTestId("connector-slack")).toContainText("2 workspaces · relay");
+  // P1: single-workspace manual mode (no "relay" suffix).
+  await expect(page.getByTestId("connector-slack")).toContainText("Slack");
 });
 
 test("generic detail page: tools + two-way blocks + disconnect for telegram-alikes", async ({
