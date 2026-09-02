@@ -94,8 +94,13 @@ function McpOneClick({ c, onConnected }: { c: Connector; onConnected: () => void
     setWaiting(true);
     setError(null);
     const res = await connectMcpBacked(c.name);
-    setWaiting(false);
-    if (!res.ok) setError(res.error || "MCP connect failed");
+    if (!res.ok) {
+      setWaiting(false);
+      setError(res.error || "MCP connect failed");
+    }
+    // On ok=true the sidecar accepts the connect; the poll above closes the modal
+    // when /v1/connectors reports connected. We must NOT setWaiting(false) here or
+    // the effect's interval tears down and the modal never auto-closes.
   };
 
   return (
