@@ -12,7 +12,8 @@
 - `ADR-003-provider-protocol-model.md` – Provider 的 Vendor / Protocol / Transport 三层概念。
 - `ADR-004-openworker-decouple-hub-boundary.md` – 移除 OpenWorker Cloud 运行时依赖并建立 Delta Hub Capability Port 边界。
 - `ADR-005-reliable-task-runtime.md` – 可靠任务运行时：验证门控、Artifact 领域对象、副作用安全恢复、Ledger 词汇表扩展。
+- `ADR-006-p2-source-citation-and-convergence.md` – P2 实用：Source / Citation 提升为可定位的一类证据、Automation 收敛的结构化守护、Inbox 解析方向终止兼容。
 
 相关架构文档：
 - `hub-federation-boundary.md` – Delta Hub 联邦化边界设计，明确 OpenWorker 仅为可选适配器。
-- `relay-mode-removal.md` – `mode: "relay"` 运行时路径最终移除的完成记录（2026-09 已 closed；未来 Federation Adapter 位于 `integrations/managed/adapters/<provider>.py`）。
+- `relay-mode-removal.md` – `mode: "relay"` 运行时路径最终移除的完成记录（2026-09 已 closed；P2 终止了 Inbox 旧 token 解析兼容；未来 Federation Adapter 位于 `integrations/managed/adapters/<provider>.py`）。

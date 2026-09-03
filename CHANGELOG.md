@@ -22,6 +22,30 @@ CHANGELOG 只记录用户可感知的变化和重要工程能力变化。
 
 - **Reference Task e2e 验收**（CSV/XLSX→分析→Markdown 报告）：`tests/test_reference_task.py` 覆盖 DELTA_BLUEPRINT §7.1 短期验收 8 条（端到端流 / 高后果经 Approval / Artifact 真实有效 / Validation 判定 / 关键事件可回放 / 同一 ledger run_id / 权限与手动一致 / 已 commit 副作用不重放）。
 
+### P2 — 实用 (DELTA_BLUEPRINT §7.2)
+
+### 新增 (Added)
+
+- **Source / Citation 提升为可定位的一类证据** (ADR-006)
+  - **`CitationRange` typed schema** (`core/sources.py`)：判别字段 `kind` ∈ `lines` / `page` / `cells` / `row` / `column` / `sheet` / `message_id` / `custom`；每种 kind 仅保留与该定位语义相关的字段进入 canonical form。
+  - **`to_range_dict` / `normalize_cited_ranges`**：序列化前做结构性校验（必填字段、字段类型），失败抛 `ValueError`，保证 run 永远不会留下 UI 无法渲染的 citation。
+  - **`SourceStore.add_citation`**：单条 citation 的便捷 API，调用方只需给一个 `CitationRange` 或带 `kind` 的 dict；复用 `mark_cited` 的锁/校验/落盘契约。
+  - **`read_file` 自动 cite** (`integrations/tools/files.py`)：`file_tools(workspace, *, source_store=None, run_id=None)` 接受可选钩子；成功读入时 closure `_make_citer` 捕获 `SourceRef` 并以 `lines` 范围落 citation。错误路径（path 越界、文件不存在、读失败）不写任何 citation。
+  - **`SourceDTO` 新增 `location` / `cited_ranges`** (`services/server/contracts.py`)：additive 字段，`to_dto` 透出，让 UI 看到文件位置与"哪些 run 引用过、引用了哪些行 / 页"。
+- **Automation 收敛结构化守护** (`tests/test_automation_convergence.py`)：廉价 wiring 守门员——自动化与手动 runtime 共用 `_build_task_engine` + manager 的 `idem_log` / `audit_sink`；自动化 run 事件 `type` 必须落在 `KNOWN_EVENT_TYPES`；`TaskRun.run_id == run_ledger.runs()`（身份不分裂）。
+- **架构文档**：`docs/architecture/adr/ADR-006-p2-source-citation-and-convergence.md`；ADR 索引同步。
+
+### 变更 (Changed)
+
+- **`core/sources.py`**：`mark_cited` 入参在加锁前先经 `normalize_cited_ranges` 校验，避免半写入的 citation 落盘。
+- **`integrations/tools/files.py`**：`file_tools` 接受可选 `source_store=` / `run_id=`（向后兼容：不传则行为与 P1 完全一致）。
+
+### 移除 (Removed)
+
+- **Inbox 旧 token 解析兼容终止**（`core/inbox_routing.py:_ID_TOKEN`）：由 `\[(?:d|ow|ocw):([0-9a-f]{6,})\]` 收紧为 `\[d:([0-9a-f]{6,})\]`。OpenWorker 时代 rebrand 留下的 `ow` / `ocw` 旧 spell 在 P2 起不再解析为 inbox 回复（写方向自 PR #73 已统一为 `[d:…]`）。`docs/architecture/relay-mode-removal.md` 的 P2 承诺条目更新为"已终止"。任何 P1 之前的旧 approval 需要通过 UI 重新发起。
+
+### P1 — 可靠 (DELTA_BLUEPRINT §7.1)
+
 ### 变更 (Changed)
 
 - **TaskRun**：`status` 增加 `"validation_failed"` 枚举值；`artifacts: list[str]` → `artifacts: list[dict]`（带 sha256/incomplete/registered_at；旧数据通过 `from_dict` 自动升级）。

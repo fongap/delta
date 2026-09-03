@@ -1,6 +1,6 @@
 """Phase 3 wiring — inbound Slack/Telegram replies correlate to Inbox items via the gateway.
 
-An inbound message carrying an `[ocw:<id>]` token is consumed as an Inbox reply (resolving the
+An inbound message carrying an `[d:<id>]` token is consumed as an Inbox reply (resolving the
 item + releasing any suspended agent), not routed to the super-agent as a new turn. A normal
 message still goes to the handler."""
 
@@ -30,7 +30,7 @@ async def test_inbound_reply_resolves_item_and_is_not_routed(tmp_path):
     await gw.start()
 
     # An inbound approval reply: resolves the item, NOT routed to the handler.
-    await fake.inject(f"approve [ocw:{item.id}]", user_id="u1")
+    await fake.inject(f"approve [d:{item.id}]", user_id="u1")
     assert inbox.get(item.id).resolution == "allow"
     assert routed == []
 
@@ -60,7 +60,7 @@ async def test_freetext_answer_to_question_is_consumed(tmp_path):
     gw.register(fake)
     await gw.start()
 
-    await fake.inject(f"us-west-2 [ocw:{q.id}]", user_id="anyone")
+    await fake.inject(f"us-west-2 [d:{q.id}]", user_id="anyone")
     assert inbox.get(q.id).resolution == "us-west-2"
     assert routed == []
     await gw.stop()

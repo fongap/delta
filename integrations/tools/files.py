@@ -1,4 +1,4 @@
-"""Line-numbered file reading (`read_file`) — replaces the aisuite toolkit's reader.
+"""Line-numbered file reading (`read_file`) 鈥?replaces the aisuite toolkit's reader.
 
 The toolkit's `read_file` returns raw text (the agent can't cite path:line without
 counting) and raises outright on large files (the agent errors and guesses). This one
@@ -7,13 +7,13 @@ the agent how to continue reading. Read-only, workspace-scoped.
 """
 
 # (tool-builder module: attaches aisuite's dynamic metadata attributes
-# (__aisuite_tool_metadata__ / __delta_schema__) to plain functions —
+# (__aisuite_tool_metadata__ / __delta_schema__) to plain functions 鈥?
 # the framework's plugin protocol, not a type error.)
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import aisuite as ai
 
@@ -53,8 +53,54 @@ _SCHEMA = {
 }
 
 
-def file_tools(workspace: str) -> list:
+def _make_citer(
+    root: Path, source_store: Any, run_id: str
+) -> Callable[[Path, int, int], None]:
+    """Build a closure that captures the file and records a lines citation.
+
+    Imported here (not at module top) so the SourceStore / CitationRange
+    modules stay optional dependencies for callers that don't use the
+    auto-cite hook.
+    """
+    from core.sources import CitationRange, KIND_LINES
+
+    def _cite(target: Path, start_line: int, end_line: int) -> None:
+        try:
+            ref = source_store.capture_file(target, workspace=root)
+        except OSError:
+            # The file was readable a moment ago; capture is best-effort so a
+            # transient re-read failure never breaks the tool's return value.
+            return
+        # An empty window (start > end, e.g. an empty file or a read past the
+        # last line) is still a successful "I read this file" event 鈥?record
+        # just the start so the UI can show the file was opened.
+        if end_line < start_line:
+            range_obj = CitationRange(kind=KIND_LINES, start=start_line)
+        else:
+            range_obj = CitationRange(
+                kind=KIND_LINES, start=start_line, end=end_line
+            )
+        source_store.add_citation(ref.id, run_id, range_obj)
+
+    return _cite
+
+
+def file_tools(
+    workspace: str,
+    *,
+    source_store: Any | None = None,
+    run_id: str | None = None,
+) -> list:
+    """Build the read_file tool bound to a workspace.
+
+    ``source_store`` + ``run_id`` are an opt-in audit hook (P2 瀹炵敤): every
+    successful read is captured as a :class:`SourceRef` and cited under the
+    run with a ``lines`` range covering the read window. Callers that don't
+    pass them (e.g. existing tests, ad-hoc callers) get the original
+    behavior unchanged 鈥?the hook is purely additive.
+    """
     root = Path(workspace).resolve()
+    _cite = _make_citer(root, source_store, run_id) if source_store and run_id else None
 
     def read_file(
         path: str,
@@ -85,17 +131,19 @@ def file_tools(workspace: str) -> list:
                         continue
                     if len(selected) >= n:
                         # Reaching one line past the window is the cheapest honest
-                        # proof that more content exists — no whole-file count.
+                        # proof that more content exists 鈥?no whole-file count.
                         has_more = True
                         break
                     text = line.rstrip("\n")
                     if len(text) > _MAX_LINE_CHARS:
-                        text = text[:_MAX_LINE_CHARS] + "… (line truncated)"
+                        text = text[:_MAX_LINE_CHARS] + "鈥?(line truncated)"
                     selected.append(f"{i:>6}\t{text}")
         except OSError as exc:
             return {"error": f"read failed: {exc}"}
 
         end = start + len(selected) - 1 if selected else start - 1
+        if _cite is not None:
+            _cite(target, start, end)
         result: dict[str, Any] = {
             "path": str(target.relative_to(root)),
             "start_line": start,

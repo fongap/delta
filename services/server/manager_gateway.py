@@ -235,9 +235,8 @@ class GatewayInboundMixin(ManagerHostState):
     # -- inbox replies over messaging connectors --------------------------------
     def _resolve_inbox_reply(self, event) -> bool:
         """Try to handle an inbound Slack/Telegram message as an Inbox reply. Returns True if the
-        message carried a `[d:<id>]` token (or legacy `[ow:…]` / `[ocw:…]` — the parser still
-        accepts those) so it's consumed here, not routed as a new turn — resolving the item
-        also releases any agent suspended on it."""
+        message carried a `[d:<id>]` token so it's consumed here, not routed as a new turn —
+        resolving the item also releases any agent suspended on it."""
         from core.inbox_routing import resolve_from_reply
 
         text = getattr(event, "text", "") or ""

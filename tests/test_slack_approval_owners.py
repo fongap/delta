@@ -262,14 +262,14 @@ def test_slack_reply_token_is_owner_only_for_approvals(tmp_path):
     item = manager.inbox.add_approval("s1", "Run it?")
 
     unauthorized = MessageEvent(
-        text=f"approve [ow:{item.id}]",
+        text=f"approve [d:{item.id}]",
         source=SessionSource("slack", "C1", user_id="U_MEMBER"),
     )
     assert manager._resolve_inbox_reply(unauthorized) is True
     assert manager.inbox.get(item.id).state == "pending"
 
     owner = MessageEvent(
-        text=f"approve [ow:{item.id}]",
+        text=f"approve [d:{item.id}]",
         source=SessionSource("slack", "C1", user_id="U_OWNER"),
     )
     assert manager._resolve_inbox_reply(owner) is True

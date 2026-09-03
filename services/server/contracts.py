@@ -95,6 +95,14 @@ class SourceDTO(ContractModel):
     name: str
     fingerprint_prefix: str
     freshness: Literal["current", "changed", "missing"] = "current"
+    # Workspace-relative path / URI / connector coordinate. P1 dropped this to
+    # shrink the payload; P2 restores it so the UI can render the actual
+    # location + let users click through to the file. Optional for backward
+    # compat with older consumers that may still omit it.
+    location: str | None = None
+    # Per-run citations ({run_id, ranges}) linking runs → this source. Same
+    # optional-additive policy as ``location``.
+    cited_ranges: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ModelDTO(ContractModel):
