@@ -87,6 +87,14 @@ CHANGELOG 只记录用户可感知的变化和重要工程能力变化。
   - 接入点：`TurnEngineAdapter._track` 的 `run.started` 写入 `self.workspace_path`；`register_run_artifacts` 的 `artifact.registered` / `artifact.completed` 写入 `workspace=`；`IdempotencyLog.commit` 透传 `workspace=`；`services/server/manager_automations.py` 的 4 个 `add_run` 站点从 `task.workspace` 带入；`finalize_manual_run` 反向回填旧行（task 在的 workspace 写回 run）。
 - **架构文档**：`docs/architecture/adr/ADR-007-p3-readonly-run-analyzer.md`；ADR 索引同步。后续 P3 工作（自动 Reflection / Skill Evaluator / 自动 Failure Memory / 自动 Preference Promotion / 条件型 Automation / Source 语义检索 / 跨项目聚合）**全部**为独立 ADR 评估，不在本 PR 范围。
 
+#### P3 §7.3 Source 完整能力 — per-citation 有效性检查 (ADR-006 续)
+
+- **`SourceStore.validate_citation(ref_id, run_id, range_obj)`** (`core/sources.py`)：回答 "UI 现在滚动到引用的行/页/单元格, 还能不能落到 run 当时看到的内容?" 返回 dict: `{valid, status, reason, current_sha256?, current_line_count?}`。
+  - `invalid` 原因：`content_changed`（文件 sha256 变了）/ `out_of_bounds`（文件 current 但 range 越界 — 被截断或 windowed read 的 start_line 已过 EOF）/ `file_missing`（status 已是 missing）/ `source_gone`（ref 本身被删了，区别于 file_missing）/ `valid`。
+  - 文件已 missing 时短路（不再触碰文件系统）；line kind 有便宜 bound check（数 `\n` 即可），其他 kind（page / cells / message_id / custom）只校验 status。
+- **`Analyzer.SourceCitationHit.validity`**：每个 hit 附带 per-citation 验证结果；多 range 的 hit 用 worst-reason roll-up（file_missing > out_of_bounds > content_changed > valid），UI 每对 (source, run) 只看到一个信号。
+- **`tests/test_source_citation_validity.py`**：13 个新测试覆盖契约——valid / out_of_bounds（file truncated）/ content_changed / file_missing（reflexive + status pre-missing）/ source_gone / 非 lines kind / Analyzer hit 携带 validity / worst-reason roll-up / to_dict 序列化 / 模块级 wrapper 透传。
+
 ### 不变（In scope but unchanged）
 
 - 短中期冻结面（§8.8）：Standing Approval / MCP / Subagent / Memory / Skill / Inbox / Self Wake 范围未扩。
