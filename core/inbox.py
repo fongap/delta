@@ -29,6 +29,8 @@ KIND_QUESTION = "question"
 KIND_NOTIFICATION = "notification"
 KIND_DIRECTORY = "directory"  # agent asks to be granted a folder
 KIND_PLAN = "plan"  # agent presents a plan for approval
+KIND_RUN_ISSUE = "run_issue"  # an automation run ended error / validation_failed / skipped
+KIND_RUN_ISSUE = "run_issue"  # a scheduled automation run ended in error / validation_failed / skipped
 
 STATE_PENDING = "pending"
 STATE_RESOLVED = "resolved"
@@ -280,6 +282,51 @@ class InboxStore:
             inbox=inbox,
             visibility=visibility,
         )
+
+    def add_run_issue(
+        self,
+        session_id,
+        title,
+        *,
+        body="",
+        inbox="default",
+        visibility=VIS_INBOX,
+        data=None,
+        tool_call_id=None,
+    ) -> InboxItem:
+        """A scheduled automation run that did NOT succeed (error /
+        validation_failed / skipped) surfaces here as an issue item so
+        it enters the unified Inbox queue (§7.2 Inbox 收敛).
+
+        The ``data`` payload carries the run + task binding for the
+        card: ``{run_id, task_id, task_title, status, error}``. The
+        item is idempotent per ``run_id`` (a re-drive of the same run
+        won't stack duplicate issues) and resolves when the user
+        acknowledges it.
+        """
+        run_id = (data or {}).get("run_id")
+        if run_id:
+            existing = self.for_run(run_id)
+            if existing is not None:
+                return existing
+        return self.add(
+            session_id,
+            KIND_RUN_ISSUE,
+            title,
+            body=body,
+            inbox=inbox,
+            visibility=visibility,
+            data=data,
+            tool_call_id=tool_call_id,
+        )
+
+    def for_run(self, run_id: str) -> InboxItem | None:
+        """Find the pending issue item for a given automation run_id
+        (idempotency: one issue per failing run)."""
+        for i in self._items.values():
+            if i.kind == KIND_RUN_ISSUE and i.data.get("run_id") == run_id:
+                return i
+        return None
 
     # -- queries ----------------------------------------------------------------
     def get(self, item_id: str) -> InboxItem | None:

@@ -186,7 +186,54 @@ class AutomationsMixin(ManagerHostState):
             except Exception:
                 pass
             self.task_store.add_run(run)
+            # §7.2 Inbox 收敛: a run that did NOT succeed (error /
+            # validation_failed / skipped) surfaces as an issue in the
+            # unified Inbox queue — not silent. The user can acknowledge
+            # it there (or reopen the run's own continuable session).
+            if run.status != "ok":
+                await self._notify_task_issue(task, run)
         return run
+
+    async def _notify_task_issue(self, task, run: TaskRun) -> None:
+        """Create an Inbox run_issue item for a non-ok scheduled run.
+
+        Fills the card with the run + task binding and the error/
+        status text so the user can see at a glance what failed and
+        where to resume. Idempotent per run_id (a re-drive won't stack
+        duplicates); the item resolves when the user acknowledges it.
+        """
+        status_label = {
+            "error": "errored",
+            "validation_failed": "failed validation",
+            "skipped": "was skipped",
+        }.get(run.status, run.status)
+        title = f"Automation '{task.title}' {status_label}"
+        detail = (run.error or "").strip()
+        body = (
+            f"Task: {task.title} (id {task.id})\n"
+            f"Run: {run.run_id} · status {run.status}\n"
+        )
+        if detail:
+            body += f"\n{detail[:400]}"
+        try:
+            await self.mirror_inbox_item(
+                self.inbox.add_run_issue(
+                    run.session_id,
+                    title,
+                    body=body,
+                    inbox=self.inbox_routing.route_for(run.session_id, task.agent),
+                    data={
+                        "run_id": run.run_id,
+                        "task_id": task.id,
+                        "task_title": task.title,
+                        "status": run.status,
+                        "error": run.error,
+                    },
+                )
+            )
+        except Exception:
+            # Never let the notification path tear down the run finalize.
+            pass
 
 
     def _validate_run(

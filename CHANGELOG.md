@@ -105,6 +105,14 @@ CHANGELOG 只记录用户可感知的变化和重要工程能力变化。
 - **行为变更**：`test_check_freshness_async_matches_sync` 的写大小从 1 字节改为 64 字节 —— Windows 上 same-length overwrite 可能不更新 mtime（fast path 据此正确判定 current，与 "真实无改动" 语义一致）。
 - **legacy 兼容**：旧 `sources.json` 没有 `mtime_ns`/`size_bytes` 字段时反序列化为 `None`，`_classify_against_disk` 走 sha256 兜底路径，行为与 P2 一致。
 
+#### P2 §7.2 Inbox 收敛 — Automation 异常进入统一待处理流 (ADR-006 续)
+
+- **`core/inbox.py` 新增 `KIND_RUN_ISSUE` kind**：一个 scheduled automation run 没有成功（error / validation_failed / skipped）时收口为 Inbox issue 项，进入统一 Inbox 队列（§7.2 §626 Inbox 收敛）。
+- **`InboxStore.add_run_issue(session_id, title, *, body, data, ...)`**：创建 `kind == KIND_RUN_ISSUE` 的 pending 项；`data` 携带 `{run_id, task_id, task_title, status, error}` 绑定。幂等：同一 `run_id` 的重复 add 复用同一项（`for_run` 查询按 run_id 去重）——一次 resume/重试不会堆叠重复 issue。
+- **`SessionManager._notify_task_issue(task, run)`**：`_run_scheduled_task` 的 `finally` 块里，run 结束时 `status != ok` 触发 —— error / validation_failed / skipped 的 run 都收口。`status == ok` 不触发（成功的 run 走原有的 `notify_on_completion`）。
+- **`tests/test_inbox_run_issue.py`**：9 个新测试覆盖契约——InboxStore 直接层（pending/幂等/无 run_id 每次新建/for_run/resolve/与 notification 区分）+ 管理器路径（error 与 validation_failed run 生成 issue、ok run 不生成、同 run 重驱动不重复）。
+- 设计契约：notification 路径永不 teardown 掉 run finalize（`_notify_task_issue` 内部 catch-all）；issue 的 `session_id` 是 run 自己的 continuable thread（用户可从 Inbox 卡片直接 reopen 那个 session 继续）。
+
 #### P3 §7.3 Context 完整能力 — 最小 Recovery Context (§4.5)
 
 - **`core/recovery.py`**：新模块。`RecoverySnapshot` dataclass（10 字段：schema / snapshot_at / run_id / session_id / phase / pending_tool_call / pending_inbox_item_id / last_event_seq / todo_summary / recent_artifacts / error）+ `RecoveryStore`（per-session JSON sidecar，write/get/clear/latest）。
