@@ -155,6 +155,7 @@ def register_run_artifacts(
                     "artifact.registered",
                     actor="system",
                     payload=a.to_dict(),
+                    workspace=workspace or None,
                 )
                 if not a.incomplete:
                     ledger.append(
@@ -162,6 +163,7 @@ def register_run_artifacts(
                         "artifact.completed",
                         actor="system",
                         payload={"path": a.path, "sha256": a.sha256, "size": a.size},
+                        workspace=workspace or None,
                     )
             except Exception:
                 # The artifact is in the return value; ledger is best-effort.

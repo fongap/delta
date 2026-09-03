@@ -82,9 +82,27 @@ class RunEventLedger:
                 actor TEXT NOT NULL DEFAULT 'system',
                 payload TEXT NOT NULL DEFAULT '{}',
                 prev_hash TEXT NOT NULL DEFAULT '',
-                hash TEXT NOT NULL
+                hash TEXT NOT NULL,
+                workspace TEXT
             )
             """)
+        # Per ADR-005 chain contract: ``workspace`` is a denormalized index
+        # hint for cross-workspace queries (e.g. P3 Run Analyzer) and is
+        # NOT part of the hash basis — adding the column is therefore
+        # backward compatible with rows written before the column
+        # existed (their chain still verifies). The migration below is
+        # idempotent: a fresh DB gets the column via CREATE TABLE; an
+        # existing DB gets it via ALTER TABLE once, then the OperationalError
+        # is swallowed on subsequent boots.
+        for ddl in (
+            "ALTER TABLE run_events ADD COLUMN workspace TEXT",
+            "CREATE INDEX IF NOT EXISTS idx_run_events_workspace "
+            "ON run_events(workspace, run_id, seq)",
+        ):
+            try:
+                self._conn.execute(ddl)
+            except sqlite3.OperationalError:
+                pass
         self._conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_run_events_run ON run_events(run_id, seq)"
         )
@@ -98,10 +116,20 @@ class RunEventLedger:
         actor: str = "system",
         payload: dict[str, Any] | None = None,
         ts: float | None = None,
+        workspace: str | None = None,
     ) -> dict[str, Any]:
         """Append one event, extending the run's hash chain. Returns the stored row.
         The payload is scrubbed through the shared sanitizer before it is hashed and
-        stored — the chain is computed over exactly what persists."""
+        stored — the chain is computed over exactly what persists.
+
+        ``workspace`` is a denormalized index hint recorded on the row so
+        the P3 Run Analyzer (and any other cross-workspace query) can
+        scope to a workspace without re-deriving it from
+        ``payload.workspace``. It is **not** part of the hash basis
+        (ADR-005: the chain is the durable fact; the column is a query
+        accelerator) — a row's workspace can be backfilled without
+        breaking ``verify()``.
+        """
         ts = time.time() if ts is None else ts
         from packages.sanitize import sanitize_payload
 
@@ -120,8 +148,8 @@ class RunEventLedger:
             digest = hashlib.sha256(basis.encode("utf-8")).hexdigest()
             self._conn.execute(
                 """
-                INSERT INTO run_events (run_id, seq, type, ts, actor, payload, prev_hash, hash)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO run_events (run_id, seq, type, ts, actor, payload, prev_hash, hash, workspace)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     run_id,
@@ -132,6 +160,7 @@ class RunEventLedger:
                     _canonical(stored_payload),
                     prev_hash,
                     digest,
+                    workspace,
                 ),
             )
         return {
@@ -143,6 +172,7 @@ class RunEventLedger:
             "payload": stored_payload or {},
             "prev_hash": prev_hash,
             "hash": digest,
+            "workspace": workspace,
         }
 
     def events(self, run_id: str) -> list[dict[str, Any]]:
@@ -213,7 +243,7 @@ class RunEventLedger:
 
     @staticmethod
     def _as_dict(r: sqlite3.Row) -> dict[str, Any]:
-        return {
+        d = {
             "run_id": r["run_id"],
             "seq": r["seq"],
             "type": r["type"],
@@ -223,3 +253,12 @@ class RunEventLedger:
             "prev_hash": r["prev_hash"],
             "hash": r["hash"],
         }
+        # workspace is NULL on rows written before ADR-007's column
+        # migration (§10.6 path: old → new). Report it as "" so callers
+        # never KeyError when filtering — the empty string is the same
+        # sentinel Analyzer._check_task_workspace rejects.
+        try:
+            d["workspace"] = r["workspace"] or ""
+        except (IndexError, KeyError):
+            d["workspace"] = ""
+        return d

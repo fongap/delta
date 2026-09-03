@@ -96,6 +96,7 @@ class IdempotencyLog:
         result: Any,
         *,
         ledger: "RunEventLedger | None" = None,
+        workspace: str | None = None,
     ) -> None:
         """Record that a side effect committed for `(run_id, tool_call_id)`.
 
@@ -138,6 +139,7 @@ class IdempotencyLog:
                         "tool": tool_name,
                         "args_sha256": sha,
                     },
+                    workspace=workspace or None,
                 )
             except Exception:
                 pass

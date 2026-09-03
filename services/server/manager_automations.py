@@ -116,7 +116,7 @@ class AutomationsMixin(ManagerHostState):
 
     async def _run_scheduled_task(self, task, trigger: str) -> TaskRun:
         run = TaskRun(
-            task_id=task.id, trigger=trigger
+            task_id=task.id, trigger=trigger, workspace=task.workspace or ""
         )  # __post_init__ sets run.session_id
         self.task_store.add_run(run)  # mark "running"
         # UX-026: tell every open app window a SCHEDULED run just started (the 5s
@@ -223,6 +223,7 @@ class AutomationsMixin(ManagerHostState):
                 "validation.passed" if result.ok else "validation.failed",
                 actor="system",
                 payload=result.to_dict(),
+                workspace=run.workspace or (task.workspace or None),
             )
         except Exception:
             pass
@@ -394,7 +395,7 @@ class AutomationsMixin(ManagerHostState):
             return {"ok": False, "error": "not found"}
         Path(task.workspace).mkdir(parents=True, exist_ok=True)
         run = TaskRun(
-            task_id=task.id, trigger="manual"
+            task_id=task.id, trigger="manual", workspace=task.workspace or ""
         )  # status "running", session_id auto
         self.task_store.add_run(run)
         return {
@@ -423,6 +424,11 @@ class AutomationsMixin(ManagerHostState):
         task = self.task_store.get(task_id)
         if run is None or task is None:
             return {"ok": False, "error": "not found"}
+        # Backfill the denormalized workspace column on rows written
+        # before the ADR-007 migration landed — every catchup / manual
+        # finalize gives us a chance to upgrade the row in place.
+        if not run.workspace and task.workspace:
+            run.workspace = task.workspace
         if run.status == "running":
             record = self.session_store.load(run.session_id)
             run.result_text = _last_assistant_text(record.messages) if record else None
