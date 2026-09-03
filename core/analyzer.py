@@ -181,22 +181,42 @@ class Analyzer:
 
     # -- run timeline ----------------------------------------------------------
 
-    def timeline_for_run(self, run_id: str) -> list[TimelineEntry]:
+    def timeline_for_run(
+        self, run_id: str, *, workspace: str | None = None
+    ) -> list[TimelineEntry]:
         """Return the run's end-to-end story, in event order.
 
-        Every row the ledger recorded for ``run_id`` becomes a
-        :class:`TimelineEntry`. We do not filter by event type here: the
-        closed vocabulary is ``KNOWN_EVENT_TYPES`` (ADR-005 WS1) and a
-        missing type surfaces in the UI exactly as the ledger stored it,
-        so future event types do not silently disappear from the
-        timeline.
+        When ``workspace`` is provided, the read is pushed to SQL
+        (``WHERE run_id = ? AND workspace = ?``) so the planner can use
+        the ``idx_run_events_workspace (workspace, run_id, seq)``
+        compound index (ADR-007 §10.6 step 1) instead of doing the
+        filter in Python after a full ledger read. Cross-workspace
+        reads are **not** an error: a run that exists under a different
+        workspace simply returns ``[]``, the same shape as "run not
+        found" — this avoids leaking whether the run exists at all to a
+        caller without the right scope, and keeps iteration over many
+        ``run_id``s cheap.
+
+        When ``workspace`` is ``None`` the full run is returned (legacy
+        pre-migration data, or a caller with explicit cross-workspace
+        intent). We deliberately do **not** silently fall back to
+        ``self.workspace`` — that would mask caller mistakes and make
+        the filter opt-out by accident.
+
+        We do not filter by event type here: the closed vocabulary is
+        ``KNOWN_EVENT_TYPES`` (ADR-005 WS1) and a missing type surfaces
+        in the UI exactly as the ledger stored it, so future event
+        types do not silently disappear from the timeline.
 
         The returned list is ordered by ``seq`` ascending and is a copy
         of the ledger's view; mutating it does not touch persistence.
         """
         if not run_id:
             raise ValueError("run_id is required")
-        events = self.ledger.events(run_id)
+        if workspace is not None:
+            events = self.ledger.events_in_workspace(run_id, workspace)
+        else:
+            events = self.ledger.events(run_id)
         return [
             TimelineEntry(
                 seq=row["seq"],
@@ -404,13 +424,18 @@ def timeline_for_run(
     run_id: str,
     ledger: RunEventLedger,
 ) -> list[TimelineEntry]:
-    """Module-level wrapper: one :meth:`Analyzer.timeline_for_run` call.
+    """Module-level wrapper: one :meth:`Analyzer.timeline_for_run` call
+    scoped to ``workspace``.
 
-    Callers that need more than one query should construct an
-    :class:`Analyzer` once and reuse it; the constructor only validates
-    ``workspace`` and is side-effect-free.
+    ``workspace`` is passed to the underlying SQL filter so the call
+    uses the ``idx_run_events_workspace`` compound index (ADR-007
+    §10.6 step 2). Callers that need more than one query should
+    construct an :class:`Analyzer` once and reuse it; the constructor
+    only validates ``workspace`` and is side-effect-free.
     """
-    return Analyzer(workspace=workspace, ledger=ledger).timeline_for_run(run_id)
+    return Analyzer(workspace=workspace, ledger=ledger).timeline_for_run(
+        run_id, workspace=workspace
+    )
 
 
 def automation_health(
