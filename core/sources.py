@@ -103,6 +103,13 @@ class SourceRef:
     captured_at: str = field(default_factory=_now)
     checked_at: str | None = None
     status: Literal["current", "changed", "missing"] = FRESH_CURRENT
+    # mtime / size at the moment the fingerprint was last confirmed.
+    # Used as a cheap pre-check before hashing the file again (P3 §7.3
+    # Source 索引失效 — mtime + size unchanged means content is
+    # unchanged, no need to re-sha256). ``None`` for non-file origins
+    # and for refs captured by older code that didn't record them.
+    mtime_ns: int | None = None
+    size_bytes: int | None = None
     # Per-run citations ({run_id, ranges}) linking runs → this source.
     cited_ranges: list[dict[str, Any]] = field(default_factory=list)
     # Which sessions/personas may cite it (optional, v1 free-form).
@@ -289,24 +296,44 @@ class SourceStore:
         p = Path(path)
         if not p.is_absolute() and ws:
             p = ws / p
-        fingerprint = _sha256(p.read_bytes())
+        data = p.read_bytes()
+        fingerprint = _sha256(data)
         location = self._location_for(p, ws)
+        # mtime / size at capture time — used as a cheap pre-check
+        # in the freshness index (P3 §7.3 Source 索引失效). A future
+        # check that sees the same (mtime_ns, size_bytes) doesn't need
+        # to re-hash the file to know nothing changed.
+        mtime_ns: int | None = None
+        size_bytes: int | None = None
+        try:
+            st = p.stat()
+            mtime_ns = getattr(st, "st_mtime_ns", None) or int(st.st_mtime * 1_000_000_000)
+            size_bytes = st.st_size
+        except OSError:
+            pass
         with self._lock:
             for ref in self._refs.values():
                 if ref.origin == ORIGIN_FILE and ref.location == location:
                     if ref.fingerprint == fingerprint:
                         ref.checked_at = _now()
                         ref.status = FRESH_CURRENT
+                        ref.mtime_ns = mtime_ns
+                        ref.size_bytes = size_bytes
                         self._save()
                         return ref
                     ref.status = FRESH_CHANGED
                     ref.checked_at = _now()
+                    ref.mtime_ns = mtime_ns
+                    ref.size_bytes = size_bytes
             ref = SourceRef(
                 id=uuid.uuid4().hex,
                 origin=ORIGIN_FILE,
                 location=location,
                 fingerprint=fingerprint,
+                captured_at=_now(),
                 checked_at=_now(),
+                mtime_ns=mtime_ns,
+                size_bytes=size_bytes,
                 permissions=dict(permissions or {}),
             )
             self._refs[ref.id] = ref
@@ -370,9 +397,16 @@ class SourceStore:
 
     # -- freshness --------------------------------------------------------------
     def check_freshness(self) -> list[SourceRef]:
-        """Re-hash every file-backed ref and surface drift: content differs → ``changed``,
+        """Re-check every file-backed ref and surface drift: content differs → ``changed``,
         unreadable → ``missing``, otherwise stay ``current``. Non-file origins are skipped
-        in v1 (their revalidation belongs to their connector)."""
+        in v1 (their revalidation belongs to their connector).
+
+        P3 §7.3 Source 索引失效: the implementation now uses an mtime +
+        size fast path. When the on-disk (mtime_ns, size_bytes) matches
+        the ref's last-seen values we know the content hasn't changed
+        and skip the sha256 entirely — the same content-currency
+        guarantee at a tiny fraction of the cost for large files.
+        """
         drifted: list[SourceRef] = []
         now = _now()
         with self._lock:
@@ -380,11 +414,20 @@ class SourceStore:
                 if ref.origin != ORIGIN_FILE:
                     continue
                 p = self._resolve(ref.location)
-                try:
-                    matches = _sha256(p.read_bytes()) == ref.fingerprint
-                    new_status = FRESH_CURRENT if matches else FRESH_CHANGED
-                except OSError:
-                    new_status = FRESH_MISSING
+                new_status = self._classify_against_disk(ref, p)
+                if new_status == FRESH_CURRENT and ref.mtime_ns is not None:
+                    # Refresh the cached stat so the next pass can keep
+                    # skipping the hash (mostly a no-op; matters on
+                    # filesystems with mtime granularity finer than
+                    # the capture's call to stat()).
+                    try:
+                        st = p.stat()
+                        ref.mtime_ns = getattr(st, "st_mtime_ns", None) or int(
+                            st.st_mtime * 1_000_000_000
+                        )
+                        ref.size_bytes = st.st_size
+                    except OSError:
+                        pass
                 if new_status != FRESH_CURRENT:
                     drifted.append(ref)
                 ref.status = new_status
@@ -395,6 +438,103 @@ class SourceStore:
     async def check_freshness_async(self) -> list[SourceRef]:
         """The background-check entry point: runs never block on freshness."""
         return await asyncio.to_thread(self.check_freshness)
+
+    @staticmethod
+    def _classify_against_disk(ref: SourceRef, p: Path) -> Literal["current", "changed", "missing"]:
+        """One ref vs one file path: mtime fast path → sha256 → missing.
+
+        Order of checks:
+
+        1. ``stat()`` fails → ``missing``.
+        2. ``(mtime_ns, size_bytes)`` unchanged from the last successful
+           pass → ``current`` without reading bytes. Cheap; common
+           case for stable files.
+        3. mtime/size differ → re-hash and compare. Equal hash means
+           ``current`` (the file was rewritten with identical content
+           — possible after a ``touch``/restore). Differing hash means
+           ``changed``.
+        4. mtime/size not recorded (older refs, non-file origins) →
+           always re-hash. The legacy behavior is preserved.
+        """
+        try:
+            st = p.stat()
+        except OSError:
+            return FRESH_MISSING
+        current_mtime_ns = getattr(st, "st_mtime_ns", None) or int(
+            st.st_mtime * 1_000_000_000
+        )
+        current_size = st.st_size
+        if (
+            ref.mtime_ns is not None
+            and ref.size_bytes is not None
+            and ref.mtime_ns == current_mtime_ns
+            and ref.size_bytes == current_size
+        ):
+            return FRESH_CURRENT
+        try:
+            matches = _sha256(p.read_bytes()) == ref.fingerprint
+        except OSError:
+            return FRESH_MISSING
+        return FRESH_CURRENT if matches else FRESH_CHANGED
+
+    def reindex_stale(self, force: bool = False) -> list[SourceRef]:
+        """Targeted freshness re-check for the refs that have actually
+        drifted (P3 §7.3 Source 索引失效).
+
+        Walks every file-backed ref and uses the mtime fast path; only
+        refs whose (mtime, size) shifted OR whose ``status`` is not
+        ``current`` get a sha256 check. ``force=True`` skips the
+        mtime optimization and rehashes everything (use after a
+        restore / git checkout that rewrote files with their original
+        mtimes).
+
+        Returns the list of refs whose status flipped to
+        ``changed`` or ``missing`` in this pass. Refs that stayed
+        ``current`` (mtime fast path or hash match) are not in the
+        return value.
+        """
+        drifted: list[SourceRef] = []
+        now = _now()
+        with self._lock:
+            for ref in self._refs.values():
+                if ref.origin != ORIGIN_FILE:
+                    continue
+                p = self._resolve(ref.location)
+                if force:
+                    # Skip the mtime fast path; always hash.
+                    try:
+                        st = p.stat()
+                    except OSError:
+                        new_status = FRESH_MISSING
+                    else:
+                        try:
+                            matches = _sha256(p.read_bytes()) == ref.fingerprint
+                        except OSError:
+                            new_status = FRESH_MISSING
+                        else:
+                            new_status = FRESH_CURRENT if matches else FRESH_CHANGED
+                        ref.mtime_ns = getattr(st, "st_mtime_ns", None) or int(
+                            st.st_mtime * 1_000_000_000
+                        )
+                        ref.size_bytes = st.st_size
+                else:
+                    new_status = self._classify_against_disk(ref, p)
+                    if new_status == FRESH_CURRENT:
+                        try:
+                            st = p.stat()
+                            ref.mtime_ns = getattr(st, "st_mtime_ns", None) or int(
+                                st.st_mtime * 1_000_000_000
+                            )
+                            ref.size_bytes = st.st_size
+                        except OSError:
+                            pass
+                if new_status != ref.status:
+                    ref.status = new_status
+                if new_status != FRESH_CURRENT:
+                    drifted.append(ref)
+                ref.checked_at = now
+            self._save()
+        return drifted
 
     # -- citation validity (P3 §7.3 Source 完整能力) ----------------------------
     # Status (current / changed / missing) tells you whether the bytes
