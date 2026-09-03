@@ -21,10 +21,13 @@ from packages.jsonstate import load_json_state, save_json_state
 
 DEFAULT_INBOX = "default"
 # Embeds the item id in a delivered message. Write direction: `[d:<id>]`
-# (Delta brand). Parse direction: still accepts `[d:…]` (current), `[ow:…]`
-# (OpenWorker rebrand 2026-07-22), and `[ocw:…]` (legacy before that rebrand)
-# so replies to old messages still resolve.
-_ID_TOKEN = re.compile(r"\[(?:d|ow|ocw):([0-9a-f]{6,})\]")
+# (Delta brand). Parse direction: accepts only `[d:…]` — the OpenWorker-era
+# `[ow:…]` (rebrand 2026-07-22) and `[ocw:…]` aliases were removed in P2:
+# the rebrand has settled and shipping two parse paths for years of legacy
+# tokens made the module longer without buying real compatibility (any user
+# who still has an old approval in flight can refresh the inbox; old items
+# never had a real action pending).
+_ID_TOKEN = re.compile(r"\[d:([0-9a-f]{6,})\]")
 
 
 @dataclass
@@ -149,12 +152,10 @@ def resolve_from_reply(
 ) -> bool | None:
     """Correlate an inbound channel reply to its item (by the embedded id) and resolve it.
 
-    Looks for the ``[d:<id>]`` token (current write form), the legacy ``[ow:…]``
-    spelling (OpenWorker rebrand 2026-07-22), and the original ``[ocw:…]``
-    spelling, then an allow/deny intent in the reply's leading word; falls back
-    to treating the whole message as a free-text answer. ``resolve(item_id,
-    resolution)`` is the InboxStore.resolve. Returns the resolve() result, or
-    None if no item id was found."""
+    Looks for the ``[d:<id>]`` token, then an allow/deny intent in the reply's
+    leading word; falls back to treating the whole message as a free-text
+    answer. ``resolve(item_id, resolution)`` is the InboxStore.resolve. Returns
+    the resolve() result, or None if no item id was found."""
     m = _ID_TOKEN.search(reply or "")
     if not m:
         return None

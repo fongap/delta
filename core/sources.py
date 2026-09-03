@@ -42,6 +42,58 @@ def _sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
+# -- CitationRange schema -------------------------------------------------------
+# A Source is useful only if a run can be located back to it. The locator shape
+# depends on the source kind — text files have lines, PDFs have pages,
+# spreadsheets have sheets/rows/cells, chat imports have message ids. We use a
+# discriminator (`kind`) so each reader emits the locator shape it actually
+# understands and the UI renders the right pointer. `kind: "custom"` is the
+# escape hatch for connectors that need to preserve their own descriptor.
+KIND_LINES = "lines"
+KIND_PAGE = "page"
+KIND_CELLS = "cells"
+KIND_ROW = "row"
+KIND_COLUMN = "column"
+KIND_SHEET = "sheet"
+KIND_MESSAGE_ID = "message_id"
+KIND_CUSTOM = "custom"
+
+_KINDS: tuple[str, ...] = (
+    KIND_LINES,
+    KIND_PAGE,
+    KIND_CELLS,
+    KIND_ROW,
+    KIND_COLUMN,
+    KIND_SHEET,
+    KIND_MESSAGE_ID,
+    KIND_CUSTOM,
+)
+
+# Per-kind allowed fields, used to drop irrelevant entries from the
+# canonical-form payload. ``CitationRange`` is intentionally a wide carrier
+# (one class describes all kinds), but the persisted shape is the minimum
+# needed to render the locator for the chosen kind — extra fields would
+# only confuse downstream readers and burn storage.
+_KIND_FIELDS: dict[str, tuple[str, ...]] = {
+    KIND_LINES: ("start", "end"),
+    KIND_PAGE: ("page", "page_end"),
+    KIND_CELLS: (
+        "sheet",
+        "row_start",
+        "row_end",
+        "col_start",
+        "col_end",
+        "cell_start",
+        "cell_end",
+    ),
+    KIND_ROW: ("sheet", "row_start", "row_end"),
+    KIND_COLUMN: ("sheet", "col_start", "col_end"),
+    KIND_SHEET: ("sheet", "row_start", "row_end", "col_start", "col_end"),
+    KIND_MESSAGE_ID: ("message_id",),
+    KIND_CUSTOM: ("descriptor",),
+}
+
+
 @dataclass
 class SourceRef:
     id: str
@@ -55,6 +107,132 @@ class SourceRef:
     cited_ranges: list[dict[str, Any]] = field(default_factory=list)
     # Which sessions/personas may cite it (optional, v1 free-form).
     permissions: dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class CitationRange:
+    """Typed locator for a run's reference into a source.
+
+    Each kind pins the data needed to scroll a viewer back to the exact spot:
+    text files use line ranges; PDFs use page numbers; spreadsheets use cell
+    ranges with optional sheet/row/column axes; chat connectors use message
+    ids; anything else falls under ``custom`` with an opaque descriptor.
+    ``to_range_dict`` validates and serializes — invalid input raises
+    ``ValueError`` so the run never persists garbage it can't render.
+    """
+
+    kind: str
+    # Text / log line ranges (1-based, inclusive).
+    start: int | None = None
+    end: int | None = None
+    # Page-based locators (PDF, slide decks).
+    page: int | None = None
+    page_end: int | None = None
+    # Spreadsheet axes (optional sheet/row/column; cell range is row1/row2/col1/col2).
+    sheet: str | None = None
+    row_start: int | None = None
+    row_end: int | None = None
+    col_start: int | None = None
+    col_end: int | None = None
+    cell_start: str | None = None
+    cell_end: str | None = None
+    # Chat / connector message id.
+    message_id: str | None = None
+    # Free-form descriptor for ``kind: "custom"``.
+    descriptor: dict[str, Any] | None = None
+
+
+def to_range_dict(value: Any) -> dict[str, Any]:
+    """Validate and serialize a CitationRange (or already-dict) into a citation dict.
+
+    Returns the canonical shape to append to ``SourceRef.cited_ranges``. Raises
+    ``ValueError`` for an unknown kind, an incomplete shape for the kind, or a
+    non-int where one is required — so the run never persists a citation the
+    UI cannot render. Only fields relevant to the chosen kind are kept; extra
+    fields on a ``CitationRange`` (a wide carrier for ergonomics) and on
+    already-dict input are dropped so the persisted shape round-trips.
+    """
+    if isinstance(value, CitationRange):
+        kind = value.kind
+        candidate: dict[str, Any] = {
+            "start": value.start,
+            "end": value.end,
+            "page": value.page,
+            "page_end": value.page_end,
+            "sheet": value.sheet,
+            "row_start": value.row_start,
+            "row_end": value.row_end,
+            "col_start": value.col_start,
+            "col_end": value.col_end,
+            "cell_start": value.cell_start,
+            "cell_end": value.cell_end,
+            "message_id": value.message_id,
+            "descriptor": value.descriptor,
+        }
+    elif isinstance(value, dict):
+        kind = value.get("kind")
+        if not isinstance(kind, str):
+            raise ValueError("citation range dict must include a 'kind' string")
+        candidate = {k: v for k, v in value.items() if k != "kind"}
+    else:
+        raise ValueError(
+            f"citation range must be a CitationRange or dict, got {type(value).__name__}"
+        )
+
+    if kind not in _KINDS:
+        raise ValueError(f"unknown citation kind: {kind!r}")
+
+    allowed = _KIND_FIELDS[kind]
+    payload: dict[str, Any] = {"kind": kind}
+    for field_name in allowed:
+        v = candidate.get(field_name)
+        if v is not None:
+            payload[field_name] = v
+
+    if kind == KIND_LINES:
+        if not any(payload.get(k) is not None for k in ("start", "end")):
+            raise ValueError("lines citation needs at least one of start/end")
+        for k in ("start", "end"):
+            v = payload.get(k)
+            if v is not None and not isinstance(v, int):
+                raise ValueError(f"lines citation {k} must be int, got {type(v).__name__}")
+    elif kind == KIND_PAGE:
+        if not any(payload.get(k) is not None for k in ("page", "page_end")):
+            raise ValueError("page citation needs at least one of page/page_end")
+        for k in ("page", "page_end"):
+            v = payload.get(k)
+            if v is not None and not isinstance(v, int):
+                raise ValueError(f"page citation {k} must be int, got {type(v).__name__}")
+    elif kind in (KIND_CELLS, KIND_ROW, KIND_COLUMN, KIND_SHEET):
+        for k in ("row_start", "row_end", "col_start", "col_end"):
+            v = payload.get(k)
+            if v is not None and not isinstance(v, int):
+                raise ValueError(
+                    f"{kind} citation {k} must be int, got {type(v).__name__}"
+                )
+        if kind == KIND_SHEET and not payload.get("sheet"):
+            raise ValueError("sheet citation needs a 'sheet' name")
+    elif kind == KIND_MESSAGE_ID:
+        if not payload.get("message_id"):
+            raise ValueError("message_id citation needs a 'message_id'")
+    elif kind == KIND_CUSTOM:
+        if not isinstance(payload.get("descriptor"), dict):
+            raise ValueError("custom citation needs a 'descriptor' dict")
+
+    return payload
+
+
+def normalize_cited_ranges(
+    ranges: list[Any] | None,
+) -> list[dict[str, Any]]:
+    """Validate a whole citation list. Same error contract as ``to_range_dict``.
+
+    Empty / None input returns an empty list — not an error, so callers can
+    safely call this with no-op citations.
+    """
+    if not ranges:
+        return []
+    return [to_range_dict(r) for r in ranges]
 
 
 class SourceStore:
@@ -160,15 +338,35 @@ class SourceStore:
         return refs[-1] if refs else None
 
     # -- citations --------------------------------------------------------------
-    def mark_cited(self, ref_id: str, run_id: str, ranges: list) -> bool:
-        """Attach a run's citation ranges (pages / rows / message ids) to a source."""
+    def mark_cited(
+        self, ref_id: str, run_id: str, ranges: list[Any]
+    ) -> bool:
+        """Attach a run's citation ranges (pages / rows / message ids) to a source.
+
+        ``ranges`` is a list of :class:`CitationRange` or matching dicts; each
+        entry is validated via :func:`normalize_cited_ranges` and stored in
+        canonical form. A bad entry raises ``ValueError`` *before* any
+        mutation so a partially-applied citation can never be persisted.
+        """
+        normalized = normalize_cited_ranges(ranges)
         with self._lock:
             ref = self._refs.get(ref_id)
             if ref is None:
                 return False
-            ref.cited_ranges.append({"run_id": run_id, "ranges": list(ranges)})
+            ref.cited_ranges.append({"run_id": run_id, "ranges": normalized})
             self._save()
             return True
+
+    def add_citation(
+        self,
+        ref_id: str,
+        run_id: str,
+        range: CitationRange | dict[str, Any],
+    ) -> bool:
+        """Single-citation convenience. Same contract as ``mark_cited`` but takes
+        one range so readers (PDF, XLSX, ``read_file``) can cite without
+        building a list. Validates and appends."""
+        return self.mark_cited(ref_id, run_id, [range])
 
     # -- freshness --------------------------------------------------------------
     def check_freshness(self) -> list[SourceRef]:
@@ -200,7 +398,14 @@ class SourceStore:
 
 
 def to_dto(ref: SourceRef) -> dict[str, Any]:
-    """Contract-side view (SourceDTO) so UI can render provenance without filesystem access."""
+    """Contract-side view (SourceDTO) so UI can render provenance without filesystem access.
+
+    Surfaces ``location`` and ``cited_ranges`` (P2 add) so the UI can show
+    where a source lives and which runs / ranges have referenced it. Older
+    consumers that ignore the new fields keep working because
+    ``ContractModel(extra="allow")`` and the optional / defaulted types
+    above are forward-compatible.
+    """
     from services.server.contracts import SourceDTO
 
     return SourceDTO(
@@ -209,4 +414,6 @@ def to_dto(ref: SourceRef) -> dict[str, Any]:
         name=Path(ref.location).name or ref.location,
         fingerprint_prefix=ref.fingerprint[:12],
         freshness=ref.status,
+        location=ref.location,
+        cited_ranges=list(ref.cited_ranges),
     ).model_dump()

@@ -6,10 +6,12 @@ import asyncio
 import hashlib
 
 from core.sources import (
+    KIND_PAGE,
     FRESH_CHANGED,
     FRESH_CURRENT,
     FRESH_MISSING,
     ORIGIN_FILE,
+    CitationRange,
     SourceStore,
     to_dto,
 )
@@ -95,12 +97,19 @@ def test_mark_cited_and_persistence(tmp_path):
     f.write_bytes(b"pdf")
     store = SourceStore(tmp_path / "sources.json", workspace=tmp_path)
     ref = store.capture_file(f)
-    assert store.mark_cited(ref.id, "run-1", [{"page": 2}]) is True
+    assert (
+        store.mark_cited(
+            ref.id, "run-1", [CitationRange(kind=KIND_PAGE, page=2)]
+        )
+        is True
+    )
     assert store.mark_cited("nope", "run-1", []) is False
 
     reloaded = SourceStore(tmp_path / "sources.json", workspace=tmp_path)
     got = reloaded.get(ref.id)
-    assert got.cited_ranges == [{"run_id": "run-1", "ranges": [{"page": 2}]}]
+    assert got.cited_ranges == [
+        {"run_id": "run-1", "ranges": [{"kind": "page", "page": 2}]}
+    ]
 
 
 def test_list_filters_and_latest(tmp_path):
@@ -142,6 +151,7 @@ def test_source_dto_contract():
                 "location": "docs/report.csv",
                 "fingerprint": "0123456789abcdef",
                 "status": "current",
+                "cited_ranges": [],
             },
         )()
     )
@@ -150,9 +160,13 @@ def test_source_dto_contract():
     assert dto["name"] == "report.csv"
     assert dto["fingerprint_prefix"] == "0123456789ab"
     assert dto["freshness"] == "current"
+    assert dto["location"] == "docs/report.csv"
+    assert dto["cited_ranges"] == []
 
     # The contract itself validates shape and defaults.
     parsed = SourceDTO(
         id="x", origin="url", name="Page", fingerprint_prefix="deadbeef"
     )
     assert parsed.freshness == "current"
+    assert parsed.location is None
+    assert parsed.cited_ranges == []

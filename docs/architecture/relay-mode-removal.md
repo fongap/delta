@@ -25,7 +25,7 @@
 | 删除 `test_slack_relay.py` 整文件 | `tests/test_slack_relay.py` | ✓ `git rm` |
 | 重写 `test_team_allowlist.py` / `test_github_installs.py` / `test_sender_attribution.py` | 三个文件 | ✓ 改为 manual mode 路径 |
 | 修改 `test_send_target_resolution.py` / `test_slack_approval_owners.py` / `test_connectors.py` | 三个文件 | ✓ 删除 relay-only 测试 + 替换 `managed_connect_*` 调用为 `secrets.put(...)` |
-| Inbox token 写方向 `[ow:…]` → `[d:…]` | `core/inbox_routing.py:113` / `services/server/manager_gateway.py:185` | ✓ 写方向破坏性变更；parse 仍接受 `[d:…]` / `[ow:…]` / `[ocw:…]` |
+| Inbox token 写方向 `[ow:…]` → `[d:…]` | `core/inbox_routing.py:113` / `services/server/manager_gateway.py:185` | ✓ 写方向破坏性变更；P2 同时终止 parse 兼容，只接受 `[d:…]` |
 | 注释同步更新到 Delta（@OpenWorker → @Delta, [ow:id] → [d:id]） | `core/interactions.py` / `core/subscriptions.py` / `services/server/manager_gateway.py:405` | ✓ |
 | 更新 `pyproject.toml` 注释 | `pyproject.toml:24` | ✓ `websockets` 注释更新 |
 | 更新 `packaging/server/delta-server.spec` 注释 | `packaging/server/delta-server.spec:100` | ✓ |
@@ -43,4 +43,5 @@
 * 未来 Federation Adapter（如 OpenWorker）若实现，位于
   `integrations/managed/adapters/<provider>.py`，与 Capability Port 并列
 * 不再维护"两套实现"（manual + relay）；relay 路径一旦清理完成即删除
-* 旧 `[ow:…]` / `[ocw:…]` 解析兼容是显式承诺，可由 P2 决定是否终止
+* 旧 `[ow:…]` / `[ocw:…]` 解析兼容已在 P2 终止（`core/inbox_routing.py:_ID_TOKEN`
+  只匹配 `[d:…]`）；写方向历史在 git 记录中保留
