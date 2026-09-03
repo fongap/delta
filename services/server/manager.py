@@ -160,6 +160,12 @@ class SessionManager(
         self._mcp_errors: dict[str, str] = {}
         self.gateway: Gateway | None = None
         self._data_base = base
+        # P2 实用 (DELTA_BLUEPRINT §7.2): per-workspace Source ledgers, kept
+        # alongside the run ledger so sources follow the workspace. LRU-ish —
+        # bounded by the number of workspaces the user has touched this
+        # session; eviction is on process restart, which is fine because the
+        # state is reloaded from disk on next access.
+        self._source_stores: dict[str, Any] = {}
         # Desktop/UI prefs (default model, onboarding state) — not secrets; a plain JSON file.
         self._prefs = self._load_prefs()
         migration = migrate_legacy_provider_profiles(self.secrets, self._prefs)
@@ -258,6 +264,35 @@ class SessionManager(
             runtime.shutdown_executor()
         self.audit_store.close()
 
+
+    def source_store_for(self, workspace: str | None, *, run_id: str | None) -> Any | None:
+        """P2 实用 — return the per-workspace :class:`core.sources.SourceStore`,
+        creating + caching it on first use.
+
+        The store lives at ``<workspace>/.delta/sources.json`` (parallel to
+        ``run-events.db`` and ``side-effects.db``), so the run ledger and the
+        source ledger are restored together. Returns None when no workspace
+        is bound (chat sessions) — readers fall back to no-op citations.
+
+        ``run_id`` is not used to key the store (sources are per-workspace,
+        not per-run — a ref survives the run that captured it). It's part
+        of the signature so the caller can pass it through the same kwargs
+        the engine sees, with no special-casing.
+        """
+        del run_id  # signature symmetry only
+        if not workspace:
+            return None
+        cached = self._source_stores.get(workspace)
+        if cached is not None:
+            return cached
+        from core.sources import SourceStore
+
+        ws_path = Path(workspace).expanduser()
+        base = ws_path / ".delta"
+        base.mkdir(parents=True, exist_ok=True)
+        store = SourceStore(base / "sources.json", workspace=ws_path)
+        self._source_stores[workspace] = store
+        return store
 
     def fetch_models(
         self, alias: str, fields: dict[str, Any] | None, timeout: float = 10.0

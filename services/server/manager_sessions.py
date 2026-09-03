@@ -196,6 +196,13 @@ class SessionsMixin(ManagerHostState):
             # ADR-005 WS4: side-effect idempotency so a crash between
             # `_execute_sync` and `_record_result` does not replay writes.
             idem_log=self.idem_log,
+            # P2 实用: file/connector readers auto-cite successful reads to
+            # the per-workspace Source ledger. None when the agent doesn't
+            # bind a workspace (chat) — readers fall back to no-op citations.
+            # The run_id is resolved from runscope at call time (the adapter
+            # sets it on every driven turn, including the first message), so
+            # the engine build doesn't need to know it yet.
+            source_store=self.source_store_for(ws, run_id=None),  # type: ignore[attr-defined]
         )
         # Wrap into the RuntimePort immediately: every later touch (task grants,
         # mention rules, persistence, turn driving) goes through the port surface.

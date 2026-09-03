@@ -99,6 +99,15 @@ class AutomationsMixin(ManagerHostState):
             # ADR-005 WS4: scheduled tasks are exactly where the
             # crash-after-side-effect window matters (long unattended runs).
             idem_log=self.idem_log,
+            # P2 实用: the source ledger flows into readers so every
+            # successful read auto-cites the run with a typed locator. The
+            # store lives in the same per-workspace data dir as the run
+            # artifacts (workspaces can mix-and-match without colliding).
+            # ``run_id`` is the G1 single identity (ADR-005): the same id
+            # the TaskRun / ledger / artifact / idemlog already share, so
+            # the citation joins the same run trail as the rest.
+            source_store=self.source_store_for(task.workspace, run_id=run_id),  # type: ignore[attr-defined]
+            run_id=run_id,
         )
         runtime = self._bind_runtime(engine, session_id, run_id=run_id)
         self._seed_task_permissions(runtime, task)

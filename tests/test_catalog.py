@@ -24,6 +24,7 @@ CODE_TOOLS = {
     "apply_patch",
     "replace_in_file",
     "read_file",  # numbered/windowed (single-root)
+    "read_document",  # P2 实用: PDF / XLSX / DOCX with typed citations
     "git_status",
     "git_diff",
     "git_log",

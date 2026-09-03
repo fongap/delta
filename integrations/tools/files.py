@@ -60,27 +60,24 @@ def _make_citer(
 
     Imported here (not at module top) so the SourceStore / CitationRange
     modules stay optional dependencies for callers that don't use the
-    auto-cite hook.
+    auto-cite hook. The actual capture+cite is delegated to
+    :func:`core.citation.cite` so every reader (text, PDF, XLSX, ...) goes
+    through the same chokepoint.
     """
-    from core.sources import CitationRange, KIND_LINES
+    from core.citation import cite
+    from core.sources import KIND_LINES, CitationRange
 
     def _cite(target: Path, start_line: int, end_line: int) -> None:
-        try:
-            ref = source_store.capture_file(target, workspace=root)
-        except OSError:
-            # The file was readable a moment ago; capture is best-effort so a
-            # transient re-read failure never breaks the tool's return value.
-            return
         # An empty window (start > end, e.g. an empty file or a read past the
-        # last line) is still a successful "I read this file" event 鈥?record
+        # last line) is still a successful "I read this file" event — record
         # just the start so the UI can show the file was opened.
         if end_line < start_line:
-            range_obj = CitationRange(kind=KIND_LINES, start=start_line)
+            range_obj: CitationRange = CitationRange(kind=KIND_LINES, start=start_line)
         else:
             range_obj = CitationRange(
                 kind=KIND_LINES, start=start_line, end=end_line
             )
-        source_store.add_citation(ref.id, run_id, range_obj)
+        cite(source_store, run_id, target, range_obj, workspace=root)
 
     return _cite
 
@@ -93,11 +90,11 @@ def file_tools(
 ) -> list:
     """Build the read_file tool bound to a workspace.
 
-    ``source_store`` + ``run_id`` are an opt-in audit hook (P2 瀹炵敤): every
+    ``source_store`` + ``run_id`` are an opt-in audit hook (P2 实用): every
     successful read is captured as a :class:`SourceRef` and cited under the
     run with a ``lines`` range covering the read window. Callers that don't
     pass them (e.g. existing tests, ad-hoc callers) get the original
-    behavior unchanged 鈥?the hook is purely additive.
+    behavior unchanged — the hook is purely additive.
     """
     root = Path(workspace).resolve()
     _cite = _make_citer(root, source_store, run_id) if source_store and run_id else None
