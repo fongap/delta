@@ -182,6 +182,42 @@ class RunEventLedger:
         ).fetchall()
         return [self._as_dict(r) for r in rows]
 
+    def events_in_workspace(
+        self, run_id: str, workspace: str
+    ) -> list[dict[str, Any]]:
+        """Read the run's events filtered by ``workspace``.
+
+        Returns the same shape as :meth:`events` but only rows whose
+        ``workspace`` column equals the bound ``workspace``. Pushed to
+        SQL so the planner can use the ``idx_run_events_workspace
+        (workspace, run_id, seq)`` compound index (added in ADR-007
+        §10.6 step 1) instead of doing the filter in Python after a
+        full ledger read.
+
+        ``workspace=""`` matches rows whose column is NULL (the legacy
+        pre-migration state, which ``_as_dict`` reports as ``""``) —
+        the SQL ``=`` on NULL would otherwise be a no-match. We translate
+        the empty-string sentinel to ``IS NULL`` so callers asking
+        "show me the pre-migration events" still get them.
+        """
+        if workspace:
+            rows = self._conn.execute(
+                "SELECT * FROM run_events "
+                "WHERE run_id = ? AND workspace = ? ORDER BY seq",
+                (run_id, workspace),
+            ).fetchall()
+        else:
+            # Empty string → NULL on disk (legacy rows); the column's
+            # default semantics treat "" and NULL as the same "no
+            # workspace" sentinel in the Python view.
+            rows = self._conn.execute(
+                "SELECT * FROM run_events "
+                "WHERE run_id = ? AND (workspace IS NULL OR workspace = '') "
+                "ORDER BY seq",
+                (run_id,),
+            ).fetchall()
+        return [self._as_dict(r) for r in rows]
+
     def runs(self) -> list[str]:
         rows = self._conn.execute(
             "SELECT DISTINCT run_id FROM run_events ORDER BY rowid"
