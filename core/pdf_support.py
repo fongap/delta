@@ -22,6 +22,7 @@ import base64
 import hashlib
 import io
 import logging
+from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -195,6 +196,58 @@ def rasterize(file_data: str, max_pages: int = RASTER_MAX_PAGES) -> list[str] | 
             return None
 
     return _cached((_digest(file_data), f"images:{max_pages}"), compute)
+
+
+def rasterize_file(
+    path: Path, page_indices: set[int] | None = None, max_pages: int = RASTER_MAX_PAGES
+) -> dict[int, str] | None:
+    """Render specific pages of a PDF file to PNG data URLs.
+
+    Unlike :func:`rasterize` (which takes a data URL), this works on a
+    file path directly -- used by ``read_document`` when pypdf's text
+    extraction comes back empty (scanned PDFs).
+
+    Args:
+        path: PDF file on disk.
+        page_indices: 1-based page numbers to render. ``None`` = all pages
+            (up to ``max_pages``).
+        max_pages: hard ceiling.
+
+    Returns:
+        ``{page_number: png_data_url}`` dict, or ``None`` when rendering
+        isn't possible (pypdfium2 missing or the document is broken).
+    """
+    try:
+        import pypdfium2
+
+        doc = pypdfium2.PdfDocument(str(path))
+        pages: dict[int, str] = {}
+        try:
+            total = len(doc)
+            indices = sorted(page_indices) if page_indices else range(1, total + 1)
+            count = 0
+            for page_no in indices:
+                if page_no < 1 or page_no > total:
+                    continue
+                if count >= max_pages:
+                    break
+                bitmap = doc[page_no - 1].render(scale=RASTER_SCALE, rev_byteorder=True)
+                png = _encode_png(
+                    bitmap.width,
+                    bitmap.height,
+                    bytes(bitmap.buffer),
+                    bitmap.stride,
+                    bitmap.n_channels,
+                )
+                encoded = base64.b64encode(png).decode("ascii")
+                pages[page_no] = f"data:image/png;base64,{encoded}"
+                count += 1
+        finally:
+            doc.close()
+        return pages or None
+    except Exception:
+        logger.warning("pdf file rasterization failed", exc_info=True)
+        return None
 
 
 def adapt_content(content: list[dict[str, Any]], caps: Any) -> list[dict[str, Any]]:

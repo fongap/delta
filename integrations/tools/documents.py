@@ -78,20 +78,40 @@ _SCHEMA = {
 def _read_pdf(target: Path) -> list[dict[str, Any]]:
     """PDF: lazy import pypdf; one block per page; text-extraction fallback.
 
-    Scanned PDFs legitimately come back as empty strings — the run
-    citation still records the page number so the UI can offer to render
-    that page as an image via pdf_support.rasterize later.
+    When pypdf's text extraction comes back empty (scanned PDFs — image-based
+    pages with no embedded text), the page is rasterized via
+    ``pdf_support.rasterize_file`` and the PNG data URL is included in the
+    block's ``image`` field. The cite hook still records the page number.
     """
     from pypdf import PdfReader
 
     reader = PdfReader(str(target))
     blocks: list[dict[str, Any]] = []
+    empty_pages: set[int] = set()
     for i, page in enumerate(reader.pages, start=1):
         try:
             text = page.extract_text() or ""
         except Exception:  # pypdf raises varied; surface as empty
             text = ""
+        if not text:
+            empty_pages.add(i)
         blocks.append({"index": i - 1, "page": i, "text": text[:_MAX_BLOCK_CHARS]})
+
+    if empty_pages:
+        from core.pdf_support import rasterize_file
+
+        images = rasterize_file(target, page_indices=empty_pages)
+        if images:
+            for block in blocks:
+                page_no = block["page"]
+                if page_no in images and not block["text"]:
+                    block["scanned"] = True
+                    block["image"] = images[page_no]
+                    block["text"] = (
+                        f"[scanned page {page_no} -- no extractable text; "
+                        f"page rendered as image]"
+                    )
+
     return blocks
 
 
@@ -259,17 +279,21 @@ def document_tools(
 
         # block=None → summary; an int → the requested block + a typed citation.
         if block is None or block < 0 or block >= len(blocks):
+            summary_blocks = [
+                {
+                    "index": b.get("index"),
+                    "label": _block_label(kind, b),
+                }
+                for b in blocks
+            ]
+            for sb, b in zip(summary_blocks, blocks):
+                if b.get("scanned"):
+                    sb["scanned"] = True
             return {
                 "path": str(target.relative_to(root)),
                 "kind": kind,
                 "block_count": len(blocks),
-                "blocks": [
-                    {
-                        "index": b.get("index"),
-                        "label": _block_label(kind, b),
-                    }
-                    for b in blocks
-                ],
+                "blocks": summary_blocks,
             }
 
         chosen = blocks[block]
