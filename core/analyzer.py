@@ -178,10 +178,6 @@ class Analyzer:
         self.ledger = ledger
         self.task_store = task_store
         self.source_store = source_store
-        # Optional cache of per-workspace task ids; populated lazily by
-        # _workspace_task_ids so callers can pre-filter before
-        # automation_health.
-        self._workspace_task_ids: set[str] | None = None
 
     # -- run timeline ----------------------------------------------------------
 
@@ -337,25 +333,6 @@ class Analyzer:
                 f"task {task.id!r} is bound to {task.workspace!r}, "
                 f"analyzer is scoped to {self.workspace!r}"
             )
-
-    def _workspace_task_ids(self) -> set[str]:
-        """Cached set of task ids that belong to ``self.workspace``.
-
-        Used by callers that need to filter cross-workspace queries
-        before they happen; not consumed by the public query methods
-        themselves (those pass ``task_id`` explicitly), but exposed for
-        tests and future Analysis surfaces.
-        """
-        if self._workspace_task_ids is not None:
-            return self._workspace_task_ids
-        ids: set[str] = set()
-        for task in self.task_store.list():
-            if not task.workspace:
-                continue
-            if _norm_workspace(task.workspace) == _norm_workspace(self.workspace):
-                ids.add(task.id)
-        self._workspace_task_ids = ids
-        return ids
 
     def _accumulate_ledger_failures(
         self, run_id: str, into: Counter[str]
