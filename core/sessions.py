@@ -40,3 +40,12 @@ class SessionRecord:
     # Reasoning effort level: "auto" | "low" | "high" | "max" — controls how hard the
     # model thinks before answering. "auto" lets the provider decide (the default).
     reasoning_effort: str = "auto"
+    # Recovery Context (P3 §7.3 / §4.5): the structured pause-point
+    # snapshot written at every durable suspend (approval / question /
+    # directory / plan). Advisory only — the engine does not read it on
+    # resume. The companion :class:`core.recovery.RecoveryStore` is
+    # the writer; the session row keeps a copy for the case where the
+    # recovery sidecar file is gone (e.g. the data dir was partially
+    # restored). ``None`` means no snapshot has been written for this
+    # session.
+    recovery: dict[str, Any] | None = None

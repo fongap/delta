@@ -52,6 +52,29 @@ def _load_grants(raw: str | None) -> dict:
     return value if isinstance(value, dict) else {}
 
 
+def _load_recovery(row) -> dict | None:
+    """Parse the ``recovery`` column on a session row.
+
+    Returns the parsed dict when a snapshot is present, ``None`` for
+    a missing column / empty value. Bad JSON or a non-dict shape
+    silently degrades to ``None`` — the snapshot is advisory and the
+    engine reads nothing from it on resume, so a corrupt snapshot
+    is an inconvenience (UI cannot show the cross-session "things
+    awaiting attention" panel), not a correctness problem.
+    """
+    try:
+        raw = row["recovery"]
+    except (IndexError, KeyError):
+        return None
+    if not raw:
+        return None
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return value if isinstance(value, dict) else None
+
+
 def _display_title(row: sqlite3.Row) -> str | None:
     """Title precedence for every read path: a manual rename (renamed=1) always wins,
     then the generated auto_title, then the first-line snapshot `save()` wrote."""
@@ -112,6 +135,7 @@ class ConversationStore:
                 extra_roots TEXT, pinned INTEGER DEFAULT 0, archived INTEGER DEFAULT 0,
                 origin TEXT, origin_label TEXT,
                 auto_title TEXT, renamed INTEGER DEFAULT 0,
+                recovery TEXT,
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             );
             CREATE TABLE IF NOT EXISTS workspaces (
@@ -132,6 +156,7 @@ class ConversationStore:
             "ALTER TABLE sessions ADD COLUMN grants TEXT",
             "ALTER TABLE sessions ADD COLUMN compaction TEXT",
             "ALTER TABLE sessions ADD COLUMN reasoning_effort TEXT DEFAULT 'auto'",
+            "ALTER TABLE sessions ADD COLUMN recovery TEXT",
         ):
             try:
                 self._conn.execute(ddl)
@@ -404,14 +429,15 @@ class ConversationStore:
             title = record.title or title_from(record.messages)
             self._conn.execute(
                 """
-                INSERT INTO sessions (session_id, workspace, model, mode, title, agent, n_msgs, messages, extra_roots, grants, compaction, reasoning_effort, updated_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+                INSERT INTO sessions (session_id, workspace, model, mode, title, agent, n_msgs, messages, extra_roots, grants, compaction, reasoning_effort, recovery, updated_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
                 ON CONFLICT(session_id) DO UPDATE SET
                     workspace = excluded.workspace, model = excluded.model, mode = excluded.mode,
                     title = COALESCE(sessions.title, excluded.title), agent = excluded.agent,
                     n_msgs = excluded.n_msgs, messages = NULL, extra_roots = excluded.extra_roots,
                     grants = excluded.grants, compaction = excluded.compaction,
                     reasoning_effort = excluded.reasoning_effort,
+                    recovery = excluded.recovery,
                     updated_at = CURRENT_TIMESTAMP
                 """,
                 (
@@ -426,6 +452,7 @@ class ConversationStore:
                     json.dumps(record.grants or {}),
                     json.dumps(record.compaction or {}),
                     record.reasoning_effort,
+                    json.dumps(record.recovery) if record.recovery is not None else None,
                 ),
             )
             self._conn.commit()
@@ -491,6 +518,10 @@ class ConversationStore:
                 row["reasoning_effort"] if "reasoning_effort" in row.keys() else "auto"
             )
             or "auto",
+            # Recovery Context (P3 §7.3 / §4.5): the structured pause-point
+            # snapshot. None when the column is empty (no snapshot ever
+            # written, or a legacy row that pre-dates the column).
+            recovery=_load_recovery(row),
         )
 
     def set_extra_roots(self, session_id: str, extra_roots: list[dict]) -> None:

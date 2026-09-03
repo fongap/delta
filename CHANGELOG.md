@@ -105,6 +105,17 @@ CHANGELOG 只记录用户可感知的变化和重要工程能力变化。
 - **行为变更**：`test_check_freshness_async_matches_sync` 的写大小从 1 字节改为 64 字节 —— Windows 上 same-length overwrite 可能不更新 mtime（fast path 据此正确判定 current，与 "真实无改动" 语义一致）。
 - **legacy 兼容**：旧 `sources.json` 没有 `mtime_ns`/`size_bytes` 字段时反序列化为 `None`，`_classify_against_disk` 走 sha256 兜底路径，行为与 P2 一致。
 
+#### P3 §7.3 Context 完整能力 — 最小 Recovery Context (§4.5)
+
+- **`core/recovery.py`**：新模块。`RecoverySnapshot` dataclass（10 字段：schema / snapshot_at / run_id / session_id / phase / pending_tool_call / pending_inbox_item_id / last_event_seq / todo_summary / recent_artifacts / error）+ `RecoveryStore`（per-session JSON sidecar，write/get/clear/latest）。
+  - Phase 枚举：`running` / `awaiting_approval` / `awaiting_question` / `awaiting_directory` / `awaiting_plan`。
+  - 契约：snapshot 是 **advisory** — engine resume 不读它；用于 UI "这个 session 卡在哪里" + 跨 session "things awaiting attention"。
+  - 验证：`session_id` 必填；非 running phase 必须有 `run_id`（不能在没 run 的情况下等审批）。
+  - Forward compat：schema 版本字段；future-schema entries 在 sidecar 中保留（不被旧 reader 覆盖），在内存中跳过（不被旧 reader 误读）。
+- **`core/sessions.py`**：`SessionRecord` 新增 `recovery: dict | None` 字段（snapshot 的 denormalized 副本）。
+- **`core/conversations.py`**：SQLite `sessions` 表新增 `recovery TEXT` 列（CREATE TABLE + ALTER TABLE 迁移）；`save()` / `load()` 读写该列；`_load_recovery(row)` helper 处理 corrupt JSON 的 graceful degrade（snapshot 是 advisory，坏的不影响 session 加载）。
+- **`tests/test_recovery_context.py`**：17 个新测试——to_dict/from_dict roundtrip / forward compat（future-schema refuse + unknown fields drop）/ validation（phase / run_id / session_id）/ store write-get-clear / store reload / latest 排序 / future-schema 保留 / SessionRecord SQLite roundtrip / legacy row None / corrupt JSON degrade。
+
 ### 不变（In scope but unchanged）
 
 - 短中期冻结面（§8.8）：Standing Approval / MCP / Subagent / Memory / Skill / Inbox / Self Wake 范围未扩。
