@@ -46,6 +46,13 @@ CHANGELOG 只记录用户可感知的变化和重要工程能力变化。
 - **`tests/test_multiroot_read_file_cite.py`**：10 个新测试覆盖契约——多根路径解析（primary/只读/可写根）、错误路径（路径逃出所有根）、相对路径在多根下回退到主根、cite 钩子按匹配根写入、`_files` capability 暴露我们的 read_file + 保留 aisuite 的 `read_file_lines`。
 - **`tests/test_catalog.py`**：未变（`COWORK_TOOLS` 集合里的 `read_file` 与 `read_file_lines` 名字保持不变；read_file 现在是我们的，read_file_lines 仍是 aisuite 的）。
 
+#### P2 follow-up B — scanned PDF image fallback (ADR-006 续)
+
+- **`core/pdf_support.py`**：新增 `rasterize_file(path, page_indices=None, max_pages=...)` —— 把 PDF 文件里的指定页渲染成 PNG data URL（懒 import pypdfium2，返回 `{page_no: png_data_url}`，失败返回 None）。与已有的 `rasterize(data_url)` 互补：那个用在适配链（attachment → model），这个用在 `read_document` 路径。
+- **`integrations/tools/documents.py::_read_pdf`**：当 pypdf 的 `extract_text` 返回空串（扫描 PDF——图片页无内嵌文本）时，用 `rasterize_file` 把该页渲染成图片并放进 block 的 `image` 字段，block 打上 `scanned: True` 标记，`text` 占位为 `[scanned page N — no extractable text; page rendered as image]`。纯文本页不变。摘要视图给 scanned block 加 `scanned: True` 标记。
+- **`tests/test_scanned_pdf_fallback.py`**：6 个新测试——全扫描 PDF（image + scanned flag + cite 仍记页码）、混合 PDF（只扫空白页，文本页不变）、纯文本 PDF 完全不变。
+- 设计契约：scanned page 的 cite 仍记 `page` 类型（页码）；`pypdfium2` 缺失时 graceful degrade（scanned page 只有空 text，无 image）。
+
 ### 变更 (Changed)
 
 - **`core/sources.py`**：`mark_cited` 入参在加锁前先经 `normalize_cited_ranges` 校验，避免半写入的 citation 落盘。
