@@ -117,6 +117,11 @@ class SourceCitationHit:
     captured_at: str
     citation: dict[str, Any]
     ledger_payload: dict[str, Any] | None
+    # Per-citation validity (P3 §7.3 Source 完整能力). The UI can use
+    # ``valid`` to decide whether to offer "scroll to the lines" vs.
+    # "the file has changed since this run"; ``reason`` is the precise
+    # cause so it can render the right notice.
+    validity: dict[str, Any] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -126,6 +131,7 @@ class SourceCitationHit:
             "captured_at": self.captured_at,
             "citation": dict(self.citation),
             "ledger_payload": dict(self.ledger_payload) if self.ledger_payload else None,
+            "validity": dict(self.validity) if self.validity else None,
         }
 
 
@@ -321,6 +327,20 @@ class Analyzer:
             run_id = citation.get("run_id")
             if not run_id:
                 continue
+            # P3 §7.3 Source 完整能力: every hit carries a per-citation
+            # validity result so the UI can warn when a cited range no
+            # longer resolves to the same content the run saw. We check
+            # every range in the entry (a single run may cite several
+            # ranges of the same file) and roll them up to the worst
+            # status so the UI gets one signal per (source, run).
+            ranges = citation.get("ranges") or []
+            validity_results = [
+                self.source_store.validate_citation(ref.id, run_id, r) for r in ranges
+            ]
+            if validity_results:
+                worst = _worst_validity(validity_results)
+            else:
+                worst = None
             hits.append(
                 SourceCitationHit(
                     source_id=ref.id,
@@ -329,6 +349,7 @@ class Analyzer:
                     captured_at=ref.captured_at,
                     citation=dict(citation),
                     ledger_payload=self._ledger_payload_for_read(run_id),
+                    validity=worst,
                 )
             )
         hits.sort(key=lambda h: h.captured_at, reverse=True)
@@ -413,6 +434,31 @@ def _norm_workspace(workspace: str | Path) -> str:
     path spellings (``C:\\foo`` vs ``C:/foo`` vs trailing slashes).
     """
     return Path(workspace).expanduser().resolve().as_posix()
+
+
+# Worst-validity rank — a single (source, run) hit may cite several
+# ranges, and the UI wants one signal per hit. The rollup picks the
+# most actionable reason (the one that prevents navigation). "valid"
+# is the floor; missing > out_of_bounds > content_changed > valid.
+_VALIDITY_RANK = {
+    "valid": 0,
+    "content_changed": 1,
+    "out_of_bounds": 2,
+    "file_missing": 3,
+    "source_gone": 4,
+}
+
+
+def _worst_validity(results: list[dict[str, Any]]) -> dict[str, Any]:
+    """Roll up per-range validity results into one per-hit signal.
+
+    Picks the highest-ranked reason; ties keep the first occurrence
+    so the rollup is deterministic across re-runs. The chosen
+    entry's other keys (``current_sha256`` / ``current_line_count``)
+    propagate so the UI can show them without re-querying.
+    """
+    worst = max(results, key=lambda r: _VALIDITY_RANK.get(r.get("reason", "valid"), 0))
+    return dict(worst)
 
 
 # -- module-level convenience wrappers --------------------------------------

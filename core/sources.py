@@ -396,6 +396,147 @@ class SourceStore:
         """The background-check entry point: runs never block on freshness."""
         return await asyncio.to_thread(self.check_freshness)
 
+    # -- citation validity (P3 §7.3 Source 完整能力) ----------------------------
+    # Status (current / changed / missing) tells you whether the bytes
+    # drifted. Citation validity is the stronger question: "if a UI
+    # scrolled to the cited lines / page / cells right now, would it
+    # land on the same content the run saw?" A changed file can still
+    # resolve a lines citation (the lines happen to still mean the
+    # same thing), but a missing file cannot; a lines citation past
+    # EOF is unambiguously invalid even when the file is current.
+    CITATION_VALID = "valid"
+    CITATION_CONTENT_CHANGED = "content_changed"  # sha256 differs; UI can still navigate, but the cited bytes aren't what the run saw
+    CITATION_OUT_OF_BOUNDS = "out_of_bounds"  # range past EOF in a current file (stale lines)
+    CITATION_FILE_MISSING = "file_missing"  # status: missing → cannot navigate at all
+    CITATION_SOURCE_GONE = "source_gone"  # ref removed from the store
+
+    def validate_citation(
+        self,
+        ref_id: str,
+        run_id: str,
+        range_obj: dict[str, Any],
+    ) -> dict[str, Any]:
+        """One citation: is it still navigable to the same content?
+
+        The result is a small dict (not a dataclass) so callers can
+        thread it straight into a SourceCitationHit / DTO without an
+        extra model. ``status`` mirrors the SourceRef status (``current``
+        / ``changed`` / ``missing``) so the caller can refresh its
+        freshness flag too; ``valid`` is the actionable boolean
+        ("should the UI offer to scroll here?").
+
+        ``range_obj`` is one entry from ``SourceRef.cited_ranges``'s
+        ``ranges`` list (a canonical CitationRange dict with a ``kind``
+        discriminator and the relevant locator fields).
+
+        ``valid=True`` means: the file is current, the range resolves
+        to actual content, and the cited bytes are what the run saw.
+
+        ``valid=False`` reasons:
+
+        - ``content_changed`` — file is ``changed`` (sha256 differs).
+          The lines/page may still happen to point at something, but
+          the run's evidence no longer corresponds to the live file.
+        - ``out_of_bounds`` — file is current, but the range is past
+          EOF (truncated file, stale ``start_line``). The UI can mark
+          the citation as "stale" but cannot scroll to it.
+        - ``file_missing`` — file is unreadable. The UI cannot
+          navigate at all; the run is operating on a snapshot that
+          no longer exists on disk.
+        - ``source_gone`` — the ref itself was removed from the
+          store. Cross-checked before filesystem access so a
+          bookkeeping cleanup doesn't masquerade as a missing file.
+        """
+        with self._lock:
+            ref = self._refs.get(ref_id)
+        if ref is None:
+            return {
+                "valid": False,
+                "status": "missing",
+                "reason": self.CITATION_SOURCE_GONE,
+            }
+        # Cheap pre-check: status already says missing → no point
+        # touching the filesystem.
+        if ref.status == FRESH_MISSING:
+            return {
+                "valid": False,
+                "status": FRESH_MISSING,
+                "reason": self.CITATION_FILE_MISSING,
+            }
+        # Open the file to (a) confirm it's still readable, (b)
+        # compare sha256, (c) bound-check the range for lines kind.
+        p = self._resolve(ref.location)
+        try:
+            data = p.read_bytes()
+        except OSError:
+            return {
+                "valid": False,
+                "status": FRESH_MISSING,
+                "reason": self.CITATION_FILE_MISSING,
+            }
+        current_sha = _sha256(data)
+        if current_sha != ref.fingerprint:
+            # File content changed. The citation may still happen to
+            # point at valid lines, but we don't trust the bytes to
+            # match the run's evidence — treat as invalid.
+            return {
+                "valid": False,
+                "status": FRESH_CHANGED,
+                "reason": self.CITATION_CONTENT_CHANGED,
+                "current_sha256": current_sha,
+            }
+        # Status: current. Now bound-check the range for kinds that
+        # have a meaningful "past the end" check.
+        kind = range_obj.get("kind")
+        if kind == KIND_LINES:
+            start = range_obj.get("start")
+            end = range_obj.get("end") if "end" in range_obj else start
+            if start is None:
+                # Defensive: a lines citation should always have at
+                # least a start (validated at capture). If somehow
+                # not, treat as invalid rather than crashing.
+                return {
+                    "valid": False,
+                    "status": FRESH_CURRENT,
+                    "reason": self.CITATION_OUT_OF_BOUNDS,
+                }
+            line_count = data.count(b"\n") + (0 if data.endswith(b"\n") else 1)
+            # Empty file = 0 lines; a citation for line 1 is
+            # out-of-bounds in an empty file.
+            if start < 1 or start > line_count:
+                return {
+                    "valid": False,
+                    "status": FRESH_CURRENT,
+                    "reason": self.CITATION_OUT_OF_BOUNDS,
+                    "current_line_count": line_count,
+                }
+            if end is not None and end > line_count:
+                return {
+                    "valid": False,
+                    "status": FRESH_CURRENT,
+                    "reason": self.CITATION_OUT_OF_BOUNDS,
+                    "current_line_count": line_count,
+                }
+            return {
+                "valid": True,
+                "status": FRESH_CURRENT,
+                "reason": self.CITATION_VALID,
+                "current_line_count": line_count,
+                "current_sha256": current_sha,
+            }
+        # For page / cells / message_id / custom kinds we don't have a
+        # cheap bound check. The file is current and the source still
+        # exists — the locator may or may not resolve in the new
+        # document, but we can't tell without re-parsing the whole
+        # thing. Mark valid; the reader that opens it will error if
+        # the page is actually missing.
+        return {
+            "valid": True,
+            "status": FRESH_CURRENT,
+            "reason": self.CITATION_VALID,
+            "current_sha256": current_sha,
+        }
+
 
 def to_dto(ref: SourceRef) -> dict[str, Any]:
     """Contract-side view (SourceDTO) so UI can render provenance without filesystem access.
