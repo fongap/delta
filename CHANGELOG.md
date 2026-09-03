@@ -63,6 +63,13 @@ CHANGELOG 只记录用户可感知的变化和重要工程能力变化。
   - **`TimelineEntry`**：给定 `run_id` + `workspace`，按 `seq` 把 ledger 事件还原为有序端到端时间线（不丢任何事件类型，封闭词汇表是 `KNOWN_EVENT_TYPES`）。
   - **`AutomationHealth`**：跨 N 个 run 聚合 `TaskRun.status` + `validation.passed/failed` 计数 + 平均时长；`failure_reasons` 来自 `run.failed` / `validation.failed` / `tool.finished{status: "error"}` payload；`run_error_counts` 单独承载 `TaskRun.error` 顶层标签以避免与 ledger 事件双重计数。跨 workspace 的 task 抛 `WorkspaceMismatchError`，**不**做静默跨 workspace 聚合。
   - **`SourceCitationHit`**：把 `SourceRef.cited_ranges` 与 ledger `tool.finished{tool ∈ {read_file, read_document}}` 关联，给出"这条 citation 来自哪一次 read"，未匹配的 citation `ledger_payload=None`。
+- **`run_events` / `task_runs` 加 `workspace` 列（ADR-007 §10.6 路径第一步）**：
+  - 两张主表加 `workspace TEXT` 列；迁移沿用 `core/conversations.py:121-140` 的 `try / except sqlite3.OperationalError` 模式——fresh DB 通过 `CREATE TABLE` 拿到列，legacy DB 通过 `ALTER TABLE` 拿到列一次后被 `OperationalError` 吞掉，幂等可重入。
+  - `RunEventLedger.append(..., workspace: str | None = None)` 接受可选 kwarg；`RunEventLedger.events(run_id)` 返回的 dict 现在带 `workspace` 键。
+  - `TaskRun.workspace: str = ""` 字段，`to_dict` / `from_dict` 双向兼容（legacy 缺字段落回默认 `""`）。
+  - 关键契约：`workspace` **不**进 hash basis——同一 payload + actor + ts + 不同 workspace 的两行有相同 hash；legacy chain 在迁移后仍能 `verify()` 通过。这允许 §10.6 路径"先扩列再升 Analyzer"无需重算历史 hash。
+  - 新增 `idx_run_events_workspace` / `idx_runs_workspace` 索引让 per-workspace 查询走索引而非全表扫描。
+  - 接入点：`TurnEngineAdapter._track` 的 `run.started` 写入 `self.workspace_path`；`register_run_artifacts` 的 `artifact.registered` / `artifact.completed` 写入 `workspace=`；`IdempotencyLog.commit` 透传 `workspace=`；`services/server/manager_automations.py` 的 4 个 `add_run` 站点从 `task.workspace` 带入；`finalize_manual_run` 反向回填旧行（task 在的 workspace 写回 run）。
 - **架构文档**：`docs/architecture/adr/ADR-007-p3-readonly-run-analyzer.md`；ADR 索引同步。后续 P3 工作（自动 Reflection / Skill Evaluator / 自动 Failure Memory / 自动 Preference Promotion / 条件型 Automation / Source 语义检索 / 跨项目聚合）**全部**为独立 ADR 评估，不在本 PR 范围。
 
 ### 不变（In scope but unchanged）

@@ -299,12 +299,18 @@ class TurnEngineAdapter:
             run_id = uuid.uuid4().hex
         self._last_run_id = run_id
         token = runscope.set_current(run_id, self._session_id or "")
+        # ADR-007 §10.6 path: persist the audit-declared workspace on
+        # the run.started row so P3 Run Analyzer and any future
+        # per-workspace query can scope without re-deriving it from
+        # payload. Empty string → NULL on disk (handled in _as_dict).
+        ws = self.workspace_path or None
         try:
             self._ledger.append(
                 run_id,
                 "run.started",
                 actor="user" if kind == "run" else "system",
                 payload={"kind": kind, **({"session_id": self._session_id} if self._session_id else {})},
+                workspace=ws,
             )
             try:
                 async for event in agen:

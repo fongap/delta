@@ -92,10 +92,26 @@ class TaskStore:
                     run_id TEXT PRIMARY KEY,
                     task_id TEXT NOT NULL,
                     started_at REAL NOT NULL,
-                    data TEXT NOT NULL
+                    data TEXT NOT NULL,
+                    workspace TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_runs_task ON task_runs(task_id, started_at DESC);
                 """)
+            # ADR-007 §10.6 path: ``workspace`` is a denormalized index
+            # hint for cross-workspace queries (mirrors the
+            # ``run_events.workspace`` migration in ``core/ledger.py``).
+            # The migration is idempotent: a fresh DB gets the column via
+            # CREATE TABLE; an existing DB gets it via ALTER TABLE once,
+            # and the OperationalError is swallowed on subsequent boots.
+            for ddl in (
+                "ALTER TABLE task_runs ADD COLUMN workspace TEXT",
+                "CREATE INDEX IF NOT EXISTS idx_runs_workspace "
+                "ON task_runs(workspace, started_at DESC)",
+            ):
+                try:
+                    self._conn.execute(ddl)
+                except sqlite3.OperationalError:
+                    pass
             self._conn.commit()
 
     # -- tasks ------------------------------------------------------------------
@@ -149,10 +165,21 @@ class TaskStore:
 
     # -- runs -------------------------------------------------------------------
     def add_run(self, run: TaskRun) -> TaskRun:
+        # ``workspace`` is denormalized onto the run for the ADR-007 P3
+        # Analyzer path; we read it from the dataclass if set, otherwise
+        # from the caller's ``TaskRun.workspace`` field (which
+        # ``from_dict`` already populates from the persisted row).
         with self._lock:
             self._conn.execute(
-                "INSERT OR REPLACE INTO task_runs (run_id, task_id, started_at, data) VALUES (?, ?, ?, ?)",
-                (run.run_id, run.task_id, run.started_at, json.dumps(run.to_dict())),
+                "INSERT OR REPLACE INTO task_runs (run_id, task_id, started_at, data, workspace) "
+                "VALUES (?, ?, ?, ?, ?)",
+                (
+                    run.run_id,
+                    run.task_id,
+                    run.started_at,
+                    json.dumps(run.to_dict()),
+                    run.workspace or "",
+                ),
             )
             self._conn.commit()
         return run

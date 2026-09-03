@@ -238,6 +238,13 @@ class TaskRun:
     error: str | None = None
     trigger: str = "schedule"  # schedule | manual | catchup
     session_id: str = ""  # the run's own conversation thread — persisted + continuable
+    # ADR-007 §10.6 path: a denormalized workspace column on task_runs.
+    # The same value also lives (in older rows) inside ``ScheduledTask``'s
+    # own workspace field, but storing it on the run means P3 Run Analyzer
+    # and any future per-workspace query don't need a join back to
+    # ``scheduled_tasks``. The field is optional; rows written before
+    # the migration round-trip as ``""``.
+    workspace: str = ""
 
     def __post_init__(self) -> None:
         if not self.session_id:
