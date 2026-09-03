@@ -95,6 +95,16 @@ CHANGELOG 只记录用户可感知的变化和重要工程能力变化。
 - **`Analyzer.SourceCitationHit.validity`**：每个 hit 附带 per-citation 验证结果；多 range 的 hit 用 worst-reason roll-up（file_missing > out_of_bounds > content_changed > valid），UI 每对 (source, run) 只看到一个信号。
 - **`tests/test_source_citation_validity.py`**：13 个新测试覆盖契约——valid / out_of_bounds（file truncated）/ content_changed / file_missing（reflexive + status pre-missing）/ source_gone / 非 lines kind / Analyzer hit 携带 validity / worst-reason roll-up / to_dict 序列化 / 模块级 wrapper 透传。
 
+#### P3 §7.3 Source 完整能力 — 索引失效检测 (mtime fast path, ADR-006 续)
+
+- **`SourceRef` 新增 `mtime_ns` / `size_bytes` 字段** (`core/sources.py`)：capture 时记下，check 时比对；未变的文件根本不算 sha256。
+- **`SourceStore.capture_file`**：现在缓存 `(mtime_ns, size_bytes)`。同一 path 重新 capture 命中相同 fingerprint 时也刷新缓存。
+- **`SourceStore.check_freshness`**：重写走 mtime fast path —— `_classify_against_disk(ref, p)` 静态方法实现三阶检查（stat → 缓存匹配 → sha256）。稳定文件 0 次 `read_bytes`。
+- **`SourceStore.reindex_stale(force=False)`**：新增定向失效检查入口（mtime 缓存命中跳过 sha256；`force=True` 强制全量重算）。返回真正 drift 的 ref 列表。
+- **`tests/test_source_index_stale.py`**：10 个新测试覆盖契约——`read_bytes` 调用计数（mtime fast path 真零读）、change 仍被检测、missing 仍被检测、`reindex_stale` 准确、force 模式全量重算、mtime 缓存刷新、legacy ref（无 mtime 缓存）总是走 sha256。
+- **行为变更**：`test_check_freshness_async_matches_sync` 的写大小从 1 字节改为 64 字节 —— Windows 上 same-length overwrite 可能不更新 mtime（fast path 据此正确判定 current，与 "真实无改动" 语义一致）。
+- **legacy 兼容**：旧 `sources.json` 没有 `mtime_ns`/`size_bytes` 字段时反序列化为 `None`，`_classify_against_disk` 走 sha256 兜底路径，行为与 P2 一致。
+
 ### 不变（In scope but unchanged）
 
 - 短中期冻结面（§8.8）：Standing Approval / MCP / Subagent / Memory / Skill / Inbox / Self Wake 范围未扩。

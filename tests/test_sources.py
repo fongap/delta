@@ -82,7 +82,11 @@ def test_check_freshness_async_matches_sync(tmp_path):
     f.write_bytes(b"x")
     store = SourceStore(tmp_path / "sources.json", workspace=tmp_path)
     ref = store.capture_file(f)
-    f.write_bytes(b"y")
+    # Use a longer write so the filesystem actually updates mtime on
+    # all platforms (a same-length overwrite can leave the mtime alone
+    # on Windows + certain filesystems, in which case the mtime fast
+    # path in check_freshness is correct to call the file current).
+    f.write_bytes(b"y" * 64)
 
     async def run():
         return await store.check_freshness_async()
