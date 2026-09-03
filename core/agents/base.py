@@ -9,9 +9,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable
+from typing import TYPE_CHECKING, Any, Callable
 
 from integrations.tools.todo import TodoList
+
+if TYPE_CHECKING:
+    from core.sources import SourceStore
 
 
 @dataclass
@@ -23,6 +26,15 @@ class AgentContext:
     # When None, tools fall back to the single `workspace` root. Held by reference so runtime
     # add/remove of folders is seen by the file tools built from it.
     roots: list | None = None
+    # P2 实用 (DELTA_BLUEPRINT §7.2): the run's source ledger. The capability
+    # catalog threads this into file/connector readers so every successful
+    # read auto-cites the run with a typed locator (lines / page / cells /
+    # message_id / custom). None disables the audit hook.
+    source_store: "SourceStore | None" = None
+    # P2 实用: the active run id (ADR-005 G1 — one identity across TaskStore,
+    # ledger, artifact, validation, idemlog). Threaded into readers as the
+    # ``run_id`` for citation appends. None disables the audit hook.
+    run_id: str | None = None
 
 
 @dataclass

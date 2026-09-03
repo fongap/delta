@@ -223,6 +223,13 @@ def build_engine(
     # event after a successful execution. `resume()` then skips calls that
     # already committed. None disables the log (tests, read-only subagents).
     idem_log: Any | None = None,
+    # P2 实用 (DELTA_BLUEPRINT §7.2): the run's Source ledger. When set
+    # alongside ``run_id``, every successful file/connector read captures
+    # the source and attaches a typed citation (lines / page / cells / ...)
+    # so the UI can scroll back to the exact spot the run saw. None
+    # disables the audit hook (tests, read-only subagents).
+    source_store: Any | None = None,
+    run_id: str | None = None,
 ) -> TurnEngine:
     ws = Path(workspace).expanduser().resolve() if workspace else None
     if agent.needs_workspace and ws is None:
@@ -245,7 +252,12 @@ def build_engine(
     )
     todo = TodoList()
     context = AgentContext(
-        workspace=ws, executor=executor, todo=todo, roots=root_list or None
+        workspace=ws,
+        executor=executor,
+        todo=todo,
+        roots=root_list or None,
+        source_store=source_store,
+        run_id=run_id,
     )
 
     registry = ToolRegistry()

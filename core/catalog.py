@@ -21,6 +21,7 @@ import aisuite as ai
 
 from core.agents.base import AgentContext
 from core.risk import RiskClass
+from integrations.tools.documents import document_tools
 from integrations.tools.files import file_tools
 from integrations.tools.git import git_tools
 from integrations.tools.search import search_tools
@@ -55,6 +56,7 @@ class Capability:
 def _code_files(context: AgentContext) -> list:
     """Repo-oriented files: single-root, line-numbered/windowed `read_file`. Our `grep` and
     windowed `read_file` replace aisuite's slower `search_files` / `read_file`/`read_file_lines`.
+    `read_document` (P2 实用) adds PDF / XLSX / DOCX reading with typed citations.
     """
     ws = str(context.workspace)
     replaced = {"search_files", "read_file", "read_file_lines"}
@@ -63,7 +65,19 @@ def _code_files(context: AgentContext) -> list:
         for t in ai.toolkits.files(root=ws, allow_write=True)
         if getattr(t, "__name__", "") not in replaced
     ]
-    return [*files, *file_tools(ws)]
+    return [
+        *files,
+        *file_tools(
+            ws,
+            source_store=context.source_store,
+            run_id=context.run_id,
+        ),
+        *document_tools(
+            ws,
+            source_store=context.source_store,
+            run_id=context.run_id,
+        ),
+    ]
 
 
 def _files(context: AgentContext) -> list:

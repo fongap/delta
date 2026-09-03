@@ -30,15 +30,25 @@ CHANGELOG 只记录用户可感知的变化和重要工程能力变化。
   - **`CitationRange` typed schema** (`core/sources.py`)：判别字段 `kind` ∈ `lines` / `page` / `cells` / `row` / `column` / `sheet` / `message_id` / `custom`；每种 kind 仅保留与该定位语义相关的字段进入 canonical form。
   - **`to_range_dict` / `normalize_cited_ranges`**：序列化前做结构性校验（必填字段、字段类型），失败抛 `ValueError`，保证 run 永远不会留下 UI 无法渲染的 citation。
   - **`SourceStore.add_citation`**：单条 citation 的便捷 API，调用方只需给一个 `CitationRange` 或带 `kind` 的 dict；复用 `mark_cited` 的锁/校验/落盘契约。
-  - **`read_file` 自动 cite** (`integrations/tools/files.py`)：`file_tools(workspace, *, source_store=None, run_id=None)` 接受可选钩子；成功读入时 closure `_make_citer` 捕获 `SourceRef` 并以 `lines` 范围落 citation。错误路径（path 越界、文件不存在、读失败）不写任何 citation。
+  - **`read_file` 自动 cite** (`integrations/tools/files.py`)：`file_tools(workspace, *, source_store=None, run_id=None)` 接受可选钩子；成功读入时 closure 通过 `core/citation.cite` 捕获 `SourceRef` 并以 `lines` 范围落 citation。错误路径（path 越界、文件不存在、读失败）不写任何 citation。
+  - **`read_document` 工具** (`integrations/tools/documents.py`)：单工具覆盖 PDF / XLSX / DOCX 三种格式，Markdown / TXT 走 `read_file`。PDF 用 `pypdf` 抽文本（一页一个 block），XLSX 走 `services/server/sheet_preview.py` 的 stdlib zipfile 解析（一个 sheet 一个 block），DOCX 同样走 stdlib zipfile + ElementTree 抽段落（一个 paragraph 一个 block）。每种格式成功读入时按各自的 locator 词汇（`page` / `cells` / `message_id`）自动 cite。摘要视图（`block=None`）只返回 block 列表不写 citation；只有真正读到的位置才进 source ledger。
+  - **`core/citation.cite` 共享钩子**：capture_file + add_citation 的统一入口；`run_id` 解析顺序：① 显式参数（自动化预分配）→ ② `core.runscope.current()`（手动 turn 由 adapter 在每轮 set，worker thread 通过 `asyncio.to_thread` 的 context copy 看到）。失败（OSError / 校验错）静默吞掉——reader 已成功，不让审计 hook 拖垮 run。
+  - **`source_store` / `run_id` 注入生产路径** (`core/agent.py`, `core/catalog.py`, `services/server/manager.py`)：`build_engine` 接受 `source_store` + `run_id`，`AgentContext` 同步带出；`SessionManager.source_store_for(workspace, run_id)` 按 workspace 缓存 `<workspace>/.delta/sources.json`（与 `run-events.db` / `side-effects.db` 同目录）；手动 session 与自动化 run 都自动接线。
   - **`SourceDTO` 新增 `location` / `cited_ranges`** (`services/server/contracts.py`)：additive 字段，`to_dto` 透出，让 UI 看到文件位置与"哪些 run 引用过、引用了哪些行 / 页"。
 - **Automation 收敛结构化守护** (`tests/test_automation_convergence.py`)：廉价 wiring 守门员——自动化与手动 runtime 共用 `_build_task_engine` + manager 的 `idem_log` / `audit_sink`；自动化 run 事件 `type` 必须落在 `KNOWN_EVENT_TYPES`；`TaskRun.run_id == run_ledger.runs()`（身份不分裂）。
+- **`read_file` / `read_document` e2e 验收** (`tests/test_read_file_cite_e2e.py`, `tests/test_read_document.py`)：用真 SessionManager + scripted provider 跑过 `_run_scheduled_task`，验证 citation 在 `mgr.source_store_for(workspace)` 落盘、citation 里的 `run_id` 等于 `TaskRun.run_id`（G1 单一身份）。
 - **架构文档**：`docs/architecture/adr/ADR-006-p2-source-citation-and-convergence.md`；ADR 索引同步。
 
 ### 变更 (Changed)
 
 - **`core/sources.py`**：`mark_cited` 入参在加锁前先经 `normalize_cited_ranges` 校验，避免半写入的 citation 落盘。
-- **`integrations/tools/files.py`**：`file_tools` 接受可选 `source_store=` / `run_id=`（向后兼容：不传则行为与 P1 完全一致）。
+- **`integrations/tools/files.py`**：`file_tools` 接受可选 `source_store=` / `run_id=`（向后兼容：不传则行为与 P1 完全一致）。`file_tools` 的内部 `_make_citer` 委托给 `core.citation.cite`，便于与 `read_document` 共享同一 chokepoint。
+- **`core/agents/base.py`**：`AgentContext` 新增 `source_store` + `run_id` 字段（可选，向后兼容）。
+- **`core/agent.py`**：`build_engine` 接受 `source_store=` / `run_id=`，注入 `AgentContext`。
+- **`core/catalog.py`**：`_code_files` 同时挂上 `read_file` 与 `read_document`（单根 workspace 路径）。
+- **`services/server/manager.py`**：新增 `source_store_for(workspace, run_id)` 实例方法（按 workspace 缓存 `SourceStore`）。
+- **`services/server/manager_sessions.py` / `manager_automations.py`**：手动 session 与自动化 run 都在 `build_engine` 调用时传入 `source_store`；`run_id` 优先取显式值（自动化的 G1 run id），否则由 adapter 在 `runscope` 命名后由 `core.citation.cite` 拉取。
+- **`tests/test_catalog.py`**：`CODE_TOOLS` 加入 `read_document`，反映 code 表面能力扩展。
 
 ### 移除 (Removed)
 

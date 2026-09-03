@@ -40,10 +40,30 @@ Source / Citation 与运行收敛的 DoD 锁定。
   的 `ContractModel` 已允许 UI 端不解析新字段）。`to_dto` 把这两项透出，
   UI 不再只能看到 12 字符指纹前缀 + 文件名。
 - `integrations/tools/files.py:file_tools` 接受可选的
-  `source_store=` / `run_id=`：成功读入时，closure `_make_citer` 捕获
-  `SourceRef` 并落 `lines` 类型的 citation，把"run 实际读了哪些行"写入
-  Source ledger。错误路径（path 越界、文件不存在、读失败）不写任何
-  citation —— 一条没真正读到的内容不能进入审计。
+  `source_store=` / `run_id=`：成功读入时通过 `core/citation.cite` 钩子
+  捕获 `SourceRef` 并落 `lines` 类型的 citation，把"run 实际读了哪些
+  行"写入 Source ledger。错误路径（path 越界、文件不存在、读失败）不写
+  任何 citation —— 一条没真正读到的内容不能进入审计。
+- `integrations/tools/documents.py:read_document` 单工具覆盖 PDF /
+  XLSX / DOCX（Markdown / TXT 走 `read_file`）。PDF 用 `pypdf` 抽文本
+  （一页一个 block），XLSX 复用 `services/server/sheet_preview.py`
+  的 stdlib zipfile 解析（一个 sheet 一个 block），DOCX 同样走 stdlib
+  + ElementTree 抽段落（一个 paragraph 一个 block）。每种格式成功
+  读入时按各自的 locator 词汇（`page` / `cells` / `message_id`）自动
+  cite。摘要视图（`block=None`）只返回 block 列表不写 citation —— 只
+  有真正读到的位置才进 source ledger。
+- `core/citation.cite` 是 capture + cite 的统一入口，失败（OSError /
+  校验错）静默吞掉：`run_id` 解析顺序为 ① 显式参数 → ②
+  `core.runscope.current()`（手动 turn 由 adapter 在每轮 set，
+  worker thread 通过 `asyncio.to_thread` 的 context copy 看到）。
+- 生产路径注入（`core/agent.py` / `core/catalog.py` /
+  `services/server/manager.py`）：`build_engine` 接受 `source_store` +
+  `run_id`，`AgentContext` 同步带出；`SessionManager.source_store_for(workspace)`
+  按 workspace 缓存 `<workspace>/.delta/sources.json`（与
+  `run-events.db` / `side-effects.db` 同目录）。手动 session 与
+  自动化 run 都自动接线。Code 表面（`code_files` capability）同时挂
+  上 `read_file` 与 `read_document`；Cowork / Ops 仍走 aisuite
+  多根 `read_file`，它们的 cite 钩入是后续工作。
 
 ### D-2 Automation 不允许形成第二套执行模型
 
@@ -79,6 +99,9 @@ Reference Task（`tests/test_reference_task.py`）继续做端到端断言；
 - **P2 中期验收第一项可机械化验收**：Source / Citation 校验在
   `core/sources.py` 即可写最小测试，UI 集成只需消费 `SourceDTO` 的新
   字段，不再需要"猜哪个文件"型启发。
+- **多种常用文件格式进入统一 Source 处理路径**：`read_file`（text /
+  log / md / 代码）+ `read_document`（PDF / XLSX / DOCX）都通过
+  `core/citation.cite` 走同一钩子，Source ledger 是单条真相来源。
 - **Inbox 解析代码少一个分支**：`resolve_from_reply` 不再承担"两种
   旧 spell 都要识别"的合约，回归矩阵更小。
 - **Automation 走线可视**：`tests/test_automation_convergence.py`
@@ -95,25 +118,46 @@ Reference Task（`tests/test_reference_task.py`）继续做端到端断言；
 - **Citation schema 收紧**：新 `CitationRange` 不再接受 `{"page": 2}`
   这种无 `kind` 的 citation dict（之前 `mark_cited` 的隐式契约），
   reader 调用方需迁移到 typed 调用或带 `kind` 的 dict。
+- **多根 workspace 暂未覆盖**：`_code_files` capability 拿到了
+  `read_document`；`_files`（cowork/ops 的多根变体）当前仍走 aisuite
+  `read_file`，不自动 cite。后续扩展需要先把 `read_file` 多根支持
+  + cite 钩入补齐。
+- **`read_document` 受 Pypdf 抽取质量限制**：扫描 PDF 走 pypdf 抽出来
+  是空字符串（"合法空内容"），citation 仍记录 page number，UI 可后续
+  调 `pdf_support.rasterize` 给出图像版。
 
 ### 后续
 
-- PDF / DOCX / XLSX 读入工具（test_pdf_support.py / test_sheets.py）
-  仍待补齐 P2-W2 中未覆盖的 `capture_file + add_citation` 钩入；
-  当前的 `file_tools` 已经示范了"成功读入即 cite"的最小路径。
+- Cowork / Ops 多根 `read_file` 的 cite 钩入（先把 `read_file` 改成支持
+  多根 roots，再接 `core/citation.cite`）。
+- 扫描 PDF 的图像回退：在 `read_document` 抽不出文本时，UI 可在
+  渲染层自动转 `pdf_support.rasterize` 出图。
 - 解析收紧后若需要回滚，可由独立 ADR 重新引入兼容解析。
 
 ## 实施引用
 
 - `core/sources.py` — `CitationRange` / `to_range_dict` / `normalize_cited_ranges`
   / `SourceStore.add_citation` / `to_dto` 扩展
+- `core/citation.py` — capture+cite 共享 chokepoint（runscope fallback）
 - `services/server/contracts.py:92` — `SourceDTO` 新增 `location` /
   `cited_ranges`
+- `core/agent.py` / `core/agents/base.py` / `core/catalog.py` —
+  `source_store` + `run_id` 注入 AgentContext → capability → reader
+- `services/server/manager.py` — `source_store_for(workspace)` 按 workspace
+  缓存 `SourceStore`
+- `services/server/manager_automations.py` / `manager_sessions.py` —
+  自动化 / 手动 session 都接线
 - `integrations/tools/files.py:file_tools` — `source_store=` / `run_id=`
-  closure 钩子
+  closure 钩子（`read_file`）
+- `integrations/tools/documents.py:document_tools` — `read_document` 单工具
+  覆盖 PDF / XLSX / DOCX
 - `core/inbox_routing.py:_ID_TOKEN` — 仅解析 `[d:…]`
 - `tests/test_source_citation.py` — CitationRange + SourceStore + DTO + Inbox
   解析收紧的回归测试
 - `tests/test_automation_convergence.py` — §7.2 automation 收敛结构化
   守护测试
+- `tests/test_read_file_cite_e2e.py` — `read_file` 真实 SessionManager
+  e2e（citations 落 `source_store_for(workspace)`，run_id = TaskRun.run_id）
+- `tests/test_read_document.py` — `read_document` 3 种格式 +
+  error paths + 真实 SessionManager e2e
 - `docs/architecture/relay-mode-removal.md` — 关闭 P2 承诺条目
