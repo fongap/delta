@@ -14,7 +14,17 @@ permissions:
 jobs:
   enable-auto-merge:
     name: Enable auto-merge
-    if: github.repository == 'fongap/delta'
+    # Only Dependabot PRs are eligible for auto-merge. Anything else
+    # (human PRs, fork PRs, etc.) is skipped at the job level so the
+    # downstream ``Fetch Dependabot metadata`` step never runs and
+    # never produces the "PR is not from Dependabot, nothing to do"
+    # error that surfaces in the PR's checks UI. The legacy
+    # ``Bail if not Dependabot`` step is kept as a defense-in-depth
+    # early return in case a future change widens the job's
+    # eligibility.
+    if: >-
+      github.repository == 'fongap/delta' &&
+      github.event.pull_request.user.login == 'dependabot[bot]'
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
