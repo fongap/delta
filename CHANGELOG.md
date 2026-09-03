@@ -39,6 +39,13 @@ CHANGELOG 只记录用户可感知的变化和重要工程能力变化。
 - **`read_file` / `read_document` e2e 验收** (`tests/test_read_file_cite_e2e.py`, `tests/test_read_document.py`)：用真 SessionManager + scripted provider 跑过 `_run_scheduled_task`，验证 citation 在 `mgr.source_store_for(workspace)` 落盘、citation 里的 `run_id` 等于 `TaskRun.run_id`（G1 单一身份）。
 - **架构文档**：`docs/architecture/adr/ADR-006-p2-source-citation-and-convergence.md`；ADR 索引同步。
 
+#### P2 follow-up A — Cowork/Ops 多根 `read_file` cite 钩子 (ADR-006 续)
+
+- **`integrations/tools/files.py`**：`file_tools` 新增 `roots=` 参数；提供时，`read_file` 接受绝对路径并按任何根解析（与 aisuite 的多根 `read_file` 等价），cite 钩子在文件**实际所在**的根下写入 source ledger（不是主根），所以从附加只读文件夹读出的引用仍以正确的 workspace-relative 路径进入 source store。新 `_make_multiroot_citer` 实现 per-read 根匹配。
+- **`core/catalog.py::_files`**：从 aisuite 多根 toolkit 里 drop `read_file`（被我们的 cite-aware 多根版本替代），保留 `read_file_lines`（单独的 aisuite 窗口化读取工具，目前没有 cite 钩子）。`read_file_lines` 仍存在——它满足多根 session 下的另一个用例窗口读取。
+- **`tests/test_multiroot_read_file_cite.py`**：10 个新测试覆盖契约——多根路径解析（primary/只读/可写根）、错误路径（路径逃出所有根）、相对路径在多根下回退到主根、cite 钩子按匹配根写入、`_files` capability 暴露我们的 read_file + 保留 aisuite 的 `read_file_lines`。
+- **`tests/test_catalog.py`**：未变（`COWORK_TOOLS` 集合里的 `read_file` 与 `read_file_lines` 名字保持不变；read_file 现在是我们的，read_file_lines 仍是 aisuite 的）。
+
 ### 变更 (Changed)
 
 - **`core/sources.py`**：`mark_cited` 入参在加锁前先经 `normalize_cited_ranges` 校验，避免半写入的 citation 落盘。
