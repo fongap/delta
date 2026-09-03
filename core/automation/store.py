@@ -21,7 +21,15 @@ from core.automation.models import ScheduledTask, TaskRun
 def compute_next_run(
     task: ScheduledTask, *, after: float | None = None
 ) -> float | None:
-    """Next fire time (epoch seconds), or None if the task is exhausted/one-shot-past."""
+    """Next fire time (epoch seconds), or None if the task is exhausted/one-shot-past.
+
+    P3 §7.3 §734: a task with a ``trigger`` (event-driven) has no
+    next_run — it's dispatched on events, not by the clock. We
+    return None so the scheduler's ``due()`` query skips it (the
+    TriggerRegistry's dispatch path is what fires it instead).
+    """
+    if getattr(task, "trigger", None) is not None:
+        return None
     sched = task.schedule
     now = after if after is not None else _epoch_now()
     if sched.kind == "once":

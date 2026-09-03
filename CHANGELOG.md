@@ -113,6 +113,19 @@ CHANGELOG 只记录用户可感知的变化和重要工程能力变化。
 - **`tests/test_inbox_run_issue.py`**：9 个新测试覆盖契约——InboxStore 直接层（pending/幂等/无 run_id 每次新建/for_run/resolve/与 notification 区分）+ 管理器路径（error 与 validation_failed run 生成 issue、ok run 不生成、同 run 重驱动不重复）。
 - 设计契约：notification 路径永不 teardown 掉 run finalize（`_notify_task_issue` 内部 catch-all）；issue 的 `session_id` 是 run 自己的 continuable thread（用户可从 Inbox 卡片直接 reopen 那个 session 继续）。
 
+#### P3 §7.3 §734 — 条件型 Automation 触发 (event-driven dispatch)
+
+- **`core/automation/triggers.py`**（新文件）：`Trigger` dataclass + `TriggerRegistry` 类。Trigger 是 Schedule 的事件驱动对应物；任务持有 Schedule 或 Trigger, 不混合。
+  - 3 个 v1 source: `manual` (工具推送) / `filesystem` (glob 路径匹配) / `inbox` (kind + data_match subset)
+  - `TriggerRegistry.dispatch(event)` 返回匹配的 `task_id` 列表, 调度本身由 caller (Scheduler extra_tick / 工具 push) 决定
+  - 每触发器 `cooldown_seconds` + 每 (task, event) fingerprint 去重, 防止 FS watcher 抖动触发几十次
+  - bad event (missing source, malformed payload) 静默 drop + warning — dispatch 不能拖崩 Scheduler
+  - `hydrate_from_store(tasks)` 从 TaskStore 加载触发器 (legacy 任务无 trigger 字段时反序列化为 None, 干净跳过)
+- **`ScheduledTask.trigger: Trigger | None` 新字段**：与 `schedule` 并列存在, 但 `compute_next_run()` 在 trigger 非空时返回 `None` —— 时间调度器的 `due()` 查询自动跳过, 事件路径接管.
+- **TaskStore 持久化**: trigger 字段写入 JSON blob; `from_dict` 反序列化时通过 `_make_trigger_or_none` 重建 Trigger.
+- **`tests/test_conditional_triggers.py`**: 21 个新测试覆盖契约——`_validate_condition` 拒绝坏 shape / registry dispatch 的 3 个 source 匹配 / glob + prefix 两种路径匹配 / inbox kind + data_match subset / cooldown 去重 / 多任务 / legacy 任务无 trigger 字段干净 hydrate / event-driven 任务 `next_run = None` / trigger 字段 round-trip 持久化.
+- **设计契约**: 任务用 `schedule` 还是 `trigger` 二选一; 时间路径与事件路径复用同一个 `_run_scheduled_task` 路径 (无第二套执行模型, §7.2 收口); event-driven 任务 `next_run = None` 让 `store.due()` 干净跳过.
+
 #### P3 §7.3 Context 完整能力 — 最小 Recovery Context (§4.5)
 
 - **`core/recovery.py`**：新模块。`RecoverySnapshot` dataclass（10 字段：schema / snapshot_at / run_id / session_id / phase / pending_tool_call / pending_inbox_item_id / last_event_seq / todo_summary / recent_artifacts / error）+ `RecoveryStore`（per-session JSON sidecar，write/get/clear/latest）。

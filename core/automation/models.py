@@ -16,6 +16,18 @@ from typing import Any
 _DOW = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 
 
+# P3 §7.3 §734: conditional triggers. A task uses either ``schedule``
+# (cron / once — time-based) OR ``trigger`` (event-based), not both.
+# The import is at the bottom of the module to dodge a cycle (the
+# Trigger dataclass itself does not need ScheduledTask).
+def _make_trigger_or_none(d: dict | None) -> Any:
+    if not d:
+        return None
+    from core.automation.triggers import Trigger
+
+    return Trigger.from_dict(d)
+
+
 def _now() -> float:
     return time.time()
 
@@ -146,6 +158,10 @@ class ScheduledTask:
     # it to `core.validation.ValidationCriteria` at run time. None means
     # "use the safe floor" (artifact count >= 1, all complete).
     validation_criteria: dict | None = None
+    # P3 §7.3 §734: optional event-driven trigger. A task uses EITHER
+    # ``schedule`` (time-based) OR ``trigger`` (event-based), not both.
+    # ``None`` for legacy time-based tasks.
+    trigger: Any = field(default=None)
 
     def __post_init__(self) -> None:
         if not self.task_session_id:
@@ -154,12 +170,21 @@ class ScheduledTask:
     def to_dict(self) -> dict:
         d = self.__dict__.copy()
         d["schedule"] = self.schedule.to_dict()
+        # Persist trigger as a plain dict (or None) for forward
+        # compatibility — older code that doesn't know the field
+        # still loads fine.
+        trig = d.get("trigger")
+        if trig is not None and hasattr(trig, "to_dict"):
+            d["trigger"] = trig.to_dict()
+        else:
+            d["trigger"] = trig
         return d
 
     @classmethod
     def from_dict(cls, d: dict) -> ScheduledTask:
         d = dict(d)
         d["schedule"] = Schedule.from_dict(d.get("schedule") or {})
+        d["trigger"] = _make_trigger_or_none(d.get("trigger"))
         return cls(**d)
 
     # -- standing rules (§25) --------------------------------------------------
