@@ -39,15 +39,16 @@ _SCHEMA = {
     "type": "function",
     "function": {
         "name": "read_document",
-        "description": (
-            "Read a PDF, XLSX, or DOCX file in the workspace and return its text. "
-            "PDFs are returned as a list of pages; XLSX as a list of sheets with "
-            "row counts and a `block` index for reading a specific sheet; DOCX as a "
-            "list of paragraphs. Markdown and plain text are NOT routed here — use "
-            "read_file, which is line-numbered. A successful read auto-cites the run "
-            "with a typed locator (page / cells / message_id) so the source ledger "
-            "can scroll back to the exact spot. Read-only."
-        ),
+             "description": (
+                 "Read a PDF, XLSX, or DOCX file in the workspace and return its text. "
+                 "PDFs are returned as a list of pages; XLSX as a list of sheets with "
+                 "row counts and a `block` index for reading a specific sheet; DOCX as a "
+                 "list of paragraphs. Markdown and plain text are NOT routed here — use "
+                 "read_file, which is line-numbered. A successful read auto-cites the run "
+                 "with a typed locator (page / cells / message_id) so the source ledger "
+                 "can scroll back to the exact spot. Read-only. Omit block to return document/block summary; "
+                 "pass a 0-based block index to read and cite that block."
+             ),
         "parameters": {
             "type": "object",
             "properties": {
@@ -196,7 +197,7 @@ def _detect_kind(path: Path) -> str:
         return "pdf"
     if suffix == ".xlsx":
         return "xlsx"
-    if suffix in {".docx", ".doc"}:
+    if suffix == ".docx":
         return "docx"
     return ""
 

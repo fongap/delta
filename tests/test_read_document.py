@@ -68,27 +68,99 @@ def _write_pdf(target: Path, pages: int = 3) -> None:
 
 
 def _write_xlsx(target: Path) -> None:
-    """Build a minimal valid .xlsx (one sheet, two rows, two columns)."""
-    from openpyxl import Workbook  # type: ignore[import-not-found]
+    """Build a minimal valid .xlsx (one sheet, two rows, two columns) using stdlib only.
 
-    wb = Workbook()
-    ws = wb.active
-    assert ws is not None
-    ws.title = "Q3"
-    ws.append(["region", "amount"])
-    ws.append(["west", 100])
-    ws.append(["east", 200])
-    wb.save(str(target))
+    Uses raw XML strings rather than ElementTree so namespace prefixes
+    (r:id on <sheet>) survive serialization — stdlib ET's default
+    namespace handling loses them otherwise.
+    """
+    import zipfile
+
+    content_types = b"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/xl/workbook.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml"/>
+  <Override PartName="/xl/worksheets/sheet1.xml" ContentType="application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml"/>
+</Types>"""
+
+    root_rels = b"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/>
+</Relationships>"""
+
+    workbook_xml = b"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+          xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <sheets>
+    <sheet name="Q3" sheetId="1" r:id="rId2"/>
+  </sheets>
+</workbook>"""
+
+    workbook_rels = b"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet" Target="worksheets/sheet1.xml"/>
+</Relationships>"""
+
+    sheet_xml = b"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">
+  <sheetData>
+    <row r="1">
+      <c t="inlineStr" r="A1"><is><t>region</t></is></c>
+      <c t="inlineStr" r="B1"><is><t>amount</t></is></c>
+    </row>
+    <row r="2">
+      <c t="inlineStr" r="A2"><is><t>west</t></is></c>
+      <c t="inlineStr" r="B2"><is><t>100</t></is></c>
+    </row>
+    <row r="3">
+      <c t="inlineStr" r="A3"><is><t>east</t></is></c>
+      <c t="inlineStr" r="B3"><is><t>200</t></is></c>
+    </row>
+  </sheetData>
+</worksheet>"""
+
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", content_types)
+        zf.writestr("_rels/.rels", root_rels)
+        zf.writestr("xl/workbook.xml", workbook_xml)
+        zf.writestr("xl/_rels/workbook.xml.rels", workbook_rels)
+        zf.writestr("xl/worksheets/sheet1.xml", sheet_xml)
 
 
 def _write_docx(target: Path, paragraphs: list[str]) -> None:
-    """Build a minimal valid .docx with the given paragraphs."""
-    from docx import Document  # type: ignore[import-not-found]
+    """Build a minimal valid .docx with the given paragraphs using stdlib only."""
+    import zipfile
+    from xml.sax.saxutils import escape
 
-    doc = Document()
-    for p in paragraphs:
-        doc.add_paragraph(p)
-    doc.save(str(target))
+    para_xml = "".join(
+        f"<w:p><w:r><w:t xml:space=\"preserve\">{escape(p)}</w:t></w:r></w:p>"
+        for p in paragraphs
+    )
+
+    content_types = b"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
+  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
+  <Default Extension="xml" ContentType="application/xml"/>
+  <Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/>
+</Types>"""
+
+    root_rels = b"""<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>
+</Relationships>"""
+
+    document_xml = (
+        '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n'
+        '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+        f"<w:body>{para_xml}</w:body>"
+        "</w:document>"
+    ).encode("utf-8")
+
+    with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("[Content_Types].xml", content_types)
+        zf.writestr("_rels/.rels", root_rels)
+        zf.writestr("word/document.xml", document_xml)
 
 
 @pytest.fixture
