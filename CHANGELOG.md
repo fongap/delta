@@ -7,6 +7,36 @@ CHANGELOG 只记录用户可感知的变化和重要工程能力变化。
 具体实现过程、测试数量、调试记录、依赖锁文件变化和单纯代码整理，应保留在 Pull Request、Commit 和 CI 记录中，不再写入 CHANGELOG。
 
 
+## P1/P2/P3 阶段基线说明
+
+P1（短期·可靠）/P2（中期·实用）/P3（长期·智能）的第一刀落地见下表。每一刀都伴随一个独立 PR 与 ADR；本节是"完成后"的快照，**不是新变更**。
+
+| 阶段 | 蓝图标号 | 落地点 | PR | ADR |
+|---|---|---|---|---|
+| P1 §7.1 短期·可靠 | Reliable Task Runtime (Ledger 词汇 / Artifact / Validation / IdemLog / 单 run id / 收口 + Reference Task e2e) | #75 | ADR-005 |
+| P2 §7.2 实用 | Source/Citation (CitationRange schema + read_file auto-cite + read_document PDF/XLSX/DOCX + Cowork multi-root cite + scanned PDF fallback) | #76 / #77 / #82 / #83 | ADR-006 |
+| P2 §7.2 实用 | Inbox 收口 (Automation 异常入 Inbox) | #87 | ADR-006 |
+| P3 §7.3 §10.6 | P3 §7.3 第一刀：只读 Run Analyzer (timeline / automation_health / source_citation_hits / workspace boundary) | #78 | ADR-007 |
+| P3 §7.3 §10.6 | workspace 列 (run_events + task_runs + 复合索引 + 迁移) | #79 | ADR-007 |
+| P3 §7.3 §10.6 | timeline_for_run SQL 过滤 (workspace 推到 SQL 走索引) | #81 | ADR-007 |
+| P3 §7.3 §701 | per-citation 有效性 (valid / content_changed / out_of_bounds / file_missing / source_gone) | #84 | ADR-006 (续) |
+| P3 §7.3 §701 | Source 索引失效 mtime fast path (0 read_bytes 命中) | #85 | ADR-006 (续) |
+| P3 §4.5 / §7.3 | minimal Recovery Context (10 字段快照 + 会话绑定 + schema 版本) | #86 | ADR-007 (续) |
+| P3 §7.3 §734 | 条件型 Automation 触发 (manual / filesystem / inbox; cooldown + fingerprint 去重) | #88 | ADR-007 (续) |
+
+**未做（蓝图 §8.9 明确延后或 §7.3 条件限定）**：
+
+- 自动 Reflection / Skill Evaluator / Failure Memory / 自动 Preference Promotion (§8.9 延后)
+- 完整 Source 语义检索 / 分块 / Source Index (§7.3 §701：中期不以建设向量数据库为目标)
+- Plan Critic (§7.3 §746：只有当真实任务证明规划错误已成为明显失败来源时再引入)
+- Multi-Agent / Subagent (§7.3 §759：只有当任务确实存在可并行子任务/独立审查需求时再扩大)
+- 完整 Context 进一步深化（除 Recovery 之外的 Working/Source/Long-term/Archive 四件）
+
+下一个 P3 §7.3 workstream 应该是**真实使用压力测试**（用 Reference Task 反复跑 + 识别真痛点），而不是继续向上铺。
+
+详见 `docs/architecture/adr/ADR-008-p1p2p3-baseline.md`。
+
+
 ## [Unreleased]
 
 ### 新增 (Added)
