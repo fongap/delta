@@ -54,6 +54,22 @@ CHANGELOG 只记录用户可感知的变化和重要工程能力变化。
 
 - **Inbox 旧 token 解析兼容终止**（`core/inbox_routing.py:_ID_TOKEN`）：由 `\[(?:d|ow|ocw):([0-9a-f]{6,})\]` 收紧为 `\[d:([0-9a-f]{6,})\]`。OpenWorker 时代 rebrand 留下的 `ow` / `ocw` 旧 spell 在 P2 起不再解析为 inbox 回复（写方向自 PR #73 已统一为 `[d:…]`）。`docs/architecture/relay-mode-removal.md` 的 P2 承诺条目更新为"已终止"。任何 P1 之前的旧 approval 需要通过 UI 重新发起。
 
+### P3 — 长期（智能）第一刀 (DELTA_BLUEPRINT §7.3)
+
+### 新增 (Added)
+
+- **只读 Run Analyzer (ADR-007)**：§7.3 受控学习链 `Candidate → Evidence → Evaluation → User Acceptance / Policy → Promotion → Use → Revocation` 的 **Evidence 步 query 层**。仅从 `RunEventLedger` + `SourceStore` + `TaskRun` 现有事实库读，不写任何"经验 / 候选 / 失败记忆 / 偏好 / Skill 候选"表，不动 Skill / Memory / Preference 任何活跃状态，不引入第二个事实库（§10.6 "ledger 是单一事实来源"不被破）。
+  - **`core/analyzer.py`**：`Analyzer` 类 + 三个 query（`timeline_for_run` / `automation_health` / `source_citation_hits`）+ 模块级薄包装。所有 query 第一参数 `workspace: str` 必填，**不允许**"全局 fetch + 客户端过滤"——per-workspace 边界是 D-4 强约束；同一 workspace 内支持跨 session / 跨 TaskRun 聚合。
+  - **`TimelineEntry`**：给定 `run_id` + `workspace`，按 `seq` 把 ledger 事件还原为有序端到端时间线（不丢任何事件类型，封闭词汇表是 `KNOWN_EVENT_TYPES`）。
+  - **`AutomationHealth`**：跨 N 个 run 聚合 `TaskRun.status` + `validation.passed/failed` 计数 + 平均时长；`failure_reasons` 来自 `run.failed` / `validation.failed` / `tool.finished{status: "error"}` payload；`run_error_counts` 单独承载 `TaskRun.error` 顶层标签以避免与 ledger 事件双重计数。跨 workspace 的 task 抛 `WorkspaceMismatchError`，**不**做静默跨 workspace 聚合。
+  - **`SourceCitationHit`**：把 `SourceRef.cited_ranges` 与 ledger `tool.finished{tool ∈ {read_file, read_document}}` 关联，给出"这条 citation 来自哪一次 read"，未匹配的 citation `ledger_payload=None`。
+- **架构文档**：`docs/architecture/adr/ADR-007-p3-readonly-run-analyzer.md`；ADR 索引同步。后续 P3 工作（自动 Reflection / Skill Evaluator / 自动 Failure Memory / 自动 Preference Promotion / 条件型 Automation / Source 语义检索 / 跨项目聚合）**全部**为独立 ADR 评估，不在本 PR 范围。
+
+### 不变（In scope but unchanged）
+
+- 短中期冻结面（§8.8）：Standing Approval / MCP / Subagent / Memory / Skill / Inbox / Self Wake 范围未扩。
+- 长期行为不变：模型行为、Skill 权重、用户偏好、Standing Rule、Task Schedule 均**未**自动调整；§7.3 "不允许模型因为一次任务成功就自动改变长期行为" 仍由 0 个写入路径守护。
+
 ### P1 — 可靠 (DELTA_BLUEPRINT §7.1)
 
 ### 变更 (Changed)

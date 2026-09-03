@@ -13,6 +13,7 @@
 - `ADR-004-openworker-decouple-hub-boundary.md` – 移除 OpenWorker Cloud 运行时依赖并建立 Delta Hub Capability Port 边界。
 - `ADR-005-reliable-task-runtime.md` – 可靠任务运行时：验证门控、Artifact 领域对象、副作用安全恢复、Ledger 词汇表扩展。
 - `ADR-006-p2-source-citation-and-convergence.md` – P2 实用：Source / Citation 提升为可定位的一类证据、Automation 收敛的结构化守护、Inbox 解析方向终止兼容。
+- `ADR-007-p3-readonly-run-analyzer.md` – P3 长期「智能」第一刀：只读 Run Analyzer（`RunEventLedger` + `SourceStore` + `TaskRun` 的 query 层），零行为变更、不动 Skill / Memory / Preference 任何活跃状态，为 §7.3 治理链的 Evidence 步提供可复用基础。
 
 相关架构文档：
 - `hub-federation-boundary.md` – Delta Hub 联邦化边界设计，明确 OpenWorker 仅为可选适配器。
