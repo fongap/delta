@@ -475,3 +475,92 @@ def test_ordinary_text_answer_still_completes(tmp_path):
     events = _collect(engine, "how does qwen format tool calls?")
     assert EventType.ERROR not in _types(events)
     assert next(ev for ev in events if ev.type == EventType.TURN_END).data["status"] == "completed"
+
+
+def test_malformed_structured_tool_call_fails_closed(tmp_path):
+    """A structured tool call whose `arguments` couldn't be parsed (the provider surfaces
+    it as a single-key `{"_raw": …}` marker) must not execute the tool. It is recorded
+    as a tool-error result so the next iteration sees the failure in context and can
+    correct it; no side effect, no shell/write/send.
+    """
+    (tmp_path / "victim.txt").write_text("hello", encoding="utf-8")
+    side_effect_path = tmp_path / "side_effect.txt"
+
+    def _would_have_run(*args, **kwargs):
+        # If the engine mistakenly executes this call we know immediately.
+        side_effect_path.write_text("BOOM", encoding="utf-8")
+        return {"ok": True}
+    _would_have_run.__name__ = "dangerous_write"
+
+    from integrations.tools import ToolRegistry
+
+    registry = ToolRegistry()
+    registry.register_all(ai.toolkits.files(root=str(tmp_path), allow_write=True))
+    registry.register(
+        _would_have_run,
+        schema={
+            "type": "function",
+            "function": {
+                "name": "dangerous_write",
+                "description": "never should run",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        },
+    )
+
+    provider = ScriptedProvider([
+        AssistantTurn(
+            tool_calls=[
+                ToolCall(
+                    id="call_malformed",
+                    name="dangerous_write",
+                    arguments={"_raw": '{"path":"abc'},
+                )
+            ],
+            finish_reason="tool_calls",
+        ),
+        # Second iteration: model fixes the call and the engine must let it through.
+        AssistantTurn(
+            tool_calls=[
+                ToolCall(
+                    id="call_fixed",
+                    name="read_file",
+                    arguments={"path": "victim.txt"},
+                )
+            ],
+            finish_reason="tool_calls",
+        ),
+        AssistantTurn(text="done", finish_reason="stop"),
+    ])
+    from core.permissions import PermissionEngine
+
+    permissions = PermissionEngine(workspace_root=tmp_path)
+    engine = TurnEngine(
+        provider=provider,
+        registry=registry,
+        permissions=permissions,
+        model="gpt-5.5",
+    )
+
+    events = _collect(engine, "do it")
+
+    # Side effect: the malformed call did NOT execute.
+    assert not side_effect_path.exists(), "malformed tool call must not execute"
+
+    # The bad call yields a TOOL_FINISHED with error status; the engine keeps going.
+    finished = [
+        ev for ev in events
+        if ev.type == EventType.TOOL_FINISHED and ev.data.get("name") == "dangerous_write"
+    ]
+    assert finished, "malformed tool call must produce a TOOL_FINISHED event"
+    assert finished[0].data["status"] == "error"
+    assert finished[0].data["error_type"] == "UnparsedToolCall"
+
+    # The corrected call on the next iteration runs normally.
+    started = [
+        ev for ev in events
+        if ev.type == EventType.TOOL_STARTED and ev.data.get("name") == "read_file"
+    ]
+    assert started, "corrected tool call must run on the next iteration"
+    assert events[-1].type == EventType.TURN_END
+    assert events[-1].data["status"] == "completed"

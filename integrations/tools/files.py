@@ -20,6 +20,7 @@ import aisuite as ai
 from integrations.tools.metadata import attach_tool_metadata
 
 _DEFAULT_MAX_LINES = 2000
+_DEFAULT_LINES_WINDOW = 100  # tighter than read_file so "give me a slice" stays cheap
 _MAX_LINE_CHARS = 500
 
 _SCHEMA = {
@@ -27,7 +28,7 @@ _SCHEMA = {
     "function": {
         "name": "read_file",
         "description": (
-            "Read a text file, returning numbered lines ('   12\\ttext') so code can be "
+            "Read a text file, returning numbered lines ('   12\ttext') so code can be "
             "referenced as path:line. Large files are windowed: pass start_line to continue "
             "where the previous read stopped. Read-only."
         ),
@@ -45,6 +46,36 @@ _SCHEMA = {
                 "max_lines": {
                     "type": "integer",
                     "description": f"How many lines (default {_DEFAULT_MAX_LINES}).",
+                },
+            },
+            "required": ["path"],
+        },
+    },
+}
+
+_READ_FILE_LINES_SCHEMA = {
+    "type": "function",
+    "function": {
+        "name": "read_file_lines",
+        "description": (
+            "Read a small window of lines from a text file (default 100, max 500) and "
+            "return them numbered so they can be cited as path:line. Use for quick slices; "
+            "for full reads use read_file. Read-only."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "path": {
+                    "type": "string",
+                    "description": "File path, relative to the workspace.",
+                },
+                "start_line": {
+                    "type": "integer",
+                    "description": "First line to read, 1-based (default 1).",
+                },
+                "max_lines": {
+                    "type": "integer",
+                    "description": f"How many lines (default {_DEFAULT_LINES_WINDOW}).",
                 },
             },
             "required": ["path"],
@@ -125,7 +156,7 @@ def file_tools(
     run_id: str | None = None,
     roots: list[Any] | None = None,
 ) -> list:
-    """Build the read_file tool bound to a workspace.
+    """Build the read_file / read_file_lines tools bound to a workspace.
 
     ``source_store`` + ``run_id`` are an opt-in audit hook (P2 实用): every
     successful read is captured as a :class:`SourceRef` and cited under the
@@ -134,10 +165,10 @@ def file_tools(
     behavior unchanged -- the hook is purely additive.
 
     ``roots`` (P2 follow-up A) makes the reader multi-root aware: when
-    provided, ``read_file`` accepts absolute paths and resolves them
-    against any root in the list (mirroring aisuite's multi-root
-    ``read_file``). The cite hook records the citation against whichever
-    root the file actually lives in, not the primary.
+    provided, both tools accept absolute paths and resolve them against
+    any root in the list (mirroring aisuite's multi-root ``read_file``).
+    The cite hook records the citation against whichever root the file
+    actually lives in, not the primary.
     """
     root = Path(workspace).resolve()
     if roots:
@@ -153,18 +184,27 @@ def file_tools(
     if roots:
         resolved_roots = [Path(getattr(r, "path", r)).resolve() for r in roots]
 
-    def read_file(
+    def _windowed_read(
         path: str,
-        start_line: int = 1,
-        max_lines: int = _DEFAULT_MAX_LINES,
+        start_line: int,
+        max_lines: int,
+        default_max_lines: int,
+        hard_max_lines: int,
     ) -> dict[str, Any]:
+        """Shared read-window implementation for read_file and read_file_lines.
+
+        Both tools share the same multi-root path resolver, the same
+        Source/Citation chokepoint, and the same `lines` citation shape. They
+        only differ in their default window size (`read_file` reads big,
+        `read_file_lines` reads a small slice) and in their hard cap.
+        """
         start = start_line if isinstance(start_line, int) and start_line > 0 else 1
         n = (
             max_lines
             if isinstance(max_lines, int) and max_lines > 0
-            else _DEFAULT_MAX_LINES
+            else default_max_lines
         )
-        n = min(n, _DEFAULT_MAX_LINES)
+        n = min(n, hard_max_lines)
 
         # Multi-root: accept absolute paths and resolve against any root.
         # Single-root: relative paths only, reject escapes.
@@ -201,12 +241,12 @@ def file_tools(
                         continue
                     if len(selected) >= n:
                         # Reaching one line past the window is the cheapest honest
-                        # proof that more content exists 鈥?no whole-file count.
+                        # proof that more content exists — no whole-file count.
                         has_more = True
                         break
                     text = line.rstrip("\n")
                     if len(text) > _MAX_LINE_CHARS:
-                        text = text[:_MAX_LINE_CHARS] + "鈥?(line truncated)"
+                        text = text[:_MAX_LINE_CHARS] + "…(line truncated)"
                     selected.append(f"{i:>6}\t{text}")
         except OSError as exc:
             return {"error": f"read failed: {exc}"}
@@ -237,6 +277,27 @@ def file_tools(
             )
         return result
 
+    def read_file(
+        path: str,
+        start_line: int = 1,
+        max_lines: int = _DEFAULT_MAX_LINES,
+    ) -> dict[str, Any]:
+        return _windowed_read(
+            path, start_line, max_lines, _DEFAULT_MAX_LINES, _DEFAULT_MAX_LINES
+        )
+
+    def read_file_lines(
+        path: str,
+        start_line: int = 1,
+        max_lines: int = _DEFAULT_LINES_WINDOW,
+    ) -> dict[str, Any]:
+        # `read_file_lines` is the small-window sibling of `read_file`. Same
+        # path-resolution rules, same Source/Citation chokepoint, same kind =
+        # "lines" citation; only the default + hard cap are tighter.
+        return _windowed_read(
+            path, start_line, max_lines, _DEFAULT_LINES_WINDOW, _MAX_LINE_CHARS
+        )
+
     read_file.__name__ = "read_file"
     read_file.__doc__ = _SCHEMA["function"]["description"]
     attach_tool_metadata(
@@ -250,4 +311,19 @@ def file_tools(
             requires_approval=False,
         ),
     )
-    return [read_file]
+
+    read_file_lines.__name__ = "read_file_lines"
+    read_file_lines.__doc__ = _READ_FILE_LINES_SCHEMA["function"]["description"]
+    attach_tool_metadata(
+        read_file_lines,
+        schema=_READ_FILE_LINES_SCHEMA,
+        metadata=ai.ToolMetadata(
+            name="read_file_lines",
+            category="filesystem",
+            risk_level="low",
+            capabilities=["read_file_lines"],
+            requires_approval=False,
+        ),
+    )
+
+    return [read_file, read_file_lines]

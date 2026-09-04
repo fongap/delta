@@ -55,8 +55,9 @@ class Capability:
 
 def _code_files(context: AgentContext) -> list:
     """Repo-oriented files: single-root, line-numbered/windowed `read_file`. Our `grep` and
-    windowed `read_file` replace aisuite's slower `search_files` / `read_file`/`read_file_lines`.
-    `read_document` (P2 实用) adds PDF / XLSX / DOCX reading with typed citations.
+    windowed `read_file` / `read_file_lines` replace aisuite's slower
+    `search_files` / `read_file` / `read_file_lines`. `read_document` (P2 实用)
+    adds PDF / XLSX / DOCX reading with typed citations.
     """
     ws = str(context.workspace)
     replaced = {"search_files", "read_file", "read_file_lines"}
@@ -81,11 +82,11 @@ def _code_files(context: AgentContext) -> list:
 
 
 def _files(context: AgentContext) -> list:
-    """Knowledge-work files: multi-root aware (reads/writes across the session's roots), keeps
-    aisuite's ``read_file_lines``. Our ``read_file`` replaces aisuite's with a cite-aware
-    multi-root version (P2 follow-up A); ``read_file_lines`` stays aisuite for now (no cite hook
-    on that variant — it's a secondary windowing reader). Only our ``grep`` replaces the slow
-    ``search_files``.
+    """Knowledge-work files: multi-root aware (reads/writes across the session's roots).
+    Both ``read_file`` and ``read_file_lines`` come from our cite-aware multi-root
+    toolkit (P2 follow-up A; ``read_file_lines`` gained a Source/Citation hook in
+    the v0.3.1 release-hardening pass so windowed reads are also auditable).
+    Only our ``grep`` replaces the slow ``search_files``.
     """
     ws = str(context.workspace)
     toolkit = (
@@ -93,9 +94,9 @@ def _files(context: AgentContext) -> list:
         if context.roots
         else ai.toolkits.files(root=ws, allow_write=True)
     )
-    # Drop aisuite's read_file (replaced by our cite-aware multi-root version)
-    # and search_files (replaced by our grep). Keep read_file_lines.
-    replaced = {"search_files", "read_file"}
+    # Drop aisuite's read_file + read_file_lines (replaced by our cite-aware
+    # multi-root versions) and search_files (replaced by our grep).
+    replaced = {"search_files", "read_file", "read_file_lines"}
     files = [
         t
         for t in toolkit

@@ -49,5 +49,7 @@ def test_ops_persona_composes_knowledge_toolset(tmp_path):
 def test_code_keeps_single_root_file_tools(tmp_path):
     reg = PersonaRegistry()
     names = _names(reg.agent("code"), _ctx(tmp_path))
-    assert "read_file" in names and "read_file_lines" not in names
+    # v0.3.1: both `read_file` and `read_file_lines` are our multi-root-aware
+    # tools, and the code agent gets the small-window sibling too.
+    assert "read_file" in names and "read_file_lines" in names
     assert "git_log" in names  # code has git; cowork/ops do not

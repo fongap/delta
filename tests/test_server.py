@@ -1296,3 +1296,60 @@ def test_set_provider_persists_extra_fields(tmp_path):
     manager.set_provider("deepseek", {"base_url": ""})
     providers = {p["name"]: p for p in manager.get_providers()}
     assert "base_url" not in providers["deepseek"]["values"]
+
+
+# -- R6: Host allow-list (defense in depth against DNS rebinding) ----------------
+
+
+def test_host_allowlist_rejects_non_loopback_host(tmp_path):
+    """A request whose Host header is anything other than the loopback literals
+    must be rejected with 421 before reaching the sidecar. The Origin regex
+    catches browsers; this is the backstop for native / server-to-server clients
+    that don't carry an Origin header but do set a Host that doesn't match the
+    bind address (127.0.0.1).
+    """
+    client = _client(tmp_path, [])
+    res = client.get("/v1/health", headers={"Host": "evil.example"})
+    assert res.status_code == 421
+    body = res.json()
+    assert body["code"] == "host.not_allowed"
+
+
+def test_host_allowlist_rejects_non_loopback_host_with_port(tmp_path):
+    client = _client(tmp_path, [])
+    res = client.get("/v1/health", headers={"Host": "evil.example:8765"})
+    assert res.status_code == 421
+
+
+def test_host_allowlist_accepts_loopback_hosts(tmp_path):
+    """localhost and 127.0.0.1 (with and without a port) keep working — the
+    Tauri proxy, the GUI, and curl from the same machine all use these.
+    """
+    client = _client(tmp_path, [])
+    for host in ("localhost", "localhost:8765", "127.0.0.1", "127.0.0.1:8765"):
+        res = client.get("/v1/health", headers={"Host": host})
+        # The health endpoint is tokenless when DELTA_API_TOKEN is unset (the test
+        # default), so the only gate is the host allow-list. A 200 here proves
+        # the host passed; a 401 would mean the host check rejected it.
+        assert res.status_code == 200, f"host {host!r} unexpectedly rejected: {res.status_code} {res.text}"
+
+
+def test_host_allowlist_accepts_testserver_for_testclient(tmp_path):
+    """Starlette's in-process TestClient sends Host: testserver; without an
+    explicit exception the whole pytest suite would 421. The exception is
+    scoped to the well-known Starlette literals — it does not extend to
+    arbitrary user-supplied hosts.
+    """
+    client = _client(tmp_path, [])
+    res = client.get("/v1/health")
+    assert res.status_code == 200
+
+
+def test_host_allowlist_does_not_block_missing_host(tmp_path):
+    """curl, native clients, and the in-process test all sometimes drop the Host
+    header entirely. A missing Host must not be the cause of a 421 — the
+    sidecar binds to loopback so the absence of a Host is fine.
+    """
+    client = _client(tmp_path, [])
+    res = client.get("/v1/health", headers={"Host": ""})
+    assert res.status_code == 200

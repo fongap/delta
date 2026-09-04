@@ -17,13 +17,16 @@ from core.risk import RiskClass
 from integrations.tools.todo import TodoList
 
 # Expected toolset for each surface — the frozen equivalence contract for the refactor.
+# `read_file` and `read_file_lines` are both ours in v0.3.1: same multi-root path
+# resolver, same Source/Citation chokepoint, only the default window differs.
 CODE_TOOLS = {
     "list_files",
     "write_file",
     "apply_unified_diff",
     "apply_patch",
     "replace_in_file",
-    "read_file",  # numbered/windowed (single-root)
+    "read_file",  # ours: numbered/windowed (single-root) with cite hook
+    "read_file_lines",  # ours: small-window sibling of read_file with cite hook
     "read_document",  # P2 实用: PDF / XLSX / DOCX with typed citations
     "git_status",
     "git_diff",
@@ -36,8 +39,8 @@ CODE_TOOLS = {
 }
 COWORK_TOOLS = {
     "list_files",
-    "read_file",  # aisuite (multi-root)
-    "read_file_lines",
+    "read_file",  # ours: cite-aware multi-root
+    "read_file_lines",  # ours: cite-aware multi-root
     "write_file",
     "apply_unified_diff",
     "apply_patch",
@@ -82,12 +85,19 @@ def test_agents_use_catalog(tmp_path):
 
 
 def test_file_capability_distinction(tmp_path):
-    # Code drops read_file_lines (folded into the windowed reader); Cowork keeps it (multi-root).
+    # Both Code and Cowork get our `read_file` AND our `read_file_lines` (v0.3.1:
+    # `read_file_lines` gained a Source/Citation hook and was promoted from a
+    # Cowork-only windowed reader to a shared chokepoint). The remaining
+    # distinction is what aisuite provides: Code has single-root + read_document,
+    # Cowork has multi-root roots-aware writes.
     code = _names(expand(["code_files"], _full_context(tmp_path)))
     cowork = _names(expand(["files"], _full_context(tmp_path)))
-    assert "read_file_lines" not in code
+    assert "read_file_lines" in code
     assert "read_file_lines" in cowork
     assert "read_file" in code and "read_file" in cowork
+    # Code has read_document; Cowork does not.
+    assert "read_document" in code
+    assert "read_document" not in cowork
 
 
 def test_requirements_skip_unavailable(tmp_path):
