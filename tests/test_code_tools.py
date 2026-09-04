@@ -166,7 +166,9 @@ def test_code_agent_has_grep_and_git_log_not_search_files(tmp_path):
     names = {getattr(t, "__name__", "") for t in code_agent().build_tools(ctx)}
     assert "grep" in names and "git_log" in names
     assert "search_files" not in names  # replaced by grep
-    assert "read_file_lines" not in names  # folded into our windowed read_file
+    # v0.3.1: read_file_lines is our small-window sibling of read_file and
+    # is now in the code agent too (same Source/Citation chokepoint).
+    assert "read_file_lines" in names
     assert {"read_file", "write_file", "git_status", "git_diff"} <= names
 
 

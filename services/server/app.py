@@ -59,6 +59,32 @@ def _origin_allowed(origin: str | None) -> bool:
     return origin is None or bool(_ALLOWED_ORIGIN_RE.match(origin))
 
 
+# Host allow-list — defense in depth against DNS rebinding. The Origin regex above is the
+# primary browser-side gate (an attacker can spoof Host but not Origin), and the bind
+# address (127.0.0.1) already limits who can reach the socket. This host gate catches
+# any future regression that loosens the bind: e.g. a script on the user's machine
+# pointing `Host: evil.example` cannot drive a session even if some other component
+# starts trusting forwarded Host headers. We accept only loopback host literals plus
+# an explicit optional port; missing Host passes (curl, native clients). The two
+# `testserver` / `testclient` literals are Starlette's in-process TestClient defaults
+# — without them every FastAPI test using TestClient would 421.
+_ALLOWED_HOST_RE = re.compile(
+    r"^(localhost"
+    r"|127\.0\.0\.1"
+    r"|\[::1\]"
+    r"|testserver"
+    r"|testclient)(:\d+)?$",
+    re.IGNORECASE,
+)
+
+
+def _host_allowed(host: str | None) -> bool:
+    """True if the HTTP Host header points at the loopback interface. Missing Host passes."""
+    if not host:
+        return True
+    return bool(_ALLOWED_HOST_RE.match(host.lower()))
+
+
 # Caps on inbound WebSocket traffic. The loopback socket is unauthenticated (any local
 # process can reach it), so bound frames, messages, and per-connection request rate before
 # building model content or starting a turn.
@@ -222,6 +248,23 @@ def create_app(manager: SessionManager) -> FastAPI:
 
     @app.middleware("http")
     async def require_sidecar_token(request: Request, call_next):
+        # Defense in depth (R6): reject a non-loopback Host header before anything
+        # else runs. A rebinding attacker that resolves 127.0.0.1 to evil.example
+        # and routes traffic through a script in the user's browser could bypass
+        # the Origin gate if Origin was absent (e.g. fetch from a privileged
+        # context); refusing a foreign Host cuts that off at the door. CORS preflight
+        # requests are short-circuited to allow the browser to receive the response
+        # it needs, matching how the token check treats OPTIONS.
+        host = request.headers.get("host")
+        if request.method != "OPTIONS" and not _host_allowed(host):
+            return JSONResponse(
+                error_envelope(
+                    "host.not_allowed",
+                    "Delta sidecar only accepts loopback Host headers",
+                    retriable=False,
+                ),
+                status_code=421,
+            )
         # Preflights carry the requested header name, not its value. CORS checks the
         # Origin; the actual state-changing request still must authenticate.
         if (

@@ -158,11 +158,16 @@ jobs:
       - name: Set up sidecar build environment
         shell: pwsh
         run: |
-          uv sync --locked --extra build
+          # The release artifact must include the messaging runtime (Slack Socket Mode + Telegram
+          # bot transports) that the product exposes to users. Without `--extra messaging`, the
+          # sidecar builds and the Gateway tests pass, but `slack_bolt`/`telegram` never land in
+          # delta-server.exe and the published "Delta" silently loses its messaging capability.
+          uv sync --locked --extra build --extra messaging
           uv pip check --python .venv\Scripts\python.exe
 
           # `delta` is the distribution/project name, not a Python package.
-          # Smoke-test the real post-refactor entry points instead.
+          # Smoke-test the real post-refactor entry points + the messaging runtime that
+          # the official release promises. A missing import here is a release blocker.
           .\.venv\Scripts\python.exe -c @"
           import aisuite
           import core
@@ -170,9 +175,12 @@ jobs:
           import integrations
           import packages
           import services
+          import slack_bolt
+          import telegram
+          import aiohttp
           from core.cli import main as cli_main
           from services.server.run import main as server_main
-          print("Python runtime import smoke passed")
+          print("Python runtime import smoke passed (incl. messaging: slack_bolt, telegram, aiohttp)")
           "@
 
       - name: Install frontend dependencies
@@ -275,9 +283,13 @@ jobs:
             throw "portable metadata version mismatch: expected $($env:EXPECTED_VERSION), got $actualVersion"
           }
 
-          # Boot the packaged PyInstaller sidecar itself. `--help` exercises the actual
-          # packaged executable/import graph without opening a listening port or making
-          # model/network requests.
+          # Boot the packaged PyInstaller sidecar and verify the real bundled
+          # runtime / dependency graph. `--self-test` imports every module the
+          # official release is contracted to ship (core/providers/integrations
+          # + mcp, pypdf, pypdfium2, croniter, certifi, tzdata, slack_bolt,
+          # telegram, aiohttp) without opening a listening port, calling a
+          # model, or touching user data. Replaces the bare `--help` smoke that
+          # proved only that the binary launched.
           $serverExe = Join-Path $verifyRoot "Delta\App\Delta\sidecar\delta-server.exe"
 
           $smokeState = Join-Path $env:RUNNER_TEMP "delta-portable-smoke-state"
@@ -292,10 +304,45 @@ jobs:
           $env:DELTA_STATE_DIR = $smokeState
 
           try {
-            & $serverExe --help
+            & $serverExe --self-test
 
             if ($LASTEXITCODE -ne 0) {
-              throw "packaged delta-server smoke failed (exit $LASTEXITCODE)"
+              throw "packaged delta-server self-test failed (exit $LASTEXITCODE)"
+            }
+          }
+          finally {
+            $env:DELTA_STATE_DIR = $oldStateDir
+          }
+
+          # The portable artifact must boot from non-ASCII + whitespace paths and
+          # survive a directory move. Delta derives every data/secret path from
+          # the sidecar's own location at startup, so a relocated binary should
+          # just work; the historical bug was a build-time hard-coded path leaking
+          # into the bundle (rejected by scan_portable_paths.ps1, but worth
+          # re-checking by exercising the live binary, not just the source tree).
+          $unicodeRoot = Join-Path $env:RUNNER_TEMP "测试 Delta\Delta 移动测试\Delta"
+
+          if (Test-Path -LiteralPath $unicodeRoot) {
+            Remove-Item -LiteralPath $unicodeRoot -Recurse -Force
+          }
+
+          Copy-Item -Recurse -Force (Join-Path $verifyRoot "Delta") $unicodeRoot
+
+          $unicodeExe = Join-Path $unicodeRoot "App\Delta\sidecar\delta-server.exe"
+          $unicodeState = Join-Path $unicodeRoot "Data"
+
+          if (-not (Test-Path -LiteralPath $unicodeState -PathType Container)) {
+            throw "relocated portable did not preserve Data\ directory layout"
+          }
+
+          $oldStateDir = $env:DELTA_STATE_DIR
+          $env:DELTA_STATE_DIR = $unicodeState
+
+          try {
+            & $unicodeExe --self-test
+
+            if ($LASTEXITCODE -ne 0) {
+              throw "packaged delta-server self-test failed under Unicode+whitespace path (exit $LASTEXITCODE)"
             }
           }
           finally {
@@ -306,6 +353,7 @@ jobs:
           Write-Host "  ZIP     : $($zip[0].FullName)"
           Write-Host "  SHA-256 : $actualHash"
           Write-Host "  Version : $actualVersion"
+          Write-Host "  Unicode : $unicodeRoot"
 
       - name: Attest portable ZIP provenance
         uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3

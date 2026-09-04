@@ -149,6 +149,64 @@ def _ensure_api_token(port: int) -> Path | None:
     )
 
 
+# Modules that MUST import cleanly in every official release build. The Delta runtime
+# is wired through these packages; a missing import here means the sidecar will fail
+# at the first request, not at startup. Kept aligned with the messaging/PDF/timezone
+# extras declared in pyproject.toml and the packages delta-server.spec bundles.
+_SELF_TEST_REQUIRED_MODULES: tuple[tuple[str, str], ...] = (
+    # core responsibility packages — a missing one means the engine cannot run.
+    ("core", "core runtime"),
+    ("providers", "providers"),
+    ("integrations", "integrations"),
+    ("packages", "packages"),
+    ("services", "services"),
+    # Foundation deps used by the bundled sidecar.
+    ("mcp", "MCP runtime"),
+    ("pypdf", "PDF text extraction"),
+    ("pypdfium2", "PDF rasterization"),
+    ("croniter", "automation scheduler math"),
+    ("certifi", "TLS CA bundle"),
+    ("uvicorn", "ASGI server"),
+    ("websockets", "WS client (managed capability port tests)"),
+    ("aisuite", "provider abstraction"),
+    # Windows-only: IANA tz database ships via this package; without it every named
+    # timezone silently falls back to local time. Harmless on POSIX, fatal on Windows.
+    ("tzdata", "IANA tz database (Windows)"),
+    # Messaging runtime. The official release artifact promises Slack + Telegram; if
+    # any of these is missing the sidecar degrades silently and the published product
+    # loses the capability — exactly what R1 forbids.
+    ("slack_bolt", "Slack Socket Mode runtime"),
+    ("telegram", "Telegram bot runtime"),
+    ("aiohttp", "Slack Socket Mode transport"),
+)
+
+
+def _self_test() -> int:
+    """Verify the bundled Python runtime / dependency graph is intact.
+
+    Offline: does not import any provider client, open a listening port, or touch
+    user data. Walks the module list that the official release is contracted to ship
+    and reports PASS/FAIL with a non-zero exit on any missing module. Intended to
+    be called from `delta-server --self-test` in CI and from the post-build
+    verification step in the release workflow.
+    """
+    missing: list[tuple[str, str]] = []
+    for module, label in _SELF_TEST_REQUIRED_MODULES:
+        try:
+            __import__(module)
+        except Exception as exc:
+            missing.append((module, f"{label}: {exc}"))
+
+    if missing:
+        print("Delta sidecar self-test: FAIL", flush=True)
+        for module, detail in missing:
+            print(f"  MISSING {module} — {detail}", flush=True)
+        return 1
+
+    print("Delta sidecar self-test: PASS", flush=True)
+    return 0
+
+
 def main(argv=None) -> None:
     _ensure_ca_bundle()
     cfg = load_config()  # global config supplies defaults
@@ -162,7 +220,17 @@ def main(argv=None) -> None:
     )
     parser.add_argument("--host", default=cfg.host)
     parser.add_argument("--port", type=int, default=cfg.port)
+    parser.add_argument(
+        "--self-test",
+        action="store_true",
+        help=(
+            "Verify the bundled Python runtime / dependency graph is intact. "
+            "Offline, no model/network calls, no user data. Exits 0 on PASS, non-zero on FAIL."
+        ),
+    )
     args = parser.parse_args(argv)
+    if args.self_test:
+        sys.exit(_self_test())
 
     # Publish the ACTUAL bound port so loopback URLs (the managed-OAuth callback)
     # target this process, not config.port. The desktop shell runs the sidecar on
