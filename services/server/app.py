@@ -357,6 +357,27 @@ def create_app(manager: SessionManager) -> FastAPI:
         ok = await manager.resolve_inbox(item_id, str(body.get("resolution", "deny")))
         return {"ok": ok}
 
+    @app.get("/v1/runs/{run_id}/side-effects")
+    def run_side_effects(run_id: str) -> dict[str, Any]:
+        uncertain = manager.idem_log.uncertain_for_run(run_id)
+        committed = manager.idem_log.committed_for_run(run_id)
+        uncommitted = manager.idem_log.uncommitted_for_run(run_id)
+        return {
+            "uncertain": uncertain,
+            "committed": committed,
+            "uncommitted": uncommitted,
+        }
+
+    @app.post("/v1/runs/{run_id}/side-effects/{tool_call_id}/resolve")
+    def resolve_uncertain_side_effect(
+        run_id: str, tool_call_id: str, body: dict
+    ) -> dict[str, Any]:
+        resolution = str(body.get("resolution", "dismissed"))
+        manager.idem_log.resolve_uncertain(
+            run_id, tool_call_id, resolution, result=body.get("result")
+        )
+        return {"ok": True, "resolution": resolution}
+
     @app.get("/v1/subscriptions")
     def subscriptions() -> dict[str, Any]:
         # Global view-only list: each (session → channel) subscription, enriched with the session's
