@@ -128,12 +128,19 @@ if IS_WINDOWS:
         pass
 
 
-# [messaging] extras are optional.
+# [messaging] extras are mandatory in official release builds. The release workflow installs
+# `--extra messaging`; if these packages aren't on the build venv the sidecar would silently
+# lose its Slack / Telegram capabilities, so we fail the build loudly instead of degrading
+# via `try/except: pass`. Self-builders who want a smaller sidecar (experimental) can set
+# `DELTA_EXPERIMENTAL=1` — the messaging packages will then be allowed to be missing.
 for pkg in ("slack_bolt", "telegram"):
-    try:
-        hiddenimports += collect_submodules(pkg)
-    except Exception:
-        pass
+    if INCLUDE_EXPERIMENTAL:
+        try:
+            hiddenimports += collect_submodules(pkg)
+        except Exception:
+            pass
+        continue
+    hiddenimports += collect_submodules(pkg)
 
 
 a = Analysis(

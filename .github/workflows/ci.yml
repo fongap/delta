@@ -487,13 +487,9 @@ jobs:
           tests
           --select E9,F63,F7,F82
 
-      # Existing Ruff debt is tolerated, but the number of findings may not increase.
-      # The baseline should normally only move downward as debt is repaired. Any upward
-      # revision must be explained in the PR description with a follow-up plan.
-
-      - name: Ruff full scan — baseline gate
-        env:
-          RUFF_BASELINE: "182"
+      # Ruff full scan — zero-error gate. The historical baseline of 182 findings
+      # was retired when the codebase reached 0; any new finding now fails CI.
+      - name: Ruff full scan — zero-error gate
         shell: bash
         run: |
           set -euo pipefail
@@ -511,9 +507,7 @@ jobs:
 
           uv run --locked python - <<'PY'
           import json
-          import os
-
-          baseline = int(os.environ["RUFF_BASELINE"])
+          import sys
 
           with open("ruff-report.json", "r", encoding="utf-8") as fh:
               findings = json.load(fh)
@@ -522,12 +516,14 @@ jobs:
               raise SystemExit("invalid Ruff JSON report")
 
           count = len(findings)
-          print(f"ruff findings: {count} (baseline {baseline})")
+          print(f"ruff findings: {count}")
 
-          if count > baseline:
+          if count > 0:
+              for f in findings:
+                  print(f"  {f.get('filename','?')}:{f.get('location',{}).get('row','?')} "
+                        f"{f.get('code','?')} {f.get('message','?')}")
               raise SystemExit(
-                  f"ruff findings {count} > baseline {baseline} — "
-                  "clean up the regression or deliberately revise the baseline"
+                  f"ruff findings {count} > 0 — clean up the regression"
               )
           PY
 

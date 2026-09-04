@@ -989,6 +989,34 @@ class TurnEngine:
                 # Stopped: every remaining call still gets an answer (no orphans).
                 yield self._interrupted_tool(tool_call)
                 continue
+            # R7 fail-closed: a structured tool call whose arguments couldn't be parsed
+            # is delivered by the provider with a `{"_raw": …}` marker. Executing it
+            # would either dispatch a bogus call to the tool or short-circuit with
+            # confusing traceback noise; either way it's a real side-effect hazard.
+            # Surface a tool-error result (so the next iteration sees the failure in
+            # context and can correct) without invoking the tool.
+            if (
+                isinstance(tool_call.arguments, dict)
+                and set(tool_call.arguments.keys()) == {"_raw"}
+            ):
+                raw_marker = tool_call.arguments.get("_raw")
+                detail = (
+                    f"tool {tool_call.name!r} returned malformed arguments "
+                    f"({len(raw_marker) if isinstance(raw_marker, str) else 'non-JSON'} chars); "
+                    "the call was not executed. The model should retry with valid JSON."
+                )
+                self._audit(tool_call, stage="denied")
+                self.messages.append(_tool_error_message(tool_call, detail))
+                yield Event(
+                    EventType.TOOL_FINISHED,
+                    {
+                        "name": tool_call.name,
+                        "status": "error",
+                        "reason": detail,
+                        "error_type": "UnparsedToolCall",
+                    },
+                )
+                continue
             yield Event(
                 EventType.TOOL_PROPOSED,
                 {"name": tool_call.name, "arguments": tool_call.arguments},

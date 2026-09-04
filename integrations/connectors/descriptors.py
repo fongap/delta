@@ -450,7 +450,7 @@ DESCRIPTORS: list[ConnectorDescriptor] = [
         name="slack",
         title="Slack",
         icon="💬",
-        blurb="Two-way messaging — one-click via Delta Cloud, or a manual Slack app (Socket Mode).",
+        blurb="Two-way messaging via a Slack app using Socket Mode.",
         auth="socket_app",
         two_way=True,
         channels=True,
@@ -652,8 +652,7 @@ DESCRIPTORS: list[ConnectorDescriptor] = [
             ),
         ],
         instructions=[
-            "One click connects via Delta Cloud (recommended).",
-            "Manual: paste a Microsoft Graph access token with Mail and Calendar scopes.",
+            "Paste a Microsoft Graph access token with Mail and Calendar scopes.",
         ],
         validate=_validate_outlook,
         available=True,
@@ -1255,8 +1254,7 @@ DESCRIPTORS: list[ConnectorDescriptor] = [
             ),
         ],
         instructions=[
-            "One click connects via Delta Cloud (recommended).",
-            "Manual: create an internal integration at notion.so/my-integrations,",
+            "Create an internal integration at notion.so/my-integrations,",
             "copy its secret, and share the relevant pages with the integration.",
         ],
         validate=_validate_notion,
@@ -1284,8 +1282,7 @@ DESCRIPTORS: list[ConnectorDescriptor] = [
             ),
         ],
         instructions=[
-            "One click connects via Delta Cloud (recommended).",
-            "Manual: create an API key under Workspace Settings → Developers.",
+            "Create an API key under Workspace Settings → Developers.",
         ],
         validate=_validate_attio,
         brand_color="#2d7ff9",
