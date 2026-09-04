@@ -132,7 +132,7 @@ def _browser_page(
     title: str, detail: str, *, ok: bool = True, error: str = "", connector: str = ""
 ) -> str:
     """The page shown in the user's browser at the end of a loopback flow (sign-in or
-    connector callback) — one branded card (UX-DECISIONS §30): OCW mark, ok/fail icon
+    connector callback) — one branded card (UX-DECISIONS §30): Delta mark, ok/fail icon
     (the connector's initial rides the ✓), the friendly detail, and the raw error
     preserved on failures (it's the debugging breadcrumb). Inline CSS, light/dark via
     prefers-color-scheme, no external assets — it must render offline."""
@@ -184,7 +184,7 @@ def _browser_page(
         "</style></head><body>"
         '<div class="card"><div class="mark"><i></i>Delta</div>'
         f"{icon}<h1>{_html.escape(title)}</h1><p>{_html.escape(detail)}</p>{err}</div>"
-        '<div class="foot">Served locally by Delta on your Mac</div>'
+        '<div class="foot">Served locally by Delta</div>'
         "</body></html>"
     )
 
