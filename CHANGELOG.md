@@ -39,6 +39,51 @@ P1（短期·可靠）/P2（中期·实用）/P3（长期·智能）的第一刀
 
 ## [Unreleased]
 
+_无未发布变更。下一个 P1/P2/P3 阶段的常规 PR 会在此累积。_
+
+
+## [0.3.1] - 2026-09-04
+
+v0.3 系列的最后一轮 release hardening。不引入新功能，只收紧当前 main 的运行时风险与文档承诺，让 v0.3 成为一个可以放心发布的 Windows Portable 版本。
+
+### 用户实际获得
+
+- **Source / Citation 全面收口** — `read_file_lines` 现在走与 `read_file` 完全相同的多根路径解析和 Source/Citation chokepoint；窗口化的读文件也进入 source ledger，并以 `kind = "lines"` 形式落到引用记录，证据链不再有旁路。
+- **Portable 产物与源码能力一致** — 官方 release 构建现在安装 `delta[messaging]`（`slack_bolt` / `telegram` / `aiohttp`）；PyInstaller 打包对 messaging extras 严格失败，不再静默跳过 Slack / Telegram 能力。Windows Portable ZIP 现在带一个真正的 `delta-server --self-test`，验证打包后的依赖图（核心包 + mcp + pypdf + pypdfium2 + croniter + certifi + tzdata + slack_bolt + telegram + aiohttp + uvicorn + websockets + aisuite）。
+- **本地网关安全边界闭合** — 新增 Host header 允许列表（只接受 `localhost` / `127.0.0.1` / `[::1]` / `testserver`）作为 DNS rebinding 的深度防御层，与现有 Origin regex + 127.0.0.1 绑定 + token 鉴权共同构成完整闭环。
+- **模型错误不会误执行副作用** — 解析失败的结构化 Tool Call（`{"_raw": …}` 标记）现在 fail-closed：直接以工具错误结果写回历史，不调用工具本体；模型可在下一 iteration 修正。
+- **退出、重启、自动化不会留下异常状态** — 调度器在关闭时不再留下 `running` TaskRun；catch-up 每次进程启动最多触发一次；同一任务在重启后不会重复已 commit 的副作用。
+- **文档不再比实现更先进** — Connector 回调页脚从 "Served locally by Delta on your Mac" 改为 "Served locally by Delta"（Windows 用户不再看到 Mac 限定）；Slack 描述从 "one-click via Delta Cloud" 改为 "Two-way messaging via a Slack app using Socket Mode"；Outlook / Notion / Attio 同样去掉 "Delta Cloud 一键连接" 误导文案；Ruff 182 历史 baseline 收口为零错误硬门槛。
+
+### Foundation（不是完整产品能力）
+
+- **Recovery Context foundation** — `core/recovery.py` 落地：per-session JSON sidecar 持有 10 字段快照（schema / snapshot_at / run_id / session_id / phase / pending_tool_call / pending_inbox_item_id / last_event_seq / todo_summary / recent_artifacts / error）。契约：snapshot 是 **advisory**，engine resume 暂不读它；用于 UI "这个 session 卡在哪里" + 跨 session "things awaiting attention"。完整 Recovery Engine（实际恢复任意暂停点）按 §4.5 / §7.3 条件限定在 v0.4.0 之后。
+- **条件触发 foundation** — `core/automation/triggers.py` 落地：`Trigger` dataclass + `TriggerRegistry` 类，3 个 v1 source（`manual` / `filesystem` / `inbox`）+ cooldown + fingerprint 去重。契约：任务用 `schedule` 还是 `trigger` 二选一；时间路径与事件路径复用同一个 `_run_scheduled_task`，没有第二套执行模型。完整事件源接线（FS watcher / Inbox hook / trigger UI / connector event bus）按 §7.3 §734 条件限定在 v0.4.0。
+
+### 修复 (Fixed)
+
+- **中文 + 空格路径下的可移植性** — release workflow 在 `D:\测试 Delta\Delta 移动测试\` 下重新解压 ZIP 并跑 `--self-test`，确认 Windows Portable 产物在非 ASCII + 空格路径下能启动并继续工作。
+- **Connector 回调页脚平台误标** — 见上文。
+- **Source 文档过强承诺** — Source mtime fast path 的描述从"绝对证明内容未改变"调整为 fast-path freshness heuristic；真正强校验仍由 per-citation SHA256 validation 承担。
+
+### 验证
+
+- `pytest`: 1491 通过（6 跳过）— 覆盖 R4 / R6 / R7 / R8 / R9 新增的 17 个测试。
+- `ruff check .`: 0 errors；CI 中的 RUFF_BASELINE=182 已移除，零错误硬门槛。
+- `delta-server --self-test`: PASS（CI 端从解压后的真实 ZIP 跑）。
+- Portable artifact: ZIP 结构正确；自检通过；中文 + 空格路径下自检通过；SHA-256 由 release workflow 计算并在 publish 前再次下载校验。
+
+### 已知限制 / v0.4.0 backlog
+
+- Recovery Engine 完整恢复任意暂停点（仅 advisory snapshot）
+- Conditional Trigger 完整事件源接线与产品入口（仅 foundation dispatcher）
+- 完整 Source 语义检索 / 分块 / Source Index（仅 freshness + per-citation validity）
+- 自动化 Reflection / Skill Evaluator / Failure Memory / 自动 Preference Promotion / Plan Critic
+- Multi-Agent / Subagent（仅 Subagent 单一工具）
+- v0.2.2 → v0.3.1 真实 fixture 升级回归（等待用户提供脱敏 fixture 后落地）
+- 完整 Auto Updater 链路 / Windows Job Object（双保险通过时不引入）
+
+
 ### 新增 (Added)
 
 - **Reliable Task Runtime** (ADR-005 — DELTA_BLUEPRINT §7.1 "Reliable")

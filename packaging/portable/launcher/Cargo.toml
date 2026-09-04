@@ -1,6 +1,6 @@
 [package]
 name = "delta-portable-launcher"
-version = "0.3.0"
+version = "0.3.1"
 description = "Delta Windows Portable root launcher (Delta.exe)"
 edition = "2021"
 rust-version = "1.77"
