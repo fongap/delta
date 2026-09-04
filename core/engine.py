@@ -1235,10 +1235,14 @@ class TurnEngine:
         yield True
 
     def _execute_sync(self, tool_call: ToolCall) -> tuple[Any, str]:
-        """Execute one authorized call (runs in a worker thread)."""
-        # ADR-005 WS4: if a previous run committed this exact call, the side
-        # effect already happened — replay the recorded result. The args_sha256
-        # check ensures we never paper over an argument change.
+        """Execute one authorized call (runs in a worker thread).
+
+        P0-A Side Effect Crash Safety — the execution path now moves
+        through the state machine Planned -> Executing -> Committed|Failed.
+        On resume, an Uncertain row is NEVER auto-replayed; the engine
+        surfaces it as an "uncertain" status so the run can enter the
+        Inbox for user resolution.
+        """
         if self.idem_log is not None:
             from core import runscope
 
@@ -1250,14 +1254,41 @@ class TurnEngine:
                         run_id, tool_call.id, tool_call.arguments
                     )
                     if hit is not None:
+                        if hit.get("state") == "uncertain":
+                            return (
+                                {
+                                    "error": "side effect is uncertain — "
+                                    "the previous run may or may not have "
+                                    "executed it. User resolution required.",
+                                    "operation_id": hit.get("operation_id", ""),
+                                },
+                                "uncertain",
+                            )
                         return hit["result"], "replayed"
+                    self.idem_log.record_planned(
+                        run_id,
+                        tool_call.id,
+                        tool_call.name,
+                        tool_call.arguments,
+                    )
+                    self.idem_log.mark_executing(run_id, tool_call.id)
         try:
             result = self.registry.execute(tool_call.name, tool_call.arguments)
         except Exception as exc:
+            if self.idem_log is not None:
+                from core import runscope
+
+                scope = runscope.current()
+                if scope is not None:
+                    run_id, _session_id = scope
+                    if run_id:
+                        try:
+                            self.idem_log.mark_failed(
+                                run_id, tool_call.id, str(exc)
+                            )
+                        except Exception:
+                            pass
             return {"error": str(exc), "error_type": type(exc).__name__}, "error"
-        # Successful execution: record the commit so a future resume() on
-        # the same (run_id, tool_call_id, args) replays rather than re-runs.
-        # Errors do NOT commit — the side effect never happened.
         if self.idem_log is not None and result is not None:
             from core import runscope
 

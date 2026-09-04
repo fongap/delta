@@ -119,6 +119,38 @@ def build_app(workspace: str | None, model: str, mode: str):
             "run ledger: recovered %d stale run(s) with synthetic interrupted events",
             len(recovered),
         )
+    # P0-A Side Effect Crash Safety: transition any Planned/Executing side
+    # effects in interrupted runs to Uncertain so they are NEVER auto-replayed.
+    interrupted_ids = [r["run_id"] for r in recovered]
+    uncertain = manager.idem_log.sweep_stale(
+        interrupted_ids, ledger=manager.run_ledger
+    )
+    if uncertain:
+        logging.getLogger("services.server").warning(
+            "side-effect log: %d uncertain side effect(s) across %d run(s) — "
+            "surfacing for user resolution",
+            len(uncertain),
+            len(interrupted_ids),
+        )
+        for entry in uncertain:
+            manager.inbox.add_run_issue(
+                entry["run_id"],
+                f"Uncertain side effect: {entry['tool_name']}",
+                body=(
+                    f"Run {entry['run_id']} was interrupted after planning a "
+                    f"side effect ({entry['tool_name']}, operation "
+                    f"{entry['operation_id']}). It is unknown whether the "
+                    "operation executed. Please confirm, re-execute, or "
+                    "dismiss."
+                ),
+                data={
+                    "run_id": entry["run_id"],
+                    "kind": "side_effect_uncertain",
+                    "tool_call_id": entry["tool_call_id"],
+                    "tool_name": entry["tool_name"],
+                    "operation_id": entry["operation_id"],
+                },
+            )
     return create_app(manager)
 
 

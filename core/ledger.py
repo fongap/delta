@@ -54,10 +54,13 @@ KNOWN_EVENT_TYPES = frozenset(
         "validation.started",
         "validation.passed",
         "validation.failed",
-        # Side-effect idempotency (WS4)
+        # Side-effect crash safety (WS4 / P0-A)
+        "side_effect.planned",
         "side_effect.committed",
         "side_effect.replayed",
-        "side_effect.uncommitted",
+        "side_effect.failed",
+        "side_effect.uncertain",
+        "side_effect.uncommitted",  # legacy alias (pre-P0A vocabulary)
     }
 )
 
