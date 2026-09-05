@@ -14,6 +14,10 @@ crate-type = ["rlib"]
 name = "verify_ledger"
 path = "src/bin/verify_ledger.rs"
 
+[[bin]]
+name = "dump_idemlog"
+path = "src/bin/dump_idemlog.rs"
+
 [dependencies]
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
