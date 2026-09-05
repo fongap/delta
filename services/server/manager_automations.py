@@ -249,7 +249,7 @@ class AutomationsMixin(ManagerHostState):
         try:
             from core.analyzer import _VALIDITY_RANK
 
-            src = self.source_store_for(workspace, run_id=run_id)
+            src = self.source_store_for(workspace, run_id=run_id)  # type: ignore[attr-defined]
         except Exception:
             return 0
         if src is None:
