@@ -222,7 +222,7 @@ def test_transient_failure_is_retried(tmp_path):
     assert events[-1].type.name == "TURN_END"
     # 2 error rows (retried) then 1 ok.
     assert [r["outcome"] for r in rows] == ["error", "error", "ok"]
-    assert rows[0]["error_class"] == "other"
+    assert rows[0]["error_class"] == "rate_limit"
 
 
 def test_stream_truncation_is_not_retried(tmp_path):
