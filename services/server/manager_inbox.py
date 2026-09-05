@@ -21,6 +21,35 @@ from services.server.manager_contract import ManagerHostState
 
 class InboxApprovalsMixin(ManagerHostState):
 
+    def _write_recovery_snapshot(
+        self,
+        session_id: str,
+        phase: str,
+        *,
+        tool_call_id: str | None = None,
+        inbox_item_id: str | None = None,
+    ) -> None:
+        from core import runscope
+        from core.recovery import (
+            PendingToolCall,
+            RecoverySnapshot,
+        )
+
+        scope = runscope.current()
+        run_id = scope[0] if scope else ""
+        ptc = None
+        if tool_call_id:
+            ptc = PendingToolCall(id=tool_call_id, name="", args_preview="")
+        self.recovery_store.write(
+            RecoverySnapshot(
+                run_id=run_id,
+                session_id=session_id,
+                phase=phase,
+                pending_tool_call=ptc,
+                pending_inbox_item_id=inbox_item_id,
+            )
+        )
+
     def inbox_question_asker(self, session_id: str, agent: str):
         """The Unattended `ask_user` handler: turn the agent's question into an Inbox item and
         suspend until a human answers it (from the Inbox, or inline when they open the session).
@@ -47,6 +76,10 @@ class InboxApprovalsMixin(ManagerHostState):
             ):  # durable resume re-raised an already-answered prompt
                 return answer_result(item.questions, item.resolution)
             self.persist_session(session_id)  # the pending tool call is now on disk
+            self._write_recovery_snapshot(
+                session_id, "awaiting_question",
+                tool_call_id=tool_call_id, inbox_item_id=item.id,
+            )
             await self.mirror_inbox_item(item)
             answer = await self.inbox.wait(item.id)
             return answer_result(item.questions, answer)
@@ -70,6 +103,11 @@ class InboxApprovalsMixin(ManagerHostState):
             )
             if item.state == "pending":
                 self.persist_session(session_id)
+                self._write_recovery_snapshot(
+                    session_id, "awaiting_approval",
+                    tool_call_id=getattr(request, "tool_call_id", None),
+                    inbox_item_id=item.id,
+                )
                 await self.mirror_inbox_item(item)
             resolution = await self.inbox.wait(item.id)
             return self.approval_outcome(resolution, request, session_id)
@@ -92,6 +130,10 @@ class InboxApprovalsMixin(ManagerHostState):
             )
             if item.state == "pending":
                 self.persist_session(session_id)
+                self._write_recovery_snapshot(
+                    session_id, "awaiting_directory",
+                    tool_call_id=tool_call_id, inbox_item_id=item.id,
+                )
                 await self.mirror_inbox_item(item)
             resp = _parse_inbox_json(await self.inbox.wait(item.id))
             if not resp.get("granted"):
@@ -122,6 +164,10 @@ class InboxApprovalsMixin(ManagerHostState):
             )
             if item.state == "pending":
                 self.persist_session(session_id)
+                self._write_recovery_snapshot(
+                    session_id, "awaiting_plan",
+                    tool_call_id=tool_call_id, inbox_item_id=item.id,
+                )
                 await self.mirror_inbox_item(item)
             resp = _parse_inbox_json(await self.inbox.wait(item.id))
             if not resp.get("approved"):
@@ -159,6 +205,7 @@ class InboxApprovalsMixin(ManagerHostState):
             async for _event in runtime.resume():
                 pass
             self.save(item.session_id, runtime)
+            self.recovery_store.clear(item.session_id)
         finally:
             self.mark_idle(item.session_id)
 
