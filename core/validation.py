@@ -42,6 +42,11 @@ class ValidationCriteria:
     `min_size` / `max_size` — per-file size gate `{path: bytes}`.
     `require_complete` — fail if any artifact is marked `incomplete=True`.
     `csv_required_headers` — `{path: [header, ...]}` for CSV artifacts.
+    `require_citations` — fail if the run has fewer than `min_valid_citations`
+        valid citations. P1-D Citation Completion Contract: an evidence-bearing
+        task can demand a citation floor.
+    `min_valid_citations` — the minimum number of citations whose validity is
+        "valid" (per Source validity check). 0 disables the floor.
     """
 
     min_artifacts: int = 1
@@ -52,6 +57,8 @@ class ValidationCriteria:
     max_size: dict[str, int] = field(default_factory=dict)
     require_complete: bool = True
     csv_required_headers: dict[str, list[str]] = field(default_factory=dict)
+    require_citations: bool = False
+    min_valid_citations: int = 0
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -63,6 +70,8 @@ class ValidationCriteria:
             "max_size": dict(self.max_size),
             "require_complete": self.require_complete,
             "csv_required_headers": {k: list(v) for k, v in self.csv_required_headers.items()},
+            "require_citations": self.require_citations,
+            "min_valid_citations": self.min_valid_citations,
         }
 
     @classmethod
@@ -76,6 +85,8 @@ class ValidationCriteria:
             max_size={k: int(v) for k, v in d.get("max_size", {}).items()},
             require_complete=bool(d.get("require_complete", True)),
             csv_required_headers={k: list(v) for k, v in d.get("csv_required_headers", {}).items()},
+            require_citations=bool(d.get("require_citations", False)),
+            min_valid_citations=int(d.get("min_valid_citations", 0)),
         )
 
 
@@ -124,12 +135,18 @@ def run_validation(
     criteria: ValidationCriteria,
     *,
     workspace: str | None = None,
+    valid_citation_count: int | None = None,
 ) -> ValidationResult:
     """Evaluate the criteria against the run's artifacts.
 
     `artifacts` may be `Artifact` instances or dicts (the in-memory shape used
     after `register_run_artifacts`). `workspace` is the absolute path used to
     resolve relative paths when reading file contents (substring + CSV checks).
+
+    `valid_citation_count` enables the P1-D Citation Completion Contract: when
+    the criteria declare `require_citations=True` and `min_valid_citations > 0`,
+    the run fails if the count is below the floor. Pass None (the default) to
+    skip the citation check entirely.
     """
     norm: list[dict[str, Any]] = []
     for a in artifacts:
@@ -276,6 +293,34 @@ def run_validation(
                 )
                 return ValidationResult(ok=False, checks=checks, evidence=evidence)
             checks.append(ValidationCheck(name=f"csv_headers:{path}", ok=True))
+
+    # P1-D Citation Completion Contract: evidence-bearing tasks can demand
+    # a citation floor. The valid_citation_count comes from
+    # `analyzer.source_citation_hits` (the Source ledger knows which
+    # citations still resolve to the same file content).
+    if criteria.require_citations and valid_citation_count is not None:
+        if valid_citation_count < criteria.min_valid_citations:
+            checks.append(
+                ValidationCheck(
+                    name="min_valid_citations",
+                    ok=False,
+                    detail=(
+                        f"{valid_citation_count} valid citation(s) < "
+                        f"min_valid_citations={criteria.min_valid_citations}"
+                    ),
+                )
+            )
+            return ValidationResult(
+                ok=False, checks=checks, evidence=evidence
+            )
+        checks.append(
+            ValidationCheck(
+                name="min_valid_citations",
+                ok=True,
+                detail=f"{valid_citation_count} valid citation(s)",
+            )
+        )
+        evidence["valid_citation_count"] = valid_citation_count
 
     return ValidationResult(ok=all(c.ok for c in checks), checks=checks, evidence=evidence)
 

@@ -378,6 +378,120 @@ def create_app(manager: SessionManager) -> FastAPI:
         )
         return {"ok": True, "resolution": resolution}
 
+    @app.get("/v1/runs/{run_id}/detail")
+    def run_detail(run_id: str) -> dict[str, Any]:
+        """The Run Detail payload — the user-facing view of one run.
+
+        Per spec P1-B: shows status, artifacts, validation, sources,
+        citations, timeline, side effects, recovery, errors — answering
+        the user questions:
+
+          * what status is this run in?
+          * which artifacts were produced?
+          * which sources were read?
+          * are the citations still valid?
+          * did validation pass? why?
+          * are there uncertain side effects?
+          * is there a paused recovery waiting for me?
+          * what did the run do (timeline)?
+        """
+        events = manager.run_ledger.events(run_id)
+        workspace = ""
+        for ev in events:
+            if ev.get("workspace"):
+                workspace = ev["workspace"]
+                break
+
+        timeline = [
+            {
+                "seq": e["seq"],
+                "type": e["type"],
+                "actor": e["actor"],
+                "ts": e["ts"],
+                "payload": e["payload"],
+            }
+            for e in events
+        ]
+
+        artifacts: list[dict[str, Any]] = []
+        for e in events:
+            if e["type"] == "artifact.registered":
+                p = e["payload"]
+                if p:
+                    artifacts.append(
+                        {
+                            "path": p.get("path"),
+                            "kind": p.get("kind"),
+                            "size": p.get("size"),
+                            "sha256": p.get("sha256"),
+                            "incomplete": p.get("incomplete", False),
+                            "modified_at": p.get("modified_at"),
+                        }
+                    )
+
+        validation: dict[str, Any] | None = None
+        for e in events:
+            if e["type"] in ("validation.passed", "validation.failed"):
+                validation = {
+                    "ok": e["type"] == "validation.passed",
+                    "checks": (e["payload"] or {}).get("checks", []),
+                    "evidence": (e["payload"] or {}).get("evidence", {}),
+                }
+                break
+
+        side_effects = {
+            "uncertain": manager.idem_log.uncertain_for_run(run_id),
+            "committed": manager.idem_log.committed_for_run(run_id),
+            "uncommitted": manager.idem_log.uncommitted_for_run(run_id),
+        }
+
+        citations: list[dict[str, Any]] = []
+        if workspace:
+            try:
+                src_store = manager.source_store_for(workspace, run_id=run_id)
+            except Exception:
+                src_store = None
+            if src_store is not None:
+                try:
+                    for ref in src_store.all():
+                        for citation in ref.cited_ranges:
+                            cited_run_id = citation.get("run_id")
+                            if cited_run_id != run_id:
+                                continue
+                            citations.append(
+                                {
+                                    "source_id": ref.id,
+                                    "location": ref.location,
+                                    "captured_at": ref.captured_at,
+                                    "citation": dict(citation),
+                                }
+                            )
+                except Exception:
+                    pass
+
+        recovery: list[dict[str, Any]] = []
+        for snap in manager.recovery_store.latest():
+            if snap.run_id == run_id:
+                recovery.append(
+                    {
+                        "session_id": snap.session_id,
+                        "phase": snap.phase,
+                        "pending_inbox_item_id": snap.pending_inbox_item_id,
+                        "snapshot_at": snap.snapshot_at,
+                    }
+                )
+
+        return {
+            "run_id": run_id,
+            "workspace": workspace,
+            "timeline": timeline,
+            "artifacts": artifacts,
+            "validation": validation,
+            "side_effects": side_effects,
+            "citations": citations,
+            "recovery": recovery,
+        }
+
     @app.get("/v1/subscriptions")
     def subscriptions() -> dict[str, Any]:
         # Global view-only list: each (session → channel) subscription, enriched with the session's

@@ -37,6 +37,7 @@ from core.identity import (
 )
 from core.events import Event, EventType
 from core.permissions import Mode, PermissionEngine
+from core.risk import WRITE_TOOLS as _WRITE_TOOLS
 from providers import AssistantTurn, ProviderClient, ToolCall
 from providers.errors import friendly_model_error
 from providers.openai_provider import looks_like_unparsed_tool_call
@@ -1308,6 +1309,30 @@ class TurnEngine:
                         )
                     except Exception:
                         pass
+                    # P1-D Explicit Artifact Registration: write tools that
+                    # produced a file register it immediately, not waiting
+                    # for the post-run mtime scan (the scanner stays as
+                    # fallback/reconciliation).
+                    if tool_call.name in _WRITE_TOOLS and isinstance(
+                        tool_call.arguments, dict
+                    ):
+                        from core.artifact import register_artifact
+
+                        ws = self.audit_context.get("workspace", "")
+                        file_path = (
+                            tool_call.arguments.get("path")
+                            or tool_call.arguments.get("file_path")
+                            or ""
+                        )
+                        if ws and file_path:
+                            try:
+                                register_artifact(
+                                    ws,
+                                    file_path,
+                                    run_id=run_id,
+                                )
+                            except Exception:
+                                pass
         return result, "ok"
 
     def _record_result(self, tool_call: ToolCall, result: Any, status: str) -> Event:

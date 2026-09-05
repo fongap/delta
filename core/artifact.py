@@ -90,6 +90,74 @@ def _sha256_of(path: Path, *, chunk: int = 65536) -> str:
     return h.hexdigest()
 
 
+def register_artifact(
+    workspace: str,
+    path: str,
+    *,
+    run_id: str,
+    ledger: "RunEventLedger | None" = None,
+    kind_classifier: Callable[[Path], str] | None = None,
+) -> Artifact | None:
+    """Explicitly register a single file as an artifact.
+
+    This is the **new main path** (P1-D): write tools that know they
+    produced a file call this after a successful write, so the artifact
+    is registered immediately (not waiting for the post-run mtime scan).
+    The workspace scanner remains as a fallback/reconciliation layer.
+
+    Returns None if the file does not exist or cannot be read.
+    """
+    if kind_classifier is None:
+        from services.server.manager_support import _artifact_kind
+
+        kind_classifier = _artifact_kind
+
+    root = Path(workspace)
+    target = root / path
+    if not target.is_file():
+        return None
+    try:
+        stat = target.stat()
+    except OSError:
+        return None
+    artifact = Artifact(
+        path=path,
+        name=Path(path).name,
+        kind=kind_classifier(target),
+        size=stat.st_size,
+        modified_at=stat.st_mtime,
+        run_id=run_id,
+    )
+    try:
+        artifact.sha256 = _sha256_of(target)
+    except OSError:
+        artifact.incomplete = True
+    if ledger is not None:
+        try:
+            ledger.append(
+                run_id,
+                "artifact.registered",
+                actor="system",
+                payload=artifact.to_dict(),
+                workspace=workspace or None,
+            )
+            if not artifact.incomplete:
+                ledger.append(
+                    run_id,
+                    "artifact.completed",
+                    actor="system",
+                    payload={
+                        "path": artifact.path,
+                        "sha256": artifact.sha256,
+                        "size": artifact.size,
+                    },
+                    workspace=workspace or None,
+                )
+        except Exception:
+            pass
+    return artifact
+
+
 def register_run_artifacts(
     workspace: str,
     *,

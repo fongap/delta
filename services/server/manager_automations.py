@@ -236,6 +236,51 @@ class AutomationsMixin(ManagerHostState):
             pass
 
 
+    def _count_valid_citations(self, workspace: str | None, run_id: str) -> int:
+        """Count citations for this run whose validity is 'valid'.
+
+        P1-D Citation Completion Contract. The Source ledger knows each
+        citation's current validity; we iterate all sources in the
+        workspace's SourceStore and count the ones cited by this run
+        whose validity check returns 'valid'.
+        """
+        if not workspace or not run_id:
+            return 0
+        try:
+            from core.analyzer import _VALIDITY_RANK
+
+            src = self.source_store_for(workspace, run_id=run_id)  # type: ignore[attr-defined]
+        except Exception:
+            return 0
+        if src is None:
+            return 0
+        n = 0
+        try:
+            for ref in src.all():
+                for citation in ref.cited_ranges:
+                    cited_run_id = citation.get("run_id")
+                    if cited_run_id != run_id:
+                        continue
+                    ranges = citation.get("ranges") or []
+                    if not ranges:
+                        continue
+                    results = [
+                        src.validate_citation(ref.id, run_id, r) for r in ranges
+                    ]
+                    worst = max(
+                        results,
+                        key=lambda r: _VALIDITY_RANK.get(
+                            r.get("reason", "valid"), 0
+                        ),
+                        default={},
+                    )
+                    if worst.get("reason") == "valid":
+                        n += 1
+        except Exception:
+            return 0
+        return n
+
+
     def _validate_run(
         self,
         run: TaskRun,
@@ -262,7 +307,12 @@ class AutomationsMixin(ManagerHostState):
         else:
             criteria = ValidationCriteria.from_dict(criteria_dict)
 
-        result = run_validation(artifacts, criteria, workspace=task.workspace)
+        result = run_validation(
+            artifacts,
+            criteria,
+            workspace=task.workspace,
+            valid_citation_count=self._count_valid_citations(task.workspace, run.run_id),
+        )
         # Ledger the verdict so a follow-up can replay the gate decision.
         try:
             self.run_ledger.append(
