@@ -143,7 +143,6 @@ def test_run_resumed_ledger_event_emitted(tmp_path):
 
     ledger = RunEventLedger(tmp_path / "run-events.db")
 
-    # Minimal mock engine: resume() yields nothing (empty turn).
     engine = MagicMock(spec=TurnEngine)
     engine.resume = MagicMock(return_value=_empty_async_gen())
     engine.messages = []
@@ -155,8 +154,7 @@ def test_run_resumed_ledger_event_emitted(tmp_path):
         engine, ledger=ledger, session_id="s1", run_id="r1"
     )
 
-    # Drive a resume.
-    asyncio.get_event_loop().run_until_complete(_drain(adapter.resume()))
+    asyncio.run(_drain(adapter.resume()))
 
     events = ledger.events("r1")
     types = [e["type"] for e in events]
@@ -183,9 +181,7 @@ def test_run_started_still_used_for_non_resume(tmp_path):
 
     adapter = TurnEngineAdapter(engine, ledger=ledger, session_id="s1", run_id="r1")
 
-    asyncio.get_event_loop().run_until_complete(
-        _drain(adapter.run("hello"))
-    )
+    asyncio.run(_drain(adapter.run("hello")))
 
     events = ledger.events("r1")
     types = [e["type"] for e in events]
