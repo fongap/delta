@@ -10,6 +10,10 @@ publish = false
 name = "delta_runtime_native"
 crate-type = ["rlib"]
 
+[[bin]]
+name = "verify_ledger"
+path = "src/bin/verify_ledger.rs"
+
 [dependencies]
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
