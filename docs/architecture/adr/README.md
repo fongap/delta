@@ -16,6 +16,7 @@
 - `ADR-007-p3-readonly-run-analyzer.md` – P3 长期「智能」第一刀：只读 Run Analyzer（`RunEventLedger` + `SourceStore` + `TaskRun` 的 query 层），零行为变更、不动 Skill / Memory / Preference 任何活跃状态，为 §7.3 治理链的 Evidence 步提供可复用基础。
 - `ADR-008-p1p2p3-baseline.md` – P1 / P2 / P3 阶段第一刀基线说明：12 个 PR 的快照、关键设计契约、蓝图 §8.9 / §7.3 明确延后或条件限定的项、下一刀"不是 PR 而是真实使用"的判定标准。
 - `ADR-009-delta-core-architecture.md` – Delta Core 长期架构：Rust Control Plane + Capability Worker；明确 Rust Core 唯一权威的领域（Task/Run/Policy/Approval/Ledger/Checkpoint/Artifact/Validation/Idempotency/Scheduler/Worker lifecycle/Provider Core）与 Python 端降级为 Worker 的边界；与 `docs/governance/rust-core-migration.md` + `docs/architecture/capability-abi.md` 共同构成 Rust 迁移的"先冻结契约再迁权威"基础。
+- `ADR-010-r1-state-foundation-shadow-read.md` – R1 State Foundation 第一刀：`core/runtime-native/` crate scaffold + Ledger/IdempotencyLog shadow-read（只读验证 Python 写入的 hash chain + side effect state machine）。不写入，不替换 Python 权威。
 
 相关架构文档：
 - `hub-federation-boundary.md` – Delta Hub 联邦化边界设计，明确 OpenWorker 仅为可选适配器。
