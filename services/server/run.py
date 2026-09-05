@@ -151,6 +151,16 @@ def build_app(workspace: str | None, model: str, mode: str):
                     "operation_id": entry["operation_id"],
                 },
             )
+    # P0-B Recovery Production Wiring: surface paused sessions at cold start.
+    # The snapshot is advisory — resume works from messages + Inbox + ledger
+    # alone — but this lets the user see "which runs were waiting for me"
+    # without rehydrating each engine.
+    paused = manager.recovery_store.latest()
+    if paused:
+        logging.getLogger("services.server").warning(
+            "recovery: %d paused session(s) — awaiting user action",
+            len(paused),
+        )
     return create_app(manager)
 
 

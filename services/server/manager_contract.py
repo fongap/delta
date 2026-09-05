@@ -57,6 +57,7 @@ if TYPE_CHECKING:
         audit_store: AuditStore
         run_ledger: RunEventLedger
         idem_log: IdempotencyLog
+        recovery_store: Any  # core.recovery.RecoveryStore
         audit_sink: Callable[[dict[str, Any]], None]
         session_store: ConversationStore
         workspace_trust: WorkspaceTrustStore

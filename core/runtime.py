@@ -307,7 +307,7 @@ class TurnEngineAdapter:
         try:
             self._ledger.append(
                 run_id,
-                "run.started",
+                "run.resumed" if kind == "resume" else "run.started",
                 actor="user" if kind == "run" else "system",
                 payload={"kind": kind, **({"session_id": self._session_id} if self._session_id else {})},
                 workspace=ws,
