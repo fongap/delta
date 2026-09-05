@@ -143,6 +143,11 @@ jobs:
                 rust=true
                 ;;
 
+              # Delta Core Rust runtime (R1 shadow-read).
+              core/runtime-native/*)
+                rust=true
+                ;;
+
               # Standalone STT Rust workspace.
               services/stt/*)
                 rust=true
@@ -442,6 +447,13 @@ jobs:
           --config "$GITHUB_WORKSPACE/deny.toml"
           check advisories
 
+      - name: Advisories — Delta Core runtime
+        working-directory: core/runtime-native
+        run: >
+          cargo deny
+          --config "$GITHUB_WORKSPACE/deny.toml"
+          check advisories
+
 
   static:
     name: static
@@ -554,6 +566,10 @@ jobs:
             tauri-deps: true
 
           - workspace: packaging/portable/launcher
+            tauri-deps: false
+
+          # Delta Core Rust runtime (shadow-read, no system deps).
+          - workspace: core/runtime-native
             tauri-deps: false
 
           # STT has its own lockfile and must be governed as an independent

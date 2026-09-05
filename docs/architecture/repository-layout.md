@@ -66,6 +66,14 @@ TUI 应通过既有核心边界使用 Delta 能力，不复制核心运行时逻
 * Persona
 * Approval
 
+`core/` 可以包含 Rust 原生运行时子目录：
+
+```text
+core/runtime-native/
+```
+
+该目录持有 Delta Core Rust 实现（R1 State Foundation shadow-read → 后续权威写入者）。它不创建顶层 `crates/` 目录（已被禁止）。CI 的 rust matrix 识别该路径。
+
 `core/` 可以依赖：
 
 ```text
