@@ -10,6 +10,7 @@
 * [`quality-policy.md`](quality-policy.md)：CI、测试、质量门禁和安全要求
 * [`release-policy.md`](release-policy.md)：版本、Tag、构建和 Release 规则
 * [`dependency-policy.md`](dependency-policy.md)：依赖升级、Dependabot 和自动合并规则
+* [`rust-core-migration.md`](rust-core-migration.md)：从 Legacy Python Runtime 迁移到 Rust Control Plane 的阶段、Authority Matrix、双写规则与 PR 要求（与 ADR-009 配套）
 
 仓库和系统结构见：
 
