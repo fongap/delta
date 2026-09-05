@@ -240,33 +240,44 @@ class AutomationsMixin(ManagerHostState):
         """Count citations for this run whose validity is 'valid'.
 
         P1-D Citation Completion Contract. The Source ledger knows each
-        citation's current validity; the Analyzer joins it with the
-        ledger to count the valid subset for one run. Returns 0 when the
-        Source store or Analyzer isn't wired (the citation check is
-        skipped in that case).
+        citation's current validity; we iterate all sources in the
+        workspace's SourceStore and count the ones cited by this run
+        whose validity check returns 'valid'.
         """
         if not workspace or not run_id:
             return 0
         try:
-            from core.analyzer import Analyzer
+            from core.analyzer import _VALIDITY_RANK
 
             src = self.source_store_for(workspace, run_id=run_id)
         except Exception:
             return 0
         if src is None:
             return 0
+        n = 0
         try:
-            analyzer = Analyzer(
-                workspace=workspace, ledger=self.run_ledger, source_store=src
-            )
-            hits = analyzer.source_citation_hits(workspace=workspace, run_id=run_id)
+            for ref in src.all():
+                for citation in ref.cited_ranges:
+                    cited_run_id = citation.get("run_id")
+                    if cited_run_id != run_id:
+                        continue
+                    ranges = citation.get("ranges") or []
+                    if not ranges:
+                        continue
+                    results = [
+                        src.validate_citation(ref.id, run_id, r) for r in ranges
+                    ]
+                    worst = max(
+                        results,
+                        key=lambda r: _VALIDITY_RANK.get(
+                            r.get("reason", "valid"), 0
+                        ),
+                        default={},
+                    )
+                    if worst.get("reason") == "valid":
+                        n += 1
         except Exception:
             return 0
-        n = 0
-        for h in hits:
-            v = h.validity or {}
-            if v.get("valid") is True:
-                n += 1
         return n
 
 

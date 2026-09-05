@@ -395,8 +395,6 @@ def create_app(manager: SessionManager) -> FastAPI:
           * is there a paused recovery waiting for me?
           * what did the run do (timeline)?
         """
-        from core.analyzer import Analyzer
-
         events = manager.run_ledger.events(run_id)
         workspace = ""
         for ev in events:
@@ -455,24 +453,19 @@ def create_app(manager: SessionManager) -> FastAPI:
                 src_store = None
             if src_store is not None:
                 try:
-                    analyzer = Analyzer(
-                        workspace=workspace,
-                        ledger=manager.run_ledger,
-                        source_store=src_store,
-                    )
-                    hits = analyzer.source_citation_hits(
-                        workspace=workspace, run_id=run_id
-                    )
-                    for h in hits:
-                        citations.append(
-                            {
-                                "source_id": h.source_id,
-                                "location": h.location,
-                                "captured_at": h.captured_at,
-                                "citation": h.citation,
-                                "validity": h.validity,
-                            }
-                        )
+                    for ref in src_store.all():
+                        for citation in ref.cited_ranges:
+                            cited_run_id = citation.get("run_id")
+                            if cited_run_id != run_id:
+                                continue
+                            citations.append(
+                                {
+                                    "source_id": ref.id,
+                                    "location": ref.location,
+                                    "captured_at": ref.captured_at,
+                                    "citation": dict(citation),
+                                }
+                            )
                 except Exception:
                     pass
 
