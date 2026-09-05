@@ -39,7 +39,29 @@ P1（短期·可靠）/P2（中期·实用）/P3（长期·智能）的第一刀
 
 ## [Unreleased]
 
-_无未发布变更。下一个 P1/P2/P3 阶段的常规 PR 会在此累积。_
+### Runtime Hardening 收口（v0.3.2 候选）
+
+v0.3.1 之后不引入新功能，只把 Runtime 当前已落地的能力接进生产路径并通过端到端 Reference Task 验证。所有变更都对应一个独立 PR。
+
+| PR | 主题 | 关键交付 |
+|---|---|---|
+| #95 | **P0-A Side Effect Crash Safety** | `core/idemlog.py` 新增 `SideEffectState`（Planned/Executing/Committed/Failed/Uncertain）状态机 + `operation_id(run_id, tool_call_id)`；engine `_execute_sync` 走 `record_planned → mark_executing → commit | mark_failed`；新增 `GET /v1/runs/{id}/side-effects` 与 `POST .../{tool_call_id}/resolve`；冷启动 `sweep_stale` 把 interrupted 副作用打成 Uncertain 入 Inbox。 |
+| #96 | **P0-B Recovery Production Wiring** | `SessionManager` 持有 `RecoveryStore(base / "recovery-snapshots.json")`；4 个 Inbox asker（approval/question/directory/plan）pending 时写 snapshot；`TurnEngineAdapter` 在 `kind == "resume"` 时发 `run.resumed`（不是 `run.started`）；冷启动 log paused sessions。 |
+| #97 | **P1-A Async Retry** | `core/call_errors.py` 新增 `ErrorClass.RATE_LIMIT/TRANSIENT/AUTH`；`is_retryable()` 仅放行这 3 类 + `ttft_timeout`；`extract_retry_after()` 解析 SDK 字段 / httpx-style 头 / 文本 regex；`wait_for_retry_async()` 异步 + 优先尊重服务端 `Retry-After`；engine `_loop` 用 async 替代阻塞 `time.sleep`。 |
+| #98 | **P0-B Reference Task Harness** | `core/reference_harness.py` 三套 stdlib XLSX/PDF 写入器（zipfile / pypdf `DecodedStreamObject`）；3 个任务驱动（Task A XLSX→Markdown 报告、Task B PDF→证据报告、Task C automation→read/write→artifact+ledger）；`ScriptedProvider` + `ReferenceTaskMetrics` 走 `agent="code"` 拿到 `read_document`；中断+恢复语义由 `test_durable_resume.py` + `test_side_effect_crash_safety.py` 单独覆盖。 |
+| #99 | **P1-D Artifacts / Citations / Analyzer 收口** | `core/artifact.py` 新增 `register_artifact(workspace, path, run_id, ledger, kind_classifier)` 单文件注册；engine 写工具 commit 后调一次；`core/validation.py` 新增 `ValidationCriteria.require_citations` + `min_valid_citations`，`run_validation(..., valid_citation_count=)` 在数量低于门槛时返回 Failed；`services/server/manager_automations.py` 直接用 `SourceStore.all()` 迭代统计当前 run 的有效引用（不依赖 `Analyzer.source_citation_hits`，因为后者只按 `source_id` 维度计数）；`services/server/app.py` 新增 `GET /v1/runs/{id}/detail`（timeline / artifacts / validation / side_effects / citations / recovery）。 |
+
+**契约冻结**：本批之后 `core/idemlog.py` / `core/recovery.py` / `core/artifact.py` / `core/validation.py` / `services/server/{manager.py, app.py, manager_*.py}` 的对外接口属于"Delta Core 公共契约"，变更必须经 ADR。
+
+**未做（与 v0.3.1 backlog 一致）**：
+
+- Recovery Engine 完整恢复任意暂停点（v0.3.2 仅完成生产路径 + advisory snapshot）
+- Conditional Trigger 完整事件源接线（仅 foundation dispatcher）
+- 完整 Source 语义检索 / 分块 / Source Index
+- 自动化 Reflection / Skill Evaluator / Failure Memory / 自动 Preference Promotion / Plan Critic
+- Multi-Agent / Subagent（仅 Subagent 单一工具）
+
+下一个工作流是 **Delta Core 准备**：Runtime Contract Freeze（Task/Run/RunEvent/Approval/SideEffect/Artifact/Validation/Recovery/Source/Citation）+ ADR-009（Delta Core Architecture and Migration）。
 
 
 ## [0.3.1] - 2026-09-04
