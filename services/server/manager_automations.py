@@ -236,6 +236,40 @@ class AutomationsMixin(ManagerHostState):
             pass
 
 
+    def _count_valid_citations(self, workspace: str | None, run_id: str) -> int:
+        """Count citations for this run whose validity is 'valid'.
+
+        P1-D Citation Completion Contract. The Source ledger knows each
+        citation's current validity; the Analyzer joins it with the
+        ledger to count the valid subset for one run. Returns 0 when the
+        Source store or Analyzer isn't wired (the citation check is
+        skipped in that case).
+        """
+        if not workspace or not run_id:
+            return 0
+        try:
+            from core.analyzer import Analyzer
+
+            src = self.source_store_for(workspace, run_id=run_id)
+        except Exception:
+            return 0
+        if src is None:
+            return 0
+        try:
+            analyzer = Analyzer(
+                workspace=workspace, ledger=self.run_ledger, source_store=src
+            )
+            hits = analyzer.source_citation_hits(workspace=workspace, run_id=run_id)
+        except Exception:
+            return 0
+        n = 0
+        for h in hits:
+            v = h.validity or {}
+            if v.get("valid") is True:
+                n += 1
+        return n
+
+
     def _validate_run(
         self,
         run: TaskRun,
@@ -262,7 +296,12 @@ class AutomationsMixin(ManagerHostState):
         else:
             criteria = ValidationCriteria.from_dict(criteria_dict)
 
-        result = run_validation(artifacts, criteria, workspace=task.workspace)
+        result = run_validation(
+            artifacts,
+            criteria,
+            workspace=task.workspace,
+            valid_citation_count=self._count_valid_citations(task.workspace, run.run_id),
+        )
         # Ledger the verdict so a follow-up can replay the gate decision.
         try:
             self.run_ledger.append(
