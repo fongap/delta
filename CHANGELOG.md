@@ -39,7 +39,12 @@ P1（短期·可靠）/P2（中期·实用）/P3（长期·智能）的第一刀
 
 ## [Unreleased]
 
-### Runtime Hardening 收口（v0.3.2 候选）
+_无未发布变更。下一个阶段的常规 PR 会在此累积。_
+
+
+## [0.3.2] - 2026-09-05
+
+### Runtime Hardening 收口
 
 v0.3.1 之后不引入新功能，只把 Runtime 当前已落地的能力接进生产路径并通过端到端 Reference Task 验证。所有变更都对应一个独立 PR。
 
@@ -50,8 +55,10 @@ v0.3.1 之后不引入新功能，只把 Runtime 当前已落地的能力接进�
 | #97 | **P1-A Async Retry** | `core/call_errors.py` 新增 `ErrorClass.RATE_LIMIT/TRANSIENT/AUTH`；`is_retryable()` 仅放行这 3 类 + `ttft_timeout`；`extract_retry_after()` 解析 SDK 字段 / httpx-style 头 / 文本 regex；`wait_for_retry_async()` 异步 + 优先尊重服务端 `Retry-After`；engine `_loop` 用 async 替代阻塞 `time.sleep`。 |
 | #98 | **P0-B Reference Task Harness** | `core/reference_harness.py` 三套 stdlib XLSX/PDF 写入器（zipfile / pypdf `DecodedStreamObject`）；3 个任务驱动（Task A XLSX→Markdown 报告、Task B PDF→证据报告、Task C automation→read/write→artifact+ledger）；`ScriptedProvider` + `ReferenceTaskMetrics` 走 `agent="code"` 拿到 `read_document`；中断+恢复语义由 `test_durable_resume.py` + `test_side_effect_crash_safety.py` 单独覆盖。 |
 | #99 | **P1-D Artifacts / Citations / Analyzer 收口** | `core/artifact.py` 新增 `register_artifact(workspace, path, run_id, ledger, kind_classifier)` 单文件注册；engine 写工具 commit 后调一次；`core/validation.py` 新增 `ValidationCriteria.require_citations` + `min_valid_citations`，`run_validation(..., valid_citation_count=)` 在数量低于门槛时返回 Failed；`services/server/manager_automations.py` 直接用 `SourceStore.all()` 迭代统计当前 run 的有效引用（不依赖 `Analyzer.source_citation_hits`，因为后者只按 `source_id` 维度计数）；`services/server/app.py` 新增 `GET /v1/runs/{id}/detail`（timeline / artifacts / validation / side_effects / citations / recovery）。 |
+| #100 | **CHANGELOG v0.3.2 记录** | 把 #95-#99 的 Runtime Hardening campaign 记入 CHANGELOG。 |
+| #101 | **Delta Core 准备文档基线** | ADR-009（Delta Core Architecture: Rust Control Plane + Capability Worker）+ Capability ABI 协议规范 + Rust Core Migration governance + Runtime Public Contract（v0.3.2 之后 Python 端稳定契约）。 |
 
-**契约冻结**：本批之后 `core/idemlog.py` / `core/recovery.py` / `core/artifact.py` / `core/validation.py` / `services/server/{manager.py, app.py, manager_*.py}` 的对外接口属于"Delta Core 公共契约"，变更必须经 ADR。
+**契约冻结**：本批之后 `core/idemlog.py` / `core/recovery.py` / `core/artifact.py` / `core/validation.py` / `services/server/{manager.py, app.py, manager_*.py}` 的对外接口属于"Delta Core 公共契约"，变更必须经 ADR。详见 `docs/architecture/runtime-public-contract.md`。
 
 **未做（与 v0.3.1 backlog 一致）**：
 
@@ -61,7 +68,7 @@ v0.3.1 之后不引入新功能，只把 Runtime 当前已落地的能力接进�
 - 自动化 Reflection / Skill Evaluator / Failure Memory / 自动 Preference Promotion / Plan Critic
 - Multi-Agent / Subagent（仅 Subagent 单一工具）
 
-下一个工作流是 **Delta Core 准备**：Runtime Contract Freeze（Task/Run/RunEvent/Approval/SideEffect/Artifact/Validation/Recovery/Source/Citation）+ ADR-009（Delta Core Architecture and Migration）。
+下一阶段是 **Rust Core R1 — State Foundation**（按 `docs/governance/rust-core-migration.md` §5）：Task/Run identity / Run state / Ledger / Idempotency / Storage transaction boundary。
 
 
 ## [0.3.1] - 2026-09-04
