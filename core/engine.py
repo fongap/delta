@@ -27,7 +27,7 @@ from core.call_errors import (
     TTFTTimeoutError,
     classify_error,
     is_retryable,
-    wait_for_retry,
+    wait_for_retry_async,
 )
 from core.identity import (
     IDENTITY_CLAUSE,
@@ -531,7 +531,9 @@ class TurnEngine:
                     and is_retryable(exc)
                 ):
                     self._turn_retries += 1
-                    delay = wait_for_retry(self._turn_retries - 1)
+                    delay = await wait_for_retry_async(
+                        self._turn_retries - 1, exc=exc
+                    )
                     self._append_notice(
                         "retrying",
                         f"Model call failed transiently ({classify_error(exc).value}) — "

@@ -1,20 +1,22 @@
-"""Model-call error classification (v0.3.0 P1).
+"""Model-call error classification (v0.3.0 P1, P1-A Async Retry).
 
 The request log used to carry only the exception class name as `error_type` — which
 couldn't tell a "gateway killed the stream before completion" from a "this server
 doesn't speak the dialect we assumed". This module classifies a provider failure into
-the four buckets that matter for diagnosis and retry policy:
+the buckets that matter for diagnosis and retry policy:
 
-- `ttft_timeout`        — no first token within the TTFT ceiling (free/shared node stall)
-- `stream_truncated`    — the stream ended WITHOUT a finish_reason (relay/gateway kill)
-- `protocol_incompatible` — the server rejected a parameter/shape we assumed standard
+- `rate_limit`         — 429 / too many requests (retryable; respects Retry-After)
+- `ttft_timeout`        — no first token within the TTFT ceiling (retryable)
+- `transient`           — 5xx / connection / service unavailable (retryable)
+- `stream_truncated`    — the stream ended WITHOUT a finish_reason (NOT retried)
 - `context_too_large`   — prompt exceeds the model window (routes into compaction)
+- `protocol_incompatible` — the server rejected a parameter/shape (NOT retried)
+- `auth`                — 401 / 403 / invalid key (NOT retried)
 - `other`               — everything else (kept, so a class is always available)
 
-It also owns the bounded retry policy (Codex-absorbed): transient/transport failures
-(429, connection, TTFT-stall) earn a bounded exponential backoff (200ms base, ×2,
-±10% jitter); `stream_truncated` and `context_too_large` are NOT auto-retried — the
-former must keep failing loudly (finish_reason guard), the latter belongs to compaction.
+Retry policy (Codex-absorbed): retryable failures earn a bounded exponential
+backoff (200ms base, x2, +/-10% jitter, 8s cap). When the server provides a
+`Retry-After` header, it takes precedence over the local backoff.
 """
 
 from __future__ import annotations
@@ -26,19 +28,25 @@ from enum import Enum
 # -- error taxonomy -----------------------------------------------------------
 
 _ERROR_CLASS = (
+    "rate_limit",
     "ttft_timeout",
+    "transient",
     "stream_truncated",
     "protocol_incompatible",
     "context_too_large",
+    "auth",
     "other",
 )
 
 
 class ErrorClass(str, Enum):
+    RATE_LIMIT = "rate_limit"
     TTFT_TIMEOUT = "ttft_timeout"
+    TRANSIENT = "transient"
     STREAM_TRUNCATED = "stream_truncated"
     PROTOCOL_INCOMPATIBLE = "protocol_incompatible"
     CONTEXT_TOO_LARGE = "context_too_large"
+    AUTH = "auth"
     OTHER = "other"
 
 
@@ -88,39 +96,26 @@ def classify_error(exc: BaseException) -> ErrorClass:
         return ErrorClass.TTFT_TIMEOUT
     if isinstance(exc, ProtocolIncompatibleError):
         return ErrorClass.PROTOCOL_INCOMPATIBLE
-    # Context overflow routes into the compaction policy (and is never retried here).
     from core import compaction as _compaction
 
     if _compaction.is_context_overflow(exc):
         return ErrorClass.CONTEXT_TOO_LARGE
     text = str(exc).lower()
+    # Auth markers (401/403) — never retried.
+    if any(m in text for m in ("401", "403", "unauthorized", "forbidden", "invalid api key", "authentication")):
+        if "429" not in text:
+            return ErrorClass.AUTH
+    # Rate-limit markers — retried, respects Retry-After.
+    if any(m in text for m in ("429", "rate limit", "too many requests", "rate_limit")):
+        return ErrorClass.RATE_LIMIT
     if any(marker in text for marker in _PROTOCOL_MARKERS):
         return ErrorClass.PROTOCOL_INCOMPATIBLE
-    # The stream-truncation guard's message (kept when the dedicated type isn't used).
     if "finish_reason" in text and ("truncat" in text or "上游流式响应被截断" in text):
         return ErrorClass.STREAM_TRUNCATED
-    return ErrorClass.OTHER
-
-
-def is_retryable(exc: BaseException) -> bool:
-    """Whether a failure earns the bounded exponential backoff. Transport/transient
-    only — never stream_truncated (the finish_reason guard stays loud) and never
-    context_too_large (that belongs to the compaction policy)."""
-    cls = classify_error(exc)
-    if cls in (ErrorClass.STREAM_TRUNCATED, ErrorClass.CONTEXT_TOO_LARGE):
-        return False
-    if cls is ErrorClass.TTFT_TIMEOUT:
-        # A pre-first-token stall is exactly the free/shared-node failure to retry:
-        # nothing was delivered, so re-issuing the call is safe.
-        return True
-    text = str(exc).lower()
-    # 429/5xx/connection/timeout markers.
-    return any(
+    # Transient: 5xx / connection / timeout / service unavailable.
+    if any(
         marker in text
         for marker in (
-            "429",
-            "rate limit",
-            "too many requests",
             "timeout",
             "timed out",
             "connection",
@@ -133,6 +128,20 @@ def is_retryable(exc: BaseException) -> bool:
             "503",
             "504",
         )
+    ):
+        return ErrorClass.TRANSIENT
+    return ErrorClass.OTHER
+
+
+def is_retryable(exc: BaseException) -> bool:
+    """Whether a failure earns the bounded exponential backoff. Rate-limit,
+    TTFT-timeout, and transient failures are retryable; stream_truncated,
+    context_too_large, protocol_incompatible, and auth are NOT."""
+    cls = classify_error(exc)
+    return cls in (
+        ErrorClass.RATE_LIMIT,
+        ErrorClass.TTFT_TIMEOUT,
+        ErrorClass.TRANSIENT,
     )
 
 
@@ -159,4 +168,69 @@ def wait_for_retry(attempt: int, *, base_ms: float = _BACKOFF_BASE_MS) -> float:
     Tests monkeypatch `time.sleep`/`random` to make retries instant/deterministic."""
     delay = backoff_delay(attempt, base_ms=base_ms)
     time.sleep(delay)
+    return delay
+
+
+def extract_retry_after(exc: BaseException) -> float | None:
+    """Extract a server-provided Retry-After delay (seconds) from a provider
+    exception. Checks:
+    1. An explicit ``retry_after`` attribute (SDK convention)
+    2. The exception message for ``retry after Ns`` / ``Retry-After: N``
+    3. The ``response`` attribute's headers (httpx SDK pattern)
+
+    Returns None when no server hint is present; the caller falls back to
+    the local exponential backoff.
+    """
+    # SDK convention: some SDK exceptions carry a `retry_after` attribute.
+    ra = getattr(exc, "retry_after", None)
+    if isinstance(ra, (int, float)) and ra > 0:
+        return float(ra)
+    # httpx SDK pattern: response.headers
+    response = getattr(exc, "response", None)
+    if response is not None:
+        headers = getattr(response, "headers", None)
+        if headers is not None:
+            raw = headers.get("retry-after") or headers.get("Retry-After")
+            if raw:
+                parsed = _parse_retry_after_value(str(raw))
+                if parsed is not None:
+                    return parsed
+    # Text markers: "retry after 2s", "Retry-After: 5", etc.
+    text = str(exc)
+    import re
+
+    match = re.search(r"retry[-_ ]?after[:\s]+(\d+(?:\.\d+)?)", text, re.IGNORECASE)
+    if match:
+        return float(match.group(1))
+    return None
+
+
+def _parse_retry_after_value(raw: str) -> float | None:
+    """Parse a Retry-After header value (seconds or HTTP-date). Only seconds
+    are supported; HTTP-date returns None (fall back to local backoff)."""
+    try:
+        return abs(float(raw))
+    except ValueError:
+        return None
+
+
+async def wait_for_retry_async(
+    attempt: int,
+    *,
+    base_ms: float = _BACKOFF_BASE_MS,
+    exc: BaseException | None = None,
+) -> float:
+    """Async-safe retry wait. Prioritizes server-provided Retry-After over
+    the local exponential backoff. Returns the delay actually awaited."""
+    if exc is not None:
+        server_delay = extract_retry_after(exc)
+        if server_delay is not None:
+            import asyncio
+
+            await asyncio.sleep(server_delay)
+            return server_delay
+    delay = backoff_delay(attempt, base_ms=base_ms)
+    import asyncio
+
+    await asyncio.sleep(delay)
     return delay
