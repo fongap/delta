@@ -39,7 +39,41 @@ P1（短期·可靠）/P2（中期·实用）/P3（长期·智能）的第一刀
 
 ## [Unreleased]
 
-_无未发布变更。下一个阶段的常规 PR 会在此累积。_
+### Rust Core R1 rollout（v0.4.0 候选）
+
+v0.3.2 之后开启 Rust Control Plane 迁移（ADR-009）。本批把 5 个 R1 候选领域中 Idempotency 一路推进到阶段 C（首个真实生产调用方迁移）。所有变更都对应一个独立 PR + ADR。
+
+| PR | 主题 | 关键交付 |
+|---|---|---|
+| #103 | **R1 crate scaffold** | `core/runtime-native/`（`delta-runtime-native` crate）+ `LedgerReader` / `IdempotencyReader` shadow-read lib + 10 Rust unit tests + CI rust matrix 扩展 + ADR-010。 |
+| #104 | **Ledger 跨语言一致性** | `verify_ledger` CLI binary + 5 Python 跨语言测试：Python 写 hash chain → Rust verify。 |
+| #105 | **Idempotency 跨语言一致性** | `dump_idemlog` CLI binary + 7 Python 跨语言测试：Python 写 side effect state machine → Rust 读。 |
+| #106 | **ADR-011 authority switch plan** | 明确"先不立即切换权威"；按领域逐个 PR + PR-level ADR；强制 Pre-R1 plumbing。 |
+| #107 | **Pre-R1 plumbing + ADR-012** | `DELTA_RUST_AUTHORITY` env-var 灰度开关 + `packages/storage_authority.py` helper + CI guard `scripts/check_rust_authority_migration.py` + 第三个领域（Task identity）inspect binary。 |
+| #108 | **IdempotencyWriter 写路径 + ADR-013** | Rust `IdempotencyWriter` + `write_idemlog` binary + 5 跨语言测试。Rust 写工具就位，不切换权威。 |
+| #109 | **IdempotencyLogWithDelegate opt-in wrapper + ADR-014** | `core/idemlog_delegate.py` 提供 opt-in wrapper + `maybe_wrap` 工厂。env var 启用时委托 Rust；否则保持 Python 行为。 |
+| #110 | **SessionManager 迁移到 delegate** | `services/server/manager.py:SessionManager.idem_log` 改用 `maybe_wrap`。首个真实生产路径；默认行为不变。 |
+
+**契约冻结**：本批之后 `core/idemlog.py` / `core/recovery.py` / `core/artifact.py` / `core/validation.py` / `services/server/{manager.py, app.py, manager_*.py}` 的对外接口属于"Delta Core 公共契约"，变更必须经 ADR。详见 `docs/architecture/runtime-public-contract.md`。
+
+**Authority Matrix 进展**：
+
+| 领域 | 当前权威 | 状态 |
+|---|---|---|
+| Idempotency | Python（opt-in Rust delegate via env var） | R1 阶段 C 完成 |
+| Ledger | Python | R0 完成，shadow-read + verify CLI 落地 |
+| Run state | Python | R0 完成 |
+| Task identity | Python | R0 完成（inspect binary 落地） |
+| Storage transaction boundary | Python | 待 R1 末段 |
+
+**未做**：
+
+- 第二个 Idempotency 调用方（`core/engine.py`）迁移
+- R1 Ledger / Run state / Task identity authority switch
+- R2-R5（Artifact / Validation / Checkpoint / Policy / Approval / Tool lifecycle / Provider 等）
+- Capability Worker 主体 / JSON-RPC / IPC
+
+下一阶段：把 Idempotency 切到真正权威（删除 Python 写入 path），然后推进 Ledger / Task identity 领域。
 
 
 ## [0.3.2] - 2026-09-05
