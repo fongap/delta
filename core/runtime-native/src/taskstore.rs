@@ -224,14 +224,11 @@ impl TaskStoreWriter {
     /// Delete a scheduled task and its runs.
     /// Mirrors Python `TaskStore.delete`.
     pub fn delete_task(&self, task_id: &str) -> Result<bool, ShadowReadError> {
-        let rows = self.conn.execute(
-            "DELETE FROM scheduled_tasks WHERE id=?",
-            params![task_id],
-        )?;
-        self.conn.execute(
-            "DELETE FROM task_runs WHERE task_id=?",
-            params![task_id],
-        )?;
+        let rows = self
+            .conn
+            .execute("DELETE FROM scheduled_tasks WHERE id=?", params![task_id])?;
+        self.conn
+            .execute("DELETE FROM task_runs WHERE task_id=?", params![task_id])?;
         Ok(rows > 0)
     }
 

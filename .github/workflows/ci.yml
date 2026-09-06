@@ -108,90 +108,12 @@ jobs:
 
           git diff --name-only "$BASE_SHA...$HEAD_SHA" > changed-files.txt
 
-          python=false
-          desktop=false
-          rust=false
-          python_advisories=false
-          rust_advisories=false
-          full=false
+          # Path detection is delegated to scripts/ci_path_selector.sh
+          # so the logic can be unit-tested independently.
+          bash scripts/ci_path_selector.sh < changed-files.txt > selected.txt
 
-          while IFS= read -r path; do
-            case "$path" in
-              # CI workflow changes are validated against the complete suite.
-              .github/workflows/*)
-                full=true
-                ;;
-
-              # Python runtime and repository-level Python tests.
-              core/*|providers/*|integrations/*|packages/*|services/server/*|apps/tui/*|tests/*)
-                python=true
-                ;;
-
-              # Python dependency graph changes require runtime and advisory checks.
-              pyproject.toml|uv.lock)
-                python=true
-                python_advisories=true
-                ;;
-
-              # Release-version gate implementation is covered by Python tests.
-              scripts/check_release_versions.py)
-                python=true
-                ;;
-
-              # Tauri Rust workspace.
-              apps/desktop/src-tauri/*)
-                rust=true
-                ;;
-
-              # Delta Core Rust runtime (R1 shadow-read).
-              core/runtime-native/*)
-                rust=true
-                ;;
-
-              # Standalone STT Rust workspace.
-              services/stt/*)
-                rust=true
-                ;;
-
-              # Portable launcher Rust workspace.
-              packaging/portable/launcher/*)
-                rust=true
-                ;;
-
-              # Desktop frontend.
-              apps/desktop/*)
-                desktop=true
-                ;;
-
-              # cargo-deny policy only affects Rust advisory validation.
-              deny.toml)
-                rust_advisories=true
-                ;;
-
-              # Other packaging changes are release-critical and receive full CI.
-              packaging/*)
-                full=true
-                ;;
-            esac
-          done < changed-files.txt
-
-          # Full validation overrides selective detection.
-          if [ "$full" = true ]; then
-            python=true
-            desktop=true
-            rust=true
-            python_advisories=true
-            rust_advisories=true
-          fi
-
-          {
-            echo "python=$python"
-            echo "desktop=$desktop"
-            echo "rust=$rust"
-            echo "python_advisories=$python_advisories"
-            echo "rust_advisories=$rust_advisories"
-            echo "full=$full"
-          } >> "$GITHUB_OUTPUT"
+          # Source the output to populate variables for the echo block below.
+          source selected.txt
 
           echo "Changed files:"
           cat changed-files.txt
@@ -204,6 +126,15 @@ jobs:
           echo "  python_advisories   = $python_advisories"
           echo "  rust_advisories     = $rust_advisories"
           echo "  full                = $full"
+
+          cat selected.txt >> "$GITHUB_OUTPUT"
+
+      - name: Self-test path selector
+        # Regression guard: the path detection logic must classify
+        # core/runtime-native/* as rust=true (not be shadowed by the
+        # broad core/* Python rule). This test runs on every CI
+        # invocation, regardless of which paths the PR changed.
+        run: bash scripts/test_ci_path_selector.sh
 
 
   pytest:
