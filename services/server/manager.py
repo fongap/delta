@@ -123,7 +123,7 @@ class SessionManager(
         from core.idemlog import IdempotencyLog
         from core.idemlog_delegate import maybe_wrap
 
-        self.idem_log = maybe_wrap(
+        self.idem_log = maybe_wrap(  # type: ignore[assignment]
             IdempotencyLog(base / "side-effects.db"),
             str(base / "side-effects.db"),
         )
