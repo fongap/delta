@@ -113,7 +113,14 @@ class SessionManager(
         # level, outside the memory table; read at engine build time.
         self.memory_settings = MemorySettingsStore(base / "memory-settings.json")
         self.audit_store = AuditStore(base / "core.db")
-        self.run_ledger = RunEventLedger(base / "run-events.db")
+        # ADR-015: ledger authority switch. When DELTA_RUST_AUTHORITY=1 +
+        # Rust binary is built, ``append`` is forwarded to write_ledger.
+        # Default behavior is identical to a plain RunEventLedger.
+        from core.ledger_delegate import maybe_wrap_ledger
+
+        self.run_ledger = maybe_wrap_ledger(  # type: ignore[assignment]
+            RunEventLedger(base / "run-events.db")
+        )
         # ADR-005 WS4: durable dedupe of side effects. Survives a crash so
         # resume() can tell "this call's effect already happened" from "this
         # call is new". Lives next to the run ledger.

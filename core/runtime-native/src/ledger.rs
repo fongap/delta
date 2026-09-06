@@ -131,6 +131,126 @@ impl LedgerReader {
     }
 }
 
+/// Read-write handle to a `run_events.db` file.
+///
+/// Mirrors the Python `RunEventLedger.append()` write path. The payload is
+/// expected to be pre-sanitized by the caller (the Python delegate scrubs
+/// through `packages/sanitize.py` before forwarding), so the hash basis
+/// matches what Python would compute.
+pub struct LedgerWriter {
+    conn: Connection,
+}
+
+impl LedgerWriter {
+    /// Open (or create) a `run_events.db` for read-write access.
+    pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, ShadowReadError> {
+        let conn = Connection::open(path)?;
+        conn.execute_batch(
+            r#"CREATE TABLE IF NOT EXISTS run_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT NOT NULL,
+                seq INTEGER NOT NULL,
+                type TEXT NOT NULL,
+                ts REAL NOT NULL,
+                actor TEXT NOT NULL DEFAULT 'system',
+                payload TEXT NOT NULL DEFAULT '{}',
+                prev_hash TEXT NOT NULL DEFAULT '',
+                hash TEXT NOT NULL,
+                workspace TEXT
+            )"#,
+        )?;
+        conn.execute_batch(
+            "CREATE INDEX IF NOT EXISTS idx_run_events_run ON run_events(run_id, seq)",
+        )?;
+        Ok(Self { conn })
+    }
+
+    /// Open an in-memory DB (for tests).
+    pub fn open_in_memory() -> Result<Self, ShadowReadError> {
+        let conn = Connection::open_in_memory()?;
+        conn.execute_batch(
+            r#"CREATE TABLE run_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                run_id TEXT NOT NULL,
+                seq INTEGER NOT NULL,
+                type TEXT NOT NULL,
+                ts REAL NOT NULL,
+                actor TEXT NOT NULL DEFAULT 'system',
+                payload TEXT NOT NULL DEFAULT '{}',
+                prev_hash TEXT NOT NULL DEFAULT '',
+                hash TEXT NOT NULL,
+                workspace TEXT
+            )"#,
+        )?;
+        conn.execute_batch("CREATE INDEX idx_run_events_run ON run_events(run_id, seq)")?;
+        Ok(Self { conn })
+    }
+
+    /// Append one event, extending the run's hash chain.
+    ///
+    /// Mirrors `core/ledger.py` `RunEventLedger.append()`. ``payload`` is
+    /// expected pre-sanitized by the caller. Returns the stored row as a
+    /// JSON object.
+    pub fn append(
+        &self,
+        run_id: &str,
+        r#type: &str,
+        actor: &str,
+        ts: f64,
+        payload: &Value,
+        workspace: &str,
+    ) -> Result<Value, ShadowReadError> {
+        let payload_str = canonical_json(payload);
+        let ts_repr = format_ts_repr(ts);
+
+        let row = self
+            .conn
+            .query_row(
+                "SELECT seq, hash FROM run_events WHERE run_id = ? \
+                 ORDER BY seq DESC LIMIT 1",
+                params![run_id],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)),
+            )
+            .ok();
+        let (seq, prev_hash) = match row {
+            Some((s, h)) => (s + 1, h),
+            None => (1, String::new()),
+        };
+        let basis = format!(
+            "{}|{}|{}|{}|{}|{}",
+            prev_hash, seq, r#type, actor, ts_repr, payload_str
+        );
+        let digest = hex_encode_sha256(basis.as_bytes());
+        self.conn.execute(
+            "INSERT INTO run_events \
+             (run_id, seq, type, ts, actor, payload, prev_hash, hash, workspace) \
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            params![
+                run_id,
+                seq,
+                r#type,
+                ts,
+                actor,
+                payload_str,
+                &prev_hash,
+                &digest,
+                workspace,
+            ],
+        )?;
+        Ok(serde_json::json!({
+            "run_id": run_id,
+            "seq": seq,
+            "type": r#type,
+            "ts": ts,
+            "actor": actor,
+            "payload": payload,
+            "prev_hash": prev_hash,
+            "hash": digest,
+            "workspace": workspace,
+        }))
+    }
+}
+
 /// Python `repr(float)` for the hash basis.
 ///
 /// `core/ledger.py` uses `repr(ts)` where ts is a Python float.
@@ -261,5 +381,120 @@ mod tests {
     fn format_ts_repr_fractional() {
         let s = format_ts_repr(1725523456.123456);
         assert!(s.contains("1725523456"));
+    }
+
+    #[test]
+    fn writer_appends_first_event() {
+        use tempfile::tempdir;
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("ledger.db");
+        let writer = LedgerWriter::open(&db).unwrap();
+        let row = writer
+            .append(
+                "run_w",
+                "run.started",
+                "user",
+                1000.0,
+                &serde_json::json!({"kind": "run"}),
+                "",
+            )
+            .unwrap();
+        assert_eq!(row["seq"], 1);
+        assert_eq!(row["prev_hash"], "");
+        assert!(!row["hash"].as_str().unwrap().is_empty());
+    }
+
+    #[test]
+    fn writer_appends_extends_chain() {
+        use tempfile::tempdir;
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("ledger.db");
+        let writer = LedgerWriter::open(&db).unwrap();
+        writer
+            .append(
+                "run_w",
+                "run.started",
+                "user",
+                1000.0,
+                &serde_json::json!({"kind": "run"}),
+                "",
+            )
+            .unwrap();
+        let row2 = writer
+            .append(
+                "run_w",
+                "run.completed",
+                "system",
+                1001.0,
+                &serde_json::json!({"kind": "run"}),
+                "",
+            )
+            .unwrap();
+        assert_eq!(row2["seq"], 2);
+        assert!(!row2["prev_hash"].as_str().unwrap().is_empty());
+    }
+
+    #[test]
+    fn writer_chain_verifies_via_reader() {
+        use tempfile::tempdir;
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("ledger.db");
+        let writer = LedgerWriter::open(&db).unwrap();
+        writer
+            .append(
+                "run_v",
+                "run.started",
+                "user",
+                1000.0,
+                &serde_json::json!({"kind": "run"}),
+                "ws_1",
+            )
+            .unwrap();
+        writer
+            .append(
+                "run_v",
+                "run.completed",
+                "system",
+                1001.0,
+                &serde_json::json!({"kind": "run"}),
+                "ws_1",
+            )
+            .unwrap();
+
+        let reader = LedgerReader::open(&db).unwrap();
+        let events = reader.events("run_v").unwrap();
+        assert_eq!(events.len(), 2);
+        assert!(reader.verify("run_v").unwrap());
+    }
+
+    #[test]
+    fn writer_independent_runs_have_separate_chains() {
+        use tempfile::tempdir;
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("ledger.db");
+        let writer = LedgerWriter::open(&db).unwrap();
+        let r1 = writer
+            .append(
+                "run_a",
+                "run.started",
+                "user",
+                1000.0,
+                &serde_json::json!({}),
+                "",
+            )
+            .unwrap();
+        let r2 = writer
+            .append(
+                "run_b",
+                "run.started",
+                "user",
+                1000.0,
+                &serde_json::json!({}),
+                "",
+            )
+            .unwrap();
+        // Each run is its own chain, so both start with empty prev_hash.
+        assert_eq!(r1["prev_hash"], "");
+        assert_eq!(r2["prev_hash"], "");
     }
 }
