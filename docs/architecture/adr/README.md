@@ -20,6 +20,7 @@
 - `ADR-011-r1-authority-switch-plan.md` – R1 authority switch 计划与边界：明确"先不立即切换权威"、未来每个领域一个 PR + PR-level ADR；强制 Pre-R1 plumbing（PR11）必须先做；列出 5 个领域（Idempotency / Ledger / Run state / Task identity / Storage transaction boundary）的迁移顺序与不变量。
 - `ADR-012-r1-pre-plumbing.md` – R1 Pre-R1 plumbing：`DELTA_RUST_AUTHORITY` env-var 灰度开关 + CI guard + 第三个领域 inspect binary。
 - `ADR-013-r1-idemlog-authority-switch.md` – R1 Idempotency authority switch 阶段 A：Rust `IdempotencyWriter` 写路径就位 + 跨语言测试。不切换权威。
+- `ADR-014-r1-idemlog-delegate.md` – R1 Idempotency authority switch 阶段 B：`core/idemlog_delegate.py` 提供 `IdempotencyLogWithDelegate` opt-in wrapper + `maybe_wrap` 工厂。**默认行为完全等同 main**；env var `DELTA_RUST_AUTHORITY=1` + Rust binary 存在时显式委托写。
 
 相关架构文档：
 - `hub-federation-boundary.md` – Delta Hub 联邦化边界设计，明确 OpenWorker 仅为可选适配器。
