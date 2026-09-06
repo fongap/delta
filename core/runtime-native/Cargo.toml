@@ -19,12 +19,20 @@ name = "dump_idemlog"
 path = "src/bin/dump_idemlog.rs"
 
 [[bin]]
+name = "write_idemlog"
+path = "src/bin/write_idemlog.rs"
+
+[[bin]]
 name = "write_ledger"
 path = "src/bin/write_ledger.rs"
 
 [[bin]]
-name = "write_idemlog"
-path = "src/bin/write_idemlog.rs"
+name = "write_tasks"
+path = "src/bin/write_tasks.rs"
+
+[[bin]]
+name = "inspect_tasks"
+path = "src/bin/inspect_tasks.rs"
 
 [dependencies]
 rusqlite = { version = "0.32", features = ["bundled"] }
