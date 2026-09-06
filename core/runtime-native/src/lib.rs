@@ -11,9 +11,14 @@
 
 pub mod idemlog;
 pub mod ledger;
+pub mod taskstore;
 
-pub use idemlog::{IdempotencyReader, SideEffectEntry, SideEffectState};
+pub use idemlog::{
+    args_sha256, operation_id, IdempotencyReader, IdempotencyWriter, SideEffectEntry,
+    SideEffectState,
+};
 pub use ledger::{LedgerEvent, LedgerReader};
+pub use taskstore::{ScheduledTaskEntry, TaskRunEntry, TaskStoreReader};
 
 pub use thiserror::Error;
 
