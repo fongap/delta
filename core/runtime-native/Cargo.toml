@@ -18,6 +18,14 @@ path = "src/bin/verify_ledger.rs"
 name = "dump_idemlog"
 path = "src/bin/dump_idemlog.rs"
 
+[[bin]]
+name = "write_ledger"
+path = "src/bin/write_ledger.rs"
+
+[[bin]]
+name = "write_idemlog"
+path = "src/bin/write_idemlog.rs"
+
 [dependencies]
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }

@@ -17,7 +17,7 @@ pub use idemlog::{
     args_sha256, operation_id, IdempotencyReader, IdempotencyWriter, SideEffectEntry,
     SideEffectState,
 };
-pub use ledger::{LedgerEvent, LedgerReader};
+pub use ledger::{LedgerEvent, LedgerReader, LedgerWriter};
 pub use taskstore::{ScheduledTaskEntry, TaskRunEntry, TaskStoreReader};
 
 pub use thiserror::Error;

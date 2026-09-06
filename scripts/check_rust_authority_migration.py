@@ -1,4 +1,4 @@
-"""Storage authority migration guard — R1 plumbing + enforcement (ADR-012/014).
+"""Storage authority migration guard — R1 plumbing + enforcement (ADR-012/014/015).
 
 Two-tier checks:
 
@@ -8,9 +8,9 @@ Two-tier checks:
 
 2. **Enforcement (opt-in)**: when ``DELTA_RUST_AUTHORITY=1`` AND this
    script is invoked with the ``--enforce-rust-authority`` flag, scans
-   for direct ``IdempotencyLog(...)`` instantiations in non-test code
-   and verifies they go through ``maybe_wrap`` or are test fixtures.
-   Lands in PR12 stage C (ADR-014).
+   for direct ``IdempotencyLog(...)`` and ``RunEventLedger(...)``
+   instantiations in non-test code and verifies they go through
+   ``maybe_wrap`` / ``maybe_wrap_ledger`` (ADR-014/015).
 
 Run::
 
@@ -42,11 +42,16 @@ STORAGE_AUTHORITY_IMPORT = re.compile(
     r"from\s+packages\s+import\s+storage_authority"
 )
 IDEMPOTENCY_LOG_DIRECT = re.compile(r"IdempotencyLog\s*\(")
+RUN_LEDGER_DIRECT = re.compile(r"RunEventLedger\s*\(")
 MAYBE_WRAP_OR_DELEGATE = re.compile(
     r"maybe_wrap\s*\(|IdempotencyLogWithDelegate\s*\("
 )
+MAYBE_WRAP_OR_DELEGATE_LEDGER = re.compile(
+    r"maybe_wrap_ledger\s*\(|RunEventLedgerWithDelegate\s*\("
+)
 TESTS = REPO / "tests"
 CORE_REFERENCE = re.compile(r"from\s+core\.idemlog_delegate\s+import")
+LEDGER_REFERENCE = re.compile(r"from\s+core\.ledger_delegate\s+import")
 
 # Map each R1 domain to the file path(s) that own it. The mapping is
 # explicit (not heuristic) so the guard is stable across refactors.
@@ -85,32 +90,54 @@ def _scan_structural() -> list[tuple[Path, str]]:
     return violations
 
 
-def _scan_enforcement() -> list[tuple[Path, int, str]]:
-    """Find direct IdempotencyLog() instantiations in non-test code.
+# The delegate wrapper files are allowed to instantiate the underlying
+# class — that is how the wrapper is constructed. The guard must not
+# flag itself.
+DELEGATE_FILES: frozenset[str] = frozenset(
+    {"core/idemlog_delegate.py", "core/ledger_delegate.py"}
+)
 
-    Only runs when ``DELTA_RUST_AUTHORITY=1`` is set (per ADR-014 stage C).
-    Scans ``core/`` and ``services/server/`` but skips tests. A direct
-    instantiation is OK only if the same file imports ``maybe_wrap`` or
-    ``IdempotencyLogWithDelegate`` and uses it (i.e. we are mid-migration
-    on that file).
+
+def _scan_enforcement() -> list[tuple[Path, int, str, str]]:
+    """Find direct IdempotencyLog() / RunEventLedger() instantiations in
+    non-test code.
+
+    Only runs when ``DELTA_RUST_AUTHORITY=1`` is set (per ADR-014/015).
+    Scans ``core/`` and ``services/server/`` but skips tests and the
+    delegate wrapper files themselves. A direct instantiation is OK
+    only if the same file imports the corresponding ``maybe_wrap`` /
+    delegate and uses it (i.e. we are mid-migration on that file).
     """
-    violations: list[tuple[Path, int, str]] = []
+    violations: list[tuple[Path, int, str, str]] = []
     search_dirs = [CORE, SERVICES]
     for search_dir in search_dirs:
         if not search_dir.exists():
             continue
         for py in search_dir.rglob("*.py"):
             try:
+                rel = py.relative_to(REPO).as_posix()
+            except ValueError:
+                continue
+            if rel in DELEGATE_FILES:
+                continue
+            try:
                 text = py.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError):
                 continue
-            for match in IDEMPOTENCY_LOG_DIRECT.finditer(text):
-                line_no = text[: match.start()].count("\n") + 1
-                if not is_rust_authority("idempotency"):
-                    return []
-                if MAYBE_WRAP_OR_DELEGATE.search(text) and CORE_REFERENCE.search(text):
-                    continue
-                violations.append((py, line_no, match.group()))
+
+            if is_rust_authority("idempotency"):
+                for match in IDEMPOTENCY_LOG_DIRECT.finditer(text):
+                    line_no = text[: match.start()].count("\n") + 1
+                    if MAYBE_WRAP_OR_DELEGATE.search(text) and CORE_REFERENCE.search(text):
+                        continue
+                    violations.append((py, line_no, match.group(), "idempotency"))
+
+            if is_rust_authority("ledger"):
+                for match in RUN_LEDGER_DIRECT.finditer(text):
+                    line_no = text[: match.start()].count("\n") + 1
+                    if MAYBE_WRAP_OR_DELEGATE_LEDGER.search(text) and LEDGER_REFERENCE.search(text):
+                        continue
+                    violations.append((py, line_no, match.group(), "ledger"))
     return violations
 
 
@@ -150,12 +177,13 @@ def main() -> int:
         enforce = _scan_enforcement()
         if enforce:
             print("storage-authority guard violations (enforcement):", file=sys.stderr)
-            for path, line_no, snippet in enforce:
+            for path, line_no, snippet, domain in enforce:
                 rel = path.relative_to(REPO)
                 print(
                     f"  - {rel}:{line_no}: direct {snippet} instantiation "
-                    f"while DELTA_RUST_AUTHORITY=1. "
-                    f"Wrap via core.idemlog_delegate.maybe_wrap.",
+                    f"while DELTA_RUST_AUTHORITY=1 ({domain} domain). "
+                    f"Wrap via core.idemlog_delegate.maybe_wrap / "
+                    f"core.ledger_delegate.maybe_wrap_ledger.",
                     file=sys.stderr,
                 )
             return 1
