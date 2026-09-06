@@ -16,6 +16,7 @@ from pathlib import Path
 from zoneinfo import ZoneInfo
 
 from core.automation.models import ScheduledTask, TaskRun
+from packages.storage_authority import is_rust_authority  # noqa: F401
 
 
 def compute_next_run(
