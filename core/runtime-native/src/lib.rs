@@ -18,7 +18,7 @@ pub use idemlog::{
     SideEffectState,
 };
 pub use ledger::{LedgerEvent, LedgerReader, LedgerWriter};
-pub use taskstore::{ScheduledTaskEntry, TaskRunEntry, TaskStoreReader};
+pub use taskstore::{ScheduledTaskEntry, TaskRunEntry, TaskStoreReader, TaskStoreWriter};
 
 pub use thiserror::Error;
 

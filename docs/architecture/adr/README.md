@@ -22,6 +22,7 @@
 - `ADR-013-r1-idemlog-authority-switch.md` – R1 Idempotency authority switch 阶段 A：Rust `IdempotencyWriter` 写路径就位 + 跨语言测试。不切换权威。
 - `ADR-014-r1-idemlog-delegate.md` – R1 Idempotency authority switch 阶段 B：`core/idemlog_delegate.py` 提供 `IdempotencyLogWithDelegate` opt-in wrapper + `maybe_wrap` 工厂。**默认行为完全等同 main**；env var `DELTA_RUST_AUTHORITY=1` + Rust binary 存在时显式委托写。
 - `ADR-015-r1-ledger-delegate.md` – R1 Ledger authority switch 阶段 B：`core/ledger_delegate.py` 提供 `RunEventLedgerWithDelegate` + `maybe_wrap_ledger`；Rust `LedgerWriter` 镜像 Python `RunEventLedger.append` 的 hash basis (`sha256(prev_hash|seq|type|actor|repr(ts)|canonical(payload))`)；CI enforcement guard 扩展到 ledger 域。
+- `ADR-016-r1-taskstore-delegate.md` – R1 Task identity authority switch 阶段 B：`core/automation/store_delegate.py` 提供 `TaskStoreWithDelegate` + `maybe_wrap_taskstore`；Rust `TaskStoreWriter` 镜像 Python `TaskStore` 的 save/delete/add_run 写路径；CI enforcement guard 扩展到 task_identity 域。
 
 相关架构文档：
 - `hub-federation-boundary.md` – Delta Hub 联邦化边界设计，明确 OpenWorker 仅为可选适配器。

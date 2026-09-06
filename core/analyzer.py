@@ -250,7 +250,7 @@ class Analyzer:
         if self.task_store is None:
             raise ValueError(
                 "automation_health requires a task_store; "
-                "construct Analyzer(..., task_store=TaskStore(...))"
+                "construct Analyzer(..., task_store=<TaskStore instance>)"
             )
         if window <= 0:
             raise ValueError("window must be a positive integer")
