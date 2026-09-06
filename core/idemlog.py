@@ -37,6 +37,8 @@ import time
 from pathlib import Path
 from typing import Any, TYPE_CHECKING
 
+from packages.storage_authority import is_rust_authority  # noqa: F401
+
 if TYPE_CHECKING:
     from core.ledger import RunEventLedger
 
