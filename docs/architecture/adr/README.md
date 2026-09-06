@@ -18,6 +18,8 @@
 - `ADR-009-delta-core-architecture.md` – Delta Core 长期架构：Rust Control Plane + Capability Worker；明确 Rust Core 唯一权威的领域（Task/Run/Policy/Approval/Ledger/Checkpoint/Artifact/Validation/Idempotency/Scheduler/Worker lifecycle/Provider Core）与 Python 端降级为 Worker 的边界；与 `docs/governance/rust-core-migration.md` + `docs/architecture/capability-abi.md` 共同构成 Rust 迁移的"先冻结契约再迁权威"基础。
 - `ADR-010-r1-state-foundation-shadow-read.md` – R1 State Foundation 第一刀：`core/runtime-native/` crate scaffold + Ledger/IdempotencyLog shadow-read（只读验证 Python 写入的 hash chain + side effect state machine）。不写入，不替换 Python 权威。
 - `ADR-011-r1-authority-switch-plan.md` – R1 authority switch 计划与边界：明确"先不立即切换权威"、未来每个领域一个 PR + PR-level ADR；强制 Pre-R1 plumbing（PR11）必须先做；列出 5 个领域（Idempotency / Ledger / Run state / Task identity / Storage transaction boundary）的迁移顺序与不变量。
+- `ADR-012-r1-pre-plumbing.md` – R1 Pre-R1 plumbing：`DELTA_RUST_AUTHORITY` env-var 灰度开关 + CI guard + 第三个领域 inspect binary。
+- `ADR-013-r1-idemlog-authority-switch.md` – R1 Idempotency authority switch 阶段 A：Rust `IdempotencyWriter` 写路径就位 + 跨语言测试。不切换权威。
 
 相关架构文档：
 - `hub-federation-boundary.md` – Delta Hub 联邦化边界设计，明确 OpenWorker 仅为可选适配器。
