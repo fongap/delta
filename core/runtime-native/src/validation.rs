@@ -342,29 +342,40 @@ pub fn run_validation(
 
     // Citation completion contract
     if criteria.require_citations {
-        if let Some(count) = valid_citation_count {
-            if count < criteria.min_valid_citations {
-                checks.push(ValidationCheck {
-                    name: "min_valid_citations".to_string(),
-                    ok: false,
-                    detail: format!(
-                        "{count} valid citation(s) < min_valid_citations={}",
-                        criteria.min_valid_citations
-                    ),
-                });
-                return Ok(ValidationResult {
-                    ok: false,
-                    checks,
-                    evidence,
-                });
-            }
+        let Some(count) = valid_citation_count else {
+            evidence["valid_citation_count"] = Value::Null;
             checks.push(ValidationCheck {
                 name: "min_valid_citations".to_string(),
-                ok: true,
-                detail: format!("{count} valid citation(s)"),
+                ok: false,
+                detail: "valid citation count unavailable".to_string(),
             });
-            evidence["valid_citation_count"] = serde_json::json!(count);
+            return Ok(ValidationResult {
+                ok: false,
+                checks,
+                evidence,
+            });
+        };
+        if count < criteria.min_valid_citations {
+            checks.push(ValidationCheck {
+                name: "min_valid_citations".to_string(),
+                ok: false,
+                detail: format!(
+                    "{count} valid citation(s) < min_valid_citations={}",
+                    criteria.min_valid_citations
+                ),
+            });
+            return Ok(ValidationResult {
+                ok: false,
+                checks,
+                evidence,
+            });
         }
+        checks.push(ValidationCheck {
+            name: "min_valid_citations".to_string(),
+            ok: true,
+            detail: format!("{count} valid citation(s)"),
+        });
+        evidence["valid_citation_count"] = serde_json::json!(count);
     }
 
     Ok(ValidationResult {
@@ -503,14 +514,19 @@ mod tests {
     }
 
     #[test]
-    fn citation_floor_skipped_when_count_is_none() {
+    fn citation_floor_fails_closed_when_count_is_none() {
         let criteria = json!({
             "min_artifacts": 1, "max_artifacts": 5,
             "require_citations": true, "min_valid_citations": 1,
         });
         let artifacts = vec![json!({"path": "a.md", "size": 1, "incomplete": false})];
         let r = run_validation(&artifacts, &criteria, None, None).unwrap();
-        assert!(r.ok);
+        assert!(!r.ok);
+        assert_eq!(
+            r.checks.last().unwrap().detail,
+            "valid citation count unavailable"
+        );
+        assert_eq!(r.evidence["valid_citation_count"], Value::Null);
     }
 
     #[test]

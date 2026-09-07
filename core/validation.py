@@ -298,6 +298,16 @@ def run_validation(
     # a citation floor. The valid_citation_count comes from
     # `analyzer.source_citation_hits` (the Source ledger knows which
     # citations still resolve to the same file content).
+    if criteria.require_citations and valid_citation_count is None:
+        evidence["valid_citation_count"] = None
+        checks.append(
+            ValidationCheck(
+                name="min_valid_citations",
+                ok=False,
+                detail="valid citation count unavailable",
+            )
+        )
+        return ValidationResult(ok=False, checks=checks, evidence=evidence)
     if criteria.require_citations and valid_citation_count is not None:
         if valid_citation_count < criteria.min_valid_citations:
             checks.append(
