@@ -16,6 +16,7 @@ import pytest
 
 from packages.storage_authority import (
     RUST_WRITE_DOMAINS,
+    RUST_READ_DOMAINS,
     DERIVED_DOMAINS,
     COORDINATION_DOMAINS,
     ALL_DOMAINS,
@@ -188,12 +189,23 @@ def test_constants_consistency():
     # Derived and coordination are subsets of ALL_DOMAINS
     assert DERIVED_DOMAINS.keys() <= ALL_DOMAINS
     assert COORDINATION_DOMAINS <= ALL_DOMAINS
-    # RUST_WRITE_DOMAINS are ALL_DOMAINS minus derived/coordination
-    assert RUST_WRITE_DOMAINS == ALL_DOMAINS - frozenset(DERIVED_DOMAINS) - COORDINATION_DOMAINS
+    # R2 reader domains are subsets of ALL_DOMAINS but disjoint from R1
+    assert RUST_READ_DOMAINS <= ALL_DOMAINS
+    assert RUST_WRITE_DOMAINS.isdisjoint(RUST_READ_DOMAINS)
+    # RUST_WRITE_DOMAINS are ALL_DOMAINS minus derived/coordination/readers
+    assert RUST_WRITE_DOMAINS == (
+        ALL_DOMAINS
+        - frozenset(DERIVED_DOMAINS)
+        - COORDINATION_DOMAINS
+        - RUST_READ_DOMAINS
+    )
     # run_state derived from ledger
     assert DERIVED_DOMAINS["run_state"] == "ledger"
     # ALL_DOMAINS does not include unknown domains
     assert "unknown_domain" not in ALL_DOMAINS
+    # R2 reader env var is distinct from R1 write env var
+    from packages.storage_authority import READER_ENV_VAR
+    assert READER_ENV_VAR != "DELTA_RUST_AUTHORITY"
 
 
 # -- per-domain delegate behavior -------------------------------------------
@@ -236,3 +248,131 @@ def test_idempotency_only_activates_idempotency_delegate_not_ledger(monkeypatch,
     assert not isinstance(wrapped_ledger, RunEventLedgerWithDelegate), (
         "ledger delegate must NOT activate when only idempotency is in the authority set"
     )
+
+
+# -- R2 shadow-reader API (ADR-019) ------------------------------------------
+
+
+def test_r2_read_domains_defined():
+    from packages.storage_authority import RUST_READ_DOMAINS
+
+    # The four reader-eligible R2 domains.
+    assert RUST_READ_DOMAINS == frozenset({
+        "artifact", "validation", "checkpoint", "source_citation",
+    })
+
+
+def test_r2_read_env_var_unset_returns_false(monkeypatch):
+    from packages.storage_authority import is_rust_shadow_reader
+
+    monkeypatch.delenv("DELTA_RUST_READERS", raising=False)
+    assert is_rust_shadow_reader("artifact") is False
+    assert is_rust_shadow_reader("validation") is False
+    assert is_rust_shadow_reader("checkpoint") is False
+    assert is_rust_shadow_reader("source_citation") is False
+
+
+def test_r2_read_specific_domain(monkeypatch):
+    from packages.storage_authority import is_rust_shadow_reader
+
+    monkeypatch.setenv("DELTA_RUST_READERS", "artifact")
+    assert is_rust_shadow_reader("artifact") is True
+    assert is_rust_shadow_reader("validation") is False
+
+
+def test_r2_read_all_keyword(monkeypatch):
+    from packages.storage_authority import is_rust_shadow_reader
+
+    monkeypatch.setenv("DELTA_RUST_READERS", "all")
+    assert is_rust_shadow_reader("artifact") is True
+    assert is_rust_shadow_reader("validation") is True
+    assert is_rust_shadow_reader("checkpoint") is True
+    assert is_rust_shadow_reader("source_citation") is True
+
+
+def test_r2_read_legacy_truthy(monkeypatch):
+    from packages.storage_authority import is_rust_shadow_reader
+
+    monkeypatch.setenv("DELTA_RUST_READERS", "1")
+    assert is_rust_shadow_reader("artifact") is True
+    monkeypatch.setenv("DELTA_RUST_READERS", "true")
+    assert is_rust_shadow_reader("checkpoint") is True
+
+
+def test_r2_read_rejects_r1_write_domain(monkeypatch):
+    """is_rust_shadow_reader must reject R1 write domains — those
+    have write authority, not just a reader. Use is_rust_authority."""
+    from packages.storage_authority import (
+        InvalidAuthorityTargetError, is_rust_shadow_reader,
+    )
+
+    monkeypatch.setenv("DELTA_RUST_READERS", "artifact")
+    for r1 in ("idempotency", "ledger", "task_identity"):
+        with pytest.raises(InvalidAuthorityTargetError):
+            is_rust_shadow_reader(r1)
+
+
+def test_r2_read_rejects_derived_and_coordination(monkeypatch):
+    from packages.storage_authority import UnknownDomainError
+
+    for bad in ("run_state", "storage_transaction"):
+        monkeypatch.setenv("DELTA_RUST_READERS", bad)
+        with pytest.raises(UnknownDomainError):
+            # Use the parse by setting and reading any R2 domain
+            from packages.storage_authority import is_rust_shadow_reader
+            is_rust_shadow_reader("artifact")
+
+
+def test_r2_read_rejects_policy_and_approval(monkeypatch):
+    """Policy and Approval are evaluation/decision surfaces, not data
+    readers. They are NOT in RUST_READ_DOMAINS; their shadow-check
+    will be a different hook in their per-domain ADR."""
+    from packages.storage_authority import (
+        InvalidAuthorityTargetError, is_rust_shadow_reader,
+    )
+
+    monkeypatch.setenv("DELTA_RUST_READERS", "artifact")
+    with pytest.raises(InvalidAuthorityTargetError):
+        is_rust_shadow_reader("policy")
+    with pytest.raises(InvalidAuthorityTargetError):
+        is_rust_shadow_reader("approval")
+
+
+def test_r2_read_unknown_domain(monkeypatch):
+    from packages.storage_authority import (
+        InvalidAuthorityTargetError, is_rust_shadow_reader,
+    )
+
+    with pytest.raises(InvalidAuthorityTargetError):
+        is_rust_shadow_reader("unknown_domain")
+
+
+def test_r2_read_disjoint_from_r1_write(monkeypatch):
+    """R1 write and R2 reader are distinct surfaces. Setting one must
+    not affect the other."""
+    from packages.storage_authority import (
+        InvalidAuthorityTargetError, is_rust_authority, is_rust_shadow_reader,
+    )
+
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "idempotency")
+    monkeypatch.setenv("DELTA_RUST_READERS", "artifact")
+    assert is_rust_authority("idempotency") is True
+    # R2 domain is not a valid R1 write target.
+    with pytest.raises(InvalidAuthorityTargetError):
+        is_rust_authority("artifact")
+    assert is_rust_shadow_reader("artifact") is True
+    # R1 domain is not a valid R2 reader target.
+    with pytest.raises(InvalidAuthorityTargetError):
+        is_rust_shadow_reader("idempotency")
+
+
+def test_r1_write_rejects_r2_read_domain(monkeypatch):
+    """is_rust_authority must reject R2 reader domains — those have a
+    Rust reader but no Rust write authority yet."""
+    from packages.storage_authority import (
+        InvalidAuthorityTargetError, is_rust_authority,
+    )
+
+    for r2 in ("artifact", "validation", "checkpoint", "source_citation"):
+        with pytest.raises(InvalidAuthorityTargetError):
+            is_rust_authority(r2)
