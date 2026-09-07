@@ -190,9 +190,9 @@ def scheduling_tools(
             instructions=instructions,
             schedule=schedule,
             workspace=workspace,
-            origin_surface=origin.get("surface", "cowork"),
+            origin_surface=origin.get("surface", "delta"),
             origin_session_id=origin.get("session_id", ""),
-            agent=origin.get("agent", "cowork"),
+            agent=origin.get("agent", "delta"),
             always_allowed_tools=grants,
         )
         store.save(task)

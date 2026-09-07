@@ -211,9 +211,9 @@ class _StubProvider:
         yield StreamChunk(turn=self.complete())
 
 
-def test_engine_connector_tools_are_cowork_scoped(tmp_path):
+def test_engine_connector_tools_are_delta_scoped(tmp_path):
     from core.agent import build_engine
-    from core.agents import chat_agent, code_agent, cowork_agent, myhelper_agent
+    from core.agents import chat_agent, code_agent, delta_agent, myhelper_agent
 
     secrets = SecretStore(tmp_path / "secrets.json")
     eng = build_engine(agent=chat_agent(), provider=_StubProvider(), secrets=secrets)
@@ -228,8 +228,8 @@ def test_engine_connector_tools_are_cowork_scoped(tmp_path):
         provider=_StubProvider(),
         secrets=secrets,
     )
-    cowork = build_engine(
-        agent=cowork_agent(),
+    delta = build_engine(
+        agent=delta_agent(),
         workspace=tmp_path,
         provider=_StubProvider(),
         secrets=secrets,
@@ -246,45 +246,45 @@ def test_engine_connector_tools_are_cowork_scoped(tmp_path):
     assert "browser_read_url" not in chat.registry.names()
     assert "browser_read_url" not in code.registry.names()
 
-    assert "send_message" in cowork.registry.names()
-    assert "browser_read_url" in cowork.registry.names()
-    assert "browser_open_url" in cowork.registry.names()
-    assert "browser_click" in cowork.registry.names()
-    assert "browser_type" in cowork.registry.names()
-    assert "github_search" not in cowork.registry.names()
+    assert "send_message" in delta.registry.names()
+    assert "browser_read_url" in delta.registry.names()
+    assert "browser_open_url" in delta.registry.names()
+    assert "browser_click" in delta.registry.names()
+    assert "browser_type" in delta.registry.names()
+    assert "github_search" not in delta.registry.names()
     assert "send_message" in helper.registry.names()
     assert "browser_read_url" not in helper.registry.names()
     assert "browser_open_url" not in helper.registry.names()
 
     # §36: browser READS (registry kind) are free; interactions still gate — and a
     # model-chosen URL is egress, so browser_open_url gates like web_fetch.
-    assert cowork.registry.get("browser_open_url").metadata.requires_approval is True
-    assert cowork.registry.get("browser_snapshot").metadata.requires_approval is False
-    assert cowork.registry.get("browser_click").metadata.requires_approval is True
-    assert cowork.registry.get("browser_type").metadata.requires_approval is True
-    cowork.permissions.allow_tool_for_session("browser_click")
-    decision = cowork.permissions.evaluate(
+    assert delta.registry.get("browser_open_url").metadata.requires_approval is True
+    assert delta.registry.get("browser_snapshot").metadata.requires_approval is False
+    assert delta.registry.get("browser_click").metadata.requires_approval is True
+    assert delta.registry.get("browser_type").metadata.requires_approval is True
+    delta.permissions.allow_tool_for_session("browser_click")
+    decision = delta.permissions.evaluate(
         "browser_click",
         {"target": "button"},
-        cowork.registry.get("browser_click").metadata,
+        delta.registry.get("browser_click").metadata,
     )
     assert decision.needs_user is True
 
     secrets.put("github:default", {"token": "ghp_test", "enabled": True})
-    cowork_with_github = build_engine(
-        agent=cowork_agent(),
+    delta_with_github = build_engine(
+        agent=delta_agent(),
         workspace=tmp_path,
         provider=_StubProvider(),
         secrets=secrets,
     )
-    assert "github_search" in cowork_with_github.registry.names()
+    assert "github_search" in delta_with_github.registry.names()
     # §36: github_search is a registry READ — free; the write sibling still gates.
     assert (
-        cowork_with_github.registry.get("github_search").metadata.requires_approval
+        delta_with_github.registry.get("github_search").metadata.requires_approval
         is False
     )
     assert (
-        cowork_with_github.registry.get(
+        delta_with_github.registry.get(
             "github_create_issue"
         ).metadata.requires_approval
         is True

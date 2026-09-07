@@ -168,7 +168,7 @@ def test_managed_config_defaults_to_disabled():
     managed service. The managed config (relay URL, base URL, device token)
     is all DEFAULT-EMPTY so inbound relaying is OFF out of the box
     (empty => relay disabled; manual Socket Mode / PAT paths are unaffected).
-    No OpenWorker endpoint is configured."""
+    No Delta Hub endpoint is configured."""
     from integrations.managed import ManagedConfig
 
     cfg = ManagedConfig()

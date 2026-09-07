@@ -19,7 +19,7 @@ import { shortPersonaName } from "../personaScope";
 import { useI18n } from "@delta/i18n/I18nContext";
 
 const ICON_FOR: Record<string, "diamond" | "chat" | "code"> = {
-  cowork: "diamond",
+  delta: "diamond",
   chat: "chat",
   code: "code",
 };
@@ -120,14 +120,14 @@ export function InboxView({
     const p = personas?.find((x) => x.id === it.session_agent);
     const label = it.session_title || it.session_id;
     const icon = (p && ICON_FOR[p.icon]) || "diamond";
-    const cls = `ico-${p?.icon || "cowork"}`;
+    const cls = `ico-${p?.icon || "delta"}`;
     return (
       <button
         className="inbox-session-chip"
         title={exists ? t("inbox.sessionChip.open", { label }) : t("inbox.sessionChip.unavailable")}
         disabled={!exists}
         onClick={() =>
-          exists && onOpenSession(it.session_id, it.session_workspace || "", it.session_agent || "cowork")
+          exists && onOpenSession(it.session_id, it.session_workspace || "", it.session_agent || "delta")
         }
       >
         <span className={"inbox-chip-ico " + cls}>

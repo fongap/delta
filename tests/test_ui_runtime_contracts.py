@@ -34,7 +34,7 @@ def test_current_session_and_message_responses_match_core_schemas(tmp_path):
             workspace=str(tmp_path),
             model="custom:model",
             mode="interactive",
-            agent="cowork",
+            agent="delta",
             messages=[{"role": "user", "content": "hello"}],
         )
     )
@@ -51,7 +51,7 @@ def test_core_dto_schemas_allow_additive_fields_and_apply_defaults():
         {
             "session_id": "s1",
             "workspace": "C:/work",
-            "agent": "cowork",
+            "agent": "delta",
             "model": "alias:model",
             "mode": "interactive",
             "future_field": "ignored by existing consumers",
@@ -98,7 +98,7 @@ def test_core_dto_schemas_allow_additive_fields_and_apply_defaults():
             SessionDTO,
             {
                 "workspace": "C:/work",
-                "agent": "cowork",
+                "agent": "delta",
                 "model": "m",
                 "mode": "interactive",
             },

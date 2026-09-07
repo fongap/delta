@@ -14,7 +14,7 @@ export function isProjectScoped(p?: { workspace?: string; family?: string }): bo
 
 // Short label for the sidebar + top bar: "Delta" / "Code" / "Ops" / "Chat".
 export function shortPersonaName(name?: string, id?: string): string {
-  if (id === "cowork") return "Delta";
+  if (id === "delta") return "Delta";
   const n = (name || id || "").trim();
   return n.replace(/\s*delta$/i, "").trim() || n;
 }
@@ -22,7 +22,7 @@ export function shortPersonaName(name?: string, id?: string): string {
 // Full family name for the persona detail page: "Delta" / "Delta Code" / "Delta Ops".
 // Chat isn't a Delta persona — left as-is.
 export function fullPersonaName(name?: string, id?: string): string {
-  if (id === "cowork") return "Delta";
+  if (id === "delta") return "Delta";
   const n = (name || id || "").trim();
   if (id === "chat" || !n) return n;
   const short = n.replace(/\s*delta$/i, "").trim() || n;

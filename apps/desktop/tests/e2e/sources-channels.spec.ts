@@ -6,7 +6,7 @@ import { test, expect } from "./fixtures";
 test("Slack channels drill-down: gating, add (auto-prefixed), remove", async ({ page }) => {
   await page.goto("/");
 
-  // Open the pinned cowork session, then expand the rail's Access section.
+  // Open the pinned delta session, then expand the rail's Access section.
   await page.getByText("Draft the launch note").first().click();
   await page.getByTestId("access-toggle").click();
 

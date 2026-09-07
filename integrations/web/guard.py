@@ -7,7 +7,7 @@ are documented as "data, not instructions". A page that talks the agent into fet
 a probe of the machine's own network position, and `web_fetch` is `requires_approval=False`,
 so no prompt ever appears.
 
-This blocks the ranges that are only reachable *because* OpenWorker runs on the user's
+This blocks the ranges that are only reachable *because* Delta runs on the user's
 machine: loopback, RFC1918 and other private space, link-local (which covers the cloud
 metadata endpoint at 169.254.169.254), and the reserved/multicast blocks.
 

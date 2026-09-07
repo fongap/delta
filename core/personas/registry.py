@@ -1,13 +1,17 @@
 """Persona registry — the installed personas + their lifecycle state.
 
 Unifies two sources behind one `id → Agent` resolver: the core surfaces (Code / Chat /
-Cowork) wrap their existing agent builders (exact prompts preserved), and markdown manifests
+Delta) wrap their existing agent builders (exact prompts preserved), and markdown manifests
 (Ops today; third-party dirs in Phase 2) load through ``PersonaManifest``. Lifecycle —
 installed → enabled → surfaced, plus a default — is persisted to a small JSON file.
 
 A session is born from exactly one persona (recorded as ``SessionRecord.agent``); resolving an
 id always returns its Agent even if the persona was later disabled, so live sessions keep
 working. Disable/surface only affect what the *new-session* picker offers.
+
+R1.6: the default persona id is ``delta`` (was ``cowork`` during the OpenWorker lineage).
+The internal id is the routing key persisted in ``SessionRecord.agent`` and
+``TaskRun.agent``; the user-facing label remains ``Delta``.
 """
 
 from __future__ import annotations
@@ -21,10 +25,10 @@ from typing import Callable
 from core.agents.base import Agent
 from core.agents.chat import chat_agent
 from core.agents.code import CODE_CAPABILITIES, code_agent
-from core.agents.cowork import COWORK_CAPABILITIES, cowork_agent
+from core.agents.delta_agent import DELTA_CAPABILITIES, delta_agent
 from core.personas.manifest import PersonaManifest, load_manifest_file
 
-DEFAULT_PERSONA_ID = "cowork"
+DEFAULT_PERSONA_ID = "delta"
 
 
 @dataclass
@@ -117,18 +121,18 @@ class PersonaRegistry:
         )
 
     def _load_builtin(self, builtin_dir: str | Path | None) -> None:
-        # Core surfaces keep their exact prompts via the existing builders. Cowork (the default)
-        # leads; Chat is hidden from the picker by default (Cowork covers quick Q&A) — recoverable
+        # Core surfaces keep their exact prompts via the existing builders. Delta (the default)
+        # leads; Chat is hidden from the picker by default (Delta covers quick Q&A) — recoverable
         # from the Personas tab.
         self._register_builder(
-            "cowork",
+            "delta",
             "Delta",
-            "cowork",
+            "delta",
             "Produce a deliverable — research, analysis, scripts",
-            cowork_agent,
+            delta_agent,
             True,
             "knowledge",
-            COWORK_CAPABILITIES,
+            DELTA_CAPABILITIES,
             workspace="deliverable",
         )
         self._register_builder(
@@ -234,7 +238,7 @@ class PersonaRegistry:
         return entry.default_surfaced if entry else True
 
     def default_id(self) -> str:
-        # The configured default if it's enabled, else cowork if present, else any enabled one.
+        # The configured default if it's enabled, else delta if present, else any enabled one.
         if self._default in self._entries and self.is_enabled(self._default):
             return self._default
         if DEFAULT_PERSONA_ID in self._entries and self.is_enabled(DEFAULT_PERSONA_ID):

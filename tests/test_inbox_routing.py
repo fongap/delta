@@ -21,7 +21,7 @@ def test_route_precedence(tmp_path):
     r.set_session_override("s1", DEFAULT_INBOX)
     assert r.route_for("s1", "ops") == DEFAULT_INBOX
     # Unbound persona/session → default.
-    assert r.route_for("s2", "cowork") == DEFAULT_INBOX
+    assert r.route_for("s2", "delta") == DEFAULT_INBOX
 
 
 def test_bindings_persist(tmp_path):

@@ -88,7 +88,7 @@ it("delivers strict v1 session events and diagnoses unknown or malformed frames 
   vi.stubGlobal("WebSocket", FakeWebSocket);
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   const onEvent = vi.fn();
-  new Session("s1", "/workspace", "cowork", { onEvent });
+  new Session("s1", "/workspace", "delta", { onEvent });
   const socket = FakeWebSocket.instances[0];
 
   socket.emit(JSON.stringify({
@@ -132,7 +132,7 @@ it("rejects the forbidden data field and accepts only the strict v1 envelope", (
   vi.stubGlobal("WebSocket", FakeWebSocket);
   const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
   const onEvent = vi.fn();
-  new Session("s1", "/workspace", "cowork", { onEvent });
+  new Session("s1", "/workspace", "delta", { onEvent });
   const socket = FakeWebSocket.instances[0];
 
   socket.emit(JSON.stringify({ type: "turn_start", data: { input: "removed shape" } }));
@@ -235,7 +235,7 @@ it("reconnects a session, suppresses duplicate sequences, and delivers unseen ou
   const onEvent = vi.fn();
   const onOpen = vi.fn();
   const onClose = vi.fn();
-  const session = new Session("s1", "/workspace", "cowork", { onEvent, onOpen, onClose });
+  const session = new Session("s1", "/workspace", "delta", { onEvent, onOpen, onClose });
   const first = FakeWebSocket.instances[0];
   first.open();
 

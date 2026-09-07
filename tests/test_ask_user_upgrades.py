@@ -199,7 +199,7 @@ def test_grouped_ask_round_trip_through_manager(tmp_path):
     sid = "grouped-q"
 
     async def scenario():
-        engine = mgr.get_engine(sid, agent="cowork", workspace=str(tmp_path))
+        engine = mgr.get_engine(sid, agent="delta", workspace=str(tmp_path))
         item = await _run_until_pending(mgr, sid, engine)
         assert item.kind == "question" and item.tool_call_id == "call_g"
         assert item.title == "Chart style?" and len(item.questions) == 2

@@ -220,7 +220,7 @@ class ConnectionsMixin(ManagerHostState):
         ``persona_id`` is the caller's hint (the GUI knows the active persona). It matters for a
         brand-new session: no SessionRecord exists until the first turn persists, so without the
         hint the view would resolve to the DEFAULT persona and show its defaults/recommends —
-        the owner's 2026-07-03 finding (a fresh Project Manager session rendered cowork's view).
+        the owner's 2026-07-03 finding (a fresh Project Manager session rendered Delta's view).
         """
         persona = self._persona_of(session_id, persona_id)
         entry = self.personas.get(persona)

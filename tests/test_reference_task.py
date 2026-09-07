@@ -70,7 +70,7 @@ def _make_task(tmp_path, *, validation_criteria=None):
         instructions="Read sales.csv and write regional_report.md summarizing totals by region.",
         schedule=Schedule(kind="cron", cron="0 9 * * *"),
         workspace=str(ws),
-        agent="cowork",
+        agent="delta",
         validation_criteria=validation_criteria,
     )
     return task, ws

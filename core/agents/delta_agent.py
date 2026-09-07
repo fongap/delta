@@ -1,9 +1,13 @@
-"""The Cowork agent — a workspace-bound knowledge-work delta.
+"""The Delta agent — a workspace-bound knowledge-work agent.
 
-You spin up a Cowork session to solve an *isolated problem* and produce a **deliverable** (a
+You spin up a Delta session to solve an *isolated problem* and produce a **deliverable** (a
 research memo, an analysis, a plan, a data pull, a small script). Like Code it has a workspace
 + files + shell, but it's outcome-oriented and general — not git-centric. Its tool factory is
 shared with MyHelper (the always-on helper runs the same toolset under a different prompt).
+
+The internal agent id is ``delta`` (was historically ``cowork`` during the OpenWorker
+lineage). The user-facing label remains ``Delta``; the internal id is the routing key
+persisted in ``SessionRecord.agent`` and ``TaskRun.agent``.
 """
 
 from __future__ import annotations
@@ -13,10 +17,10 @@ from core.agents.base import Agent, AgentContext
 
 # Capabilities the knowledge-work surface composes from the vetted catalog. `files` is the
 # multi-root variant (reads/writes across added folders), unlike Code's single-root `code_files`.
-COWORK_CAPABILITIES = ["files", "search", "shell", "todo"]
+DELTA_CAPABILITIES = ["files", "search", "shell", "todo"]
 
-COWORK_INSTRUCTIONS = (
-    "You are a Delta agent — a capable knowledge-work delta spun up to solve one problem "
+DELTA_INSTRUCTIONS = (
+    "You are a Delta agent — a capable knowledge-work agent spun up to solve one problem "
     "and produce a concrete deliverable (a memo, analysis, plan, dataset, or small script). "
     "Work inside the session's workspace: read and write files there, run shell commands (the "
     "session is persistent), search the web when you need facts, and load skills from the "
@@ -36,20 +40,20 @@ COWORK_INSTRUCTIONS = (
 )
 
 
-def cowork_tool_factory(context: AgentContext) -> list:
-    """Workspace toolset shared by Cowork and MyHelper: files (multi-root) + grep + shell + todo.
+def delta_tool_factory(context: AgentContext) -> list:
+    """Workspace toolset shared by Delta and MyHelper: files (multi-root) + grep + shell + todo.
     Composed from the vetted catalog; capabilities lacking their context (no executor/todo) are
     skipped, exactly as the old hand-written factory did."""
-    return expand(COWORK_CAPABILITIES, context)
+    return expand(DELTA_CAPABILITIES, context)
 
 
-def cowork_agent() -> Agent:
+def delta_agent() -> Agent:
     return Agent(
-        name="cowork",
+        name="delta",
         title="Delta",
-        system_prompt=COWORK_INSTRUCTIONS,
+        system_prompt=DELTA_INSTRUCTIONS,
         needs_workspace=True,
-        tool_factory=cowork_tool_factory,
+        tool_factory=delta_tool_factory,
         family="knowledge",
         messaging=True,
         connectors=True,

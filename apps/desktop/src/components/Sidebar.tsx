@@ -24,7 +24,7 @@ import { useI18n } from "@delta/i18n/I18nContext";
 // Session surfaces shown as accordions, in display order. The surfaced personas drive this list
 // (so third-party / Ops personas appear); the hardcoded set is the fallback before personas load.
 const SURFACES: { key: string; label: string; icon: IconName; cls: string }[] = [
-  { key: "cowork", label: "Delta", icon: "diamond", cls: "ico-cowork" },
+  { key: "delta", label: "Delta", icon: "diamond", cls: "ico-delta" },
   { key: "chat", label: "Chat", icon: "chat", cls: "ico-chat" },
   { key: "code", label: "Code", icon: "code", cls: "ico-code" },
 ];
@@ -33,7 +33,7 @@ const surfaceFromPersona = (p: Persona) => ({
   key: p.id,
   label: shortPersonaName(p.name, p.id),
   icon: personaGlyph(p.icon, p.family),
-  cls: `ico-${p.icon || "cowork"}`,
+  cls: `ico-${p.icon || "delta"}`,
 });
 
 // Attention = Inbox items awaiting a session (an accent count that bubbles session → persona →
@@ -860,7 +860,7 @@ export function Sidebar(props: Props) {
           .sort((a, b) => Number(b.default) - Number(a.default)) // default leads
           .map(surfaceFromPersona)
       : SURFACES.filter(
-          (s) => s.key === "cowork" || props.surfaces[s.key as keyof SurfaceVisibility],
+          (s) => s.key === "delta" || props.surfaces[s.key as keyof SurfaceVisibility],
         )
   ).filter((s) => personaVisible(s.key));
 

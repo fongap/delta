@@ -1,9 +1,8 @@
 """External identity — platform-agnostic federation model.
 
 For future Delta Hub identity federation. Core types must NOT contain
-OpenWorker-specific fields (no openworker_user_id, no openworker_email,
-no openworker_jwt). An ExternalIdentity is just an issuer + subject +
-optional display name — the same shape any OIDC / SAML / custom federation
+provider-specific fields — an ExternalIdentity is just an issuer + subject
++ optional display name, the same shape any OIDC / SAML / custom federation
 adapter would produce.
 """
 
@@ -30,10 +29,10 @@ class ExternalIdentity:
 class ExternalIdentityProvider(Protocol):
     """Verify an external identity assertion (future federation).
 
-    A future OpenWorker Federation Adapter would implement this to verify
-    OpenWorker-issued tokens. An OIDC provider would implement this to
-    verify ID tokens. Delta Hub's native device-token auth does NOT use
-    this — device tokens are verified directly by the Hub.
+    A future Delta Hub federation adapter (OIDC, SAML, a third-party
+    identity provider) would implement this to verify ID tokens. Delta
+    Hub's native device-token auth does NOT use this — device tokens are
+    verified directly by the Hub.
     """
 
     async def verify_assertion(self, assertion: str) -> ExternalIdentity:

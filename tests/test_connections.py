@@ -164,7 +164,7 @@ def test_delete_session_clears_overrides(tmp_path):
             workspace=str(tmp_path),
             model="gpt-5.5",
             mode="interactive",
-            agent="cowork",
+            agent="delta",
         )
     )
     mgr.session_connections.set("sX", "slack", False)
@@ -223,7 +223,7 @@ def test_dm_muted_session_not_delivered(tmp_path, monkeypatch):
 # -- runtime gating: outbound / tools ------------------------------------------
 def test_muted_connector_tools_absent(tmp_path):
     mgr = SessionManager(workspace=tmp_path, provider=ScriptedProvider())
-    # github connected so its tools would otherwise be exposed to a connectors persona (cowork)
+    # github connected so its tools would otherwise be exposed to a connectors persona (delta)
     mgr.secrets.put("github:default", {"token": "ghp_test", "enabled": True})
 
     for sid in ("sOn", "sOff"):
@@ -233,7 +233,7 @@ def test_muted_connector_tools_absent(tmp_path):
                 workspace=str(tmp_path),
                 model="gpt-5.5",
                 mode="interactive",
-                agent="cowork",
+                agent="delta",
             )
         )
     mgr.session_connections.set("sOff", "github", False)  # mute github for sOff only

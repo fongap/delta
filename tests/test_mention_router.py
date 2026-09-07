@@ -1,6 +1,6 @@
 """The Slack mention router (UX-DECISIONS §31).
 
-@ocw tagged in a channel is the PRIMARY entry point: with no subscribed session, a
+@delta tagged in a channel is the PRIMARY entry point: with no subscribed session, a
 per-thread delta session spawns (visible in the sidebar, thread-scoped standing
 send_message grant); follow-up tags in the same thread steer the same session. A
 channel with a user-connected (subscribed) delta overrides the router — it must
@@ -96,7 +96,7 @@ def test_slack_mapper_computes_mentions_me():
     base = {"channel": "C1", "user": "U1", "ts": "1.2", "channel_type": "channel"}
     assert slack_event_to_event({**base, "text": "<@UBOT> hi"}, "UBOT").mentions_me
     assert slack_event_to_event(
-        {**base, "text": "hey <@UBOT|ocw> hi"}, "UBOT"
+        {**base, "text": "hey <@UBOT|delta> hi"}, "UBOT"
     ).mentions_me
     assert not slack_event_to_event(
         {**base, "text": "<@UOTHER> hi"}, "UBOT"

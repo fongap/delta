@@ -176,7 +176,7 @@ def test_outbound_messages_noop_without_provider():
 # -- Slice C: add/remove session folders (RO/RW) + persistence ------------------
 
 
-def _cowork_manager(tmp_path):
+def _delta_manager(tmp_path):
     from providers import ModelCapabilities, ProviderClient
     from services.server import SessionManager
 
@@ -193,13 +193,13 @@ def _cowork_manager(tmp_path):
 
 
 def test_add_and_remove_roots_live_and_persisted(tmp_path):
-    mgr = _cowork_manager(tmp_path)
+    mgr = _delta_manager(tmp_path)
     ro = tmp_path / "shared_ro"
     rw = tmp_path / "shared_rw"
     ro.mkdir()
     rw.mkdir()
     sid = "sessC"
-    engine = mgr.get_engine(sid, agent="cowork")
+    engine = mgr.get_engine(sid, agent="delta")
     assert engine is not None
 
     # only the primary scratch to start
@@ -234,7 +234,7 @@ def test_add_and_remove_roots_live_and_persisted(tmp_path):
 
     # persist (as a turn would) and reload in a fresh manager → the rw folder survives
     mgr.save(sid, engine)
-    mgr2 = _cowork_manager(tmp_path)
+    mgr2 = _delta_manager(tmp_path)
     persisted = {r["path"]: r for r in mgr2.get_roots(sid)}
     assert (
         str(rw.resolve()) in persisted
@@ -245,9 +245,9 @@ def test_add_and_remove_roots_live_and_persisted(tmp_path):
 
 def test_add_root_before_first_turn_persists(tmp_path):
     """Adding a folder on a brand-new conversation (no record, no engine yet) must survive:
-    the manager creates a minimal cowork record so the grant isn't lost (GUI start panel).
+    the manager creates a minimal delta record so the grant isn't lost (GUI start panel).
     """
-    mgr = _cowork_manager(tmp_path)
+    mgr = _delta_manager(tmp_path)
     shared = tmp_path / "shared"
     shared.mkdir()
     sid = "fresh-session"
@@ -258,12 +258,12 @@ def test_add_root_before_first_turn_persists(tmp_path):
     paths = {r["path"] for r in res["roots"]}
     assert str(shared.resolve()) in paths
 
-    # the grant survived: a fresh manager (no engines) still sees it, under the cowork agent
-    mgr2 = _cowork_manager(tmp_path)
+    # the grant survived: a fresh manager (no engines) still sees it, under the delta agent
+    mgr2 = _delta_manager(tmp_path)
     persisted = {r["path"]: r for r in mgr2.get_roots(sid)}
     assert str(shared.resolve()) in persisted
     record = mgr2.session_store.load(sid)
-    assert record is not None and record.agent == "cowork"
+    assert record is not None and record.agent == "delta"
 
 
 # -- Slice D: request_directory (interactive grant) ----------------------------

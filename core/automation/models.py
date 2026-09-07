@@ -132,9 +132,9 @@ class ScheduledTask:
     instructions: str
     schedule: Schedule
     workspace: str
-    origin_surface: str = "cowork"  # where it was launched from (a reference)
+    origin_surface: str = "delta"  # where it was launched from (a reference)
     origin_session_id: str = ""
-    agent: str = "cowork"
+    agent: str = "delta"
     id: str = field(default_factory=lambda: "task-" + uuid.uuid4().hex[:10])
     task_session_id: str = ""  # the task's OWN thread (set to f"__task__{id}")
     model: str | None = None

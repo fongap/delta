@@ -13,8 +13,10 @@ dependencies = [
     "textual==8.2.8",
     "fastapi==0.141.1",
     "uvicorn[standard]==0.52.4",
-    # Keep the immutable OpenWorker import commit: it contains Agent/runtime fixes newer
-    # than the 2025-11 PyPI 0.1.14 artifact, so equal package metadata is not equivalence.
+    # Pinned to a specific commit for reproducible Agent/runtime behavior; the
+    # latest PyPI artifact does not yet match this revision, so version equality
+    # is not a reliable equivalence signal. R1.6 (legacy cleanup): aisuite is a
+    # regular third-party dependency, not an OpenWorker-forked package.
     "aisuite @ git+https://github.com/andrewyng/aisuite.git@1b4bbf303ec21968230b1ec869a144d054e9b3c4",
     "docstring_parser==0.18.0",
     "pyyaml==6.0.3",  # persona manifest frontmatter (YAML)

@@ -100,7 +100,7 @@ function normalizeTodos(raw: unknown): TodoItem[] {
 
 // Fallbacks used only before the persona list loads (the in-component, family-aware
 // needsWorkspace/gatesWorkspace consult the real persona once available).
-const needsWorkspaceFallback = (a: string) => a === "code" || a === "cowork";
+const needsWorkspaceFallback = (a: string) => a === "code" || a === "delta";
 const gatesWorkspaceFallback = (a: string) => a === "code";
 const LAST_SESSION_KEY = "delta:last-session-by-agent:v1";
 const NAV_COLLAPSED_KEY = "delta:nav-collapsed:v1";
@@ -165,7 +165,7 @@ export function App() {
   const [showGate, setShowGate] = useState(false);
   const [workspaceTrustRequest, setWorkspaceTrustRequest] =
     useState<WorkspaceCommandTrust | null>(null);
-  const [agent, setAgent] = useState("cowork");
+  const [agent, setAgent] = useState("delta");
   // No hardcoded vendor/model default — the active model rides on the server-provided health
   // (`getHealth().then(h => setModel(h.model))`) and on Settings ▸ Models. An empty default
   // keeps the composer's "No model connected" chip honest until one resolves.
@@ -181,7 +181,7 @@ export function App() {
   // Per-session token usage (OPE-42): rebuilt from the transcript on session load,
   // accumulated live from assistant_message events, reset with the transcript.
   const [usage, setUsage] = useState<SessionUsage>(emptyUsage());
-  const [surfaces, setSurfaces] = useState<SurfaceVisibility>({ cowork: true, chat: false, code: false });
+  const [surfaces, setSurfaces] = useState<SurfaceVisibility>({ delta: true, chat: false, code: false });
   const [mode, setMode] = useState("interactive");
   const [connected, setConnected] = useState(false);
   const [running, setRunning] = useState(false);
@@ -582,7 +582,7 @@ export function App() {
   // corrects regardless of which settled last.
   useEffect(() => {
     if ((agent === "chat" && !surfaces.chat) || (agent === "code" && !surfaces.code)) {
-      switchAgent("cowork");
+      switchAgent("delta");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent, surfaces]);
@@ -929,7 +929,7 @@ export function App() {
   // Track produced-file count for the topbar "Artifacts" affordance (works even when the rail is
   // hidden, where the rail itself doesn't fetch). Cowork only; refreshes on file writes/turn end.
   useEffect(() => {
-    if (agent !== "cowork" || surface !== "session") {
+    if (agent !== "delta" || surface !== "session") {
       setArtifactCount(0);
       return;
     }
@@ -1045,7 +1045,7 @@ export function App() {
         title: d.task_title || "Automation",
         sessionId: d.session_id || "",
         workspace: d.workspace || "",
-        agent: d.agent || "cowork",
+        agent: d.agent || "delta",
         time: new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
       });
       announceAutomationsChanged(); // the Scheduled band's badge is now stale
@@ -1140,7 +1140,7 @@ export function App() {
         setWorkspace(targetWorkspace);
         setBranch(null);
       } else if (!targetWorkspace) {
-        setWorkspace(null); // orphan cowork: clear so the next `ready` adopts a fresh scratch
+        setWorkspace(null); // orphan delta: clear so the next `ready` adopts a fresh scratch
       }
       if (!gatesWorkspace(name)) setShowGate(false);
       else if (targetWorkspace) setShowGate(false);
@@ -1165,7 +1165,7 @@ export function App() {
       setWorkspace(fallback);
       setBranch(null);
     } else if (!fallback && needsWorkspace(name)) {
-      setWorkspace(null); // orphan cowork: server provisions a fresh scratch on connect
+      setWorkspace(null); // orphan delta: server provisions a fresh scratch on connect
     }
     activateSession(id);
     rememberLastSession(name, id, fallback);
@@ -1546,7 +1546,7 @@ export function App() {
               sidebar brand row (A2 revised) — the topbar drag surface had swallowed its clicks.
               Model/mode/persona controls stay in the composer (§22). */}
           <div className="main-topbar-side main-topbar-actions" onPointerDown={beginWindowDrag}>
-            {agent === "cowork" && railHidden && artifactCount > 0 && (
+            {agent === "delta" && railHidden && artifactCount > 0 && (
               <button
                 className="topbar-artifacts-btn"
                 onPointerDown={(e) => e.stopPropagation()}
@@ -1608,7 +1608,7 @@ export function App() {
             )}
             <div className="main-scroll" ref={scrollRef} onScroll={handleScroll}>
               {idle ? (
-                agent === "cowork" ? (
+                agent === "delta" ? (
                   <SessionIntro
                   />
                 ) : (
@@ -1761,12 +1761,12 @@ export function App() {
             todo={todo}
             running={running}
             onPreviewChange={onArtifactPreview}
-            showArtifacts={agent === "cowork"}
+            showArtifacts={agent === "delta"}
             personaId={agent}
             projectScoped={isProjectScoped(personaOf(agent))}
             workspace={workspace || undefined}
             branch={branch}
-            scratchPrimary={agent === "cowork"}
+            scratchPrimary={agent === "delta"}
             openAccessKey={accessKey}
             onOpenIntegrations={() => setSurface("integrations")}
           />

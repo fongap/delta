@@ -220,7 +220,7 @@ async def test_scheduled_approver_parks_and_mints(tmp_path, monkeypatch):
     ws = tmp_path / "ws"
     ws.mkdir()
     manager = SessionManager(data_dir=tmp_path / "data", provider=_provider())
-    task = _task(workspace=str(ws), agent="cowork")
+    task = _task(workspace=str(ws), agent="delta")
     manager.task_store.save(task)
     run = TaskRun(task_id=task.id)
     manager.task_store.add_run(run)
@@ -274,7 +274,7 @@ async def test_scheduled_approver_name_allows_and_denies(tmp_path, monkeypatch):
     ws = tmp_path / "ws"
     ws.mkdir()
     manager = SessionManager(data_dir=tmp_path / "data", provider=_provider())
-    task = _task(workspace=str(ws), agent="cowork", always_allowed_tools=["web_search"])
+    task = _task(workspace=str(ws), agent="delta", always_allowed_tools=["web_search"])
     manager.task_store.save(task)
     run = TaskRun(task_id=task.id)
     manager.task_store.add_run(run)
@@ -344,14 +344,14 @@ def test_get_engine_seeds_run_session_rules(tmp_path, monkeypatch):
     manager = SessionManager(data_dir=tmp_path / "data", provider=_provider())
     task = _task(
         workspace=str(ws),
-        agent="cowork",
+        agent="delta",
         always_allowed_tools=["send_message slack:T1/C1"],
     )
     manager.task_store.save(task)
     run = TaskRun(task_id=task.id)
     manager.task_store.add_run(run)
     # Manual "Run now" / durable resume rebuilds via get_engine — rules must ride along.
-    engine = manager.get_engine(run.session_id, workspace=str(ws), agent="cowork")
+    engine = manager.get_engine(run.session_id, workspace=str(ws), agent="delta")
     assert engine.engine.permissions.task_rules == {"send_message": {"slack:T1/C1"}}
 
 

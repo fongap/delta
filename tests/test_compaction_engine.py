@@ -243,7 +243,7 @@ def test_compaction_state_survives_save_and_rebuild(tmp_path):
 
     mgr = SessionManager(workspace=tmp_path, provider=Provider())
     sid = "compact-persist"
-    port = mgr.get_engine(sid, agent="cowork", workspace=str(tmp_path))
+    port = mgr.get_engine(sid, agent="delta", workspace=str(tmp_path))
     engine = port.engine
     assert callable(engine.compaction_settings)  # live Settings getter is wired
     assert engine.compaction_settings()["threshold_pct"] == 0.8
@@ -255,7 +255,7 @@ def test_compaction_state_survives_save_and_rebuild(tmp_path):
     mgr.save(sid, port)
     mgr._runtimes.pop(sid)
 
-    rebuilt = mgr.get_engine(sid, agent="cowork", workspace=str(tmp_path))
+    rebuilt = mgr.get_engine(sid, agent="delta", workspace=str(tmp_path))
     assert rebuilt.compaction_dict() == engine.compaction_state.as_dict()
 
 

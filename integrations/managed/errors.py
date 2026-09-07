@@ -2,7 +2,7 @@
 
 When no managed service is configured, broker calls raise/return these so
 callers can show the user a clear "managed unavailable" message instead of
-silently falling back to an OpenWorker endpoint.
+silently falling back to a managed endpoint.
 """
 
 from __future__ import annotations

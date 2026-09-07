@@ -333,7 +333,7 @@ class WorkspaceTrustMixin(ManagerHostState):
                         model=self.model,
                         mode=self.mode.value,
                         messages=[],
-                        agent="cowork",  # folder access is a Cowork affordance
+                        agent="delta",  # folder access is a Delta affordance
                     )
                 )
             extra = [r for r in self.get_roots(session_id) if not r["primary"]]

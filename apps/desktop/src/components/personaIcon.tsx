@@ -10,7 +10,7 @@
 import { Icon, type IconName } from "./Icon";
 
 const LEGACY: Record<string, IconName> = {
-  cowork: "diamond",
+  delta: "diamond",
   chat: "chat",
   code: "code",
   ops: "wrench",

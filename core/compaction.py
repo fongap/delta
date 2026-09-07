@@ -3,7 +3,7 @@
 When the outbound history approaches the model's context limit, the older portion of the
 *outbound* view is replaced with (a) an LLM-written structured summary and (b) mechanically
 extracted state — the recent turns and all user messages survive. The persisted transcript
-is never modified; only what is sent to the model. Full design: ocw-context
+is never modified; only what is sent to the model. Full design:
 docs/auto-compaction-spec.md (approved 2026-07-28).
 
 This module is pure functions + one dataclass; the engine owns *when* (its run loop) and

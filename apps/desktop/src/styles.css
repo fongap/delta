@@ -1292,7 +1292,7 @@ button.btn.ghost:hover { color: var(--ink); }
 .inbox-session-chip:hover:not(:disabled) { color: var(--ink); border-color: var(--line-strong); }
 .inbox-session-chip:disabled { cursor: default; opacity: 0.6; }
 .inbox-chip-ico { width: 18px; height: 18px; border-radius: 5px; display: inline-flex; align-items: center; justify-content: center; color: #fff; flex: none; }
-.inbox-chip-ico.ico-cowork { background: #16a34a; }
+.inbox-chip-ico.ico-delta { background: #16a34a; }
 .inbox-chip-ico.ico-chat { background: var(--accent); color: var(--on-accent); }
 .inbox-chip-ico.ico-code { background: #7c3aed; }
 .inbox-chip-ico.ico-ops { background: #ea580c; }
