@@ -447,27 +447,21 @@ def create_app(manager: SessionManager) -> FastAPI:
 
         citations: list[dict[str, Any]] = []
         if workspace:
-            try:
-                src_store = manager.source_store_for(workspace, run_id=run_id)
-            except Exception:
-                src_store = None
+            src_store = manager.source_store_for(workspace, run_id=run_id)
             if src_store is not None:
-                try:
-                    for ref in src_store.all():
-                        for citation in ref.cited_ranges:
-                            cited_run_id = citation.get("run_id")
-                            if cited_run_id != run_id:
-                                continue
-                            citations.append(
-                                {
-                                    "source_id": ref.id,
-                                    "location": ref.location,
-                                    "captured_at": ref.captured_at,
-                                    "citation": dict(citation),
-                                }
-                            )
-                except Exception:
-                    pass
+                for ref in src_store.list():
+                    for citation in ref.cited_ranges:
+                        cited_run_id = citation.get("run_id")
+                        if cited_run_id != run_id:
+                            continue
+                        citations.append(
+                            {
+                                "source_id": ref.id,
+                                "location": ref.location,
+                                "captured_at": ref.captured_at,
+                                "citation": dict(citation),
+                            }
+                        )
 
         recovery: list[dict[str, Any]] = []
         for snap in manager.recovery_store.latest():
