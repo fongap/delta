@@ -31,7 +31,10 @@ pub use idemlog::{
     SideEffectState,
 };
 pub use ledger::{LedgerEvent, LedgerReader, LedgerWriter};
-pub use source_citation::{validate_all, validate_citation, ValidatedCitation};
+pub use source_citation::{
+    validate_all, validate_citation, validate_source_citation, CitationValidationResult,
+    CitationValidity, ValidatedCitation,
+};
 pub use taskstore::{ScheduledTaskEntry, TaskRunEntry, TaskStoreReader, TaskStoreWriter};
 pub use validation::{run_validation, ValidationCheck, ValidationResult};
 

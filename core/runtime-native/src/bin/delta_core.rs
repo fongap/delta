@@ -60,7 +60,8 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use delta_runtime_native::{
-    ArtifactInput, ArtifactRegistryWriter, IdempotencyWriter, LedgerWriter, TaskStoreWriter,
+    validate_source_citation, ArtifactInput, ArtifactRegistryWriter, IdempotencyWriter,
+    LedgerWriter, TaskStoreWriter,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -168,6 +169,13 @@ enum Command {
         incomplete: bool,
         registered_at: f64,
         ts: Option<f64>,
+        workspace: Option<String>,
+    },
+    /// R2.1: evaluate a citation against a compatibility SourceRef snapshot.
+    #[serde(rename = "citation.validate")]
+    CitationValidate {
+        source: Option<Value>,
+        range: Value,
         workspace: Option<String>,
     },
 }
@@ -428,6 +436,16 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
                 Err(e) => Err(e.to_string()),
             }
         }
+        Command::CitationValidate {
+            source,
+            range,
+            workspace,
+        } => serde_json::to_value(validate_source_citation(
+            source.as_ref(),
+            &range,
+            workspace.as_deref().map(std::path::Path::new),
+        ))
+        .map_err(|error| error.to_string()),
     };
     match result {
         Ok(v) => serde_json::json!({"ok": true, "result": v}),
