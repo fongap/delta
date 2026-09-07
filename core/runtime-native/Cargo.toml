@@ -35,6 +35,22 @@ name = "inspect_tasks"
 path = "src/bin/inspect_tasks.rs"
 
 [[bin]]
+name = "inspect_artifact"
+path = "src/bin/inspect_artifact.rs"
+
+[[bin]]
+name = "inspect_checkpoint"
+path = "src/bin/inspect_checkpoint.rs"
+
+[[bin]]
+name = "inspect_citation"
+path = "src/bin/inspect_citation.rs"
+
+[[bin]]
+name = "inspect_validation"
+path = "src/bin/inspect_validation.rs"
+
+[[bin]]
 name = "delta_core"
 path = "src/bin/delta_core.rs"
 
