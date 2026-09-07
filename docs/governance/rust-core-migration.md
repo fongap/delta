@@ -33,18 +33,18 @@
 
 | 领域 | 当前可能实现 | 最终 Authority |
 | --- | --- | --- |
-| Task | Python | Rust |
-| Run | Python | Rust |
+| Task | Python（opt-in Rust delegate） | Rust |
+| Run | Python（`run_status()` 从 ledger 派生） | Rust |
 | Runtime | Python | Rust |
 | Scheduler | Python | Rust |
 | Policy | Python | Rust |
 | Approval | Python | Rust |
-| Ledger | Python | Rust |
+| Ledger | Python（opt-in Rust delegate） | Rust |
 | Checkpoint | Python | Rust |
 | Resume | Python | Rust |
 | Artifact Registry | Python | Rust |
 | Validation | Python | Rust |
-| Idempotency | Python | Rust |
+| Idempotency | Python（opt-in Rust delegate） | Rust |
 | Tool lifecycle | Python | Rust |
 | Worker lifecycle | 分散 | Rust |
 | Provider Core | Python | Rust-first |
@@ -54,6 +54,8 @@
 | 特殊 SDK | Python | Capability Worker |
 | UI | TypeScript | TypeScript |
 | Tauri Host | Rust | Rust |
+
+> **R1 State Foundation 完成状态（ADR-017）**：Idempotency / Ledger / Task identity 三个领域的 Rust delegate 路径已就位，灰度开关 `DELTA_RUST_AUTHORITY` 默认关闭。Run state 通过 `RunEventLedger.run_status()` 从 ledger 事件派生。Storage transaction boundary 通过 `CoreTransaction` 提供协调锁序。统一 `delta_core` 进程入口取代 per-write subprocess。CI smoke gate 覆盖 authority regression + cross-language contract。
 
 每次迁移必须更新实际 Authority Matrix。
 

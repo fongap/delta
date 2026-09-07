@@ -34,6 +34,10 @@ path = "src/bin/write_tasks.rs"
 name = "inspect_tasks"
 path = "src/bin/inspect_tasks.rs"
 
+[[bin]]
+name = "delta_core"
+path = "src/bin/delta_core.rs"
+
 [dependencies]
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }

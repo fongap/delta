@@ -1,0 +1,364 @@
+//! delta-core — long-running Rust Core process for the Delta Runtime.
+//!
+//! R1 (P1-E): unifies the per-write subprocess pattern into a single
+//! host process. Reads line-delimited JSON commands from stdin and
+//! writes one JSON response per line to stdout. The Python delegate
+//! modules (`core/idemlog_delegate.py`, `core/ledger_delegate.py`,
+//! `core/automation/store_delegate.py`) hold a persistent connection
+//! to this process instead of spawning a fresh `write_idemlog` /
+//! `write_ledger` / `write_tasks` subprocess for every command.
+//!
+//! Protocol (request):
+//!
+//! ```json
+//! {"cmd": "<domain.action>", ...args}
+//! ```
+//!
+//! Protocol (response): one line of JSON per request.
+//!
+//! ```json
+//! {"ok": true, "result": {...}}  // success
+//! {"ok": false, "error": "..."}  // failure
+//! ```
+//!
+//! Supported commands (R1 minimum):
+//!
+//! - `ledger.append` — append one event to ``run_events.db``.
+//! - `idem.record_planned` / `idem.mark_executing` / `idem.commit` /
+//!   `idem.mark_failed` / `idem.mark_uncertain` — state transitions
+//!   on ``side_effects.db``.
+//! - `task.save` / `task.delete` / `task.add_run` — identity writes
+//!   to ``automation.db``.
+//!
+//! Design notes (R1):
+//!
+//! - This is a minimum host interface, not a JSON-RPC framework. No
+//!   id negotiation, no streaming, no async. The Python side keeps
+//!   a single subprocess open and round-robins commands.
+//! - The existing per-operation CLI binaries (`write_idemlog`,
+//!   `write_ledger`, `write_tasks`) remain in place as migration
+//!   diagnostic tools. The new `delta-core` is the production
+//!   writer.
+//! - Each request opens (and holds) a connection to the named DB
+//!   the first time. Subsequent requests reuse the same connection.
+//!   This is the main performance win over per-subprocess invocation.
+
+use std::collections::HashMap;
+use std::io::{self, BufRead, Write};
+use std::path::PathBuf;
+use std::sync::Mutex;
+
+use delta_runtime_native::{IdempotencyWriter, LedgerWriter, TaskStoreWriter};
+use serde::Deserialize;
+use serde_json::Value;
+
+#[derive(Debug, Deserialize)]
+#[serde(tag = "cmd")]
+enum Command {
+    #[serde(rename = "ledger.append")]
+    LedgerAppend {
+        db: String,
+        run_id: String,
+        #[serde(rename = "type")]
+        event_type: String,
+        actor: Option<String>,
+        ts: Option<f64>,
+        payload: Option<Value>,
+        workspace: Option<String>,
+    },
+    #[serde(rename = "idem.record_planned")]
+    IdemRecordPlanned {
+        db: String,
+        run_id: String,
+        tool_call_id: String,
+        tool_name: String,
+        #[serde(default)]
+        args: Value,
+    },
+    #[serde(rename = "idem.mark_executing")]
+    IdemMarkExecuting {
+        db: String,
+        run_id: String,
+        tool_call_id: String,
+    },
+    #[serde(rename = "idem.commit")]
+    IdemCommit {
+        db: String,
+        run_id: String,
+        tool_call_id: String,
+        tool_name: String,
+        #[serde(default)]
+        args: Value,
+        #[serde(default)]
+        result: Value,
+    },
+    #[serde(rename = "idem.mark_failed")]
+    IdemMarkFailed {
+        db: String,
+        run_id: String,
+        tool_call_id: String,
+        error: String,
+    },
+    #[serde(rename = "idem.mark_uncertain")]
+    IdemMarkUncertain {
+        db: String,
+        run_id: String,
+        tool_call_id: String,
+    },
+    #[serde(rename = "task.save")]
+    TaskSave {
+        db: String,
+        task_id: String,
+        enabled: bool,
+        next_run: Option<f64>,
+        data: String,
+    },
+    #[serde(rename = "task.delete")]
+    TaskDelete { db: String, task_id: String },
+    #[serde(rename = "task.add_run")]
+    TaskAddRun {
+        db: String,
+        run_id: String,
+        task_id: String,
+        started_at: f64,
+        data: String,
+        workspace: String,
+    },
+    #[serde(rename = "ping")]
+    Ping {},
+}
+
+struct ConnCache {
+    ledgers: HashMap<PathBuf, LedgerWriter>,
+    idems: HashMap<PathBuf, IdempotencyWriter>,
+    tasks: HashMap<PathBuf, TaskStoreWriter>,
+}
+
+impl ConnCache {
+    fn new() -> Self {
+        Self {
+            ledgers: HashMap::new(),
+            idems: HashMap::new(),
+            tasks: HashMap::new(),
+        }
+    }
+
+    fn ledger(&mut self, db: &str) -> Result<&mut LedgerWriter, String> {
+        let path = PathBuf::from(db);
+        if !self.ledgers.contains_key(&path) {
+            let w = LedgerWriter::open(&path).map_err(|e| e.to_string())?;
+            self.ledgers.insert(path.clone(), w);
+        }
+        Ok(self.ledgers.get_mut(&path).unwrap())
+    }
+
+    fn idem(&mut self, db: &str) -> Result<&mut IdempotencyWriter, String> {
+        let path = PathBuf::from(db);
+        if !self.idems.contains_key(&path) {
+            let w = IdempotencyWriter::open(&path).map_err(|e| e.to_string())?;
+            self.idems.insert(path.clone(), w);
+        }
+        Ok(self.idems.get_mut(&path).unwrap())
+    }
+
+    fn task(&mut self, db: &str) -> Result<&mut TaskStoreWriter, String> {
+        let path = PathBuf::from(db);
+        if !self.tasks.contains_key(&path) {
+            let w = TaskStoreWriter::open(&path).map_err(|e| e.to_string())?;
+            self.tasks.insert(path.clone(), w);
+        }
+        Ok(self.tasks.get_mut(&path).unwrap())
+    }
+}
+
+fn err(s: String) -> Value {
+    serde_json::json!({"ok": false, "error": s})
+}
+
+fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
+    let mut cache = cache.lock().unwrap();
+    let result: Result<Value, String> = match cmd {
+        Command::LedgerAppend {
+            db,
+            run_id,
+            event_type,
+            actor,
+            ts,
+            payload,
+            workspace,
+        } => {
+            let writer = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let ts = ts.unwrap_or_else(|| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs_f64())
+                    .unwrap_or(0.0)
+            });
+            let actor = actor.unwrap_or_else(|| "system".to_string());
+            let payload = payload.unwrap_or(Value::Null);
+            let workspace = workspace.unwrap_or_default();
+            match writer.append(&run_id, &event_type, &actor, ts, &payload, &workspace) {
+                Ok(v) => Ok(v),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::IdemRecordPlanned {
+            db,
+            run_id,
+            tool_call_id,
+            tool_name,
+            args,
+        } => {
+            let writer = match cache.idem(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            match writer.record_planned(&run_id, &tool_call_id, &tool_name, &args) {
+                Ok(op_id) => Ok(serde_json::json!({"operation_id": op_id})),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::IdemMarkExecuting {
+            db,
+            run_id,
+            tool_call_id,
+        } => {
+            let writer = match cache.idem(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            match writer.mark_executing(&run_id, &tool_call_id) {
+                Ok(_) => Ok(Value::Null),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::IdemCommit {
+            db,
+            run_id,
+            tool_call_id,
+            tool_name,
+            args,
+            result,
+        } => {
+            let writer = match cache.idem(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            match writer.commit(&run_id, &tool_call_id, &tool_name, &args, &result) {
+                Ok(_) => Ok(Value::Null),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::IdemMarkFailed {
+            db,
+            run_id,
+            tool_call_id,
+            error,
+        } => {
+            let writer = match cache.idem(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            match writer.mark_failed(&run_id, &tool_call_id, &error) {
+                Ok(_) => Ok(Value::Null),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::IdemMarkUncertain {
+            db,
+            run_id,
+            tool_call_id,
+        } => {
+            let writer = match cache.idem(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            match writer.mark_uncertain(&run_id, &tool_call_id) {
+                Ok(_) => Ok(Value::Null),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::TaskSave {
+            db,
+            task_id,
+            enabled,
+            next_run,
+            data,
+        } => {
+            let writer = match cache.task(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            match writer.save_task(&task_id, enabled, next_run, &data) {
+                Ok(_) => Ok(Value::Null),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::TaskDelete { db, task_id } => {
+            let writer = match cache.task(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            match writer.delete_task(&task_id) {
+                Ok(_) => Ok(Value::Null),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::TaskAddRun {
+            db,
+            run_id,
+            task_id,
+            started_at,
+            data,
+            workspace,
+        } => {
+            let writer = match cache.task(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            match writer.add_run(&run_id, &task_id, started_at, &data, &workspace) {
+                Ok(_) => Ok(Value::Null),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::Ping {} => Ok(serde_json::json!({"pong": true})),
+    };
+    match result {
+        Ok(v) => serde_json::json!({"ok": true, "result": v}),
+        Err(e) => serde_json::json!({"ok": false, "error": e}),
+    }
+}
+
+fn main() -> std::process::ExitCode {
+    let stdin = io::stdin();
+    let stdout = io::stdout();
+    let mut out = stdout.lock();
+    let cache = Mutex::new(ConnCache::new());
+
+    for line in stdin.lock().lines() {
+        let line = match line {
+            Ok(l) => l,
+            Err(_) => break,
+        };
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let cmd: Command = match serde_json::from_str(trimmed) {
+            Ok(c) => c,
+            Err(e) => {
+                let resp = serde_json::json!({"ok": false, "error": format!("parse: {e}")});
+                writeln!(out, "{resp}").ok();
+                out.flush().ok();
+                continue;
+            }
+        };
+        let resp = handle(cmd, &cache);
+        writeln!(out, "{resp}").ok();
+        out.flush().ok();
+    }
+    std::process::ExitCode::SUCCESS
+}

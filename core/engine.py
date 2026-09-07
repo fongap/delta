@@ -127,10 +127,17 @@ class TurnEngine:
         # (the previous run's side effects are not re-played). None
         # disables the log (tests, read-only subagents).
         idem_log: Any | None = None,
+        # P0-B: the run-event ledger, so _execute_sync can pass ledger=
+        # to idem_log state-transition calls. Each IdempotencyLog method
+        # is the single choke point that writes both the idempotency state
+        # AND the corresponding side_effect.* ledger event in one call.
+        # None disables ledger events (tests, read-only subagents).
+        ledger: Any | None = None,
     ) -> None:
         self.provider = provider
         self.registry = registry
         self.idem_log = idem_log
+        self.ledger = ledger
         self.permissions = permissions
         self.model = model
         self.approver = approver or _deny_all
@@ -1273,8 +1280,11 @@ class TurnEngine:
                         tool_call.id,
                         tool_call.name,
                         tool_call.arguments,
+                        ledger=self.ledger,
                     )
-                    self.idem_log.mark_executing(run_id, tool_call.id)
+                    self.idem_log.mark_executing(
+                        run_id, tool_call.id, ledger=self.ledger
+                    )
         try:
             result = self.registry.execute(tool_call.name, tool_call.arguments)
         except Exception as exc:
@@ -1287,7 +1297,8 @@ class TurnEngine:
                     if run_id:
                         try:
                             self.idem_log.mark_failed(
-                                run_id, tool_call.id, str(exc)
+                                run_id, tool_call.id, str(exc),
+                                ledger=self.ledger,
                             )
                         except Exception:
                             pass
@@ -1306,6 +1317,7 @@ class TurnEngine:
                             tool_call.name,
                             tool_call.arguments,
                             result,
+                            ledger=self.ledger,
                         )
                     except Exception:
                         pass
@@ -1330,6 +1342,7 @@ class TurnEngine:
                                     ws,
                                     file_path,
                                     run_id=run_id,
+                                    ledger=self.ledger,
                                 )
                             except Exception:
                                 pass

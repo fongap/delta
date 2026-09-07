@@ -185,6 +185,22 @@ class IdempotencyLogWithDelegate:
     ) -> None:
         if self._delegate:
             _invoke("mark_uncertain", self._db_path, run_id=run_id, tool_call_id=tool_call_id)
+            if ledger is not None:
+                try:
+                    row = self._inner._row(run_id, tool_call_id)
+                    ledger.append(
+                        run_id,
+                        "side_effect.uncertain",
+                        actor="system",
+                        payload={
+                            "tool_call_id": tool_call_id,
+                            "tool": row["tool_name"] if row else "unknown",
+                            "operation_id": row["operation_id"] if row else "",
+                        },
+                        workspace=workspace or None,
+                    )
+                except Exception:
+                    pass
             return
         self._inner.mark_uncertain(run_id, tool_call_id, ledger=ledger, workspace=workspace)
 
@@ -202,8 +218,27 @@ class IdempotencyLogWithDelegate:
     def committed_for_run(self, run_id: str) -> list[dict]:
         return self._inner.committed_for_run(run_id)
 
-    def sweep_stale(self, interrupted_run_ids: list[str], **kw: Any) -> list[dict]:
-        return self._inner.sweep_stale(interrupted_run_ids, **kw)
+    def sweep_stale(
+        self, interrupted_run_ids: list[str], **kw: Any
+    ) -> list[dict]:
+        if not self._delegate:
+            return self._inner.sweep_stale(interrupted_run_ids, **kw)
+        swept: list[dict] = []
+        for run_id in interrupted_run_ids:
+            stale = self._inner.uncommitted_for_run(run_id)
+            for entry in stale:
+                self.mark_uncertain(
+                    run_id, entry["tool_call_id"], **kw
+                )
+                swept.append(
+                    {
+                        "run_id": run_id,
+                        "tool_call_id": entry["tool_call_id"],
+                        "tool_name": entry["tool_name"],
+                        "operation_id": entry["operation_id"],
+                    }
+                )
+        return swept
 
     def resolve_uncertain(self, *args: Any, **kw: Any) -> None:
         return self._inner.resolve_uncertain(*args, **kw)

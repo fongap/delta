@@ -196,6 +196,7 @@ class SessionsMixin(ManagerHostState):
             # ADR-005 WS4: side-effect idempotency so a crash between
             # `_execute_sync` and `_record_result` does not replay writes.
             idem_log=self.idem_log,
+            ledger=self.run_ledger,
             # P2 实用: file/connector readers auto-cite successful reads to
             # the per-workspace Source ledger. None when the agent doesn't
             # bind a workspace (chat) — readers fall back to no-op citations.
