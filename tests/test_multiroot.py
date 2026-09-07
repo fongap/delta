@@ -1,6 +1,6 @@
 """Slice B — multi-root file toolkit + permission scoping + the context injector.
 
-Orphan Cowork sessions own a primary writable scratch dir and may gain additional folders,
+Orphan Delta sessions own a primary writable scratch dir and may gain additional folders,
 each read-only or read-write. These cover the three layers that share the roots list.
 """
 

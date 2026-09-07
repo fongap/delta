@@ -121,7 +121,7 @@ class SessionsMixin(ManagerHostState):
             model, mode, messages = self.model, self.mode, None
 
         if ag.needs_workspace and (not ws or not Path(ws).is_dir()):
-            # Knowledge surfaces (Cowork, Ops, …) start "orphan": no folder picked →
+            # Knowledge surfaces (Delta, Ops, …) start "orphan": no folder picked →
             # auto-provision a per-conversation scratch directory (generalizes MyHelper's
             # auto-workspace). Code-family surfaces still require a real repo; Chat needs none.
             if ag.family == "knowledge":

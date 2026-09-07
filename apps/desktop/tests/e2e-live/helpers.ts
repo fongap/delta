@@ -64,7 +64,7 @@ export function newestFile(scratchBase: string, name: string): string | null {
   return best?.path ?? null;
 }
 
-/** Open a fresh Cowork session via the split button's persona menu. */
+/** Open a fresh Delta session via the split button's persona menu. */
 export async function startCoworkSession(page: Page) {
   await page.goto("/");
   await page.getByRole("button", { name: "Choose a persona" }).click();

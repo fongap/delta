@@ -58,7 +58,7 @@ test("live: install a persona from a directory, enable it, and run a task as it"
   await selectMode(page, "Full access");
   await sendTask(page, `Write a file named ${name} containing exactly: ${token}`);
 
-  // The installed persona should do the work. Non-Cowork personas don't render the Artifacts rail,
+  // The installed persona should do the work. Non-Delta personas don't render the Artifacts rail,
   // so wait on the file itself (ground truth) rather than a UI signal.
   await expect
     .poll(

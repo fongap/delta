@@ -20,7 +20,7 @@ backend on :8765. Two flavors, both skip cleanly when the backend is down:
 - **API-shape smoke** (`api-smoke.spec.ts`) — no model tokens, no creds. Asserts `/v1/health` and
   `/v1/providers` return the shapes the GUI reads, catching drift between the mocks and the real
   backend. Cheap enough to run anytime the sidecar is up.
-- **Full vertical** (`fib.spec.ts`, …) — asks a fresh Cowork session to produce `fib.md` and
+- **Full vertical** (`fib.spec.ts`, …) — asks a fresh Delta session to produce `fib.md` and
   verifies the file lands on disk. Needs a model configured, is nondeterministic, and costs a few
   tokens per run. Exercises the vertical the hermetic specs mock: model wiring, the tool/approval
   loop, file I/O, and WebSocket streaming.
@@ -43,8 +43,8 @@ won't clash with a running `npm run dev` on 5173) and reuses it if already up.
   `tool_proposed` + `permission_required` and suspends until the client's `approval` decision
   arrives. This runs the production send/stream/approve code paths with zero model cost.
 - Seed data worth knowing: the pinned session "Draft the launch note" is the newest (boot-resume
-  target); 7 unpinned "Weekly plan N" cowork sessions exercise the sidebar peek cap; two pending
-  Inbox items (approval on cowork, question on ops) drive the Inbox filters; `acme-notes` is a
+  target); 7 unpinned "Weekly plan N" delta sessions exercise the sidebar peek cap; two pending
+  Inbox items (approval on delta, question on ops) drive the Inbox filters; `acme-notes` is a
   disabled non-builtin persona for enable/delete flows. Providers are seeded in three states
   (OpenAI configured+used, Anthropic configured-unused, Z AI unconfigured w/ prefilled endpoint) —
   `POST /v1/providers` flips `configured` on save, `/verify` fails on a key containing "bad". One

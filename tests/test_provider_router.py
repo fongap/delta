@@ -683,7 +683,7 @@ def test_surface_visibility(tmp_path, monkeypatch):
     from services.server.manager import SessionManager
 
     mgr = SessionManager(data_dir=tmp_path)
-    # default: Cowork only
+    # default: Delta only
     s = mgr.get_settings()["surfaces"]
     assert s == {"delta": True, "chat": False, "code": False}
 

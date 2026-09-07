@@ -61,7 +61,7 @@ def test_disable_default_falls_back(tmp_path):
     assert reg.default_id() == DEFAULT_PERSONA_ID  # delta
     reg.set_enabled("ops", True)  # another persona must be enabled to fall back to
     reg.set_enabled("delta", False)
-    # Cowork off → default resolves to another enabled persona, not delta.
+    # Delta off → default resolves to another enabled persona, not delta.
     assert reg.default_id() != "delta"
     # Unknown / unspecified persona falls back to the (new) default, which is enabled.
     fallback = reg.agent(None)

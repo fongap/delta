@@ -424,7 +424,7 @@ export async function revealArtifact(
   return res.json();
 }
 
-// -- session roots (orphan Cowork: scratch + added folders) -------------------
+// -- session roots (orphan Delta: scratch + added folders) -------------------
 export interface RootInfo {
   path: string;
   writable: boolean;

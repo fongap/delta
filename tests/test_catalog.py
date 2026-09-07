@@ -1,8 +1,8 @@
 """Phase 0 gate — the vetted tool catalog.
 
-Asserts capabilities register, ``expand`` reproduces the Code and Cowork toolsets exactly
+Asserts capabilities register, ``expand`` reproduces the Code and Delta toolsets exactly
 (the equivalence net for the build_tools refactor), context prerequisites are honored
-(no shell without an executor, no files without a workspace), and the Code/Cowork file-tool
+(no shell without an executor, no files without a workspace), and the Code/Delta file-tool
 distinction (single-root numbered reader vs multi-root) is preserved."""
 
 from __future__ import annotations
@@ -85,17 +85,17 @@ def test_agents_use_catalog(tmp_path):
 
 
 def test_file_capability_distinction(tmp_path):
-    # Both Code and Cowork get our `read_file` AND our `read_file_lines` (v0.3.1:
+    # Both Code and Delta get our `read_file` AND our `read_file_lines` (v0.3.1:
     # `read_file_lines` gained a Source/Citation hook and was promoted from a
-    # Cowork-only windowed reader to a shared chokepoint). The remaining
+    # Delta-only windowed reader to a shared chokepoint). The remaining
     # distinction is what aisuite provides: Code has single-root + read_document,
-    # Cowork has multi-root roots-aware writes.
+    # Delta has multi-root roots-aware writes.
     code = _names(expand(["code_files"], _full_context(tmp_path)))
     delta = _names(expand(["files"], _full_context(tmp_path)))
     assert "read_file_lines" in code
     assert "read_file_lines" in delta
     assert "read_file" in code and "read_file" in delta
-    # Code has read_document; Cowork does not.
+    # Code has read_document; Delta does not.
     assert "read_document" in code
     assert "read_document" not in delta
 

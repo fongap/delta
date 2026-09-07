@@ -181,4 +181,4 @@ def test_delta_has_grep_not_search_files(tmp_path):
         for t in delta_tool_factory(AgentContext(workspace=tmp_path))
     }
     assert "grep" in names and "search_files" not in names
-    assert "git_log" not in names  # git history isn't useful for Cowork
+    assert "git_log" not in names  # git history isn't useful for Delta

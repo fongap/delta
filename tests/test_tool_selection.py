@@ -11,7 +11,7 @@ from core.tool_selection import (
     turn_signal_categories,
 )
 
-# Simulated registry for a Cowork-like surface: files/shell/web/memory/messaging/skills.
+# Simulated registry for a Delta-like surface: files/shell/web/memory/messaging/skills.
 REGISTRY = [
     "list_files", "read_file", "write_file", "apply_patch", "request_directory",
     "grep", "run_shell", "shell_task_output",

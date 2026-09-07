@@ -180,7 +180,7 @@ class WorkspaceTrustMixin(ManagerHostState):
 
 
     def set_scratch_base(self, path: str) -> dict[str, Any]:
-        """Set + persist the common area where each Cowork conversation's scratch directory is
+        """Set + persist the common area where each Delta conversation's scratch directory is
         created (default ~/Delta). The raw value is stored so the UI shows it as entered;
         new conversations use it immediately (existing ones keep their provisioned dir).
         """
@@ -257,7 +257,7 @@ class WorkspaceTrustMixin(ManagerHostState):
         return None
 
 
-    # -- session roots (orphan Cowork: scratch + added folders) ------------------
+    # -- session roots (orphan Delta: scratch + added folders) ------------------
     def get_roots(self, session_id: str) -> list[dict[str, Any]]:
         """The directories this session can touch: primary scratch first, then added folders.
         Reads the live engine when one is running; otherwise reconstructs from persisted state.

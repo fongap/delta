@@ -1,4 +1,4 @@
-"""Cowork-only connector tools for first-party integrations.
+"""Delta-only connector tools for first-party integrations.
 
 These tools are intentionally local-first: credentials are read from the SecretStore at
 execution time and never enter prompts. OAuth-managed setup can later replace the manual

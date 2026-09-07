@@ -1,6 +1,6 @@
 """Workspace roots — the directories a session is allowed to touch.
 
-A Cowork session is "orphan": it owns a per-conversation **scratch** dir (the primary root,
+A Delta session is "orphan": it owns a per-conversation **scratch** dir (the primary root,
 writable, the default save location) and may gain access to additional folders, each chosen
 read-only or read-write. The same `list[RootDir]` object is shared by reference across the
 PermissionEngine (scoping), the file toolkit (resolution), and the context injector (so the

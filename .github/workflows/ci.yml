@@ -698,6 +698,18 @@ jobs:
           # Extend that list whenever another responsibility path migrates.
           python3 scripts/check_legacy_paths.py
 
+      - name: Legacy branding gate (R1.6)
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # R1.6 P1-3: prevent OpenWorker / cowork / @ocw tokens from
+          # re-entering production source (apps/ core/ packages/ providers/
+          # services/ integrations/ packaging/ scripts/). Legitimate
+          # historical references in docs/, CHANGELOG, ADRs, LICENSE, NOTICE,
+          # UPSTREAM.md are exempt by the script's directory filter.
+          python3 scripts/check_legacy_branding.py
+
 
   ci-required:
     name: ci-required

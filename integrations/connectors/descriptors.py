@@ -600,7 +600,7 @@ DESCRIPTORS: list[ConnectorDescriptor] = [
         logo="browser",
         fields=[],
         instructions=[
-            "No setup required. Browser tools are available to Cowork sessions."
+            "No setup required. Browser tools are available to Delta sessions."
         ],
         available=True,
     ),

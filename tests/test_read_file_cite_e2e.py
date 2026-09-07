@@ -58,7 +58,7 @@ def _task(tmp_path, ws_name: str) -> ScheduledTask:
         workspace=str(ws),
         # `code` is the agent whose ``code_files`` capability wires our
         # line-numbered ``read_file`` (carries the auto-cite hook).
-        # Cowork/ops keep aisuite's multi-root reader; cite there is a
+        # Delta/ops keep aisuite's multi-root reader; cite there is a
         # follow-up.
         agent="code",
     )

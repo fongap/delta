@@ -13,10 +13,17 @@ dependencies = [
     "textual==8.2.8",
     "fastapi==0.141.1",
     "uvicorn[standard]==0.52.4",
-    # Pinned to a specific commit for reproducible Agent/runtime behavior; the
-    # latest PyPI artifact does not yet match this revision, so version equality
-    # is not a reliable equivalence signal. R1.6 (legacy cleanup): aisuite is a
-    # regular third-party dependency, not an OpenWorker-forked package.
+    # Pinned to a specific commit. R1.6 evaluation: PyPI 0.1.14 (Nov 25 2025)
+    # predates both the rebrand and the OpenWorker platform split. The current
+    # pin (1b4bbf3, Jul 21 2026) is a pre-rebrand OpenWorker-platform snapshot
+    # of aisuite; the upstream has since archived that branch into
+    # andrewyng/openworker (PR #401, Aug 13 2026). Bumping to the post-archive
+    # upstream commit (531b5b8) is a real dependency change and is tracked as a
+    # follow-up — not part of R1.6 source-level cleanup, which only adjusted
+    # the descriptive comment to no longer call the pin an "OpenWorker import
+    # commit". aisuite's public surface (`aisuite.Client`, `aisuite.agents.tool`,
+    # `aisuite.utils.tools.Tools`) is the same at both commits; Delta uses only
+    # that surface.
     "aisuite @ git+https://github.com/andrewyng/aisuite.git@1b4bbf303ec21968230b1ec869a144d054e9b3c4",
     "docstring_parser==0.18.0",
     "pyyaml==6.0.3",  # persona manifest frontmatter (YAML)
@@ -51,7 +58,7 @@ dev = [
 # aiohttp is slack-bolt's Socket Mode transport at runtime (and the FakeSlack test harness
 # drives the real handler) — declare it so CI installs it, not just transitively.
 messaging = ["python-telegram-bot==22.8", "slack-bolt==1.30.0", "aiohttp==3.14.3"]
-# Interactive Cowork browser automation.
+# Interactive Delta browser automation.
 browser = ["playwright>=1.62.0"]
 # Windows Portable build-only dependency. Keeping it as an explicit extra lets
 # the release sidecar environment be reproduced from uv.lock.

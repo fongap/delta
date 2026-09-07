@@ -812,7 +812,7 @@ export function Sidebar(props: Props) {
     );
   };
 
-  // Code/Cowork group by project; Chat is a flat recents list.
+  // Code/Delta group by project; Chat is a flat recents list.
   const byProject = useMemo(() => {
     const grouped = new Map<string, SessionInfo[]>();
     for (const s of mine) {
@@ -829,7 +829,7 @@ export function Sidebar(props: Props) {
   }, [byProject, normalizedQuery]);
 
   // Projects are tracked PER SURFACE: a folder appears under Code only if it has Code sessions,
-  // under Cowork only if it has Cowork sessions (+ the currently-open folder). No cross-bleed.
+  // under Delta only if it has Delta sessions (+ the currently-open folder). No cross-bleed.
   const projectOrder: string[] = [];
   const seen = new Set<string>();
   // Pin the active folder at top only when browsing the active persona (else it belongs elsewhere).

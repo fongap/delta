@@ -311,7 +311,7 @@ export function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [toggleNav]);
-  // Count of files this Cowork conversation has produced — surfaces an "Artifacts (N)" button in
+  // Count of files this Delta conversation has produced — surfaces an "Artifacts (N)" button in
   // the topbar when the side panel is hidden, so produced files are never buried.
   const [artifactCount, setArtifactCount] = useState(0);
   // §32 deep link into the rail's Access section (the former Session-settings drawer): bumping
@@ -332,7 +332,7 @@ export function App() {
   const [composerPrefill, setComposerPrefill] = useState<{ text: string; attachments?: Attachment[]; nonce: number }>();
 
   // Persona metadata drives workspace behavior by FAMILY, not by hardcoded id (so a DevOps/SecOps
-  // code-family persona gates a folder like Code, and a knowledge persona starts orphan like Cowork).
+  // code-family persona gates a folder like Code, and a knowledge persona starts orphan like Delta).
   const [personas, setPersonas] = useState<Persona[] | null>(null);
   useEffect(() => {
     getPersonas().then(setPersonas).catch(() => {});
@@ -452,7 +452,7 @@ export function App() {
     try {
       const recents = await getRecentWorkspaces();
       setProjects(recents);
-      // Only auto-adopt a recent folder for gated surfaces (Code). Cowork starts orphan.
+      // Only auto-adopt a recent folder for gated surfaces (Code). Delta starts orphan.
       if (gatesWorkspace(agent)) {
         const ws = recents.find((w) => w.exists) || recents[0];
         if (ws) {
@@ -484,7 +484,7 @@ export function App() {
           // effect). resumeLastOrGate is async — if we cleared `booting` first, the throwaway
           // initial sessionId would connect against an empty/stale workspace and the server
           // would provision a junk per-conversation scratch dir for it before resume could
-          // flip to the real session. Cowork ignores default_workspace (a Code concept).
+          // flip to the real session. Delta ignores default_workspace (a Code concept).
           if (h.default_workspace && gatesWorkspace(agent)) setWorkspace(h.default_workspace);
           else await resumeLastOrGate();
           // The mount-time loadSettings races the sidecar boot and swallows its failure —
@@ -578,7 +578,7 @@ export function App() {
   }, [refreshSessions]);
 
   // If the active surface isn't visible (hidden in Settings, or a resumed session landed on a
-  // hidden surface), fall back to Cowork (always visible). Watches both agent and surfaces so it
+  // hidden surface), fall back to Delta (always visible). Watches both agent and surfaces so it
   // corrects regardless of which settled last.
   useEffect(() => {
     if ((agent === "chat" && !surfaces.chat) || (agent === "code" && !surfaces.code)) {
@@ -630,7 +630,7 @@ export function App() {
           if (d.model) setModel(d.model);
           if (d.mode) setMode(d.mode);
           if (d.command_trust?.required) setWorkspaceTrustRequest(d.command_trust);
-          // Cowork: adopt the server-provisioned scratch dir (only when we don't already have one).
+          // Delta: adopt the server-provisioned scratch dir (only when we don't already have one).
           if (d.workspace) setWorkspace((cur) => cur || d.workspace);
           break;
         case "turn_start":
@@ -870,7 +870,7 @@ export function App() {
     // NOTE: `workspace` is intentionally NOT a dependency. Every real workspace change
     // (pick folder, select/switch session, new session) is paired with a `sessionId`
     // change, so the socket still reconnects when it should. The one workspace-only change
-    // is the `ready` handler adopting the server's provisioned Cowork scratch dir — listing
+    // is the `ready` handler adopting the server's provisioned Delta scratch dir — listing
     // `workspace` here made that adoption tear down and rebuild the socket immediately after
     // first connect, dropping the user's first message (the "send twice" bug). The scratch
     // dir is deterministic from `sessionId` server-side, so skipping that reconnect is safe.
@@ -927,7 +927,7 @@ export function App() {
   }, [items, streaming]);
 
   // Track produced-file count for the topbar "Artifacts" affordance (works even when the rail is
-  // hidden, where the rail itself doesn't fetch). Cowork only; refreshes on file writes/turn end.
+  // hidden, where the rail itself doesn't fetch). Delta only; refreshes on file writes/turn end.
   useEffect(() => {
     if (agent !== "delta" || surface !== "session") {
       setArtifactCount(0);
@@ -1129,7 +1129,7 @@ export function App() {
     const inheritable = gatesWorkspace(agent) ? workspace : null;
 
     if (target) {
-      // Code falls back to a recent folder; Cowork resumes its scratch (target.workspace) or
+      // Code falls back to a recent folder; Delta resumes its scratch (target.workspace) or
       // starts orphan ("" → server provisions). Chat has no workspace.
       const targetWorkspace = gatesWorkspace(name)
         ? target.workspace || fallbackWorkspace(inheritable, knownProjects)
@@ -1186,7 +1186,7 @@ export function App() {
   };
   // "New project" lives under a project-scoped persona's accordion. Switch to that persona, start a
   // fresh session with no folder yet, and open the gate in create mode — so the gate's
-  // surface==="session" && gatesWorkspace(agent) guard passes even if the active session was Chat/Cowork.
+  // surface==="session" && gatesWorkspace(agent) guard passes even if the active session was Chat/Delta.
   const newProject = (forAgent?: string) => {
     const target = forAgent || agent;
     setSurface("session");

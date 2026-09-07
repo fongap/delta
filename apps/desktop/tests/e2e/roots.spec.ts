@@ -14,7 +14,7 @@ test("working directories: add folders with the read-only / read-write gate", as
   const dirs = page.getByTestId("drawer-directories");
   await expect(dirs.getByText("Folders")).toBeVisible();
 
-  // The primary is the writable scratch workspace (Cowork shows it as "Temporary space").
+  // The primary is the writable scratch workspace (Delta shows it as "Temporary space").
   await expect(dirs.getByText("Temporary space")).toBeVisible();
 
   // Add a folder — the gate defaults to read-only (Allow writes OFF). The Browse button works
