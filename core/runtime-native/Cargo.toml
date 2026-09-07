@@ -55,6 +55,7 @@ name = "delta_core"
 path = "src/bin/delta_core.rs"
 
 [dependencies]
+csv = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

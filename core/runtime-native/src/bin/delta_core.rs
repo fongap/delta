@@ -60,8 +60,8 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use delta_runtime_native::{
-    validate_source_citation, ArtifactInput, ArtifactRegistryWriter, IdempotencyWriter,
-    LedgerWriter, TaskStoreWriter,
+    run_validation, validate_source_citation, ArtifactInput, ArtifactRegistryWriter,
+    IdempotencyWriter, LedgerWriter, TaskStoreWriter,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -177,6 +177,15 @@ enum Command {
         source: Option<Value>,
         range: Value,
         workspace: Option<String>,
+    },
+    /// R2.2: evaluate the deterministic completion contract in Rust.
+    #[serde(rename = "validation.run")]
+    ValidationRun {
+        criteria: Value,
+        #[serde(default)]
+        artifacts: Vec<Value>,
+        workspace: Option<String>,
+        valid_citation_count: Option<usize>,
     },
 }
 
@@ -446,6 +455,18 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
             workspace.as_deref().map(std::path::Path::new),
         ))
         .map_err(|error| error.to_string()),
+        Command::ValidationRun {
+            criteria,
+            artifacts,
+            workspace,
+            valid_citation_count,
+        } => run_validation(
+            &artifacts,
+            &criteria,
+            workspace.as_deref().map(std::path::Path::new),
+            valid_citation_count,
+        )
+        .and_then(|result| serde_json::to_value(result).map_err(|error| error.to_string())),
     };
     match result {
         Ok(v) => serde_json::json!({"ok": true, "result": v}),
