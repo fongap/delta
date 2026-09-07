@@ -386,6 +386,44 @@ jobs:
           check advisories
 
 
+  rust-core-smoke:
+    name: rust-core-smoke
+    # R1 (P1-G) CI gate: the delta_core binary built in the
+    # `core/runtime-native` workspace must pass the smoke gate
+    # (ping + ledger hash chain + idem full cycle + task save/run/delete).
+    # This runs whenever Rust Core sources change, NOT on every Python
+    # change, to keep the PR path narrow.
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Read Rust toolchain channel
+        id: rust-toolchain
+        shell: bash
+        run: |
+          channel=$(grep '^channel' rust-toolchain.toml | tr -d '\r' | sed 's/.*"\(.*\)"/\1/')
+          echo "channel=$channel" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@4360b52568e2003a75bf9bc1d59f33a8e3fc893c # stable snapshot
+        with:
+          toolchain: ${{ steps.rust-toolchain.outputs.channel }}
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+        with:
+          workspaces: core/runtime-native
+
+      - name: Build delta_core binary
+        working-directory: core/runtime-native
+        run: cargo build --release --bin delta_core
+
+      - name: Run rust-core smoke gate
+        run: python scripts/check_rust_core_smoke.py --binary core/runtime-native/target/release/delta_core
+
+
   static:
     name: static
     needs: changes
@@ -687,6 +725,7 @@ jobs:
       - python-advisories
       - rust-advisories
       - rust
+      - rust-core-smoke
       - layout-check
 
     steps:
@@ -745,6 +784,7 @@ jobs:
 
               "rust": rust_required,
               "rust-advisories": rust_advisories_required,
+              "rust-core-smoke": rust_required,
           }
 
           failures = {}

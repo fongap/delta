@@ -150,6 +150,20 @@ if ($LauncherExe) {
     }
 }
 
+# ---- 2b. Delta Core Rust binary (R1 unified writer, ADR P1-E) -----------------
+Write-Host "==> [2b/6] delta-core Rust binary" -ForegroundColor Cyan
+$CoreCrate   = Join-Path $Root "core\runtime-native"
+$DeltaCoreExe = Join-Path $CoreCrate "target\release\delta_core.exe"
+Push-Location $CoreCrate
+try {
+    & cargo build --release --bin delta_core
+    if ($LASTEXITCODE -ne 0) { throw "cargo build (delta_core) failed (exit $LASTEXITCODE)" }
+}
+finally { Pop-Location }
+if (-not (Test-Path -LiteralPath $DeltaCoreExe -PathType Leaf)) {
+    throw "delta_core build finished but no binary at $DeltaCoreExe"
+}
+
 # ---- 3. Tauri app build (frontend embedded, no installers) ---------------------
 if (-not $SkipAppBuild) {
     Write-Host "==> [3/6] tauri build --no-bundle" -ForegroundColor Cyan
@@ -207,6 +221,12 @@ New-Item -ItemType Directory -Force -Path $AppDir                          | Out
 # App\ : real app exe + sidecar onedir (landing next to the exe, matching server_bin()).
 Copy-Item -Force $AppExe (Join-Path $AppDir "$AppName.exe")
 Copy-Item -Recurse -Force $SideDst (Join-Path $AppDir "sidecar")
+
+# Delta Core Rust binary (R1 unified writer) — lives next to Delta.exe so the Python
+# runtime can resolve it via the standard "same-dir as app exe" lookup. The existing
+# per-domain CLI binaries (write_idemlog.exe, write_ledger.exe, write_tasks.exe) are
+# kept inside sidecar/ for diagnostic / migration use only.
+Copy-Item -Force $DeltaCoreExe (Join-Path $AppDir "delta-core.exe")
 
 # Optional first-run data seed (launcher copies App\DefaultData -> Data only on first run).
 $DefaultSeed = Join-Path $AppDir "DefaultData"

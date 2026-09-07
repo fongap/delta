@@ -21,6 +21,7 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import threading
 import time
 from pathlib import Path
 from typing import Any, Iterable
@@ -77,6 +78,7 @@ class RunEventLedger:
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        self._lock = threading.RLock()
         self._conn.execute("""
             CREATE TABLE IF NOT EXISTS run_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -139,7 +141,7 @@ class RunEventLedger:
         from packages.sanitize import sanitize_payload
 
         stored_payload = sanitize_payload(payload)
-        with self._conn:
+        with self._lock, self._conn:
             row = self._conn.execute(
                 "SELECT seq, hash FROM run_events WHERE run_id = ? "
                 "ORDER BY seq DESC LIMIT 1",
@@ -245,6 +247,51 @@ class RunEventLedger:
             tuple(sorted(TERMINAL_EVENTS)),
         ).fetchall()
         return [r["run_id"] for r in rows]
+
+    def run_status(self, run_id: str) -> str:
+        """Derive a run's lifecycle status from the ledger.
+
+        The ledger is the single source of truth for run lifecycle. This
+        function reads the run's terminal event and maps it to the
+        UI-facing ``status`` vocabulary consumed by ``TaskRun.status``,
+        the analyzer, and the Inbox.
+
+        Mapping:
+
+        * no events         → ``"unknown"`` (run was never started)
+        * has start, no end → ``"running"`` (or ``"resumed"`` after a
+                               ``run.resumed``)
+        * ``run.completed``  → ``"ok"``
+        * ``run.failed``     → ``"error"``
+        * ``run.interrupted`` → ``"interrupted"`` (crash recovery)
+        * ``validation.failed`` last (no run.completed) → ``"validation_failed"``
+        * any other state    → ``"unknown"``
+
+        R1 contract (P1-C): callers must read this rather than trusting
+        ``TaskRun.status``, which is a denormalized convenience copy.
+        """
+        if not run_id:
+            return "unknown"
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT type, seq FROM run_events "
+                "WHERE run_id = ? ORDER BY seq DESC LIMIT 1",
+                (run_id,),
+            ).fetchone()
+        if row is None:
+            return "unknown"
+        event_type = row["type"]
+        if event_type == "run.completed":
+            return "ok"
+        if event_type == "run.failed":
+            return "error"
+        if event_type == "run.interrupted":
+            return "interrupted"
+        if event_type in ("run.started", "run.resumed"):
+            return "running" if event_type == "run.started" else "resumed"
+        if event_type == "validation.failed":
+            return "validation_failed"
+        return "unknown"
 
     def recover_stale(self) -> Iterable[dict[str, Any]]:
         """Cold-start sweep: close every open run with a synthetic interrupted event."""

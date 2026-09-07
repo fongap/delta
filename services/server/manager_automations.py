@@ -99,6 +99,7 @@ class AutomationsMixin(ManagerHostState):
             # ADR-005 WS4: scheduled tasks are exactly where the
             # crash-after-side-effect window matters (long unattended runs).
             idem_log=self.idem_log,
+            ledger=self.run_ledger,
             # P2 实用: the source ledger flows into readers so every
             # successful read auto-cites the run with a typed locator. The
             # store lives in the same per-workspace data dir as the run

@@ -223,6 +223,10 @@ def build_engine(
     # event after a successful execution. `resume()` then skips calls that
     # already committed. None disables the log (tests, read-only subagents).
     idem_log: Any | None = None,
+    # P0-B: run-event ledger. Passed to TurnEngine so _execute_sync can
+    # forward it to IdempotencyLog state-transition calls, making
+    # side_effect.* events appear in run_events.db.
+    ledger: Any | None = None,
     # P2 实用 (DELTA_BLUEPRINT §7.2): the run's Source ledger. When set
     # alongside ``run_id``, every successful file/connector read captures
     # the source and attaches a typed citation (lines / page / cells / ...)
@@ -511,6 +515,7 @@ def build_engine(
         ttft_timeout=config.ttft_timeout,
         max_retries=config.max_retries,
         idem_log=idem_log,
+        ledger=ledger,
     )
     engine.executor = executor  # type: ignore[attr-defined]
     engine.todo = todo  # type: ignore[attr-defined]

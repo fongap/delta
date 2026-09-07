@@ -57,7 +57,7 @@ jobs:
 
           # Single source of truth for version consistency and CHANGELOG release gate.
           # The script appends version= and tag= to GITHUB_OUTPUT.
-          python3 scripts/check_release_versions.py --quiet
+          python3 scripts/check_release_versions.py --quiet --release
 
       - name: Verify CI passed for this commit
         shell: bash

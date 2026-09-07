@@ -157,7 +157,9 @@ def _scan_enforcement() -> list[tuple[Path, int, str, str]]:
 
 
 def main() -> int:
-    if "--enforce-rust-authority" in sys.argv and not is_rust_authority("idempotency"):
+    if "--enforce-rust-authority" in sys.argv and not any(
+        is_rust_authority(d) for d in DOMAINS
+    ):
         print(
             "warning: --enforce-rust-authority requested but DELTA_RUST_AUTHORITY "
             "is not set; enforcement layer is inert.",

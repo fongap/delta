@@ -1,10 +1,10 @@
 # ADR-011 — R1 Authority Switch: 计划与边界
 
-- 状态：Proposed
+- 状态：Superseded by ADR-017
 - 日期：2026-09-05
 - 范围：Delta Core 权威归属迁移（Python → Rust）
 - 决策类型：迁移阶段规划
-- 关联：ADR-009（Delta Core Architecture）、ADR-010（R1 Shadow-Read）、`docs/governance/rust-core-migration.md` §5 R1 / §6 单领域迁移流程 / §7 双写规则
+- 关联：ADR-009（Delta Core Architecture）、ADR-010（R1 Shadow-Read）、ADR-017（R1 State Foundation 完成）、`docs/governance/rust-core-migration.md` §5 R1 / §6 单领域迁移流程 / §7 双写规则
 
 ## 背景
 

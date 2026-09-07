@@ -17,6 +17,7 @@ def _load(name: str):
         name, REPO / "scripts" / f"{name}.py"
     )
     module = importlib.util.module_from_spec(spec)
+    sys.modules[name] = module
     spec.loader.exec_module(module)
     return module
 
@@ -79,3 +80,92 @@ def test_version_sources_are_consistent():
         text=True,
     )
     assert result.returncode == 0, result.stdout + result.stderr
+
+
+def _version_module():
+    return _load("check_release_versions")
+
+
+# --- Version identity normalization tests (Cases 1-4) ---
+
+def test_case1_stable_version_equivalent():
+    """Case 1: stable version is equivalent across ecosystems.
+
+    Python: 0.4.0, SemVer: 0.4.0 → dev PASS, release PASS.
+    """
+    m = _version_module()
+    a = m.parse_version_identity("0.4.0")
+    b = m.parse_version_identity("0.4.0")
+    assert a == b
+    assert not a.is_prerelease
+    assert str(a) == "0.4.0"
+
+
+def test_case2_dev_version_cross_ecosystem_equivalent():
+    """Case 2: PEP 440 dev and SemVer dev are logically equivalent.
+
+    Python: 0.4.0.dev0, SemVer: 0.4.0-dev.0 → dev PASS, release FAIL.
+    """
+    m = _version_module()
+    pep440 = m.parse_version_identity("0.4.0.dev0")
+    semver = m.parse_version_identity("0.4.0-dev.0")
+    assert pep440 == semver
+    assert pep440.is_prerelease
+    assert semver.is_prerelease
+    assert pep440.prerelease == "dev"
+    assert pep440.prerelease_number == 0
+
+
+def test_case3_real_version_mismatch_fails():
+    """Case 3: different major/minor/patch must not be equal.
+
+    Python: 0.4.0.dev0, Desktop: 0.4.1-dev.0 → FAIL.
+    """
+    m = _version_module()
+    a = m.parse_version_identity("0.4.0.dev0")
+    b = m.parse_version_identity("0.4.1-dev.0")
+    assert a != b
+
+
+def test_case4_different_prerelease_numbers_fails():
+    """Case 4: same base but different prerelease number must not be equal.
+
+    0.4.0.dev0 vs 0.4.0-dev.1 → FAIL.
+    """
+    m = _version_module()
+    a = m.parse_version_identity("0.4.0.dev0")
+    b = m.parse_version_identity("0.4.0-dev.1")
+    assert a != b
+    assert a.prerelease_number == 0
+    assert b.prerelease_number == 1
+
+
+def test_case5_release_mode_rejects_prerelease():
+    """Case 5: release mode must reject any prerelease version.
+
+    The current repo version is 0.4.0.dev0 / 0.4.0-dev.0 (dev line).
+    Running --release must fail because the version is not stable X.Y.Z.
+    """
+    result = subprocess.run(
+        [sys.executable, str(REPO / "scripts" / "check_release_versions.py"), "--quiet", "--release"],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode != 0
+    assert "stable" in (result.stdout + result.stderr).lower()
+
+
+def test_release_mode_output_includes_version_and_tag(monkeypatch, tmp_path):
+    """When GITHUB_OUTPUT is set, the script appends version= and tag=."""
+    import os
+    gh_out = tmp_path / "gh_out"
+    result = subprocess.run(
+        [sys.executable, str(REPO / "scripts" / "check_release_versions.py"), "--quiet"],
+        capture_output=True,
+        text=True,
+        env={**os.environ, "GITHUB_OUTPUT": str(gh_out)},
+    )
+    assert result.returncode == 0
+    content = gh_out.read_text()
+    assert "version=" in content
+    assert "tag=" in content

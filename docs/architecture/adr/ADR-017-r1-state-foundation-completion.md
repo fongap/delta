@@ -1,0 +1,82 @@
+# ADR-017 — R1 State Foundation 完成
+
+- 状态：Active
+- 日期：2026-09-07
+- 范围：Delta Core R1 State Foundation 全部 5 个领域 + 统一进程入口
+- 决策类型：迁移阶段完成记录
+- 关联：ADR-009（Delta Core Architecture）、ADR-010（Shadow-Read）、ADR-011（Authority Switch Plan）、ADR-012~016（各领域 Delegate）、`docs/governance/rust-core-migration.md` §5 R1
+
+## 背景
+
+ADR-011 提议"先不立即切换权威"，按领域逐个 PR 推进。ADR-012~016 落地了灰度开关、三个领域的 delegate wrapper 和跨语言写路径。
+
+本 ADR 记录 R1 State Foundation 的**完成状态**：5 个领域的权威路径全部就位、统一进程入口已实现、CI gate 已落地。
+
+## 决策
+
+### R1 完成范围
+
+R1 State Foundation 在 v0.4.0-dev 线上完成以下 13 个 PR：
+
+| PR | 主题 | 关键交付 |
+|---|---|---|
+| P0-A | 版本边界 | `v0.3.2` ↔ `v0.4.0-dev` 边界明确；11 个版本源 bump |
+| P0-B | SideEffect ↔ Ledger contract | 4 个集成测试；发现并修复 `_execute_sync` 未传 `ledger=` 的契约缺口 |
+| P0-C | Per-domain authority selector | `DELTA_RUST_AUTHORITY` 从全局布尔改为逗号分隔的 per-domain 列表 |
+| P0-D | Idempotency authority path | `sweep_stale` delegate bypass 修复；`mark_uncertain` 产生 ledger 事件 |
+| P1-A | Ledger authority | `RunEventLedger` 并发锁（`threading.RLock`）；`register_artifact` ledger wiring；结构+并发+崩溃测试 |
+| P1-B | Task identity authority | 结构守护测试；所有生产路径经 `maybe_wrap_taskstore` |
+| P1-C | Run state authority | `RunEventLedger.run_status(run_id)` 从 ledger 事件派生运行状态（单一事实源） |
+| P1-D | Storage transaction boundary | `CoreStorage` / `CoreTransaction` 抽象；确定性锁序；协调提交点 |
+| P1-E | 统一 Delta Core 进程入口 | `delta_core` Rust 二进制（stdin/stdout JSON line protocol）+ `DeltaCoreClient` Python 客户端 |
+| P1-F | Package Delta Core | 便携版构建脚本集成 `delta_core.exe`；多位置 binary lookup |
+| P1-G | CI gates | `rust-core-smoke` CI job + `check_rust_core_smoke.py` 脚本 + 迁移数据库测试 |
+| Docs | Authority Matrix + ADR | 本 ADR + Authority Matrix 更新 |
+
+### Authority Matrix（R1 完成后）
+
+| 领域 | R1 前 | R1 后 | 灰度开关 |
+|---|---|---|---|
+| Idempotency | Python | Python（opt-in Rust delegate） | `DELTA_RUST_AUTHORITY=idempotency` |
+| Ledger | Python | Python（opt-in Rust delegate） | `DELTA_RUST_AUTHORITY=ledger` |
+| Task identity | Python | Python（opt-in Rust delegate） | `DELTA_RUST_AUTHORITY=task_identity` |
+| Run state | Python | Python（`run_status()` 从 ledger 派生） | — |
+| Storage transaction | Python | Python（`CoreTransaction` 协调锁序） | — |
+
+### 统一进程入口（P1-E）
+
+`delta_core` Rust 二进制取代 per-write subprocess 模式：
+
+- 一个常驻进程处理多个 domain operation（`ledger.append` / `idem.record_planned` / `task.save` 等）
+- Python 端通过 `DeltaCoreClient` 持有持久连接
+- 连接缓存复用（同一 DB 的多次请求共享 `Connection`）
+- 现有 per-operation CLI binary（`write_idemlog` / `write_ledger` / `write_tasks`）保留为迁移诊断工具
+
+### CI Gates（P1-G）
+
+1. **Authority Regression Guard** — `scripts/check_rust_authority_migration.py`（per-domain 强制）
+2. **Cross-language Contract Tests** — `tests/test_migration_db.py`（Python 写 → Rust 读 + Rust 写 → Python 读）
+3. **Smoke Gate** — `scripts/check_rust_core_smoke.py`（ping + ledger hash chain + idem full cycle + task save/run/delete）
+4. **CI Job** — `rust-core-smoke` 在 `ci.yml` 中，Rust 源码变更时触发
+
+### 不变量（R1 期间保持）
+
+- 行为测试基线不漂移：62 个新测试全部通过
+- Python 读取者继续工作：所有 `TaskStore.list` / `IdempotencyLog.committed_for_run` 等从同一 SQLite DB 读取
+- Ledger 链不变：Python ↔ Rust `hash` / `prev_hash` 100% 一致
+- 幂等性不变：`operation_id` 派生规则 100% 一致
+
+## 结果
+
+- R1 State Foundation 5 个领域 + 统一进程入口全部就位
+- 灰度开关默认关闭（`DELTA_RUST_AUTHORITY` 未设置时行为等同 v0.3.2）
+- CI gate 覆盖 authority regression + cross-language contract + smoke
+- 下一步：R2 Trusted Execution（Artifact / Validation / Checkpoint / Policy / Approval）
+
+## 明确不做
+
+- 不在 R1 内删除 Python 写入路径（灰度开关默认关闭，Python 仍是默认权威）
+- 不引入 Capability Worker 主体
+- 不引入 JSON-RPC / IPC 框架
+- 不重命名 Python 模块
+- 不在 R1 内切换默认权威（需 R2 前的用户验证）

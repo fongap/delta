@@ -37,11 +37,13 @@ P1（短期·可靠）/P2（中期·实用）/P3（长期·智能）的第一刀
 详见 `docs/architecture/adr/ADR-008-p1p2p3-baseline.md`。
 
 
-## [Unreleased]
+## [Unreleased] — v0.4.0 development line
 
-### Rust Core R1 rollout（v0.4.0 候选）
+> **版本边界**：`v0.3.2`（2026-09-05，tag `v0.3.2` @ commit `2ecf25d`）是 Python Runtime Hardening 的稳定基线。`main` 分支自此进入 `0.4.0-dev` 预发布线，Rust Core R1 全部归属于 `v0.4.0`。二者不混入同一正式发布产物。
 
-v0.3.2 之后开启 Rust Control Plane 迁移（ADR-009）。本批把 5 个 R1 候选领域中 Idempotency 一路推进到阶段 C（首个真实生产调用方迁移）。所有变更都对应一个独立 PR + ADR。
+### Rust Core R1 rollout（v0.4.0）
+
+v0.3.2 之后开启 Rust Control Plane 迁移（ADR-009）。R1 State Foundation 全部 13 个 PR 已完成（ADR-017）。
 
 | PR | 主题 | 关键交付 |
 |---|---|---|
@@ -53,6 +55,18 @@ v0.3.2 之后开启 Rust Control Plane 迁移（ADR-009）。本批把 5 个 R1 
 | #108 | **IdempotencyWriter 写路径 + ADR-013** | Rust `IdempotencyWriter` + `write_idemlog` binary + 5 跨语言测试。Rust 写工具就位，不切换权威。 |
 | #109 | **IdempotencyLogWithDelegate opt-in wrapper + ADR-014** | `core/idemlog_delegate.py` 提供 opt-in wrapper + `maybe_wrap` 工厂。env var 启用时委托 Rust；否则保持 Python 行为。 |
 | #110 | **SessionManager 迁移到 delegate** | `services/server/manager.py:SessionManager.idem_log` 改用 `maybe_wrap`。首个真实生产路径；默认行为不变。 |
+| P0-A | **版本边界** | `v0.3.2` ↔ `v0.4.0-dev` 边界明确；11 个版本源 bump。 |
+| P0-B | **SideEffect ↔ Ledger contract** | 4 个集成测试；修复 `_execute_sync` 未传 `ledger=` 的契约缺口。 |
+| P0-C | **Per-domain authority selector** | `DELTA_RUST_AUTHORITY` 从全局布尔改为逗号分隔 per-domain 列表。 |
+| P0-D | **Idempotency authority path** | `sweep_stale` delegate bypass 修复；`mark_uncertain` 产生 ledger 事件。 |
+| P1-A | **Ledger authority** | `RunEventLedger` 并发锁；`register_artifact` ledger wiring；结构+并发+崩溃测试。 |
+| P1-B | **Task identity authority** | 结构守护测试；所有生产路径经 `maybe_wrap_taskstore`。 |
+| P1-C | **Run state authority** | `RunEventLedger.run_status(run_id)` 从 ledger 事件派生运行状态。 |
+| P1-D | **Storage transaction boundary** | `CoreStorage` / `CoreTransaction` 抽象；确定性锁序；协调提交点。 |
+| P1-E | **统一 Delta Core 进程入口** | `delta_core` Rust 二进制（stdin/stdout JSON line protocol）+ `DeltaCoreClient` Python 客户端。 |
+| P1-F | **Package Delta Core** | 便携版构建脚本集成 `delta_core.exe`；多位置 binary lookup。 |
+| P1-G | **CI gates** | `rust-core-smoke` CI job + `check_rust_core_smoke.py` + 迁移数据库测试。 |
+| Docs | **ADR-017 + Authority Matrix** | R1 完成记录；Authority Matrix 更新。 |
 
 **契约冻结**：本批之后 `core/idemlog.py` / `core/recovery.py` / `core/artifact.py` / `core/validation.py` / `services/server/{manager.py, app.py, manager_*.py}` 的对外接口属于"Delta Core 公共契约"，变更必须经 ADR。详见 `docs/architecture/runtime-public-contract.md`。
 
@@ -60,20 +74,23 @@ v0.3.2 之后开启 Rust Control Plane 迁移（ADR-009）。本批把 5 个 R1 
 
 | 领域 | 当前权威 | 状态 |
 |---|---|---|
-| Idempotency | Python（opt-in Rust delegate via env var） | R1 阶段 C 完成 |
-| Ledger | Python | R0 完成，shadow-read + verify CLI 落地 |
-| Run state | Python | R0 完成 |
-| Task identity | Python | R0 完成（inspect binary 落地） |
-| Storage transaction boundary | Python | 待 R1 末段 |
+| Idempotency | Python（opt-in Rust delegate via env var） | R1 完成 |
+| Ledger | Python（opt-in Rust delegate via env var） | R1 完成 |
+| Task identity | Python（opt-in Rust delegate via env var） | R1 完成 |
+| Run state | Python（`run_status()` 从 ledger 派生） | R1 完成 |
+| Storage transaction boundary | Python（`CoreTransaction` 协调锁序） | R1 完成 |
+
+**统一进程入口**：`delta_core` Rust 二进制（stdin/stdout JSON line protocol）取代 per-write subprocess。`DeltaCoreClient` Python 客户端持有持久连接。
+
+**CI gates**：`rust-core-smoke` CI job + `check_rust_core_smoke.py` + 迁移数据库测试。
 
 **未做**：
 
-- 第二个 Idempotency 调用方（`core/engine.py`）迁移
-- R1 Ledger / Run state / Task identity authority switch
+- 切换默认权威（灰度开关默认关闭，需 R2 前用户验证）
 - R2-R5（Artifact / Validation / Checkpoint / Policy / Approval / Tool lifecycle / Provider 等）
 - Capability Worker 主体 / JSON-RPC / IPC
 
-下一阶段：把 Idempotency 切到真正权威（删除 Python 写入 path），然后推进 Ledger / Task identity 领域。
+下一阶段：R2 Trusted Execution。
 
 
 ## [0.3.2] - 2026-09-05
