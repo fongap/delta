@@ -1,0 +1,74 @@
+name: Dependabot uv.lock sync
+
+# When Dependabot opens a pip PR it bumps pyproject.toml but cannot
+# update uv.lock (Dependabot's built-in uv support targets v0.11,
+# while CI uses v0.12.3 with --locked). This workflow regenerates
+# uv.lock on the PR branch so CI's `uv sync --locked` succeeds.
+#
+# The workflow uses pull_request_target so it runs with the base
+# branch's token and can push to the Dependabot-owned PR branch.
+
+on:
+  pull_request_target:
+    types:
+      - opened
+      - reopened
+      - synchronize
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync-uv-lock:
+    name: Sync uv.lock
+    if: >-
+      github.repository == 'fongap/delta' &&
+      github.event.pull_request.user.login == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Fetch Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3
+        with:
+          github-token: ${{ github.token }}
+
+      - name: Skip non-pip PRs
+        if: steps.metadata.outputs.package-ecosystem != 'pip'
+        run: |
+          echo "::notice::Not a pip PR (ecosystem: ${{ steps.metadata.outputs.package-ecosystem }}); uv.lock sync skipped."
+          exit 0
+
+      - name: Check out PR branch
+        if: steps.metadata.outputs.package-ecosystem == 'pip'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up uv
+        if: steps.metadata.outputs.package-ecosystem == 'pip'
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: "0.12.3"
+
+      - name: Run uv lock
+        if: steps.metadata.outputs.package-ecosystem == 'pip'
+        run: uv lock
+
+      - name: Commit updated uv.lock
+        if: steps.metadata.outputs.package-ecosystem == 'pip'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add uv.lock
+          if git diff --cached --quiet; then
+            echo "uv.lock already in sync; nothing to commit."
+            exit 0
+          fi
+          git commit -m "chore(deps): sync uv.lock for Dependabot pip update"
+          git push
