@@ -103,7 +103,7 @@ class DeltaCoreClient:
                 )
         self._binary_path = binary_path
         self._proc: subprocess.Popen | None = None
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
 
     @property
     def binary_path(self) -> Path:
@@ -126,17 +126,33 @@ class DeltaCoreClient:
         )
 
     def close(self) -> None:
-        """Close the subprocess. Subsequent commands will restart it."""
+        """Close the subprocess. Subsequent commands will restart it.
+
+        Safe to call multiple times and safe against an already-dead
+        process. Kill + reap on timeout so no zombie is left behind.
+        """
         with self._lock:
-            if self._proc is not None:
+            proc = self._proc
+            if proc is None:
+                return
+            try:
+                if proc.stdin is not None:
+                    try:
+                        proc.stdin.close()
+                    except Exception:
+                        pass
                 try:
-                    self._proc.stdin.close()
+                    proc.wait(timeout=2)
                 except Exception:
-                    pass
-                try:
-                    self._proc.wait(timeout=2)
-                except Exception:
-                    self._proc.kill()
+                    try:
+                        proc.kill()
+                    except Exception:
+                        pass
+                    try:
+                        proc.wait(timeout=2)
+                    except Exception:
+                        pass
+            finally:
                 self._proc = None
 
     def command(self, payload: dict[str, Any]) -> Any:
@@ -147,19 +163,20 @@ class DeltaCoreClient:
         """
         with self._lock:
             self._ensure_started()
-            assert self._proc is not None
-            assert self._proc.stdin is not None
-            assert self._proc.stdout is not None
+            proc = self._proc
+            if proc is None or proc.stdin is None or proc.stdout is None:
+                self.close()
+                raise DeltaCoreError("delta_core process pipes unavailable")
             line = json.dumps(payload)
             try:
-                self._proc.stdin.write(line + "\n")
-                self._proc.stdin.flush()
-            except (BrokenPipeError, OSError) as exc:
-                self._proc = None
+                proc.stdin.write(line + "\n")
+                proc.stdin.flush()
+            except (BrokenPipeError, OSError, ValueError) as exc:
+                self.close()
                 raise DeltaCoreError(f"delta_core stdin write failed: {exc}") from exc
-            response_line = self._proc.stdout.readline()
+            response_line = proc.stdout.readline()
             if not response_line:
-                self._proc = None
+                self.close()
                 raise DeltaCoreError("delta_core closed stdout (crash?)")
             try:
                 response = json.loads(response_line)

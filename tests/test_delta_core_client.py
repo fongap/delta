@@ -14,6 +14,7 @@ Tests the :class:`DeltaCoreClient` that wraps the long-running
 
 from __future__ import annotations
 
+import subprocess
 import sys
 from pathlib import Path
 
@@ -168,6 +169,66 @@ def test_close_is_idempotent(client):
     """Closing an unstarted client (or twice) must not error."""
     client.close()
     client.close()
+
+
+def test_close_allows_restart(client, db_path):
+    """After close(), command() must restart the subprocess."""
+    client.command({"cmd": "ping"})
+    client.close()
+    result = client.command({"cmd": "ping"})
+    assert result == {"pong": True}
+
+
+def test_close_twice_is_safe(client):
+    """Double close must not raise or leave the lock held."""
+    client.close()
+    client.close()
+
+
+def test_close_after_subprocess_crash_restarts(client, db_path):
+    """If subprocess dies externally, close() cleans up and command() restarts."""
+    client.command({"cmd": "ping"})
+    proc = client._proc
+    assert proc is not None
+    proc.kill()
+    proc.wait(timeout=2)
+    # close() should be safe and clear the dead proc
+    client.close()
+    # command() should restart a fresh subprocess
+    result = client.command({"cmd": "ping"})
+    assert result == {"pong": True}
+
+
+def test_close_kills_and_reaps_on_timeout(client, monkeypatch):
+    """If wait() times out, close() kills and reaps; no zombie left."""
+    client.command({"cmd": "ping"})
+
+    def slow_wait(timeout=2):
+        import time
+        time.sleep(0.01)
+        if timeout < 5:
+            raise subprocess.TimeoutExpired(cmd="", timeout=timeout)
+        return 0
+
+    monkeypatch.setattr(client._proc, "wait", slow_wait)
+    client.close()
+    assert client._proc is None
+
+
+def test_close_after_stdin_write_failure_restarts(client, db_path):
+    """If stdin write fails (BrokenPipe), close() cleans up and restarts."""
+    client.command({"cmd": "ping"})
+    proc = client._proc
+    assert proc is not None
+    # Simulate broken pipe by closing stdin from other side
+    proc.stdin.close()
+    with pytest.raises(DeltaCoreError, match="stdin write failed"):
+        client.command({"cmd": "ping"})
+    # Dead proc should be cleaned
+    assert client._proc is None
+    # New command should work
+    result = client.command({"cmd": "ping"})
+    assert result == {"pong": True}
 
 
 def test_idem_commit_full_cycle(client, tmp_path):
