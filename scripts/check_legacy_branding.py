@@ -99,6 +99,12 @@ FORBIDDEN_PATTERNS = [
     re.compile(r"core\.agents\.cowork\b", re.IGNORECASE),
     re.compile(r"COWORK_CAPABILITIES|COWORK_INSTRUCTIONS|COWORK_TOOLS"),
     re.compile(r"cowork_agent|cowork_tool_factory"),
+    # Identifier-aware: catches "Cowork" / "cowork" embedded in larger
+    # identifiers that the word-boundary pattern misses (CamelCase /
+    # snake_case with cowork as a component, e.g. startCoworkSession,
+    # stopCoworkRun, my_cowork_helper). The leading \w ensures standalone
+    # `cowork` is still caught by the word-boundary pattern above.
+    re.compile(r"\w[Cc]owork"),
 ]
 
 _SKIP_PARTS = {

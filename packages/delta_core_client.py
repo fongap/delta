@@ -42,6 +42,13 @@ CRATE_DIR = REPO_ROOT / "core" / "runtime-native"
 # argument.
 DEFAULT_COMMAND_TIMEOUT_SECONDS: float = 30.0
 
+# Delta Core wire-protocol version. Must match the
+# ``PROTOCOL_VERSION`` constant in
+# ``core/runtime-native/src/bin/delta_core.rs``. The Python client
+# sends this in a ``hello`` command immediately after subprocess
+# startup; a mismatch raises :class:`DeltaCoreError` (fail-closed).
+PROTOCOL_VERSION: int = 1
+
 
 def _find_delta_core_binary() -> Path | None:
     """Locate the delta_core binary in the standard search order.
@@ -219,6 +226,47 @@ class DeltaCoreClient:
         )
         self._stderr_stop.clear()
         self._stderr_thread = self._stderr_drainer(self._proc)
+        self._handshake()
+
+    def _handshake(self) -> None:
+        """Send a ``hello`` command and verify the protocol version.
+
+        Called immediately after subprocess startup. If the server
+        reports a different protocol version, the subprocess is
+        closed and :class:`DeltaCoreError` is raised (fail-closed).
+        This prevents the Python runtime from silently talking to a
+        stale or upgraded binary.
+        """
+        if self._proc is None or self._proc.stdin is None or self._proc.stdout is None:
+            raise DeltaCoreError("delta_core subprocess not started")
+        cmd = json.dumps({"cmd": "hello", "protocol_version": PROTOCOL_VERSION})
+        try:
+            self._proc.stdin.write(cmd + "\n")
+            self._proc.stdin.flush()
+        except (BrokenPipeError, OSError) as e:
+            self._proc = None
+            raise DeltaCoreError(f"delta_core handshake write failed: {e}") from e
+        line = self._proc.stdout.readline()
+        if not line:
+            self._proc = None
+            raise DeltaCoreError("delta_core handshake: empty response (subprocess died?)")
+        try:
+            resp = json.loads(line)
+        except json.JSONDecodeError as e:
+            self.close()
+            raise DeltaCoreError(f"delta_core handshake: non-JSON response: {line!r}") from e
+        if not resp.get("ok"):
+            self.close()
+            raise DeltaCoreError(
+                f"delta_core handshake rejected: {resp.get('error', 'unknown error')}"
+            )
+        server_version = (resp.get("result") or {}).get("protocol_version")
+        if server_version != PROTOCOL_VERSION:
+            self.close()
+            raise DeltaCoreError(
+                f"delta_core protocol version mismatch: "
+                f"client={PROTOCOL_VERSION}, server={server_version}"
+            )
 
     def close(self) -> None:
         """Close the subprocess. Subsequent commands will restart it.

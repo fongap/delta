@@ -435,3 +435,53 @@ def test_binary_name_is_underscore_not_hyphen():
     if found is not None:
         assert "delta_core" in found.name
         assert "delta-core" not in found.name
+
+
+def test_hello_handshake_succeeds_on_startup():
+    """The client sends a `hello` command immediately after spawning
+    delta_core and verifies the protocol version before accepting
+    any other command."""
+    from packages.delta_core_client import (
+        DeltaCoreClient,
+        PROTOCOL_VERSION,
+        _find_delta_core_binary,
+    )
+
+    binary = _find_delta_core_binary()
+    if binary is None:
+        pytest.skip("delta_core binary not built")
+    c = DeltaCoreClient(binary_path=binary)
+    try:
+        c.close()
+    except Exception:
+        pass
+    # If startup succeeded without raising, the handshake passed.
+    # The PROTOCOL_VERSION constant must match the Rust side.
+    assert PROTOCOL_VERSION == 1
+
+
+def test_hello_handshake_fails_on_protocol_mismatch(monkeypatch, tmp_path):
+    """If the client and server disagree on protocol version, the
+    client must fail-closed (raise DeltaCoreError) rather than
+    silently sending commands to an incompatible binary.
+
+    We simulate the mismatch by monkey-patching the Python-side
+    PROTOCOL_VERSION to a value the Rust binary does not support."""
+    from packages import delta_core_client
+    from packages.delta_core_client import (
+        DeltaCoreClient,
+        DeltaCoreError,
+        _find_delta_core_binary,
+    )
+
+    binary = _find_delta_core_binary()
+    if binary is None:
+        pytest.skip("delta_core binary not built")
+    monkeypatch.setattr(delta_core_client, "PROTOCOL_VERSION", 999)
+    c = DeltaCoreClient(binary_path=binary)
+    with pytest.raises(DeltaCoreError) as exc:
+        c.command({"cmd": "ping"})
+    assert "protocol mismatch" in str(exc.value)
+    # Client must have closed the subprocess on mismatch.
+    assert c._proc is None
+

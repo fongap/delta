@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { scratchBaseIfReady, sendTask, startCoworkSession } from "./helpers";
+import { scratchBaseIfReady, sendTask, startDeltaSession } from "./helpers";
 
 // LIVE — Inbox / Unattended. With "Send to Inbox" on, a tool call that would normally block on an
 // inline approval card must instead route to the Inbox (so the agent runs unattended). We assert the
@@ -12,7 +12,7 @@ test("live: unattended routes an approval to the Inbox", async ({ page }) => {
   const token = `INBOX-${Date.now()}`;
   const name = `inbox-${Date.now()}.txt`;
 
-  await startCoworkSession(page);
+  await startDeltaSession(page);
 
   // Turn on "Send to Inbox" (unattended) via the composer's Inbox control, and wait until it's
   // persisted (the icon's title flips to the unattended wording only after setUnattended resolves).

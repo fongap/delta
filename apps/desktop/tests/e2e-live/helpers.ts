@@ -65,7 +65,7 @@ export function newestFile(scratchBase: string, name: string): string | null {
 }
 
 /** Open a fresh Delta session via the split button's persona menu. */
-export async function startCoworkSession(page: Page) {
+export async function startDeltaSession(page: Page) {
   await page.goto("/");
   await page.getByRole("button", { name: "Choose a persona" }).click();
   await page.getByText(/Produce a deliverable/).click();

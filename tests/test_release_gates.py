@@ -169,3 +169,37 @@ def test_release_mode_output_includes_version_and_tag(monkeypatch, tmp_path):
     content = gh_out.read_text()
     assert "version=" in content
     assert "tag=" in content
+
+
+def test_portable_zip_structure_if_present():
+    """If a portable ZIP has been built locally (releases/Delta-Windows-Portable.zip),
+    verify its structure: exactly one top-level Delta/ directory and the required
+    portable files. This is a lightweight local check that complements the full
+    E2E build + smoke verification in .github/workflows/release.yml (build-portable job).
+
+    Skips if no ZIP exists locally (the full E2E verification only runs in CI)."""
+    import zipfile
+    import pytest
+
+    zip_path = REPO / "releases" / "Delta-Windows-Portable.zip"
+    if not zip_path.exists():
+        pytest.skip(
+            f"No local portable ZIP at {zip_path}. "
+            "Full E2E portable build + smoke verification runs in "
+            ".github/workflows/release.yml (build-portable job)."
+        )
+    with zipfile.ZipFile(zip_path) as zf:
+        names = zf.namelist()
+        # Must contain exactly one top-level directory.
+        tops = {n.split("/")[0] for n in names if n}
+        assert len(tops) == 1, f"expected one top-level dir, got {tops}"
+        assert "Delta" in tops, f"top-level dir must be Delta/, got {tops}"
+        # Required files per packaging/portable/build_portable.ps1.
+        required = [
+            "Delta/",
+            "Delta/Delta.exe",
+            "Delta/App/",
+            "Delta/Data/",
+        ]
+        for req in required:
+            assert any(n.startswith(req) for n in names), f"missing required: {req}"

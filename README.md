@@ -12,7 +12,7 @@
 
 # Delta
 
-Delta 是一个面向个人工作的本地优先 AI 助手，基于 OpenWorker 演进，并作为独立项目维护自身的产品定位、架构与发布节奏。
+Delta 是一个面向个人工作的本地优先 AI 助手。模型由用户自主配置，不绑定任何特定服务商，所有数据保存在本地或用户控制的便携目录中。
 
 <p align="center">
   <img src="resources/screenshots/Delta-2026082401.webp" width="95%" alt="Delta">
@@ -87,11 +87,13 @@ releases/
 
 ## 项目状态
 
-> Delta 仍处于开发阶段，并非 OpenWorker 官方发行版。
+> Delta 仍处于开发阶段；API、数据格式与便携版布局在 R1 之前可能继续调整。
 
 - 开发说明：[`CONTRIBUTING.md`](https://github.com/fongap/delta/blob/main/CONTRIBUTING.md)
 - 仓库结构：[`repository-layout.md`](https://github.com/fongap/delta/blob/main/docs/architecture/repository-layout.md)
-- 上游项目：[`OpenWorker`](https://github.com/andrewyng/openworker)
-- 上游管理：[`UPSTREAM.md`](https://github.com/fongap/delta/blob/main/UPSTREAM.md)
 - 变更记录：[`CHANGELOG.md`](https://github.com/fongap/delta/blob/main/CHANGELOG.md)
 - 开源许可：[`MIT License`](https://github.com/fongap/delta/blob/main/LICENSE)
+
+## 来源与归属
+
+Delta 起源于 [OpenWorker](https://github.com/andrewyng/openworker) 项目（MIT 许可证），并作为独立项目维护自身的产品定位、架构与发布节奏。OpenWorker 的历史贡献通过 MIT 许可证保留；Delta 与 OpenWorker 上游不再保持自动镜像关系。详见 [`UPSTREAM.md`](https://github.com/fongap/delta/blob/main/UPSTREAM.md)。
