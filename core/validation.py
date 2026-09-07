@@ -154,6 +154,20 @@ def run_validation(
             norm.append(a)
         else:
             norm.append(a.to_dict())
+
+    from packages.storage_authority import is_rust_authority
+
+    if is_rust_authority("validation"):
+        from core.validation_delegate import run_validation_delegated
+
+        return ValidationResult.from_dict(
+            run_validation_delegated(
+                norm,
+                criteria.to_dict(),
+                workspace=workspace,
+                valid_citation_count=valid_citation_count,
+            )
+        )
     by_path = {a["path"]: a for a in norm}
 
     checks: list[ValidationCheck] = []

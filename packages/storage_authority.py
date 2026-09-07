@@ -78,6 +78,7 @@ RUST_WRITE_DOMAINS: Final[frozenset[str]] = frozenset({
     "task_identity",    # tasks.db
     "artifact",         # run_events.db (artifact.registered + artifact.completed events)
     "source_citation",  # typed citation validity evaluation via delta_core
+    "validation",       # deterministic completion gate via delta_core
 })
 
 #: Rust shadow-reader domains (R2, ADR-019). These have Rust *readers*
@@ -91,7 +92,6 @@ RUST_WRITE_DOMAINS: Final[frozenset[str]] = frozenset({
 # (artifact.registered / artifact.completed events). The reader is
 # still useful for cross-check but the write path takes precedence.
 RUST_READ_DOMAINS: Final[frozenset[str]] = frozenset({
-    "validation",       # core/validation.py — deterministic rule engine
     "checkpoint",       # core/recovery.py — JSON snapshot schema
 })
 

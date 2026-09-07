@@ -25,14 +25,13 @@
 //! (WS3: Validation) and ``docs/architecture/adr/ADR-019-r2-pre-plumbing.md``.
 
 use std::collections::HashMap;
-use std::io::{BufRead, BufReader};
 use std::path::Path;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// One check in the validation verdict. Mirrors Python `ValidationCheck.to_dict()`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ValidationCheck {
     pub name: String,
     pub ok: bool,
@@ -40,7 +39,7 @@ pub struct ValidationCheck {
 }
 
 /// Aggregated verdict. Mirrors Python `ValidationResult.to_dict()`.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct ValidationResult {
     pub ok: bool,
     pub checks: Vec<ValidationCheck>,
@@ -239,8 +238,8 @@ pub fn run_validation(
             {
                 continue;
             }
-            let text = match std::fs::read_to_string(ws.join(path)) {
-                Ok(t) => t,
+            let text = match std::fs::read(ws.join(path)) {
+                Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
                 Err(e) => {
                     checks.push(ValidationCheck {
                         name: format!("read:{path}"),
@@ -385,25 +384,20 @@ pub fn run_validation(
     })
 }
 
-/// Read the first non-empty line of a file and split by `,`. This is
-/// the minimum needed for the CSV header check; quoted fields with
-/// embedded commas are NOT supported (matches the limitations in
-/// ``core/validation.py``'s use of ``csv.reader`` with default dialect
-/// on simple CSVs).
+/// Read the first CSV record using RFC-compatible quoting. This mirrors
+/// Python's ``csv.reader`` path, including quoted headers with commas.
 fn read_csv_first_row(path: &Path) -> std::io::Result<Option<Vec<String>>> {
-    let f = std::fs::File::open(path)?;
-    let mut buf = BufReader::new(f);
-    let mut first_line = String::new();
-    buf.read_line(&mut first_line)?;
-    if first_line.is_empty() {
-        return Ok(None);
+    let bytes = std::fs::read(path)?;
+    let mut reader = csv::ReaderBuilder::new()
+        .has_headers(false)
+        .from_reader(bytes.as_slice());
+    match reader.records().next() {
+        Some(record) => record
+            .map(|row| row.iter().map(String::from).collect::<Vec<_>>())
+            .map(Some)
+            .map_err(std::io::Error::other),
+        None => Ok(None),
     }
-    let parsed: Vec<String> = first_line
-        .trim_end_matches(['\r', '\n'])
-        .split(',')
-        .map(String::from)
-        .collect();
-    Ok(Some(parsed))
 }
 
 #[cfg(test)]
