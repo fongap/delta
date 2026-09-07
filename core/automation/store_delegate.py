@@ -1,71 +1,46 @@
 """TaskStore delegate to Rust Core when is_rust_authority is active.
 
-This module is the R1 Task identity authority switch (ADR-016).
-When ``DELTA_RUST_AUTHORITY=1`` is set and the binary is built,
-write calls (``save``, ``delete``, ``add_run``) on
-:class:`TaskStoreWithDelegate` are forwarded to the Rust
-``write_tasks`` binary instead of writing through the Python
-SQLite connection. The Python code path is otherwise unchanged.
+This module is the R1.5 Task identity authority cutover (ADR-016).
+When ``DELTA_RUST_AUTHORITY=task_identity`` is set, write calls
+(``save``, ``delete``, ``add_run``) on
+:class:`TaskStoreWithDelegate` are forwarded to the unified
+``delta_core`` Rust process via :class:`DeltaCoreClient` instead of
+writing through the Python SQLite connection.
 
-The default factory :func:`maybe_wrap_taskstore` returns either a
-plain :class:`TaskStore` (when authority is not active) or a
-delegate wrapper (when authority is active).
+R1.5 cutover: the delegate now uses the persistent
+:class:`DeltaCoreClient` (NDJSON over stdin/stdout) instead of
+spawning a fresh ``write_tasks`` subprocess per command. The
+per-op CLI binary ``write_tasks`` is retained only as a diagnostic
+tool.
 
-Risk: this PR introduces a real authority switch. Rolling back is
-achieved by either (a) unsetting ``DELTA_RUST_AUTHORITY`` or (b)
-uninstalling the ``delta-runtime-native`` binary — both routes
-immediately restore Python-only writes. The Python read path is
-unaffected; both authorities write to the same SQLite tables.
+Fail-closed (P0-3): when ``DELTA_RUST_AUTHORITY=task_identity`` is
+declared but the ``delta_core`` binary is unavailable, the delegate
+raises :class:`DeltaCoreError` — it never silently falls back to
+the Python write path.
 """
 
 from __future__ import annotations
 
 import json
-import subprocess
-import sys
-from pathlib import Path
 from typing import Any
 
 from core.automation.store import TaskStore
 
+from packages.delta_core_client import DeltaCoreClient, DeltaCoreError, default_client
 from packages.storage_authority import is_rust_authority
-
-REPO_ROOT = Path(__file__).resolve().parent.parent.parent
-CRATE_DIR = REPO_ROOT / "core" / "runtime-native"
-
-
-def _binary_path() -> Path | None:
-    target = "write_tasks.exe" if sys.platform == "win32" else "write_tasks"
-    path = CRATE_DIR / "target" / "debug" / target
-    return path if path.exists() else None
 
 
 def _is_delegate_active() -> bool:
-    """True iff Rust authority is on AND the binary is available."""
+    """True iff Rust authority is on AND the delta_core binary is available."""
     if not is_rust_authority("task_identity"):
         return False
-    return _binary_path() is not None
+    return DeltaCoreClient._find_binary() is not None
 
 
-def _invoke(action: str, db_path: str, **kw: Any) -> None:
-    binary = _binary_path()
-    if binary is None:
-        raise RuntimeError("write_tasks binary not built")
-    args = [str(binary), "--db", db_path, "--action", action]
-    for key, value in kw.items():
-        if value is None:
-            continue
-        flag = "--" + key.replace("_", "-")
-        if isinstance(value, bool):
-            value = "1" if value else "0"
-        elif isinstance(value, (dict, list)):
-            value = json.dumps(value)
-        args += [flag, str(value)]
-    result = subprocess.run(args, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"write_tasks {action} failed: rc={result.returncode}, stderr={result.stderr}"
-        )
+def _invoke_core(cmd: str, db_path: str, **kw: Any) -> Any:
+    """Send one command to delta_core via the shared DeltaCoreClient."""
+    client = default_client()
+    return client.command({"cmd": cmd, "db": db_path, **kw})
 
 
 class TaskStoreWithDelegate:
@@ -93,8 +68,8 @@ class TaskStoreWithDelegate:
 
     def save(self, task: Any) -> Any:
         if self._delegate:
-            _invoke(
-                "save_task",
+            _invoke_core(
+                "task.save",
                 self._db_path,
                 task_id=task.id,
                 enabled=task.enabled,
@@ -106,14 +81,14 @@ class TaskStoreWithDelegate:
 
     def delete(self, task_id: str) -> bool:
         if self._delegate:
-            _invoke("delete_task", self._db_path, task_id=task_id)
+            _invoke_core("task.delete", self._db_path, task_id=task_id)
             return True
         return self._inner.delete(task_id)
 
     def add_run(self, run: Any) -> Any:
         if self._delegate:
-            _invoke(
-                "add_run",
+            _invoke_core(
+                "task.add_run",
                 self._db_path,
                 run_id=run.run_id,
                 task_id=run.task_id,
@@ -149,7 +124,20 @@ class TaskStoreWithDelegate:
 
 
 def maybe_wrap_taskstore(store: TaskStore) -> TaskStore | TaskStoreWithDelegate:
-    """Return a delegate wrapper iff Rust authority is active; else the original."""
-    if not _is_delegate_active():
+    """Return a delegate wrapper iff Rust authority is active; else the original.
+
+    Fail-closed (P0-3): when ``DELTA_RUST_AUTHORITY`` declares
+    ``task_identity`` as a Rust domain but the ``delta_core`` binary
+    is unavailable, this raises :class:`DeltaCoreError` rather than
+    silently falling back to the Python write path.
+    """
+    if not is_rust_authority("task_identity"):
         return store
+    if not _is_delegate_active():
+        raise DeltaCoreError(
+            "DELTA_RUST_AUTHORITY declares task_identity as a Rust domain "
+            "but delta_core binary is not available; refusing to fall "
+            "back to Python (fail-closed). Build delta_core or unset "
+            "DELTA_RUST_AUTHORITY."
+        )
     return TaskStoreWithDelegate(store)

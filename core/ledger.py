@@ -293,6 +293,38 @@ class RunEventLedger:
             return "validation_failed"
         return "unknown"
 
+    def derive_run_status(self, run_id: str, fallback: str | None = None) -> str:
+        """P0-4: Derive the authoritative run status from the ledger.
+
+        The ledger is the single source of truth for run lifecycle. This
+        method is the canonical entry point for production read paths
+        that previously trusted the denormalized ``TaskRun.status``
+        column. Callers MUST use this rather than reading
+        ``run.status`` directly when the truth matters (analyzer,
+        run-state checks, UI status badges, reference harness).
+
+        Coverage (R1.5 contract):
+
+        * ``running``  — ``run.started`` is the last event
+        * ``ok``       — ``run.completed`` is the last event
+        * ``error``    — ``run.failed`` is the last event
+        * ``interrupted`` — ``run.interrupted`` is the last event
+          (crash recovery, see :meth:`recover_stale`)
+        * ``validation_failed`` — ``validation.failed`` is the last
+          event with no prior ``run.completed``
+        * ``unknown``  — no events (the run was never started)
+        * ``resumed``  — ``run.resumed`` is the last event
+
+        The ``fallback`` is consulted only when the ledger returns
+        ``"unknown"`` (no events at all). This covers ``skipped``
+        runs that never wrote to the ledger, and legacy rows
+        predating the ledger migration.
+        """
+        status = self.run_status(run_id)
+        if status == "unknown" and fallback:
+            return fallback
+        return status
+
     def recover_stale(self) -> Iterable[dict[str, Any]]:
         """Cold-start sweep: close every open run with a synthetic interrupted event."""
         recovered = []

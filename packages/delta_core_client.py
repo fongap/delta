@@ -35,6 +35,13 @@ from typing import Any
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CRATE_DIR = REPO_ROOT / "core" / "runtime-native"
 
+# Default command timeout in seconds. The Rust process answers
+# most commands in microseconds; this is a watchdog for hangs /
+# deadlocks (e.g. lock contention on a SQLite connection). Callers
+# can override per-client via the ``command_timeout`` constructor
+# argument.
+DEFAULT_COMMAND_TIMEOUT_SECONDS: float = 30.0
+
 
 def _find_delta_core_binary() -> Path | None:
     """Locate the delta_core binary in the standard search order.
@@ -43,14 +50,19 @@ def _find_delta_core_binary() -> Path | None:
 
     1. ``DELTA_CORE_BINARY`` env var (explicit override).
     2. Same directory as the running Python executable — matches the
-       Windows Portable layout (``App/Delta/delta-core.exe`` next to
+       Windows Portable layout (``App/Delta/delta_core.exe`` next to
        ``App/Delta/Delta.exe``).
-    3. The Tauri resource path (``sys._MEIPASS`` when frozen).
-    4. The repo's dev build (``core/runtime-native/target/...``).
+    3. Parent directories of the Python executable — covers the
+       PyInstaller onedir sidecar layout where ``sys.executable`` is
+       ``App/Delta/sidecar/delta-server/delta-server.exe`` and the
+       binary lives at ``App/Delta/delta_core.exe`` (up to 3 levels).
+    4. ``DELTA_PORTABLE_ROOT`` env var — set by the portable launcher;
+       binary is at ``App/Delta/delta_core.exe`` relative to root.
+    5. The Tauri resource path (``sys._MEIPASS`` when frozen).
+    6. The repo's dev build (``core/runtime-native/target/...``).
 
     Returns ``None`` if no candidate is found. The caller decides
-    whether to raise or to fall back to the per-operation CLI
-    binaries.
+    whether to raise (fail-closed) or to skip the delegate.
     """
     target = "delta_core.exe" if sys.platform == "win32" else "delta_core"
 
@@ -58,9 +70,21 @@ def _find_delta_core_binary() -> Path | None:
     if env and Path(env).exists():
         return Path(env)
 
-    py_dir = Path(sys.executable).resolve().parent / target
-    if py_dir.exists():
-        return py_dir
+    py_exe = Path(sys.executable).resolve()
+    py_dir = py_exe.parent
+    if (py_dir / target).exists():
+        return py_dir / target
+
+    for level in range(1, 4):
+        ancestor = py_exe.parents[level] if len(py_exe.parents) > level else None
+        if ancestor and (ancestor / target).exists():
+            return ancestor / target
+
+    portable_root = os.environ.get("DELTA_PORTABLE_ROOT")
+    if portable_root:
+        candidate = Path(portable_root) / "App" / "Delta" / target
+        if candidate.exists():
+            return candidate
 
     meipass = getattr(sys, "_MEIPASS", None)
     if meipass:
@@ -89,11 +113,40 @@ class DeltaCoreClient:
 
     The ``core/idemlog_delegate.py``, ``core/ledger_delegate.py``,
     and ``core/automation/store_delegate.py`` modules use this client
-    when the unified process is available; they fall back to the
-    per-operation CLI binaries otherwise.
+    when the unified process is available. When authority is declared
+    but the binary is missing, the delegates raise
+    :class:`DeltaCoreError` (fail-closed) rather than falling back.
+
+    P1-1 lifecycle guarantees:
+
+    * **Startup failure** — a missing or non-executable binary
+      raises :class:`DeltaCoreError` on first use.
+    * **Subprocess crash** — if the subprocess dies (e.g. SIGSEGV,
+      panic) the next ``command()`` call restarts it.
+    * **Broken pipe** — ``BrokenPipeError`` on ``stdin.write`` is
+      caught; the client restarts on the next call.
+    * **Non-JSON response** — ``json.JSONDecodeError`` on the
+      response line is caught and re-raised as
+      :class:`DeltaCoreError`.
+    * **Command timeout** — ``stdout.readline()`` runs under a
+      timeout (``command_timeout`` constructor arg, default
+      :data:`DEFAULT_COMMAND_TIMEOUT_SECONDS`). A timeout closes the
+      client and raises :class:`DeltaCoreError`.
+    * **Clean shutdown** — :meth:`close` closes stdin, waits for the
+      subprocess to exit, kills + reaps on timeout. Idempotent.
+    * **Restart policy** — after any failure, the next ``command()``
+      spawns a fresh subprocess automatically.
+    * **stderr draining** — a background thread reads stderr
+      continuously so the Rust process's stderr pipe can never
+      fill up and deadlock the subprocess. The thread exits
+      cleanly on :meth:`close`.
     """
 
-    def __init__(self, binary_path: Path | None = None) -> None:
+    def __init__(
+        self,
+        binary_path: Path | None = None,
+        command_timeout: float = DEFAULT_COMMAND_TIMEOUT_SECONDS,
+    ) -> None:
         if binary_path is None:
             binary_path = _find_delta_core_binary()
             if binary_path is None:
@@ -102,12 +155,52 @@ class DeltaCoreClient:
                     "set DELTA_CORE_BINARY or build core/runtime-native"
                 )
         self._binary_path = binary_path
+        self._command_timeout = command_timeout
         self._proc: subprocess.Popen | None = None
+        self._stderr_thread: threading.Thread | None = None
+        self._stderr_stop = threading.Event()
         self._lock = threading.RLock()
+
+    @staticmethod
+    def _find_binary() -> Path | None:
+        """Module-level binary lookup — used by delegates to check availability."""
+        return _find_delta_core_binary()
 
     @property
     def binary_path(self) -> Path:
         return self._binary_path
+
+    def _stderr_drainer(self, proc: subprocess.Popen) -> threading.Thread:
+        """Start a background thread that drains ``proc.stderr``.
+
+        The Rust process is contractually silent on stderr under
+        normal operation. This drainer exists as a deadlock guard:
+        if the subprocess ever writes to stderr and the parent
+        never reads, the OS pipe buffer fills (typically 4-64 KB)
+        and the subprocess blocks on its next ``write``. The
+        drainer reads line by line until EOF or stop signal.
+
+        Returns the thread for join-on-close.
+        """
+        stop = self._stderr_stop
+
+        def drain():
+            try:
+                stream = proc.stderr
+                if stream is None:
+                    return
+                while not stop.is_set():
+                    line = stream.readline()
+                    if not line:
+                        return
+            except Exception:
+                return
+
+        thread = threading.Thread(
+            target=drain, name="delta-core-stderr-drain", daemon=True
+        )
+        thread.start()
+        return thread
 
     def _ensure_started(self) -> None:
         if self._proc is not None and self._proc.poll() is None:
@@ -124,16 +217,24 @@ class DeltaCoreClient:
             text=True,
             bufsize=1,
         )
+        self._stderr_stop.clear()
+        self._stderr_thread = self._stderr_drainer(self._proc)
 
     def close(self) -> None:
         """Close the subprocess. Subsequent commands will restart it.
 
         Safe to call multiple times and safe against an already-dead
         process. Kill + reap on timeout so no zombie is left behind.
+        The stderr drainer thread is signaled to stop and joined
+        with a short timeout.
         """
         with self._lock:
             proc = self._proc
+            thread = self._stderr_thread
+            self._proc = None
+            self._stderr_thread = None
             if proc is None:
+                self._stderr_stop.set()
                 return
             try:
                 if proc.stdin is not None:
@@ -153,13 +254,44 @@ class DeltaCoreClient:
                     except Exception:
                         pass
             finally:
-                self._proc = None
+                self._stderr_stop.set()
+                if thread is not None and thread.is_alive():
+                    thread.join(timeout=1.0)
+
+    def _readline_with_timeout(self, stream, timeout: float) -> str:
+        """Read one line from ``stream`` with a timeout.
+
+        Uses a background thread + ``join(timeout)`` so the
+        underlying ``readline()`` is always interruptible. Returns
+        the line on success, raises :class:`DeltaCoreError` on
+        timeout.
+        """
+        result: list[str] = []
+        error: list[BaseException] = []
+
+        def reader():
+            try:
+                result.append(stream.readline())
+            except BaseException as exc:
+                error.append(exc)
+
+        thread = threading.Thread(target=reader, daemon=True)
+        thread.start()
+        thread.join(timeout=timeout)
+        if thread.is_alive():
+            raise DeltaCoreError(
+                f"delta_core command timed out after {timeout}s"
+            )
+        if error:
+            raise DeltaCoreError(f"delta_core readline failed: {error[0]}")
+        return result[0] if result else ""
 
     def command(self, payload: dict[str, Any]) -> Any:
         """Send one command, return the ``result`` field of the response.
 
         Raises :class:`DeltaCoreError` if the subprocess returns
-        ``ok: false`` or dies before responding.
+        ``ok: false``, dies before responding, or exceeds the
+        configured command timeout.
         """
         with self._lock:
             self._ensure_started()
@@ -174,13 +306,20 @@ class DeltaCoreClient:
             except (BrokenPipeError, OSError, ValueError) as exc:
                 self.close()
                 raise DeltaCoreError(f"delta_core stdin write failed: {exc}") from exc
-            response_line = proc.stdout.readline()
+            try:
+                response_line = self._readline_with_timeout(
+                    proc.stdout, self._command_timeout
+                )
+            except DeltaCoreError:
+                self.close()
+                raise
             if not response_line:
                 self.close()
                 raise DeltaCoreError("delta_core closed stdout (crash?)")
             try:
                 response = json.loads(response_line)
             except json.JSONDecodeError as exc:
+                self.close()
                 raise DeltaCoreError(
                     f"delta_core returned non-JSON: {response_line!r}"
                 ) from exc

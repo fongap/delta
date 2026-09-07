@@ -222,11 +222,13 @@ New-Item -ItemType Directory -Force -Path $AppDir                          | Out
 Copy-Item -Force $AppExe (Join-Path $AppDir "$AppName.exe")
 Copy-Item -Recurse -Force $SideDst (Join-Path $AppDir "sidecar")
 
-# Delta Core Rust binary (R1 unified writer) — lives next to Delta.exe so the Python
-# runtime can resolve it via the standard "same-dir as app exe" lookup. The existing
+# Delta Core Rust binary (R1.5 unified writer) — lives next to Delta.exe so the Python
+# runtime can resolve it via the standard "same-dir as app exe" lookup (and the
+# parent-of-sidecar walk-up in _find_delta_core_binary). The name MUST be delta_core.exe
+# (underscore) to match the Cargo [[bin]] name and the DeltaCoreClient lookup. The existing
 # per-domain CLI binaries (write_idemlog.exe, write_ledger.exe, write_tasks.exe) are
 # kept inside sidecar/ for diagnostic / migration use only.
-Copy-Item -Force $DeltaCoreExe (Join-Path $AppDir "delta-core.exe")
+Copy-Item -Force $DeltaCoreExe (Join-Path $AppDir "delta_core.exe")
 
 # Optional first-run data seed (launcher copies App\DefaultData -> Data only on first run).
 $DefaultSeed = Join-Path $AppDir "DefaultData"

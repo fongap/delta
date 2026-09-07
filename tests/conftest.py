@@ -24,6 +24,22 @@ def _isolated_state_dir(tmp_path, monkeypatch):
     monkeypatch.delenv("DELTA_API_TOKEN", raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _close_delta_core_client():
+    """Close the process-wide DeltaCoreClient after each test so the
+    next test gets a fresh subprocess (different DB paths, no stale
+    connection cache). The delegates use default_client() which lazily
+    creates a singleton; closing it between tests prevents the Rust
+    ConnCache from holding open handles to temp DB files."""
+    yield
+    try:
+        from packages.delta_core_client import close_default_client
+
+        close_default_client()
+    except Exception:
+        pass
+
+
 @pytest_asyncio.fixture
 async def fake_slack(monkeypatch):
     """A running FakeSlack control object; `SLACK_API_URL` is set to it for the test's duration."""

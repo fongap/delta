@@ -55,7 +55,7 @@
 | UI | TypeScript | TypeScript |
 | Tauri Host | Rust | Rust |
 
-> **R1 State Foundation 完成状态（ADR-017）**：Idempotency / Ledger / Task identity 三个领域的 Rust delegate 路径已就位，灰度开关 `DELTA_RUST_AUTHORITY` 默认关闭。Run state 通过 `RunEventLedger.run_status()` 从 ledger 事件派生。Storage transaction boundary 通过 `CoreTransaction` 提供协调锁序。统一 `delta_core` 进程入口取代 per-write subprocess。CI smoke gate 覆盖 authority regression + cross-language contract。
+> **R1 State Foundation 完成状态（ADR-017）**：Idempotency / Ledger / Task identity 三个领域的 Rust delegate 路径已就位，灰度开关 `DELTA_RUST_AUTHORITY` 默认关闭。三个 delegate 全部走统一 `delta_core` 进程（`DeltaCoreClient`），per-op CLI 仅作诊断工具。Run state 通过 `RunEventLedger.derive_run_status()` 从 ledger 事件派生（`TaskRun.status` 仅为非规范化缓存）。Storage transaction boundary 通过 `CoreTransaction` 提供协调锁序（非跨 DB 原子事务 — 真正的跨 DB 原子性留到 Rust Core 后续阶段）。Authority 声明后 binary 缺失走 fail-closed，禁止静默 fallback。CI smoke gate 覆盖 authority regression + cross-language contract + production call chain。
 
 每次迁移必须更新实际 Authority Matrix。
 
