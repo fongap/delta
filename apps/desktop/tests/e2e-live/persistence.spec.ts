@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { scratchBaseIfReady, selectMode, sendTask, startCoworkSession } from "./helpers";
+import { scratchBaseIfReady, selectMode, sendTask, startDeltaSession } from "./helpers";
 
 // LIVE #6 — persistence & resume. After a completed turn, reloading the page must not lose the work:
 // the session persists in the sidebar and reopens with its full transcript and its artifact. We
@@ -15,7 +15,7 @@ test("live: a session's transcript and artifact survive a page reload", async ({
   // reliable click target in the sidebar), and is the artifact name.
   const name = `note-${Date.now()}.txt`;
 
-  await startCoworkSession(page);
+  await startDeltaSession(page);
   await selectMode(page, "Full access");
   await sendTask(page, `Write a file named ${name} containing exactly: ${token}`);
 

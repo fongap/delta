@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { readFileSync } from "fs";
-import { newestFile, scratchBaseIfReady, sendTask, startCoworkSession } from "./helpers";
+import { newestFile, scratchBaseIfReady, sendTask, startDeltaSession } from "./helpers";
 
 // LIVE #1 — the approval gate. In the default "Ask for approval" mode a tool call must block on an
 // in-transcript approval card; approving it lets execution proceed. (fib.md skips this via Full
@@ -13,7 +13,7 @@ test("live: a write blocks on an approval card, then completes once approved", a
   // Unique filename per run so the "doesn't exist before approval" check can't see a prior run's file.
   const name = `hello-${Date.now()}.txt`;
 
-  await startCoworkSession(page);
+  await startDeltaSession(page);
   // Leave the default "Ask for approval" mode — the write should gate.
   await sendTask(page, `Create a file named ${name} containing exactly the text: hello world`);
 

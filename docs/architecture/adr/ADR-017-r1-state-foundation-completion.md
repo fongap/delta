@@ -94,7 +94,15 @@ R1 全部 13 个 PR 完成后再做一次"生产切权"收口（`Delta R1.5 — 
 | P1-1 DeltaCoreClient 生命周期 | ✅ command timeout + stderr 排水 |
 | P1-2 Portable 实机 smoke | ✅ 中文+空格路径测试 |
 
-**R1 状态**：`Operationally Complete`（生产主路径已切换到 Rust Core；灰度开关仍默认关闭，Python 仍是默认权威）。
+**R1 状态三态澄清**：
+
+| 维度 | 状态 | 说明 |
+|---|---|---|
+| R1 State Foundation 基础设施 | Complete | 5 个领域 delegate wrapper + 统一进程入口 + CI gate 全部就位 |
+| Rust Authority 能力 | Available（opt-in） | 灰度开关 `DELTA_RUST_AUTHORITY` 可逐域启用；默认关闭 |
+| Production Default Authority | Python（未切换） | `DELTA_RUST_AUTHORITY` 未设置时，所有写入走 Python 路径；生产主路径不变 |
+
+> 注意：`Operationally Complete` 仅表示 R1 迁移阶段的基础设施交付完成，**不代表** 生产默认权威已切换到 Rust Core。默认权威切换是独立决策，需在 R2 前基于用户验证数据单独裁定。
 
 ## 明确不做
 

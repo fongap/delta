@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { readFileSync } from "fs";
-import { newestFile, scratchBaseIfReady, selectMode, sendTask, startCoworkSession } from "./helpers";
+import { newestFile, scratchBaseIfReady, selectMode, sendTask, startDeltaSession } from "./helpers";
 
 // LIVE end-to-end smoke: drive the real app against the real backend + a real model, ask it to
 // produce a file in Full-access mode, and verify the artifact lands on disk with correct contents.
@@ -16,7 +16,7 @@ test("live: agent writes fib.md to its scratch workspace, verified on disk", asy
   const scratchBase = await scratchBaseIfReady();
   test.skip(!scratchBase, "live backend not ready — start delta-server and configure a model");
 
-  await startCoworkSession(page);
+  await startDeltaSession(page);
   await selectMode(page, "Full access"); // run the write without an approval gate
   await sendTask(page, PROMPT);
 

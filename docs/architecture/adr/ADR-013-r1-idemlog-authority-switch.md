@@ -1,9 +1,12 @@
 # ADR-013 — R1 Idempotency Authority Switch: 第一刀设计
 
-- 状态：Proposed
+- 状态：Superseded by ADR-017
 - 日期：2026-09-05
 - 范围：R1 Idempotency 域权威切换（Python → Rust）
-- 关联：ADR-009 / ADR-010 / ADR-011 / ADR-012 / `docs/governance/rust-core-migration.md` §5 / §6 / §7 / §11
+- 决策类型：迁移阶段设计（已被 ADR-017 的完成记录取代）
+- 关联：ADR-009 / ADR-010 / ADR-011 / ADR-012 / ADR-017（R1 State Foundation 完成）/ `docs/governance/rust-core-migration.md` §5 / §6 / §7 / §11
+
+> **Superseded 说明**：本 ADR 描述的三阶段渐进路径（A→B→C）已被 ADR-017 的实际实现取代。ADR-017 记录了最终落地的 per-domain authority selector + `DeltaCoreClient` 统一进程入口，不再使用 subprocess 委托模式。本文件保留作为历史设计参考。
 
 ## 背景
 

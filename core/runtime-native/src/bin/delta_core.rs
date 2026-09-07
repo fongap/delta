@@ -21,6 +21,17 @@
 //! {"ok": false, "error": "..."}  // failure
 //! ```
 //!
+//! Startup handshake: the Python client sends a ``hello`` command
+//! immediately after spawning the subprocess. The server replies
+//! with its protocol version; a mismatch raises an error and the
+//! subprocess is closed (fail-closed). This prevents the Python
+//! runtime from silently talking to a stale or upgraded binary.
+//!
+//! ```json
+//! {"cmd": "hello", "protocol_version": 1}
+//! {"ok": true, "result": {"protocol_version": 1, "server": "delta_core"}}
+//! ```
+//!
 //! Supported commands (R1 minimum):
 //!
 //! - `ledger.append` — append one event to ``run_events.db``.
@@ -51,6 +62,17 @@ use std::sync::Mutex;
 use delta_runtime_native::{IdempotencyWriter, LedgerWriter, TaskStoreWriter};
 use serde::Deserialize;
 use serde_json::Value;
+
+/// Delta Core wire-protocol version.
+///
+/// Bump this whenever the JSON command surface changes in a way
+/// that would break an older client (added/removed/renamed fields,
+/// changed semantics of existing fields, new required fields). The
+/// Python client sends its expected version in the ``hello`` command
+/// immediately after subprocess startup; a mismatch raises
+/// :class:`DeltaCoreError` (fail-closed) so we never silently talk to
+/// an incompatible binary.
+const PROTOCOL_VERSION: u32 = 1;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "cmd")]
@@ -126,6 +148,8 @@ enum Command {
     },
     #[serde(rename = "ping")]
     Ping {},
+    #[serde(rename = "hello")]
+    Hello { protocol_version: u32 },
 }
 
 struct ConnCache {
@@ -325,6 +349,18 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
             }
         }
         Command::Ping {} => Ok(serde_json::json!({"pong": true})),
+        Command::Hello { protocol_version } => {
+            if protocol_version != PROTOCOL_VERSION {
+                Err(format!(
+                    "protocol mismatch: client={protocol_version}, server={PROTOCOL_VERSION}"
+                ))
+            } else {
+                Ok(serde_json::json!({
+                    "protocol_version": PROTOCOL_VERSION,
+                    "server": "delta_core",
+                }))
+            }
+        }
     };
     match result {
         Ok(v) => serde_json::json!({"ok": true, "result": v}),

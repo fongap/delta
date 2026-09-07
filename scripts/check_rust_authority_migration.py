@@ -30,7 +30,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from packages.storage_authority import DOMAINS, is_rust_authority  # noqa: E402
+from packages.storage_authority import ALL_DOMAINS, RUST_WRITE_DOMAINS, is_rust_authority  # noqa: E402
 
 CORE = REPO / "core"
 SERVICES = REPO / "services"
@@ -99,7 +99,7 @@ def _scan_structural() -> list[tuple[Path, str]]:
         if not SQLITE_CONNECT.search(text):
             continue
         if not STORAGE_AUTHORITY_IMPORT.search(text):
-            for domain in DOMAINS:
+            for domain in RUST_WRITE_DOMAINS:
                 if _file_owns_domain(py, domain):
                     violations.append((py, domain))
                     break
@@ -158,7 +158,7 @@ def _scan_enforcement() -> list[tuple[Path, int, str, str]]:
 
 def main() -> int:
     if "--enforce-rust-authority" in sys.argv and not any(
-        is_rust_authority(d) for d in DOMAINS
+        is_rust_authority(d) for d in RUST_WRITE_DOMAINS
     ):
         print(
             "warning: --enforce-rust-authority requested but DELTA_RUST_AUTHORITY "

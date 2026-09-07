@@ -13,17 +13,10 @@ dependencies = [
     "textual==8.2.8",
     "fastapi==0.141.1",
     "uvicorn[standard]==0.52.4",
-    # Pinned to a specific commit. R1.6 evaluation: PyPI 0.1.14 (Nov 25 2025)
-    # predates both the rebrand and the OpenWorker platform split. The current
-    # pin (1b4bbf3, Jul 21 2026) is a pre-rebrand OpenWorker-platform snapshot
-    # of aisuite; the upstream has since archived that branch into
-    # andrewyng/openworker (PR #401, Aug 13 2026). Bumping to the post-archive
-    # upstream commit (531b5b8) is a real dependency change and is tracked as a
-    # follow-up — not part of R1.6 source-level cleanup, which only adjusted
-    # the descriptive comment to no longer call the pin an "OpenWorker import
-    # commit". aisuite's public surface (`aisuite.Client`, `aisuite.agents.tool`,
-    # `aisuite.utils.tools.Tools`) is the same at both commits; Delta uses only
-    # that surface.
+    # Pinned to a specific commit on andrewyng/aisuite (1b4bbf3). Delta uses
+    # only the public surface (aisuite.Client, aisuite.agents.tool,
+    # aisuite.utils.tools.Tools); bumping to a newer upstream commit is a
+    # real dependency change tracked separately.
     "aisuite @ git+https://github.com/andrewyng/aisuite.git@1b4bbf303ec21968230b1ec869a144d054e9b3c4",
     "docstring_parser==0.18.0",
     "pyyaml==6.0.3",  # persona manifest frontmatter (YAML)

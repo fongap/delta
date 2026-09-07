@@ -90,7 +90,15 @@ v0.3.2 之后开启 Rust Control Plane 迁移（ADR-009）。R1 State Foundation
 
 **R1.5 生产切权状态**：三个 delegate 全部走统一 `delta_core` 进程入口；per-op CLI 仅诊断。Authority 声明后 binary 缺失 fail-closed。Run status 单一事实源（`TaskRun.status` 仅为非规范化缓存）。Storage transaction 文档与现实一致。Production Authority CI 覆盖 SessionManager → delegate → DeltaCoreClient → delta_core → SQLite → Python read-back 全链路。
 
-**R1.5 状态**：`Operationally Complete`（见 ADR-017）。
+**R1.5 状态三态澄清**（见 ADR-017）：
+
+| 维度 | 状态 | 说明 |
+|---|---|---|
+| R1 State Foundation 基础设施 | Complete | 5 个领域 delegate wrapper + 统一进程入口 + CI gate 全部就位 |
+| Rust Authority 能力 | Available（opt-in） | 灰度开关 `DELTA_RUST_AUTHORITY` 可逐域启用；默认关闭 |
+| Production Default Authority | Python（未切换） | env var 未设置时所有写入走 Python 路径；生产主路径不变 |
+
+> `Operationally Complete` 仅表示 R1 迁移阶段的基础设施交付完成，**不代表**生产默认权威已切换到 Rust Core。默认权威切换需在 R2 前基于用户验证数据单独裁定。
 
 **统一进程入口**：`delta_core` Rust 二进制（stdin/stdout JSON line protocol）取代 per-write subprocess。`DeltaCoreClient` Python 客户端持有持久连接。
 
@@ -103,6 +111,32 @@ v0.3.2 之后开启 Rust Control Plane 迁移（ADR-009）。R1 State Foundation
 - Capability Worker 主体 / JSON-RPC / IPC
 
 下一阶段：R2 Trusted Execution。
+
+
+### R1.6 — Legacy Cleanup（`cowork` → `delta` 全栈重命名）
+
+**Breaking Change**：本节列出的标识符、模块名、env var、事件前缀、bot handle 均已从 `cowork` / `@ocw` / `OpenWorker*` 重命名为 `delta` / `@delta` / `delta.*`。依赖旧标识符的下游脚本/集成需要同步更新。
+
+| 类别 | 旧标识符 | 新标识符 |
+|---|---|---|
+| Agent id | `cowork` | `delta` |
+| 内部 agent 模块 | `core/agents/cowork.py` | `core/agents/delta_agent.py` |
+| Bot handle | `@ocw` | `@delta` |
+| Mention 解析 token | `[ocw:...]` | `[d:...]` |
+| Flag prefix | `ocw.flag.personas` | `delta.flag.personas` |
+| Env var | `OPENWORKER_*` / `ocw_home` | （移除；如需用户态目录见 `DELTA_PORTABLE_ROOT`） |
+| User state dir | `.openworker/` | `Data/`（便携版唯一用户态目录） |
+| Runtime class | `OpenWorkerRuntime` | `DeltaRuntime` |
+| Manager class | `CoworkerManager` | `DeltaManager` |
+
+**PR**：[#128](https://github.com/anomalyco/fonghub/pull/128) — `cowork` → `delta` 全栈重命名（含 i18n、e2e fixtures、tests）；`scripts/check_legacy_branding.py` 落地 + CI gate 接入；e2e fixture 断言修复。
+
+**保留的旧标识符（有意为之，需知悉）**：
+
+- `LICENSE` / `NOTICE` / `UPSTREAM.md` —— 第三方归属声明（MIT 要求）
+- `ADR-004` / `ADR-005~017` / `docs/architecture/relay-mode-removal.md` / `docs/architecture/hub-federation-boundary.md` / `integrations/managed/*` / `integrations/federation/openworker/` —— 历史决策记录 + 第三方契约占位
+- `tests/test_source_citation.py` 中的 `[ocw:...]` —— P2 终止的旧解析路径的回归测试
+- `tests/test_fake_slack.py` / `tests/test_mention_router.py` 中的旧 fixture —— Slack mention 解析历史形态验证
 
 
 ## [0.3.2] - 2026-09-05
