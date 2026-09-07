@@ -247,38 +247,32 @@ class AutomationsMixin(ManagerHostState):
         """
         if not workspace or not run_id:
             return 0
-        try:
-            from core.analyzer import _VALIDITY_RANK
+        from core.analyzer import _VALIDITY_RANK
 
-            src = self.source_store_for(workspace, run_id=run_id)  # type: ignore[attr-defined]
-        except Exception:
-            return 0
+        src = self.source_store_for(workspace, run_id=run_id)  # type: ignore[attr-defined]
         if src is None:
             return 0
         n = 0
-        try:
-            for ref in src.all():
-                for citation in ref.cited_ranges:
-                    cited_run_id = citation.get("run_id")
-                    if cited_run_id != run_id:
-                        continue
-                    ranges = citation.get("ranges") or []
-                    if not ranges:
-                        continue
-                    results = [
-                        src.validate_citation(ref.id, run_id, r) for r in ranges
-                    ]
-                    worst = max(
-                        results,
-                        key=lambda r: _VALIDITY_RANK.get(
-                            r.get("reason", "valid"), 0
-                        ),
-                        default={},
-                    )
-                    if worst.get("reason") == "valid":
-                        n += 1
-        except Exception:
-            return 0
+        for ref in src.list():
+            for citation in ref.cited_ranges:
+                cited_run_id = citation.get("run_id")
+                if cited_run_id != run_id:
+                    continue
+                ranges = citation.get("ranges") or []
+                if not ranges:
+                    continue
+                results = [
+                    src.validate_citation(ref.id, run_id, r) for r in ranges
+                ]
+                worst = max(
+                    results,
+                    key=lambda r: _VALIDITY_RANK.get(
+                        r.get("reason", "valid"), 0
+                    ),
+                    default={},
+                )
+                if worst.get("reason") == "valid":
+                    n += 1
         return n
 
 
