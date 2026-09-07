@@ -28,6 +28,12 @@ R1 State Foundation 在 v0.4.0-dev 线上完成以下 13 个 PR：
 | P1-B | Task identity authority | 结构守护测试；所有生产路径经 `maybe_wrap_taskstore` |
 | P1-C | Run state authority | `RunEventLedger.run_status(run_id)` 从 ledger 事件派生运行状态（单一事实源） |
 | P1-D | Storage transaction boundary | `CoreStorage` / `CoreTransaction` 抽象；确定性锁序；协调提交点 |
+| P0-1 | Unified Rust Core process | 三个 delegate 全部走 `DeltaCoreClient`（统一 `delta_core` 进程）；per-op CLI 仅诊断 |
+| P0-2 | Binary naming consistency | Cargo `delta_core` / build script `delta_core.exe` / `DeltaCoreClient` 查找名统一 |
+| P0-3 | Authority fail-closed | authority 声明后 binary 缺失 → `DeltaCoreError`，禁止静默 fallback |
+| P0-4 | Run state single source of truth | `RunEventLedger.derive_run_status()` 派生；`TaskRun.status` 仅为 cache |
+| P0-5 | Storage transaction reality | `CoreTransaction` 文档与实现一致：协调锁序，非跨 DB 原子事务 |
+| P0-6 | Production authority CI | 真实生产调用链测试（SessionManager → delegate → DeltaCoreClient → delta_core → SQLite → Python read-back） |
 | P1-E | 统一 Delta Core 进程入口 | `delta_core` Rust 二进制（stdin/stdout JSON line protocol）+ `DeltaCoreClient` Python 客户端 |
 | P1-F | Package Delta Core | 便携版构建脚本集成 `delta_core.exe`；多位置 binary lookup |
 | P1-G | CI gates | `rust-core-smoke` CI job + `check_rust_core_smoke.py` 脚本 + 迁移数据库测试 |
@@ -41,7 +47,7 @@ R1 State Foundation 在 v0.4.0-dev 线上完成以下 13 个 PR：
 | Ledger | Python | Python（opt-in Rust delegate） | `DELTA_RUST_AUTHORITY=ledger` |
 | Task identity | Python | Python（opt-in Rust delegate） | `DELTA_RUST_AUTHORITY=task_identity` |
 | Run state | Python | Python（`run_status()` 从 ledger 派生） | — |
-| Storage transaction | Python | Python（`CoreTransaction` 协调锁序） | — |
+| Storage transaction | Python | Python（`CoreTransaction` 协调锁序；非跨 DB 原子事务） | — |
 
 ### 统一进程入口（P1-E）
 
@@ -72,6 +78,23 @@ R1 State Foundation 在 v0.4.0-dev 线上完成以下 13 个 PR：
 - 灰度开关默认关闭（`DELTA_RUST_AUTHORITY` 未设置时行为等同 v0.3.2）
 - CI gate 覆盖 authority regression + cross-language contract + smoke
 - 下一步：R2 Trusted Execution（Artifact / Validation / Checkpoint / Policy / Approval）
+
+## R1.5 生产切权收口（2026-09-07）
+
+R1 全部 13 个 PR 完成后再做一次"生产切权"收口（`Delta R1.5 — Rust Core 生产切权收口`）：
+
+| 任务 | 状态 |
+|---|---|
+| P0-1 统一 Rust Core 调用 | ✅ 三个 delegate 全部走 `DeltaCoreClient` |
+| P0-2 二进制命名一致性 | ✅ 修复 `delta-core.exe` → `delta_core.exe`；新增便携式查找测试 |
+| P0-3 Authority fail-closed | ✅ `DeltaCoreError` 禁止静默 fallback |
+| P0-4 Run status 单一事实源 | ✅ `derive_run_status()`；Analyzer + manager_automations 改用 |
+| P0-5 Storage transaction 真实化 | ✅ 文档与现实一致；`rollback()` 明确 no-op |
+| P0-6 Production Authority CI | ✅ SessionManager → delta_core 全链路 + 反向守卫 |
+| P1-1 DeltaCoreClient 生命周期 | ✅ command timeout + stderr 排水 |
+| P1-2 Portable 实机 smoke | ✅ 中文+空格路径测试 |
+
+**R1 状态**：`Operationally Complete`（生产主路径已切换到 Rust Core；灰度开关仍默认关闭，Python 仍是默认权威）。
 
 ## 明确不做
 

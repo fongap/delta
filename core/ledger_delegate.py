@@ -1,59 +1,46 @@
 """RunEventLedger delegate to Rust Core when is_rust_authority is active.
 
-This module is the R1 Ledger authority switch (ADR-015). When
-``DELTA_RUST_AUTHORITY=1`` is set and the binary is built, every
-``append`` call on :class:`RunEventLedgerWithDelegate` is forwarded to
-the Rust ``write_ledger`` binary instead of writing through the Python
-SQLite connection. The Python code path is otherwise unchanged.
+This module is the R1.5 Ledger authority cutover (ADR-015). When
+``DELTA_RUST_AUTHORITY=ledger`` is set, every ``append`` call on
+:class:`RunEventLedgerWithDelegate` is forwarded to the unified
+``delta_core`` Rust process via :class:`DeltaCoreClient` instead of
+writing through the Python SQLite connection.
+
+R1.5 cutover: the delegate now uses the persistent
+:class:`DeltaCoreClient` (NDJSON over stdin/stdout) instead of
+spawning a fresh ``write_ledger`` subprocess per command. The
+per-op CLI binary ``write_ledger`` is retained only as a diagnostic
+tool.
 
 The delegate scrubs the payload through the shared sanitizer
 **before** forwarding, so the hash basis that Rust computes is over
 exactly what would have been stored by Python.
 
-The default factory :func:`maybe_wrap_ledger` returns either a plain
-:class:`RunEventLedger` (when authority is not active) or a delegate
-wrapper (when authority is active). Callers that explicitly construct
-``RunEventLedger(...)`` keep their existing behavior.
-
-Risk: this PR introduces a real authority switch. Rolling back is
-achieved by either (a) unsetting ``DELTA_RUST_AUTHORITY`` or (b)
-uninstalling the ``delta-runtime-native`` binary — both routes
-immediately restore Python-only writes. The Python read path is
-unaffected; both authorities write to the same SQLite table and
-:meth:`RunEventLedger.events` etc. continue to work.
+Fail-closed (P0-3): when ``DELTA_RUST_AUTHORITY=ledger`` is
+declared but the ``delta_core`` binary is unavailable, the delegate
+raises :class:`DeltaCoreError` — it never silently falls back to
+the Python write path.
 """
 
 from __future__ import annotations
 
-import json
-import subprocess
-import sys
 import time
-from pathlib import Path
 from typing import Any
 
 from core.ledger import RunEventLedger
 
+from packages.delta_core_client import DeltaCoreClient, DeltaCoreError, default_client
 from packages.storage_authority import is_rust_authority
-
-REPO_ROOT = Path(__file__).resolve().parent.parent
-CRATE_DIR = REPO_ROOT / "core" / "runtime-native"
-
-
-def _binary_path() -> Path | None:
-    target = "write_ledger.exe" if sys.platform == "win32" else "write_ledger"
-    path = CRATE_DIR / "target" / "debug" / target
-    return path if path.exists() else None
 
 
 def _is_delegate_active() -> bool:
-    """True iff Rust authority is on AND the binary is available."""
+    """True iff Rust authority is on AND the delta_core binary is available."""
     if not is_rust_authority("ledger"):
         return False
-    return _binary_path() is not None
+    return DeltaCoreClient._find_binary() is not None
 
 
-def _invoke(
+def _invoke_core(
     db_path: str,
     run_id: str,
     event_type: str,
@@ -62,33 +49,22 @@ def _invoke(
     payload: dict | None,
     workspace: str | None,
 ) -> dict[str, Any]:
-    binary = _binary_path()
-    if binary is None:
-        raise RuntimeError("write_ledger binary not built")
-    args = [
-        str(binary),
-        "--db",
-        db_path,
-        "--run-id",
-        run_id,
-        "--type",
-        event_type,
-        "--actor",
-        actor,
-        "--ts",
-        str(ts),
-    ]
+    """Send one ledger.append command to delta_core via the shared client."""
+    cmd: dict[str, Any] = {
+        "cmd": "ledger.append",
+        "db": db_path,
+        "run_id": run_id,
+        "type": event_type,
+        "actor": actor,
+        "ts": ts,
+    }
     if payload is not None:
-        args += ["--payload", json.dumps(payload)]
+        cmd["payload"] = payload
     if workspace:
-        args += ["--workspace", workspace]
-    result = subprocess.run(args, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"write_ledger failed: rc={result.returncode}, stderr={result.stderr}"
-        )
-    out = result.stdout.strip()
-    return json.loads(out) if out else {}
+        cmd["workspace"] = workspace
+    client = default_client()
+    result = client.command(cmd)
+    return result if isinstance(result, dict) else {}
 
 
 class RunEventLedgerWithDelegate:
@@ -126,7 +102,7 @@ class RunEventLedgerWithDelegate:
             from packages.sanitize import sanitize_payload
 
             stored_payload = sanitize_payload(payload)
-            return _invoke(
+            return _invoke_core(
                 self._db_path,
                 run_id,
                 type,
@@ -148,6 +124,12 @@ class RunEventLedgerWithDelegate:
 
     def events(self, run_id: str) -> list[dict[str, Any]]:
         return self._inner.events(run_id)
+
+    def run_status(self, run_id: str) -> str:
+        return self._inner.run_status(run_id)
+
+    def derive_run_status(self, run_id: str, fallback: str | None = None) -> str:
+        return self._inner.derive_run_status(run_id, fallback=fallback)
 
     def events_in_workspace(
         self, run_id: str, workspace: str
@@ -171,7 +153,20 @@ class RunEventLedgerWithDelegate:
 
 
 def maybe_wrap_ledger(ledger: RunEventLedger) -> RunEventLedger | RunEventLedgerWithDelegate:
-    """Return a delegate wrapper iff Rust authority is active; else the original."""
-    if not _is_delegate_active():
+    """Return a delegate wrapper iff Rust authority is active; else the original.
+
+    Fail-closed (P0-3): when ``DELTA_RUST_AUTHORITY`` declares
+    ``ledger`` as a Rust domain but the ``delta_core`` binary is
+    unavailable, this raises :class:`DeltaCoreError` rather than
+    silently falling back to the Python write path.
+    """
+    if not is_rust_authority("ledger"):
         return ledger
+    if not _is_delegate_active():
+        raise DeltaCoreError(
+            "DELTA_RUST_AUTHORITY declares ledger as a Rust domain "
+            "but delta_core binary is not available; refusing to fall "
+            "back to Python (fail-closed). Build delta_core or unset "
+            "DELTA_RUST_AUTHORITY."
+        )
     return RunEventLedgerWithDelegate(ledger)

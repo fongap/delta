@@ -137,10 +137,10 @@ def test_idempotency_only_activates_idempotency_delegate_not_ledger(monkeypatch,
     repo_root = Path(__file__).resolve().parent.parent
     crate_dir = repo_root / "core" / "runtime-native"
     binary = crate_dir / "target" / "debug" / (
-        "write_idemlog.exe" if sys.platform == "win32" else "write_idemlog"
+        "delta_core.exe" if sys.platform == "win32" else "delta_core"
     )
     if not binary.exists():
-        pytest.skip("write_idemlog binary not built")
+        pytest.skip("delta_core binary not built")
 
     monkeypatch.setenv("DELTA_RUST_AUTHORITY", "idempotency")
 

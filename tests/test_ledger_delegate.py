@@ -1,10 +1,15 @@
-"""RunEventLedgerWithDelegate — R1 Ledger authority switch behavior.
+"""RunEventLedgerWithDelegate — R1.5 authority cutover behavior.
 
-R1 Ledger authority switch (ADR-015). The
+R1.5 Ledger authority cutover (ADR-015). The
 ``RunEventLedgerWithDelegate`` wrapper is the entry point for opt-in
-Rust Core writes. The default ``RunEventLedger`` keeps its current
-behavior; this wrapper activates only when ``DELTA_RUST_AUTHORITY=1``
-is set and the Rust binary is built.
+Rust Core writes via the unified ``delta_core`` process. The default
+``RunEventLedger`` keeps its current behavior; this wrapper activates
+only when ``DELTA_RUST_AUTHORITY=ledger`` is set and the
+``delta_core`` binary is built.
+
+Fail-closed (P0-3): when authority is declared but the binary is
+missing, ``maybe_wrap_ledger`` raises ``DeltaCoreError`` instead of
+falling back to Python.
 
 The tests below set / unset the env var explicitly per test so the
 behavior is deterministic regardless of the host environment.
@@ -22,10 +27,11 @@ from core.ledger_delegate import (
     RunEventLedgerWithDelegate,
     maybe_wrap_ledger,
 )
+from packages.delta_core_client import DeltaCoreError
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CRATE_DIR = REPO_ROOT / "core" / "runtime-native"
-BINARY = CRATE_DIR / "target" / "debug" / ("write_ledger.exe" if sys.platform == "win32" else "write_ledger")
+BINARY = CRATE_DIR / "target" / "debug" / ("delta_core.exe" if sys.platform == "win32" else "delta_core")
 
 
 @pytest.fixture
@@ -36,8 +42,8 @@ def rust_authority_off(monkeypatch):
 @pytest.fixture
 def rust_authority_on(monkeypatch):
     if not BINARY.exists():
-        pytest.skip("write_ledger binary not built")
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "1")
+        pytest.skip("delta_core binary not built")
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "ledger")
 
 
 def test_maybe_wrap_returns_plain_ledger_when_authority_off(rust_authority_off, tmp_path):
@@ -54,6 +60,19 @@ def test_maybe_wrap_returns_delegate_when_authority_on(rust_authority_on, tmp_pa
     wrapped = maybe_wrap_ledger(ledger)
     assert isinstance(wrapped, RunEventLedgerWithDelegate)
     assert wrapped.delegate_active is True
+
+
+def test_maybe_wrap_fails_closed_when_authority_on_but_binary_missing(monkeypatch, tmp_path):
+    """P0-3: when authority is declared but delta_core is unavailable,
+    maybe_wrap_ledger must raise DeltaCoreError, not fall back."""
+    from packages.delta_core_client import DeltaCoreClient
+
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "ledger")
+    monkeypatch.setattr(DeltaCoreClient, "_find_binary", staticmethod(lambda: None))
+    db = tmp_path / "run-events.db"
+    ledger = RunEventLedger(db)
+    with pytest.raises(DeltaCoreError, match="fail-closed"):
+        maybe_wrap_ledger(ledger)
 
 
 def test_delegate_writes_via_rust_and_python_reads_back(rust_authority_on, tmp_path):

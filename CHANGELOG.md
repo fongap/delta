@@ -66,6 +66,14 @@ v0.3.2 之后开启 Rust Control Plane 迁移（ADR-009）。R1 State Foundation
 | P1-E | **统一 Delta Core 进程入口** | `delta_core` Rust 二进制（stdin/stdout JSON line protocol）+ `DeltaCoreClient` Python 客户端。 |
 | P1-F | **Package Delta Core** | 便携版构建脚本集成 `delta_core.exe`；多位置 binary lookup。 |
 | P1-G | **CI gates** | `rust-core-smoke` CI job + `check_rust_core_smoke.py` + 迁移数据库测试。 |
+| P0-1 | **统一 Rust Core 调用** | 三个 delegate 全部走 `DeltaCoreClient`（统一 `delta_core` 进程）；per-op CLI (`write_idemlog` / `write_ledger` / `write_tasks`) 仅作诊断工具。 |
+| P0-2 | **二进制命名一致性** | Cargo `delta_core` / build script `delta_core.exe` / `DeltaCoreClient` 查找名统一（修复 `delta-core.exe` 拼写 bug）；新增便携式布局查找测试。 |
+| P0-3 | **Authority fail-closed** | `DELTA_RUST_AUTHORITY` 声明某领域后 `delta_core` 不可用 → `DeltaCoreError`；禁止静默回 Python。 |
+| P0-4 | **Run status 单一事实源** | 新增 `RunEventLedger.derive_run_status()`；Analyzer 改用其聚合；`TaskRun.status` 明确为非规范化缓存。 |
+| P0-5 | **Storage transaction 真实化** | `CoreTransaction.rollback()` 明确为 no-op；文档/ADR/test 与 Python 两 DB 现实一致；真正跨 DB 原子性留到 Rust Core 后续。 |
+| P0-6 | **Production Authority CI** | 新增 `tests/test_production_authority_chain.py`：SessionManager → delegate → DeltaCoreClient → delta_core → SQLite → Python read-back 全链路 + 反向守卫。 |
+| P1-1 | **DeltaCoreClient 生命周期** | command timeout（默认 30s）+ stderr 排水线程（防 PIPE 死锁）+ close 清理 drainer。 |
+| P1-2 | **Portable 实机 smoke** | 中文 + 空格路径下 `DELTA_PORTABLE_ROOT` 查找；Data/ 唯一用户态目录；Rust authority 不 fallback。 |
 | Docs | **ADR-017 + Authority Matrix** | R1 完成记录；Authority Matrix 更新。 |
 
 **契约冻结**：本批之后 `core/idemlog.py` / `core/recovery.py` / `core/artifact.py` / `core/validation.py` / `services/server/{manager.py, app.py, manager_*.py}` 的对外接口属于"Delta Core 公共契约"，变更必须经 ADR。详见 `docs/architecture/runtime-public-contract.md`。
@@ -78,7 +86,11 @@ v0.3.2 之后开启 Rust Control Plane 迁移（ADR-009）。R1 State Foundation
 | Ledger | Python（opt-in Rust delegate via env var） | R1 完成 |
 | Task identity | Python（opt-in Rust delegate via env var） | R1 完成 |
 | Run state | Python（`run_status()` 从 ledger 派生） | R1 完成 |
-| Storage transaction boundary | Python（`CoreTransaction` 协调锁序） | R1 完成 |
+| Storage transaction boundary | Python（`CoreTransaction` 协调锁序；非跨 DB 原子事务） | R1.5 收口 |
+
+**R1.5 生产切权状态**：三个 delegate 全部走统一 `delta_core` 进程入口；per-op CLI 仅诊断。Authority 声明后 binary 缺失 fail-closed。Run status 单一事实源（`TaskRun.status` 仅为非规范化缓存）。Storage transaction 文档与现实一致。Production Authority CI 覆盖 SessionManager → delegate → DeltaCoreClient → delta_core → SQLite → Python read-back 全链路。
+
+**R1.5 状态**：`Operationally Complete`（见 ADR-017）。
 
 **统一进程入口**：`delta_core` Rust 二进制（stdin/stdout JSON line protocol）取代 per-write subprocess。`DeltaCoreClient` Python 客户端持有持久连接。
 

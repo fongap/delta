@@ -1,10 +1,15 @@
-"""IdempotencyLogWithDelegate — R1 stage B authority switch behavior.
+"""IdempotencyLogWithDelegate — R1.5 authority cutover behavior.
 
-R1 Idempotency authority switch stage B (ADR-014). The
+R1.5 Idempotency authority cutover (ADR-014). The
 ``IdempotencyLogWithDelegate`` wrapper is the entry point for opt-in
-Rust Core writes. The default ``IdempotencyLog`` keeps its current
-behavior; this wrapper activates only when ``DELTA_RUST_AUTHORITY=1``
-is set and the Rust binary is built.
+Rust Core writes via the unified ``delta_core`` process. The default
+``IdempotencyLog`` keeps its current behavior; this wrapper activates
+only when ``DELTA_RUST_AUTHORITY=idempotency`` is set and the
+``delta_core`` binary is built.
+
+Fail-closed (P0-3): when authority is declared but the binary is
+missing, ``maybe_wrap`` raises ``DeltaCoreError`` instead of
+falling back to Python.
 
 The tests below set / unset the env var explicitly per test so the
 behavior is deterministic regardless of the host environment.
@@ -22,10 +27,11 @@ from core.idemlog_delegate import (
     IdempotencyLogWithDelegate,
     maybe_wrap,
 )
+from packages.delta_core_client import DeltaCoreError
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CRATE_DIR = REPO_ROOT / "core" / "runtime-native"
-BINARY = CRATE_DIR / "target" / "debug" / ("write_idemlog.exe" if sys.platform == "win32" else "write_idemlog")
+BINARY = CRATE_DIR / "target" / "debug" / ("delta_core.exe" if sys.platform == "win32" else "delta_core")
 
 
 @pytest.fixture
@@ -36,8 +42,8 @@ def rust_authority_off(monkeypatch):
 @pytest.fixture
 def rust_authority_on(monkeypatch):
     if not BINARY.exists():
-        pytest.skip("write_idemlog binary not built")
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "1")
+        pytest.skip("delta_core binary not built")
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "idempotency")
 
 
 def test_maybe_wrap_returns_plain_log_when_authority_off(rust_authority_off, tmp_path):
@@ -54,6 +60,19 @@ def test_maybe_wrap_returns_delegate_when_authority_on(rust_authority_on, tmp_pa
     wrapped = maybe_wrap(log, str(db))
     assert isinstance(wrapped, IdempotencyLogWithDelegate)
     assert wrapped.delegate_active is True
+
+
+def test_maybe_wrap_fails_closed_when_authority_on_but_binary_missing(monkeypatch, tmp_path):
+    """P0-3: when authority is declared but delta_core is unavailable,
+    maybe_wrap must raise DeltaCoreError, not silently fall back."""
+    from packages.delta_core_client import DeltaCoreClient
+
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "idempotency")
+    monkeypatch.setattr(DeltaCoreClient, "_find_binary", staticmethod(lambda: None))
+    db = tmp_path / "side-effects.db"
+    log = IdempotencyLog(db)
+    with pytest.raises(DeltaCoreError, match="fail-closed"):
+        maybe_wrap(log, str(db))
 
 
 def test_delegate_writes_via_rust_and_python_reads_back(rust_authority_on, tmp_path):

@@ -209,3 +209,77 @@ def test_automation_health_module_wrapper_parity(tmp_path):
         led.close()
         store.close()
     assert via_class.to_dict() == via_module.to_dict()
+
+
+# -- P0-4: ledger is the single source of truth for run status ----------------
+
+
+def test_automation_health_uses_ledger_status_not_cached(tmp_path):
+    """P0-4: when the denormalized TaskRun.status disagrees with the
+    ledger's terminal state, the analyzer reports the ledger's value.
+    A cached 'running' row whose ledger has a run.completed event
+    must be counted as 'ok', not 'running'."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    led = RunEventLedger(tmp_path / "events.db")
+    store = TaskStore(tmp_path / "tasks.db")
+    task = ScheduledTask(
+        title="t",
+        instructions="i",
+        schedule=Schedule(kind="cron", cron="0 9 * * *"),
+        workspace=str(ws),
+    )
+    store.save(task)
+    try:
+        # The cached TaskRun.status is "running" (stale), but the ledger
+        # has a run.completed event. The analyzer must report "ok".
+        cached_run = TaskRun(
+            task_id=task.id,
+            run_id="stale-run",
+            started_at=1000.0,
+            finished_at=1000.0 + 4.0,
+            status="running",
+        )
+        store.add_run(cached_run)
+        led.append("stale-run", "run.started")
+        led.append("stale-run", "run.completed")
+
+        analyzer = Analyzer(workspace=str(ws), ledger=led, task_store=store)
+        h = analyzer.automation_health(task.id)
+        assert h.status_counts.get("ok", 0) == 1
+        assert h.status_counts.get("running", 0) == 0
+    finally:
+        led.close()
+        store.close()
+
+
+def test_automation_health_falls_back_to_cached_for_skipped(tmp_path):
+    """A task that was skipped (no ledger events at all) surfaces its
+    cached 'skipped' status via the fallback in derive_run_status."""
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    led = RunEventLedger(tmp_path / "events.db")
+    store = TaskStore(tmp_path / "tasks.db")
+    task = ScheduledTask(
+        title="t",
+        instructions="i",
+        schedule=Schedule(kind="cron", cron="0 9 * * *"),
+        workspace=str(ws),
+    )
+    store.save(task)
+    try:
+        skipped_run = TaskRun(
+            task_id=task.id,
+            run_id="skipped-run",
+            started_at=2000.0,
+            status="skipped",
+        )
+        store.add_run(skipped_run)
+        # No ledger events for this run — it's truly skipped.
+
+        analyzer = Analyzer(workspace=str(ws), ledger=led, task_store=store)
+        h = analyzer.automation_health(task.id)
+        assert h.status_counts.get("skipped", 0) == 1
+    finally:
+        led.close()
+        store.close()

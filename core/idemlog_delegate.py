@@ -1,70 +1,45 @@
 """IdempotencyLog delegate to Rust Core when is_rust_authority is active.
 
-This module is the R1 Idempotency authority switch stage B (ADR-014).
-When ``DELTA_RUST_AUTHORITY=1`` is set and the binary is built, every
-write call on :class:`IdempotencyLogWithDelegate` is forwarded to the
-Rust ``write_idemlog`` binary instead of writing through the Python
-SQLite connection. The Python code path is otherwise unchanged.
+This module is the R1.5 Idempotency authority cutover (ADR-014). When
+``DELTA_RUST_AUTHORITY=idempotency`` is set, every write call on
+:class:`IdempotencyLogWithDelegate` is forwarded to the unified
+``delta_core`` Rust process via :class:`DeltaCoreClient` instead of
+writing through the Python SQLite connection.
 
-The default factory :func:`maybe_wrap` returns either a plain
-:class:`IdempotencyLog` (when authority is not active) or a delegate
-wrapper (when authority is active). Callers that explicitly construct
-``IdempotencyLog(...)`` keep their existing behavior.
+R1.5 cutover: the delegate now uses the persistent
+:class:`DeltaCoreClient` (NDJSON over stdin/stdout) instead of
+spawning a fresh ``write_idemlog`` subprocess per command. The
+per-op CLI binaries (``write_idemlog`` etc.) are retained only as
+diagnostic tools.
 
-Risk: this PR introduces a real authority switch. Rolling back is
-achieved by either (a) unsetting ``DELTA_RUST_AUTHORITY`` or (b)
-uninstalling the ``delta-runtime-native`` binary — both routes
-immediately restore Python-only writes. The Python read path is
-unaffected; both authorities write to the same SQLite table and
-:func:`IdempotencyLog.committed_for_run` etc. continue to work.
+Fail-closed (P0-3): when ``DELTA_RUST_AUTHORITY=idempotency`` is
+declared but the ``delta_core`` binary is unavailable, the delegate
+raises :class:`DeltaCoreError` — it never silently falls back to
+the Python write path. Rollback is achieved by unsetting
+``DELTA_RUST_AUTHORITY``.
 """
 
 from __future__ import annotations
 
-import json
-import subprocess
-import sys
-from pathlib import Path
 from typing import Any
 
 from core.idemlog import IdempotencyLog
 
+from packages.delta_core_client import DeltaCoreClient, DeltaCoreError, default_client
 from packages.storage_authority import is_rust_authority
-
-REPO_ROOT = Path(__file__).resolve().parent.parent
-CRATE_DIR = REPO_ROOT / "core" / "runtime-native"
-
-
-def _binary_path() -> Path | None:
-    target = "write_idemlog.exe" if sys.platform == "win32" else "write_idemlog"
-    path = CRATE_DIR / "target" / "debug" / target
-    return path if path.exists() else None
 
 
 def _is_delegate_active() -> bool:
-    """True iff Rust authority is on AND the binary is available."""
+    """True iff Rust authority is on AND the delta_core binary is available."""
     if not is_rust_authority("idempotency"):
         return False
-    return _binary_path() is not None
+    return DeltaCoreClient._find_binary() is not None
 
 
-def _invoke(action: str, db_path: str, **kw: Any) -> None:
-    binary = _binary_path()
-    if binary is None:
-        raise RuntimeError("write_idemlog binary not built")
-    args = [str(binary), "--db", db_path, "--action", action]
-    for key, value in kw.items():
-        if value is None:
-            continue
-        flag = "--" + key.replace("_", "-")
-        if isinstance(value, (dict, list)):
-            value = json.dumps(value)
-        args += [flag, str(value)]
-    result = subprocess.run(args, capture_output=True, text=True)
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"write_idemlog {action} failed: rc={result.returncode}, stderr={result.stderr}"
-        )
+def _invoke_core(cmd: str, db_path: str, **kw: Any) -> Any:
+    """Send one command to delta_core via the shared DeltaCoreClient."""
+    client = default_client()
+    return client.command({"cmd": cmd, "db": db_path, **kw})
 
 
 class IdempotencyLogWithDelegate:
@@ -101,8 +76,8 @@ class IdempotencyLogWithDelegate:
         workspace: str | None = None,
     ) -> str | None:
         if self._delegate:
-            _invoke(
-                "record_planned",
+            _invoke_core(
+                "idem.record_planned",
                 self._db_path,
                 run_id=run_id,
                 tool_call_id=tool_call_id,
@@ -124,7 +99,7 @@ class IdempotencyLogWithDelegate:
         workspace: str | None = None,
     ) -> None:
         if self._delegate:
-            _invoke("mark_executing", self._db_path, run_id=run_id, tool_call_id=tool_call_id)
+            _invoke_core("idem.mark_executing", self._db_path, run_id=run_id, tool_call_id=tool_call_id)
             return
         self._inner.mark_executing(run_id, tool_call_id, ledger=ledger, workspace=workspace)
 
@@ -140,8 +115,8 @@ class IdempotencyLogWithDelegate:
         workspace: str | None = None,
     ) -> None:
         if self._delegate:
-            _invoke(
-                "commit",
+            _invoke_core(
+                "idem.commit",
                 self._db_path,
                 run_id=run_id,
                 tool_call_id=tool_call_id,
@@ -165,8 +140,8 @@ class IdempotencyLogWithDelegate:
         workspace: str | None = None,
     ) -> None:
         if self._delegate:
-            _invoke(
-                "mark_failed",
+            _invoke_core(
+                "idem.mark_failed",
                 self._db_path,
                 run_id=run_id,
                 tool_call_id=tool_call_id,
@@ -184,7 +159,7 @@ class IdempotencyLogWithDelegate:
         workspace: str | None = None,
     ) -> None:
         if self._delegate:
-            _invoke("mark_uncertain", self._db_path, run_id=run_id, tool_call_id=tool_call_id)
+            _invoke_core("idem.mark_uncertain", self._db_path, run_id=run_id, tool_call_id=tool_call_id)
             if ledger is not None:
                 try:
                     row = self._inner._row(run_id, tool_call_id)
@@ -250,9 +225,18 @@ class IdempotencyLogWithDelegate:
 def maybe_wrap(log: IdempotencyLog, db_path: str) -> IdempotencyLog | IdempotencyLogWithDelegate:
     """Return a delegate wrapper iff Rust authority is active; else the original.
 
-    Caller controls the DB path so we can re-derive it from the inner
-    object's :attr:`db_path` if not provided.
+    Fail-closed (P0-3): when ``DELTA_RUST_AUTHORITY`` declares
+    ``idempotency`` as a Rust domain but the ``delta_core`` binary is
+    unavailable, this raises :class:`DeltaCoreError` rather than
+    silently falling back to the Python write path.
     """
-    if not _is_delegate_active():
+    if not is_rust_authority("idempotency"):
         return log
+    if not _is_delegate_active():
+        raise DeltaCoreError(
+            "DELTA_RUST_AUTHORITY declares idempotency as a Rust domain "
+            "but delta_core binary is not available; refusing to fall "
+            "back to Python (fail-closed). Build delta_core or unset "
+            "DELTA_RUST_AUTHORITY."
+        )
     return IdempotencyLogWithDelegate(log, db_path)

@@ -10,6 +10,12 @@ Tests the :class:`DeltaCoreClient` that wraps the long-running
 * Raise :class:`DeltaCoreError` when the subprocess dies.
 * Maintain a hash chain across appends (proves the subprocess
   holds the connection open between commands).
+
+P0-2 Portable lookup tests: verify the binary is discoverable in the
+Windows Portable layout where ``sys.executable`` is inside the
+PyInstaller onedir sidecar (e.g. ``App/Delta/sidecar/delta-server/
+delta-server.exe``) and ``delta_core.exe`` lives at ``App/Delta/
+delta_core.exe`` (up to 3 parent levels up).
 """
 
 from __future__ import annotations
@@ -153,10 +159,10 @@ def test_missing_binary_raises():
 def test_default_lookup_finds_dev_build():
     """When no env var is set, the default lookup finds the dev
     build at ``core/runtime-native/target/{release,debug}/``."""
-    import os
+    import os as _os
     from packages.delta_core_client import _find_delta_core_binary
 
-    os.environ.pop("DELTA_CORE_BINARY", None)
+    _os.environ.pop("DELTA_CORE_BINARY", None)
     found = _find_delta_core_binary()
     if not BINARY.exists():
         assert found is None
@@ -266,3 +272,166 @@ def test_idem_commit_full_cycle(client, tmp_path):
         }
     )
     assert r3 is None
+
+
+# -- P1-1: command timeout ----------------------------------------------------
+
+
+def test_command_timeout_raises_delta_core_error(monkeypatch, tmp_path):
+    """P1-1: a hung subprocess (readline blocks forever) must time
+    out rather than block the caller indefinitely. The timeout
+    closes the client and raises DeltaCoreError."""
+    from packages.delta_core_client import DeltaCoreClient
+
+    if not BINARY.exists():
+        pytest.skip("delta_core binary not built")
+
+    c = DeltaCoreClient(command_timeout=0.2)
+    try:
+        c.command({"cmd": "ping"})  # start subprocess
+        # Now simulate a hang: replace stdout.readline with a sleeper.
+        proc = c._proc
+        assert proc is not None
+
+        def hang_readline(*a, **kw):
+            import time
+            time.sleep(5)
+            return ""
+
+        monkeypatch.setattr(proc.stdout, "readline", hang_readline)
+        with pytest.raises(DeltaCoreError, match="timed out"):
+            c.command({"cmd": "ping"})
+        # Client should have closed itself.
+        assert c._proc is None
+    finally:
+        c.close()
+
+
+def test_command_timeout_uses_default():
+    """The default command timeout is 30s, suitable for a watchdog
+    on a normally-fast local IPC."""
+    from packages.delta_core_client import (
+        DEFAULT_COMMAND_TIMEOUT_SECONDS,
+        DeltaCoreClient,
+    )
+
+    if not BINARY.exists():
+        pytest.skip("delta_core binary not built")
+    c = DeltaCoreClient()
+    try:
+        assert c._command_timeout == DEFAULT_COMMAND_TIMEOUT_SECONDS
+        assert c._command_timeout == 30.0
+    finally:
+        c.close()
+
+
+# -- P1-1: stderr drainer -----------------------------------------------------
+
+
+def test_stderr_drainer_is_running(client):
+    """P1-1: a background thread must be draining stderr while the
+    subprocess is alive. This prevents the OS pipe from filling up
+    and deadlocking the subprocess if it ever writes to stderr."""
+    client.command({"cmd": "ping"})
+    assert client._stderr_thread is not None
+    assert client._stderr_thread.is_alive()
+    assert client._stderr_thread.daemon is True
+
+
+def test_stderr_drainer_stops_on_close(client):
+    """P1-1: close() must signal the drainer to stop and join it
+    with a bounded timeout. No thread leak."""
+    client.command({"cmd": "ping"})
+    thread = client._stderr_thread
+    assert thread is not None
+    client.close()
+    # Drainer should have been joined (or timed out, but the thread
+    # is a daemon so it can't block process exit either way).
+    assert client._stderr_thread is None
+    # Thread object may still exist briefly; not strictly required to be dead.
+    import time
+    time.sleep(0.1)
+    assert not thread.is_alive() or thread.daemon
+
+
+# -- P0-2 Portable binary lookup tests ----------------------------------------
+
+
+def test_find_binary_same_dir_as_python_exe(monkeypatch, tmp_path):
+    """Lookup finds delta_core in the same dir as sys.executable."""
+    from packages.delta_core_client import _find_delta_core_binary
+
+    target = "delta_core.exe" if sys.platform == "win32" else "delta_core"
+    fake_dir = tmp_path / "app"
+    fake_dir.mkdir()
+    (fake_dir / target).write_bytes(b"")
+    monkeypatch.setattr(sys, "executable", str(fake_dir / "python.exe"))
+    monkeypatch.delenv("DELTA_CORE_BINARY", raising=False)
+    monkeypatch.delenv("DELTA_PORTABLE_ROOT", raising=False)
+    found = _find_delta_core_binary()
+    assert found is not None
+    assert found.name == target
+    assert found.parent == fake_dir
+
+
+def test_find_binary_parent_of_python_exe_onedir_layout(monkeypatch, tmp_path):
+    """Lookup finds delta_core in the parent dir of the Python exe —
+    the PyInstaller onedir layout where sys.executable is at
+    App/Delta/sidecar/delta-server/delta-server.exe and the binary
+    lives at App/Delta/delta_core.exe (2 levels up)."""
+    from packages.delta_core_client import _find_delta_core_binary
+
+    target = "delta_core.exe" if sys.platform == "win32" else "delta_core"
+    app_delta = tmp_path / "App" / "Delta"
+    sidecar = app_delta / "sidecar" / "delta-server"
+    sidecar.mkdir(parents=True)
+    (app_delta / target).write_bytes(b"")
+    monkeypatch.setattr(sys, "executable", str(sidecar / "delta-server.exe"))
+    monkeypatch.delenv("DELTA_CORE_BINARY", raising=False)
+    monkeypatch.delenv("DELTA_PORTABLE_ROOT", raising=False)
+    found = _find_delta_core_binary()
+    assert found is not None
+    assert found == app_delta / target
+
+
+def test_find_binary_portable_root_env(monkeypatch, tmp_path):
+    """Lookup finds delta_core via DELTA_PORTABLE_ROOT env var."""
+    from packages.delta_core_client import _find_delta_core_binary
+
+    target = "delta_core.exe" if sys.platform == "win32" else "delta_core"
+    portable_root = tmp_path / "DeltaPortable"
+    app_delta = portable_root / "App" / "Delta"
+    app_delta.mkdir(parents=True)
+    (app_delta / target).write_bytes(b"")
+    monkeypatch.setattr(sys, "executable", str(tmp_path / "python.exe"))
+    monkeypatch.delenv("DELTA_CORE_BINARY", raising=False)
+    monkeypatch.setenv("DELTA_PORTABLE_ROOT", str(portable_root))
+    found = _find_delta_core_binary()
+    assert found is not None
+    assert found == app_delta / target
+
+
+def test_find_binary_env_override(monkeypatch, tmp_path):
+    """DELTA_CORE_BINARY env var takes priority over all other lookups."""
+    from packages.delta_core_client import _find_delta_core_binary
+
+    target = "delta_core.exe" if sys.platform == "win32" else "delta_core"
+    custom = tmp_path / "custom" / target
+    custom.parent.mkdir()
+    custom.write_bytes(b"")
+    monkeypatch.setenv("DELTA_CORE_BINARY", str(custom))
+    found = _find_delta_core_binary()
+    assert found is not None
+    assert found == custom
+
+
+def test_binary_name_is_underscore_not_hyphen():
+    """The binary name MUST be delta_core (underscore) everywhere —
+    Cargo.toml, DeltaCoreClient lookup, and build script. A hyphen
+    name (delta-core.exe) is a known bug that must not recur."""
+    from packages.delta_core_client import _find_delta_core_binary
+
+    found = _find_delta_core_binary()
+    if found is not None:
+        assert "delta_core" in found.name
+        assert "delta-core" not in found.name

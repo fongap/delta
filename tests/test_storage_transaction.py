@@ -1,9 +1,11 @@
-"""Storage transaction boundary tests (P1-D).
+"""Storage coordination boundary tests (P1-D / P0-5 R1.5).
 
-Tests the ``CoreStorage`` / ``CoreTransaction`` abstraction that
-guarantees high-consequence state changes (SideEffect intent /
-commit, Run completion) update both the idempotency log and the
-run ledger under a single coordinated boundary.
+Tests the ``CoreStorage`` / ``CoreTransaction`` abstraction. R1.5
+is explicit: this is a **coordinated lock-ordering boundary**,
+not a true cross-DB atomic transaction. The two stores live in
+two separate SQLite DB files; Python cannot provide cross-DB
+rollback. The tests verify the lock-ordering guarantee and the
+documented R1.5 semantics (no rollback on exception).
 """
 
 from __future__ import annotations
@@ -62,12 +64,12 @@ def test_ledger_append_inside_transaction_is_visible_after_exit(storage):
     assert [e["type"] for e in events] == ["run.started", "tool.finished"]
 
 
-def test_exception_rolls_back_idempotency_state(storage):
-    """R1 contract: the transaction boundary provides a coordinated
-    commit point. If the block raises after one store has committed
-    (e.g. a ledger event), the caller is responsible for handling
-    the asymmetry — the Python R1 implementation does not provide
-    cross-DB rollback. The Rust R1 implementation will.
+def test_exception_does_not_roll_back_ledger_event(storage):
+    """R1.5 contract: the Python boundary cannot roll back across two
+    separate SQLite DB files. Whatever each store committed stays
+    committed, even on exception. Callers that need compensation
+    must do so explicitly. The Rust R1.5+ phase will provide a true
+    cross-DB transaction.
     """
     run_id = "r-tx-rollback"
 
@@ -78,9 +80,9 @@ def test_exception_rolls_back_idempotency_state(storage):
 
     events = storage.ledger.events(run_id)
     assert len(events) == 1, (
-        "Python R1 keeps the pre-exception ledger event; callers must "
-        "tolerate or compensate. The Rust R1 implementation will roll "
-        "back both stores atomically."
+        "R1.5 keeps the pre-exception ledger event (Python has no "
+        "cross-DB rollback). The Rust R1.5+ phase will provide a "
+        "true cross-DB transaction."
     )
 
 
@@ -113,6 +115,29 @@ def test_high_consequence_side_effect_commit_in_one_transaction(storage):
     events = storage.ledger.events(run_id)
     side_effect_events = [e for e in events if e["type"] == "side_effect.committed"]
     assert len(side_effect_events) == 1
+
+
+def test_rollback_is_noop_in_r15(storage):
+    """P0-5: CoreTransaction.rollback is a no-op in R1.5. Python
+    cannot roll back across two separate SQLite DB files. The
+    rollback method exists for API parity with the future
+    Rust-backed implementation. Calling it must not raise and
+    must not affect any committed state."""
+    run_id = "r-tx-noop"
+    with storage.begin() as tx:
+        tx.ledger.append(run_id, "run.started")
+        tx.idem.commit(
+            run_id, "call-noop", "write_file", {"path": "x"}, {"ok": True},
+            ledger=tx.ledger,
+        )
+        # Rollback is a no-op in R1.5; both stores keep what they wrote.
+        tx.rollback()
+        # After rollback, the committed state is still visible.
+        row = storage.idem._row(run_id, "call-noop")
+        assert row is not None
+        assert row["state"] == "committed"
+        events = storage.ledger.events(run_id)
+        assert any(e["type"] == "run.started" for e in events)
 
 
 def test_concurrent_transactions_are_serialized(storage):

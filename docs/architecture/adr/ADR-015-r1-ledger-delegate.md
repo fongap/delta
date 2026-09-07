@@ -1,9 +1,11 @@
 # ADR-015 — R1 Ledger Authority Switch: 阶段 B（实际委托）
 
-- 状态：Accepted
+- 状态：Accepted (历史)
 - 日期：2026-09-05
 - 范围：R1 Ledger 域权威切换（Python → Rust）阶段 B
 - 关联：ADR-009 / ADR-010 / ADR-011 / ADR-012 / ADR-013 / ADR-014 / `docs/governance/rust-core-migration.md` §5 / §6 / §7 / §11
+
+> **R1.5 更新（2026-09-07）**：本 ADR 描述的"委托 `write_ledger` per-op subprocess"实现已被 P0-1 取代。R1.5 实际生产路径：delegate 改走统一 `delta_core` 进程（`DeltaCoreClient` → `delta_core` → SQLite），`write_ledger` 仅保留为诊断工具。详见 ADR-017 §R1.5 生产切权收口。
 
 ## 背景
 

@@ -1,10 +1,15 @@
-"""TaskStoreWithDelegate — R1 Task identity authority switch behavior.
+"""TaskStoreWithDelegate — R1.5 Task identity authority cutover behavior.
 
-R1 Task identity authority switch (ADR-016). The
+R1.5 Task identity authority cutover (ADR-016). The
 ``TaskStoreWithDelegate`` wrapper is the entry point for opt-in
-Rust Core writes. The default ``TaskStore`` keeps its current
-behavior; this wrapper activates only when ``DELTA_RUST_AUTHORITY=1``
-is set and the Rust binary is built.
+Rust Core writes via the unified ``delta_core`` process. The default
+``TaskStore`` keeps its current behavior; this wrapper activates
+only when ``DELTA_RUST_AUTHORITY=task_identity`` is set and the
+``delta_core`` binary is built.
+
+Fail-closed (P0-3): when authority is declared but the binary is
+missing, ``maybe_wrap_taskstore`` raises ``DeltaCoreError`` instead
+of falling back to Python.
 """
 
 from __future__ import annotations
@@ -20,10 +25,11 @@ from core.automation.store_delegate import (
     TaskStoreWithDelegate,
     maybe_wrap_taskstore,
 )
+from packages.delta_core_client import DeltaCoreError
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CRATE_DIR = REPO_ROOT / "core" / "runtime-native"
-BINARY = CRATE_DIR / "target" / "debug" / ("write_tasks.exe" if sys.platform == "win32" else "write_tasks")
+BINARY = CRATE_DIR / "target" / "debug" / ("delta_core.exe" if sys.platform == "win32" else "delta_core")
 
 
 @pytest.fixture
@@ -34,8 +40,8 @@ def rust_authority_off(monkeypatch):
 @pytest.fixture
 def rust_authority_on(monkeypatch):
     if not BINARY.exists():
-        pytest.skip("write_tasks binary not built")
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "1")
+        pytest.skip("delta_core binary not built")
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "task_identity")
 
 
 def _make_task_dict(task_id: str, **kw) -> dict:
@@ -71,6 +77,20 @@ def test_maybe_wrap_returns_delegate_when_authority_on(rust_authority_on, tmp_pa
     assert isinstance(wrapped, TaskStoreWithDelegate)
     assert wrapped.delegate_active is True
     wrapped.close()
+
+
+def test_maybe_wrap_fails_closed_when_authority_on_but_binary_missing(monkeypatch, tmp_path):
+    """P0-3: when authority is declared but delta_core is unavailable,
+    maybe_wrap_taskstore must raise DeltaCoreError, not fall back."""
+    from packages.delta_core_client import DeltaCoreClient
+
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "task_identity")
+    monkeypatch.setattr(DeltaCoreClient, "_find_binary", staticmethod(lambda: None))
+    db = tmp_path / "tasks.db"
+    store = TaskStore(db)
+    with pytest.raises(DeltaCoreError, match="fail-closed"):
+        maybe_wrap_taskstore(store)
+    store.close()
 
 
 def test_delegate_writes_task_via_rust(rust_authority_on, tmp_path):
