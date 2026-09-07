@@ -6,6 +6,8 @@
 - 决策类型：迁移阶段规划
 - 关联：ADR-009（Delta Core Architecture）、ADR-011（R1 Authority Switch Plan，已 Superseded by ADR-017）、ADR-017（R1 State Foundation 完成）、`docs/governance/rust-core-migration.md` §5 R2 / §6 单领域迁移流程 / §7 双写规则 / §11 PR 规则
 
+> 2026-09-08 后续决策：ADR-021 取代本 ADR 对 Source/Citation “只读影子、不存在权威切换语义”的定位，并暂停原计划中随后的 Approval / Policy / Checkpoint 权威迁移。新顺序为 Source/Citation → Validation → Trusted Execution Convergence → Runtime Boundary Audit → Product Reality Gate。
+
 ## 背景
 
 R1 State Foundation（ADR-017）已在 2026-09-07 完成：5 个领域（Idempotency / Ledger / Task identity / Run state / Storage transaction boundary）的 Rust delegate wrapper + 统一 `delta_core` 进程入口 + CI gate 全部就位。Rust authority 能力可用（opt-in via `DELTA_RUST_AUTHORITY`），但生产默认权威仍是 Python（Pre-R2 Gate / R1.7 明确的三态澄清）。
