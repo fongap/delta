@@ -285,14 +285,14 @@ def test_citation_inspect_validates_lines_citation():
     assert report["citations"][0]["kind"] == "lines"
 
 
-def test_citation_inspect_rejects_missing_field():
+def test_citation_inspect_accepts_single_line_locator():
     citations = [{"kind": "lines", "start": 1}]
     result = subprocess.run(
         [str(_binary("inspect_citation")), "-"],
         input=json.dumps(citations), text=True, capture_output=True,
     )
-    assert result.returncode != 0
-    assert "end" in result.stderr or "missing" in result.stderr.lower()
+    assert result.returncode == 0, result.stderr
+    assert json.loads(result.stdout)["citations"] == citations
 
 
 def test_citation_inspect_rejects_unknown_kind():
@@ -347,3 +347,38 @@ def test_citation_inspect_agrees_with_python_for_each_kind():
             input=json.dumps([case]), text=True, capture_output=True,
         )
         assert result.returncode == 0, f"Rust rejected {case}: {result.stderr}"
+        assert json.loads(result.stdout)["citations"][0] == py_out
+
+
+@pytest.mark.parametrize(
+    "case",
+    [
+        {"kind": "lines", "start": 0},
+        {"kind": "lines", "start": 3, "end": 2},
+        {"kind": "lines", "start": True},
+        {"kind": "page", "page": -1},
+        {"kind": "page", "page": 5, "page_end": 4},
+        {"kind": "cells", "sheet": "S1"},
+        {"kind": "cells", "sheet": "", "cell_start": "A1"},
+        {"kind": "row", "sheet": "S1"},
+        {"kind": "row", "sheet": "S1", "row_start": 5, "row_end": 4},
+        {"kind": "column", "sheet": "S1", "col_start": 0},
+        {"kind": "sheet", "sheet": "S1", "row_start": 2, "row_end": 1},
+        {"kind": "message_id", "message_id": ""},
+        {"kind": "custom", "descriptor": []},
+        {"kind": "unsupported"},
+    ],
+)
+def test_citation_inspect_and_python_reject_same_malformed_ranges(case):
+    from core.sources import to_range_dict
+
+    with pytest.raises(ValueError):
+        to_range_dict(case)
+
+    result = subprocess.run(
+        [str(_binary("inspect_citation")), "-"],
+        input=json.dumps([case]),
+        text=True,
+        capture_output=True,
+    )
+    assert result.returncode != 0, f"Rust accepted malformed citation {case}"

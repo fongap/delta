@@ -28,10 +28,12 @@ from core.inbox import InboxStore
 from core.inbox_routing import resolve_from_reply
 from core.sources import (
     KIND_CELLS,
+    KIND_COLUMN,
     KIND_CUSTOM,
     KIND_LINES,
     KIND_MESSAGE_ID,
     KIND_PAGE,
+    KIND_ROW,
     KIND_SHEET,
     CitationRange,
     SourceStore,
@@ -61,6 +63,22 @@ def test_lines_citation_rejects_non_int():
         to_range_dict({"kind": KIND_LINES, "start": "12"})
 
 
+@pytest.mark.parametrize("value", [0, -1])
+def test_lines_citation_rejects_non_positive_positions(value):
+    with pytest.raises(ValueError, match=">= 1"):
+        to_range_dict({"kind": KIND_LINES, "start": value})
+
+
+def test_lines_citation_rejects_reverse_range():
+    with pytest.raises(ValueError, match="end .* < start"):
+        to_range_dict({"kind": KIND_LINES, "start": 4, "end": 3})
+
+
+def test_lines_citation_rejects_bool_as_integer():
+    with pytest.raises(ValueError, match="start must be int"):
+        to_range_dict({"kind": KIND_LINES, "start": True})
+
+
 def test_page_citation_accepts_single_page():
     out = to_range_dict(CitationRange(kind=KIND_PAGE, page=7))
     assert out == {"kind": "page", "page": 7}
@@ -74,6 +92,11 @@ def test_page_citation_accepts_page_range():
 def test_page_citation_rejects_missing_page():
     with pytest.raises(ValueError, match="at least one of page/page_end"):
         to_range_dict(CitationRange(kind=KIND_PAGE))
+
+
+def test_page_citation_rejects_reverse_range():
+    with pytest.raises(ValueError, match="page_end .* < page"):
+        to_range_dict(CitationRange(kind=KIND_PAGE, page=3, page_end=2))
 
 
 def test_cells_citation_accepts_full_axis_range():
@@ -107,6 +130,20 @@ def test_cells_citation_accepts_a1_style_range():
         "cell_start": "A2",
         "cell_end": "D10",
     }
+
+
+def test_cells_citation_requires_sheet_and_locator():
+    with pytest.raises(ValueError, match="'sheet' name"):
+        to_range_dict(CitationRange(kind=KIND_CELLS, cell_start="A1"))
+    with pytest.raises(ValueError, match="cell or row/column range"):
+        to_range_dict(CitationRange(kind=KIND_CELLS, sheet="Sheet1"))
+
+
+def test_row_and_column_citations_require_their_axis():
+    with pytest.raises(ValueError, match="row_start/row_end"):
+        to_range_dict(CitationRange(kind=KIND_ROW, sheet="Sheet1"))
+    with pytest.raises(ValueError, match="col_start/col_end"):
+        to_range_dict(CitationRange(kind=KIND_COLUMN, sheet="Sheet1"))
 
 
 def test_sheet_citation_requires_sheet_name():
