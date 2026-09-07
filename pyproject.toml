@@ -43,7 +43,7 @@ dev = [
     # by all static/audit gates instead of resolving them separately at runtime.
     "pip-audit==2.10.1",
     "pyright==1.1.411",
-    "ruff==0.16.5",
+    "ruff==0.16.6",
 ]
 # Inbound messaging listeners (outbound send_message needs only httpx, already a core dep).
 # aiohttp is slack-bolt's Socket Mode transport at runtime (and the FakeSlack test harness
