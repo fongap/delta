@@ -26,6 +26,7 @@
 - `ADR-017-r1-state-foundation-completion.md` – R1 State Foundation 完成记录：5 个领域（Idempotency / Ledger / Task identity / Run state / Storage transaction boundary）权威路径全部就位 + 统一 `delta_core` 进程入口 + CI smoke gate。灰度开关默认关闭；下一步 R2。
 - `ADR-018-r2-trusted-execution-plan.md` – R2 Trusted Execution 计划与边界：明确"先不立即切换 R2 域权威"、未来每个领域一个 PR + PR-level ADR；强制 Pre-R2 plumbing（PR131）必须先做；列出 6 个 R2 域（Artifact / Validation / Checkpoint / Policy / Approval / Source-Citation）的迁移顺序、风险评估与不变量。
 - `ADR-019-r2-pre-plumbing.md` – R2 Pre-Plumbing：扩展 `packages/storage_authority.py` 增加 `RUST_READ_DOMAINS` + `is_rust_shadow_reader()` + 独立的 `DELTA_RUST_READERS` env var；4 个 Rust 影子读模块（artifact / validation / checkpoint / source_citation）+ 3 个 inspect binary + 12 个跨语言测试。Policy / Approval 排除在 reader 模式外（评估/决策面，需要不同 hook）。
+- `ADR-020-r2-artifact-authority-switch.md` – R2 第一域权威切换（Artifact Registry，per ADR-018 提议顺序）：`artifact` 从 `RUST_READ_DOMAINS` 提升到 `RUST_WRITE_DOMAINS`；新增 `core/artifact_delegate.py` + `ArtifactRegistryWriter`（Rust 复用 R1 `LedgerWriter`）+ `delta_core` 协议 `artifact.register` 命令 + 7 个跨语言测试。Artifact 不是新表，是 ledger 的两个特殊事件类型（`artifact.registered` + `artifact.completed`）。
 
 相关架构文档：
 - `hub-federation-boundary.md` – Delta Hub 联邦化边界设计，明确 OpenWorker 仅为可选适配器。

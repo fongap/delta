@@ -21,7 +21,10 @@ pub mod source_citation;
 pub mod taskstore;
 pub mod validation;
 
-pub use artifact::{ArtifactMismatch, ArtifactReader, ArtifactRecord};
+pub use artifact::{
+    ArtifactInput, ArtifactMismatch, ArtifactReader, ArtifactRecord, ArtifactRegistrationResult,
+    ArtifactRegistryWriter,
+};
 pub use checkpoint::{parse_snapshot, read_snapshot_file, ParsedSnapshot, SNAPSHOT_SCHEMA_VERSION};
 pub use idemlog::{
     args_sha256, operation_id, IdempotencyReader, IdempotencyWriter, SideEffectEntry,
