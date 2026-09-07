@@ -48,7 +48,7 @@ interface Props {
   // to give the preview (PDF/webpage/sheet) more room (#3).
   onPreviewChange?: (open: boolean) => void;
   // §32: the rail is the ONE session panel for every non-chat persona. Artifacts stays
-  // cowork-only (deliverables; code-family gets "Files" later — slot reserved); the Access
+  // delta-only (deliverables; code-family gets "Files" later — slot reserved); the Access
   // section (the former Session-settings drawer) renders for all.
   showArtifacts?: boolean;
   personaId?: string;

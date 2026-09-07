@@ -54,7 +54,7 @@ const SETTINGS = {
   source: "store",
   onboarded: true,
   experimental_connectors: false,
-  surfaces: { cowork: true, chat: false, code: true },
+  surfaces: { delta: true, chat: false, code: true },
   nav_layout: "grouped",
   scratch_base: "~/Delta",
   secrets_path: "/Users/test/.config/delta/secrets.json",
@@ -78,7 +78,7 @@ const SETTINGS = {
 
 const PERSONAS = {
   personas: [
-    { id: "cowork", name: "Delta", icon: "cowork", tagline: "Produce a deliverable — research, analysis, scripts", needs_workspace: true, builtin: true, family: "knowledge", workspace: "deliverable", tools: ["files", "search"], enabled: true, surfaced: true, default: true },
+    { id: "delta", name: "Delta", icon: "delta", tagline: "Produce a deliverable — research, analysis, scripts", needs_workspace: true, builtin: true, family: "knowledge", workspace: "deliverable", tools: ["files", "search"], enabled: true, surfaced: true, default: true },
     { id: "code", name: "Code", icon: "code", tagline: "Work in a codebase — files, git, shell", needs_workspace: true, builtin: true, family: "code", workspace: "git", tools: ["code_files", "git"], enabled: true, surfaced: true, default: false },
     { id: "chat", name: "Chat", icon: "chat", tagline: "Quick questions — no workspace", needs_workspace: false, builtin: true, family: "knowledge", workspace: "none", tools: [], enabled: true, surfaced: false, default: false },
     { id: "ops", name: "Ops Delta", icon: "wrench", tagline: "Operate and investigate — runbooks, logs, infrastructure", needs_workspace: true, builtin: true, family: "knowledge", workspace: "deliverable", tools: ["files", "shell"], enabled: true, surfaced: true, default: false },
@@ -90,10 +90,10 @@ const PERSONAS = {
 
 // The boot-resume target (most recent updated_at) — existing specs open it by title.
 const PINNED_SESSION = {
-  session_id: "pinned-cowork-1",
+  session_id: "pinned-delta-1",
   title: "Draft the launch note",
   workspace: "/Users/test/Delta/launch-note",
-  agent: "cowork",
+  agent: "delta",
   model: "anthropic:claude-opus-4-8",
   mode: "interactive",
   updated_at: "2026-07-01 09:00:00",
@@ -112,7 +112,7 @@ const EXTRA_SESSIONS = Array.from({ length: 7 }, (_, i) => ({
   session_id: `wp-${i + 1}`,
   title: `Weekly plan ${i + 1}`,
   workspace: "",
-  agent: "cowork",
+  agent: "delta",
   model: "anthropic:claude-opus-4-8",
   mode: "interactive",
   updated_at: `2026-06-2${8 - Math.min(i, 7)} 10:00:00`,
@@ -148,7 +148,7 @@ const SLACK_SESSION = {
   session_id: "slack-thread-1",
   title: "#general — check the deploy?",
   workspace: "",
-  agent: "cowork",
+  agent: "delta",
   model: "anthropic:claude-opus-4-8",
   mode: "interactive",
   updated_at: "2026-06-10 10:00:00",
@@ -202,7 +202,7 @@ const INBOX_ITEMS = [
     created_at: "2026-07-01 08:00:00",
     resolved_at: null,
     session_title: "Weekly plan 3",
-    session_agent: "cowork",
+    session_agent: "delta",
     session_workspace: "",
     session_exists: true,
   },
@@ -230,9 +230,9 @@ const INBOX_ITEMS = [
 // Persona detail (GET /v1/personas/:id) — SourcesDrawer/PersonaView read `recommends` and
 // `default_connections` as arrays, so these must be present (not the catch-all {}).
 const PERSONA_DETAIL = {
-  id: "cowork",
+  id: "delta",
   name: "Delta",
-  icon: "cowork",
+  icon: "delta",
   tagline: "Produce a deliverable — research, analysis, scripts",
   description: "",
   enabled: true,
@@ -267,7 +267,7 @@ const AUTOMATION = {
   schedule: "Every day at ~5:40 PM",
   schedule_raw: { kind: "cron", cron: "40 17 * * *", fire_at: null, timezone: "local" },
   workspace: "",
-  agent: "cowork",
+  agent: "delta",
   enabled: true,
   next_run: Math.floor(Date.now() / 1000) + 3600,
   last_run: Math.floor(Date.now() / 1000) - 60,
@@ -326,13 +326,13 @@ export async function mockApi(page: import("@playwright/test").Page) {
   const subscriptions: any[] = [
     // One existing subscription (a non-pinned session) so the Slack page's per-workspace
     // "Listening" row has an entry. Relay-mode channels are team-qualified (slack:T…/C…).
-    { session_id: "wp-1", session_title: "Weekly plan 1", agent: "cowork", channel: "slack:T1DL/C0AAA111", channel_name: "delta-test", routing_target: null, collision: false },
+    { session_id: "wp-1", session_title: "Weekly plan 1", agent: "delta", channel: "slack:T1DL/C0AAA111", channel_name: "delta-test", routing_target: null, collision: false },
   ];
   // Parked unauthorized messages (§19) — mutable so Allow/Dismiss round-trip through the UI.
   // The relay is multi-workspace: parked items carry their team so the Slack page files them
   // under the right workspace card.
   const parked: any[] = [
-    { id: "pk1", platform: "slack", chat_id: "C0AAA111", chat_name: "#delta-test", user_id: "U0NEW", user_name: "Maya", chat_type: "channel", text: "hey ocw, can you summarize this thread?", ts: Date.now() / 1000 - 120, team_id: "T1DL" },
+    { id: "pk1", platform: "slack", chat_id: "C0AAA111", chat_name: "#delta-test", user_id: "U0NEW", user_name: "Maya", chat_type: "channel", text: "hey delta, can you summarize this thread?", ts: Date.now() / 1000 - 120, team_id: "T1DL" },
   ];
   // Slack connector — PER-TEST state (managed relay, two workspaces) so allow/disconnect
   // mutations never leak across tests sharing a worker. Backend parity: `workspaces` mirrors
@@ -365,7 +365,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
   // GitHub — PER-TEST multi-installation state (managed relay, one installation +
   // one parked mention) mirroring the backend's github:install:<id> profiles.
   const githubParked: any[] = [
-    { id: "gh-pk1", platform: "github", chat_id: "acme/site#7", chat_name: "acme/site#7", user_id: "maya-dev", user_name: "maya-dev", chat_type: "channel", text: "@ocw please take a look at this flaky test", ts: Date.now() / 1000 - 90, team_id: "101" },
+    { id: "gh-pk1", platform: "github", chat_id: "acme/site#7", chat_name: "acme/site#7", user_id: "maya-dev", user_name: "maya-dev", chat_type: "channel", text: "@delta please take a look at this flaky test", ts: Date.now() / 1000 - 90, team_id: "101" },
   ];
   const githubState = {
     connected: true,
@@ -1343,7 +1343,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
     if (p.endsWith("/v1/channels/recent"))
       return json({
         channels: [
-          { channel: "slack:C0AAA111", name: "delta-test", last_from: "amy", last_text: "hey ocw, can you summarize this thread?" },
+          { channel: "slack:C0AAA111", name: "delta-test", last_from: "amy", last_text: "hey delta, can you summarize this thread?" },
           { channel: "slack:C0BBB222", last_from: "bob", last_text: "deploy failed" },
         ],
       });

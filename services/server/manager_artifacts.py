@@ -89,7 +89,7 @@ class ArtifactsBrowserAuditMixin(ManagerHostState):
         }
         # os.walk with in-place pruning, NOT rglob: rglob descends first and filters after,
         # so a home-directory workspace walked into ~/Library and tripped the macOS App Data
-        # TCC prompt ("OpenWorker would like to access data from other apps") on every turn.
+        # TCC prompt ("Delta would like to access data from other apps") on every turn.
         # Pruning here means those directories are never entered at all.
         from integrations.tools.search import OS_DATA_DIRS
 

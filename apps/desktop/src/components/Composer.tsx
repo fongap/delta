@@ -70,7 +70,7 @@ interface Props {
   // the composer is the discoverable primary control before the first send.
   reasoningEffort?: string;
   onReasoningEffortChange?: (effort: string) => void;
-  // When set (Code/Cowork), the Mode menu is shown. The folder/roots + branch controls left the
+  // When set (Code/Delta), the Mode menu is shown. The folder/roots + branch controls left the
   // composer for the Session settings drawer (§22) — folder access is standing session config.
   workspace?: string;
   // Unattended / send-approvals-to-Inbox — folded into the Mode menu (§22): "who approves, and

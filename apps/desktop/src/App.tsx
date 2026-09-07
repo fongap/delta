@@ -100,7 +100,7 @@ function normalizeTodos(raw: unknown): TodoItem[] {
 
 // Fallbacks used only before the persona list loads (the in-component, family-aware
 // needsWorkspace/gatesWorkspace consult the real persona once available).
-const needsWorkspaceFallback = (a: string) => a === "code" || a === "cowork";
+const needsWorkspaceFallback = (a: string) => a === "code" || a === "delta";
 const gatesWorkspaceFallback = (a: string) => a === "code";
 const LAST_SESSION_KEY = "delta:last-session-by-agent:v1";
 const NAV_COLLAPSED_KEY = "delta:nav-collapsed:v1";
@@ -165,7 +165,7 @@ export function App() {
   const [showGate, setShowGate] = useState(false);
   const [workspaceTrustRequest, setWorkspaceTrustRequest] =
     useState<WorkspaceCommandTrust | null>(null);
-  const [agent, setAgent] = useState("cowork");
+  const [agent, setAgent] = useState("delta");
   // No hardcoded vendor/model default — the active model rides on the server-provided health
   // (`getHealth().then(h => setModel(h.model))`) and on Settings ▸ Models. An empty default
   // keeps the composer's "No model connected" chip honest until one resolves.
@@ -181,7 +181,7 @@ export function App() {
   // Per-session token usage (OPE-42): rebuilt from the transcript on session load,
   // accumulated live from assistant_message events, reset with the transcript.
   const [usage, setUsage] = useState<SessionUsage>(emptyUsage());
-  const [surfaces, setSurfaces] = useState<SurfaceVisibility>({ cowork: true, chat: false, code: false });
+  const [surfaces, setSurfaces] = useState<SurfaceVisibility>({ delta: true, chat: false, code: false });
   const [mode, setMode] = useState("interactive");
   const [connected, setConnected] = useState(false);
   const [running, setRunning] = useState(false);
@@ -311,7 +311,7 @@ export function App() {
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [toggleNav]);
-  // Count of files this Cowork conversation has produced — surfaces an "Artifacts (N)" button in
+  // Count of files this Delta conversation has produced — surfaces an "Artifacts (N)" button in
   // the topbar when the side panel is hidden, so produced files are never buried.
   const [artifactCount, setArtifactCount] = useState(0);
   // §32 deep link into the rail's Access section (the former Session-settings drawer): bumping
@@ -332,7 +332,7 @@ export function App() {
   const [composerPrefill, setComposerPrefill] = useState<{ text: string; attachments?: Attachment[]; nonce: number }>();
 
   // Persona metadata drives workspace behavior by FAMILY, not by hardcoded id (so a DevOps/SecOps
-  // code-family persona gates a folder like Code, and a knowledge persona starts orphan like Cowork).
+  // code-family persona gates a folder like Code, and a knowledge persona starts orphan like Delta).
   const [personas, setPersonas] = useState<Persona[] | null>(null);
   useEffect(() => {
     getPersonas().then(setPersonas).catch(() => {});
@@ -452,7 +452,7 @@ export function App() {
     try {
       const recents = await getRecentWorkspaces();
       setProjects(recents);
-      // Only auto-adopt a recent folder for gated surfaces (Code). Cowork starts orphan.
+      // Only auto-adopt a recent folder for gated surfaces (Code). Delta starts orphan.
       if (gatesWorkspace(agent)) {
         const ws = recents.find((w) => w.exists) || recents[0];
         if (ws) {
@@ -484,7 +484,7 @@ export function App() {
           // effect). resumeLastOrGate is async — if we cleared `booting` first, the throwaway
           // initial sessionId would connect against an empty/stale workspace and the server
           // would provision a junk per-conversation scratch dir for it before resume could
-          // flip to the real session. Cowork ignores default_workspace (a Code concept).
+          // flip to the real session. Delta ignores default_workspace (a Code concept).
           if (h.default_workspace && gatesWorkspace(agent)) setWorkspace(h.default_workspace);
           else await resumeLastOrGate();
           // The mount-time loadSettings races the sidecar boot and swallows its failure —
@@ -578,11 +578,11 @@ export function App() {
   }, [refreshSessions]);
 
   // If the active surface isn't visible (hidden in Settings, or a resumed session landed on a
-  // hidden surface), fall back to Cowork (always visible). Watches both agent and surfaces so it
+  // hidden surface), fall back to Delta (always visible). Watches both agent and surfaces so it
   // corrects regardless of which settled last.
   useEffect(() => {
     if ((agent === "chat" && !surfaces.chat) || (agent === "code" && !surfaces.code)) {
-      switchAgent("cowork");
+      switchAgent("delta");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [agent, surfaces]);
@@ -630,7 +630,7 @@ export function App() {
           if (d.model) setModel(d.model);
           if (d.mode) setMode(d.mode);
           if (d.command_trust?.required) setWorkspaceTrustRequest(d.command_trust);
-          // Cowork: adopt the server-provisioned scratch dir (only when we don't already have one).
+          // Delta: adopt the server-provisioned scratch dir (only when we don't already have one).
           if (d.workspace) setWorkspace((cur) => cur || d.workspace);
           break;
         case "turn_start":
@@ -870,7 +870,7 @@ export function App() {
     // NOTE: `workspace` is intentionally NOT a dependency. Every real workspace change
     // (pick folder, select/switch session, new session) is paired with a `sessionId`
     // change, so the socket still reconnects when it should. The one workspace-only change
-    // is the `ready` handler adopting the server's provisioned Cowork scratch dir — listing
+    // is the `ready` handler adopting the server's provisioned Delta scratch dir — listing
     // `workspace` here made that adoption tear down and rebuild the socket immediately after
     // first connect, dropping the user's first message (the "send twice" bug). The scratch
     // dir is deterministic from `sessionId` server-side, so skipping that reconnect is safe.
@@ -927,9 +927,9 @@ export function App() {
   }, [items, streaming]);
 
   // Track produced-file count for the topbar "Artifacts" affordance (works even when the rail is
-  // hidden, where the rail itself doesn't fetch). Cowork only; refreshes on file writes/turn end.
+  // hidden, where the rail itself doesn't fetch). Delta only; refreshes on file writes/turn end.
   useEffect(() => {
-    if (agent !== "cowork" || surface !== "session") {
+    if (agent !== "delta" || surface !== "session") {
       setArtifactCount(0);
       return;
     }
@@ -1045,7 +1045,7 @@ export function App() {
         title: d.task_title || "Automation",
         sessionId: d.session_id || "",
         workspace: d.workspace || "",
-        agent: d.agent || "cowork",
+        agent: d.agent || "delta",
         time: new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
       });
       announceAutomationsChanged(); // the Scheduled band's badge is now stale
@@ -1129,7 +1129,7 @@ export function App() {
     const inheritable = gatesWorkspace(agent) ? workspace : null;
 
     if (target) {
-      // Code falls back to a recent folder; Cowork resumes its scratch (target.workspace) or
+      // Code falls back to a recent folder; Delta resumes its scratch (target.workspace) or
       // starts orphan ("" → server provisions). Chat has no workspace.
       const targetWorkspace = gatesWorkspace(name)
         ? target.workspace || fallbackWorkspace(inheritable, knownProjects)
@@ -1140,7 +1140,7 @@ export function App() {
         setWorkspace(targetWorkspace);
         setBranch(null);
       } else if (!targetWorkspace) {
-        setWorkspace(null); // orphan cowork: clear so the next `ready` adopts a fresh scratch
+        setWorkspace(null); // orphan delta: clear so the next `ready` adopts a fresh scratch
       }
       if (!gatesWorkspace(name)) setShowGate(false);
       else if (targetWorkspace) setShowGate(false);
@@ -1165,7 +1165,7 @@ export function App() {
       setWorkspace(fallback);
       setBranch(null);
     } else if (!fallback && needsWorkspace(name)) {
-      setWorkspace(null); // orphan cowork: server provisions a fresh scratch on connect
+      setWorkspace(null); // orphan delta: server provisions a fresh scratch on connect
     }
     activateSession(id);
     rememberLastSession(name, id, fallback);
@@ -1186,7 +1186,7 @@ export function App() {
   };
   // "New project" lives under a project-scoped persona's accordion. Switch to that persona, start a
   // fresh session with no folder yet, and open the gate in create mode — so the gate's
-  // surface==="session" && gatesWorkspace(agent) guard passes even if the active session was Chat/Cowork.
+  // surface==="session" && gatesWorkspace(agent) guard passes even if the active session was Chat/Delta.
   const newProject = (forAgent?: string) => {
     const target = forAgent || agent;
     setSurface("session");
@@ -1546,7 +1546,7 @@ export function App() {
               sidebar brand row (A2 revised) — the topbar drag surface had swallowed its clicks.
               Model/mode/persona controls stay in the composer (§22). */}
           <div className="main-topbar-side main-topbar-actions" onPointerDown={beginWindowDrag}>
-            {agent === "cowork" && railHidden && artifactCount > 0 && (
+            {agent === "delta" && railHidden && artifactCount > 0 && (
               <button
                 className="topbar-artifacts-btn"
                 onPointerDown={(e) => e.stopPropagation()}
@@ -1608,7 +1608,7 @@ export function App() {
             )}
             <div className="main-scroll" ref={scrollRef} onScroll={handleScroll}>
               {idle ? (
-                agent === "cowork" ? (
+                agent === "delta" ? (
                   <SessionIntro
                   />
                 ) : (
@@ -1761,12 +1761,12 @@ export function App() {
             todo={todo}
             running={running}
             onPreviewChange={onArtifactPreview}
-            showArtifacts={agent === "cowork"}
+            showArtifacts={agent === "delta"}
             personaId={agent}
             projectScoped={isProjectScoped(personaOf(agent))}
             workspace={workspace || undefined}
             branch={branch}
-            scratchPrimary={agent === "cowork"}
+            scratchPrimary={agent === "delta"}
             openAccessKey={accessKey}
             onOpenIntegrations={() => setSurface("integrations")}
           />

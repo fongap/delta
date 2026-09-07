@@ -732,7 +732,7 @@ button.btn.danger { color: var(--accent); }
 .wschip:hover .edit { color: var(--muted); }
 .wsbranch { display: inline-flex; align-items: center; gap: 5px; font-size: 12px; color: var(--faint); }
 
-/* roots manager (orphan Cowork directories) */
+/* roots manager (orphan Delta directories) */
 .rootsbar { position: relative; display: inline-flex; }
 .rootsbar .wschip { max-width: none; }
 .roots-pop {
@@ -781,7 +781,7 @@ button.btn.danger { color: var(--accent); }
 .addfolder-write { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted); cursor: pointer; }
 .addfolder-actions .spacer { flex: 1; }
 
-/* Cowork session start panel */
+/* Delta session start panel */
 .intro { max-width: 640px; margin: 0 auto; padding: 40px 20px 24px; }
 .intro .greeting { font-size: 26px; font-weight: 600; display: flex; align-items: center; justify-content: center; gap: 10px; }
 .intro .greeting .mark { color: var(--accent); }
@@ -1292,7 +1292,7 @@ button.btn.ghost:hover { color: var(--ink); }
 .inbox-session-chip:hover:not(:disabled) { color: var(--ink); border-color: var(--line-strong); }
 .inbox-session-chip:disabled { cursor: default; opacity: 0.6; }
 .inbox-chip-ico { width: 18px; height: 18px; border-radius: 5px; display: inline-flex; align-items: center; justify-content: center; color: #fff; flex: none; }
-.inbox-chip-ico.ico-cowork { background: #16a34a; }
+.inbox-chip-ico.ico-delta { background: #16a34a; }
 .inbox-chip-ico.ico-chat { background: var(--accent); color: var(--on-accent); }
 .inbox-chip-ico.ico-code { background: #7c3aed; }
 .inbox-chip-ico.ico-ops { background: #ea580c; }

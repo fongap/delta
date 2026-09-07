@@ -104,18 +104,18 @@ def test_uninstall_removes_entry_state_and_snapshot(tmp_path):
     assert "acme-ops" not in reg2.ids()
 
 
-def test_uninstall_default_falls_back_to_cowork(tmp_path):
+def test_uninstall_default_falls_back_to_delta(tmp_path):
     reg = PersonaRegistry(state_path=tmp_path / "personas.json")
     reg.install_from_dir(_persona_dir(tmp_path))
     reg.set_default("acme-ops")
     reg.uninstall("acme-ops")
-    assert reg.default_id() == "cowork"
+    assert reg.default_id() == "delta"
 
 
 def test_uninstall_refuses_builtins_and_unknown(tmp_path):
     reg = PersonaRegistry(state_path=tmp_path / "personas.json")
     with pytest.raises(ValueError):
-        reg.uninstall("cowork")
+        reg.uninstall("delta")
     with pytest.raises(KeyError):
         reg.uninstall("ghost")
 

@@ -131,8 +131,8 @@ def test_persona_enable_toggle(tmp_path, monkeypatch):
     client = TestClient(create_app(mgr))
 
     before = {p["id"]: p for p in client.get("/v1/personas").json()["personas"]}
-    assert before["ops"]["enabled"] is False  # ships disabled; only cowork starts on
-    assert before["cowork"]["enabled"] is True
+    assert before["ops"]["enabled"] is False  # ships disabled; only delta starts on
+    assert before["delta"]["enabled"] is True
 
     resp = client.post("/v1/personas/ops/enable", json={"enabled": True}).json()
     assert resp["ok"] is True
@@ -184,7 +184,7 @@ def test_session_connections_endpoint(tmp_path, monkeypatch):
 
 def test_fresh_session_view_uses_persona_hint(tmp_path, monkeypatch):
     # A brand-new session has no SessionRecord until its first turn persists. Without the
-    # GUI's persona hint the view resolved to the DEFAULT persona (cowork) — the owner's
+    # GUI's persona hint the view resolved to the DEFAULT persona (delta) — the owner's
     # 2026-07-03 finding: a fresh session showed the wrong defaults and no recommends.
     mgr = _mgr(tmp_path, monkeypatch)
     _connect_slack(mgr)

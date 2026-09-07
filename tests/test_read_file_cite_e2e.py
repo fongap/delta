@@ -9,7 +9,7 @@ i.e. ``_run_scheduled_task`` → ``build_engine`` → registry.execute →
 
 The test drives the **code** agent, whose ``code_files`` capability is the
 one that wires our line-numbered ``read_file`` (which carries the
-auto-cite hook). Knowledge-work surfaces (cowork/ops) keep aisuite's
+auto-cite hook). Knowledge-work surfaces (delta/ops) keep aisuite's
 multi-root ``read_file``; their cite hook is a follow-up.
 
 The test is intentionally cheap: one ``read_file`` call, one assertion on
@@ -58,7 +58,7 @@ def _task(tmp_path, ws_name: str) -> ScheduledTask:
         workspace=str(ws),
         # `code` is the agent whose ``code_files`` capability wires our
         # line-numbered ``read_file`` (carries the auto-cite hook).
-        # Cowork/ops keep aisuite's multi-root reader; cite there is a
+        # Delta/ops keep aisuite's multi-root reader; cite there is a
         # follow-up.
         agent="code",
     )

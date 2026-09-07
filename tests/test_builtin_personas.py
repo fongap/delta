@@ -1,6 +1,6 @@
 """Phase 1 gate — built-in personas resolve to the same toolsets as the legacy agents.
 
-The equivalence net: routing Code/Cowork through the persona registry must yield the exact
+The equivalence net: routing Code/Delta through the persona registry must yield the exact
 same tools the agent builders produce, and Ops (a markdown persona) must compose the knowledge
 toolset. Ties back to the Phase 0 catalog equivalence."""
 
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from core.agents.base import AgentContext
 from core.agents.code import code_agent
-from core.agents.cowork import cowork_agent
+from core.agents.delta_agent import delta_agent
 from core.personas.registry import PersonaRegistry
 from integrations.tools.todo import TodoList
 
@@ -28,19 +28,19 @@ def test_code_persona_matches_builder(tmp_path):
     assert reg.agent("code").family == "code"
 
 
-def test_cowork_persona_matches_builder(tmp_path):
+def test_delta_persona_matches_builder(tmp_path):
     reg = PersonaRegistry()
     ctx = _ctx(tmp_path)
-    assert _names(reg.agent("cowork"), ctx) == _names(cowork_agent(), ctx)
-    a = reg.agent("cowork")
+    assert _names(reg.agent("delta"), ctx) == _names(delta_agent(), ctx)
+    a = reg.agent("delta")
     assert a.messaging and a.connectors
 
 
 def test_ops_persona_composes_knowledge_toolset(tmp_path):
     reg = PersonaRegistry()
     ctx = _ctx(tmp_path)
-    # Ops uses the same capability list as Cowork (files/search/shell/todo).
-    assert _names(reg.agent("ops"), ctx) == _names(cowork_agent(), ctx)
+    # Ops uses the same capability list as Delta (files/search/shell/todo).
+    assert _names(reg.agent("ops"), ctx) == _names(delta_agent(), ctx)
     a = reg.agent("ops")
     assert a.family == "knowledge" and a.messaging and a.connectors
     assert "read_file_lines" in _names(a, ctx)  # multi-root knowledge files
@@ -52,4 +52,4 @@ def test_code_keeps_single_root_file_tools(tmp_path):
     # v0.3.1: both `read_file` and `read_file_lines` are our multi-root-aware
     # tools, and the code agent gets the small-window sibling too.
     assert "read_file" in names and "read_file_lines" in names
-    assert "git_log" in names  # code has git; cowork/ops do not
+    assert "git_log" in names  # code has git; delta/ops do not

@@ -232,7 +232,7 @@ class SlackAdapter(BasePlatformAdapter):
                     mapped.source.chat_name = await self._channel_name(
                         mapped.source.chat_id
                     )
-                # ...and rewrite <@U…> mention tokens in the text to @name ("@ocw hi", not
+                # ...and rewrite <@U…> mention tokens in the text to @name ("@delta hi", not
                 # "<@U0BDKMA4DFF> hi").
                 mapped.text = await self._resolve_mentions(mapped.text)
                 await self.handle_message(mapped)

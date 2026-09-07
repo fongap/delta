@@ -28,7 +28,7 @@ test("kind + persona filters narrow the pending list", async ({ page }) => {
   await expect(page.getByText("Approve: run_shell")).not.toBeVisible();
   await expect(page.getByText(question)).toBeVisible();
 
-  // Persona chips render because two personas hold items; filtering to Ops hides the cowork item.
+  // Persona chips render because two personas hold items; filtering to Ops hides the delta item.
   await filters.getByRole("button", { name: "All", exact: true }).click();
   await filters.getByRole("button", { name: "Ops", exact: true }).click();
   await expect(page.getByText("Approve: run_shell")).not.toBeVisible();

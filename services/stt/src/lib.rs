@@ -25,7 +25,7 @@ use serde::Serialize;
 use sha2::{Digest, Sha256};
 use whisper_rs::{FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters};
 
-/// A reasonably fast multilingual model for short OpenWorker prompts (~142 MB). Unlike the
+/// A reasonably fast multilingual model for short Delta voice prompts (~142 MB). Unlike the
 /// English-only `ggml-base.en.bin`, this model auto-detects the spoken language, so Voice Input
 /// works for Chinese and other languages too.
 pub const DEFAULT_MODEL_FILE: &str = "ggml-base.bin";

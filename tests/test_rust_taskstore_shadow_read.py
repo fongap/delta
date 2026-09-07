@@ -79,7 +79,7 @@ def _make_task(task_id: str, title: str) -> ScheduledTask:
         schedule=Schedule(kind="cron", cron="0 0 * * *"),
         workspace="/tmp/ws",
         id=task_id,
-        agent="cowork",
+        agent="delta",
     )
 
 

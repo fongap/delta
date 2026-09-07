@@ -1,4 +1,4 @@
-"""Playwright-backed browser automation tools for Cowork.
+"""Playwright-backed browser automation tools for Delta.
 
 The dependency is optional. If Playwright or its browser binaries are not installed, the
 tools return a clear setup error instead of breaking engine construction.

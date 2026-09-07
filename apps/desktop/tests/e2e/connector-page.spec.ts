@@ -35,7 +35,7 @@ test("parked sender files under the connected workspace; Allow & deliver adds to
   const t1 = page.getByTestId("slack-workspace-T1DL");
   await expect(t1.getByTestId("waiting-pk1")).toContainText("Maya");
   await expect(t1.getByTestId("waiting-pk1")).toContainText("in #delta-test");
-  await expect(t1.getByTestId("waiting-pk1")).toContainText("hey ocw, can you summarize this thread?");
+  await expect(t1.getByTestId("waiting-pk1")).toContainText("hey delta, can you summarize this thread?");
 
   await page.getByTestId("parked-allow-deliver-pk1").click();
   await expect(page.getByTestId("waiting-pk1")).toHaveCount(0);

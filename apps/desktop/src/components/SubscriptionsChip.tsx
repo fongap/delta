@@ -230,7 +230,7 @@ export function ChannelPicker({
               )}
               {!r.is_member && (
                 <span className="block text-[11px] text-warnInk">
-                  {t("connectors.inviteOcw")}
+                  {t("connectors.inviteDelta")}
                 </span>
               )}
             </button>

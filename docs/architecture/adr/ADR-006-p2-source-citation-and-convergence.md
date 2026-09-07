@@ -119,7 +119,7 @@ Reference Task（`tests/test_reference_task.py`）继续做端到端断言；
   这种无 `kind` 的 citation dict（之前 `mark_cited` 的隐式契约），
   reader 调用方需迁移到 typed 调用或带 `kind` 的 dict。
 - **多根 workspace 暂未覆盖**：`_code_files` capability 拿到了
-  `read_document`；`_files`（cowork/ops 的多根变体）当前仍走 aisuite
+  `read_document`；`_files`（delta/ops 的多根变体）当前仍走 aisuite
   `read_file`，不自动 cite。后续扩展需要先把 `read_file` 多根支持
   + cite 钩入补齐。
 - **`read_document` 受 Pypdf 抽取质量限制**：扫描 PDF 走 pypdf 抽出来

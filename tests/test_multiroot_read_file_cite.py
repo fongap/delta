@@ -1,7 +1,7 @@
-"""P2 follow-up A: Cowork/Ops 多根 read_file 的 cite 钩子 (ADR-006).
+"""P2 follow-up A: Delta/Ops 多根 read_file 的 cite 钩子 (ADR-006).
 
 P2 (PR #76/#77) 给单根 ``file_tools`` (code agent 用的) 接上了 P2 自动
-cite 钩子，但 Cowork/Ops 的 ``_files`` capability 仍走 aisuite 的
+cite 钩子，但 Delta/Ops 的 ``_files`` capability 仍走 aisuite 的
 多根 ``read_file``——没有 cite。本测试覆盖在 ``_files`` 路径上替换
 aisuite 多根 read_file 后，cite 行为在多根场景下的契约。
 
@@ -192,7 +192,7 @@ def test_single_root_path_in_result_mode_unchanged(tmp_path):
 
 
 def test_files_capability_uses_our_multiroot_read_file(tmp_path):
-    """The ``files`` capability (Cowork/Ops) must now expose OUR
+    """The ``files`` capability (Delta/Ops) must now expose OUR
     cite-aware read_file (not aisuite's), and ``read_file_lines`` from
     aisuite remains for its separate windowed-reader use case."""
     scratch, ro, rw = _setup(tmp_path)

@@ -115,10 +115,10 @@ def test_chat_completions_openai_shape(tmp_path):
 def test_agents_and_memory_rest(tmp_path):
     client = _client(tmp_path, [])
     agents = client.get("/v1/agents").json()["agents"]
-    # The picker lists enabled+surfaced personas — a fresh install is cowork-only
+    # The picker lists enabled+surfaced personas — a fresh install is delta-only
     # (non-default personas ship disabled, opt-in from Settings ▸ Personas).
     names = [a["name"] for a in agents]
-    assert names == ["cowork"]
+    assert names == ["delta"]
     assert "skills" in client.get("/v1/skills").json()  # catalog (may be empty)
 
     added = client.post("/v1/memory", json={"content": "prefer pathlib"}).json()
@@ -153,7 +153,7 @@ def test_disable_persona_archives_its_sessions(tmp_path):
     store.set_flags(
         "chat-old", archived=True
     )  # already archived — must not be re-counted
-    mk("cowork-a", "cowork")
+    mk("delta-a", "delta")
     mk("__run__r1", "chat")  # internal automation thread — never touched
 
     client = TestClient(create_app(manager))
@@ -161,7 +161,7 @@ def test_disable_persona_archives_its_sessions(tmp_path):
     assert body["ok"] is True
     assert body["archived_sessions"] == 2
     assert store.load("chat-a").archived and store.load("chat-b").archived
-    assert store.load("cowork-a").archived is False
+    assert store.load("delta-a").archived is False
     assert store.load("__run__r1").archived is False
 
     # Re-enable brings the persona back but never rewrites the user's archive state.
@@ -276,7 +276,7 @@ def test_sessions_hide_scheduled_internal_runs(tmp_path):
             mode="interactive",
             messages=[{"role": "user", "content": "normal task"}],
             title="Normal task",
-            agent="cowork",
+            agent="delta",
         )
     )
     manager.session_store.save(
@@ -287,7 +287,7 @@ def test_sessions_hide_scheduled_internal_runs(tmp_path):
             mode="interactive",
             messages=[{"role": "user", "content": "scheduled run"}],
             title="Daily news briefing",
-            agent="cowork",
+            agent="delta",
         )
     )
     manager.session_store.save(
@@ -298,7 +298,7 @@ def test_sessions_hide_scheduled_internal_runs(tmp_path):
             mode="interactive",
             messages=[{"role": "user", "content": "scheduled task"}],
             title="Daily news briefing",
-            agent="cowork",
+            agent="delta",
         )
     )
     client = TestClient(create_app(manager))
@@ -320,7 +320,7 @@ def test_sessions_can_be_renamed_and_deleted(tmp_path):
             mode="interactive",
             messages=[{"role": "user", "content": "original"}],
             title="Original title",
-            agent="cowork",
+            agent="delta",
         )
     )
     client = TestClient(create_app(manager))
@@ -352,7 +352,7 @@ def test_sessions_can_be_pinned_and_archived(tmp_path):
                 model="gpt-5.5",
                 mode="interactive",
                 messages=[{"role": "user", "content": sid}],
-                agent="cowork",
+                agent="delta",
             )
         )
     client = TestClient(create_app(manager))
@@ -820,7 +820,7 @@ def test_ws_session_persisted_while_parked_on_approval(tmp_path):
 
 def test_ws_browser_tool_audit_round_trip(tmp_path):
     client = _client(tmp_path, [_tool("browser_close", {}), _text("closed")])
-    with client.websocket_connect("/ws/session/browser-audit?agent=cowork") as ws:
+    with client.websocket_connect("/ws/session/browser-audit?agent=delta") as ws:
         assert ws.receive_json()["type"] == "ready"
         ws.send_json({"type": "user_message", "text": "close browser"})
         types = _drain(ws, on_permission="once")
@@ -1248,7 +1248,7 @@ def test_always_allow_grants_survive_restart(tmp_path):
         )
 
     def _run_turn(client, expect_prompts):
-        with client.websocket_connect("/ws/session/grants1?agent=cowork") as ws:
+        with client.websocket_connect("/ws/session/grants1?agent=delta") as ws:
             assert ws.receive_json()["type"] == "ready"
             ws.send_json({"type": "user_message", "text": "run it"})
             asked = 0

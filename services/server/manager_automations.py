@@ -436,8 +436,8 @@ class AutomationsMixin(ManagerHostState):
             instructions=instructions,
             schedule=schedule,
             workspace="",
-            origin_surface="cowork",
-            agent="cowork",
+            origin_surface="delta",
+            agent="delta",
             # Human-driven path (GUI form / onboarding recipes): the creating surface
             # rendered the grants, the submit IS the consent. Same validation as the
             # agent tool — only target-bound write grants survive.

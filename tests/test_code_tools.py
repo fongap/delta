@@ -172,13 +172,13 @@ def test_code_agent_has_grep_and_git_log_not_search_files(tmp_path):
     assert {"read_file", "write_file", "git_status", "git_diff"} <= names
 
 
-def test_cowork_has_grep_not_search_files(tmp_path):
+def test_delta_has_grep_not_search_files(tmp_path):
     from core.agents.base import AgentContext
-    from core.agents.cowork import cowork_tool_factory
+    from core.agents.delta_agent import delta_tool_factory
 
     names = {
         getattr(t, "__name__", "")
-        for t in cowork_tool_factory(AgentContext(workspace=tmp_path))
+        for t in delta_tool_factory(AgentContext(workspace=tmp_path))
     }
     assert "grep" in names and "search_files" not in names
-    assert "git_log" not in names  # git history isn't useful for Cowork
+    assert "git_log" not in names  # git history isn't useful for Delta

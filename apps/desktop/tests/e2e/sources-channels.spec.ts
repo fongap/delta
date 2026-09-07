@@ -6,7 +6,7 @@ import { test, expect } from "./fixtures";
 test("Slack channels drill-down: gating, add (auto-prefixed), remove", async ({ page }) => {
   await page.goto("/");
 
-  // Open the pinned cowork session, then expand the rail's Access section.
+  // Open the pinned delta session, then expand the rail's Access section.
   await page.getByText("Draft the launch note").first().click();
   await page.getByTestId("access-toggle").click();
 
@@ -54,7 +54,7 @@ test("recent channels popover: opens on focus, filters, picks", async ({ page })
   await expect(pop.getByText("bob: deploy failed")).toBeVisible();
 
   // Typing part of the channel NAME filters too…
-  await input.fill("ocw");
+  await input.fill("delta");
   await expect(pop.getByText("#delta-test")).toBeVisible();
   await expect(pop.getByText("slack:C0BBB222")).toHaveCount(0);
   await input.fill("");

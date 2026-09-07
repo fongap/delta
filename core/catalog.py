@@ -50,7 +50,7 @@ class Capability:
 
 
 # -- capability builders --------------------------------------------------------
-# These reproduce, exactly, what the Code and Cowork agent factories assembled by hand.
+# These reproduce, exactly, what the Code and Delta agent factories assembled by hand.
 
 
 def _code_files(context: AgentContext) -> list:

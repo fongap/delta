@@ -254,10 +254,10 @@ async def test_tick_while_run_is_parked_never_redispatches_it(tmp_path):
 def test_create_and_list_tools(tmp_path):
     store = TaskStore(tmp_path / "auto.db")
     origin = {
-        "surface": "cowork",
+        "surface": "delta",
         "session_id": "s1",
         "workspace": "/tmp/ws",
-        "agent": "cowork",
+        "agent": "delta",
     }
     tools = {
         t.__name__: t
@@ -335,7 +335,7 @@ async def test_scheduled_run_persists_continuable_session(tmp_path, monkeypatch)
         ]
     )
     manager = SessionManager(data_dir=tmp_path / "data", provider=provider)
-    task = _task(workspace=str(ws), agent="cowork")
+    task = _task(workspace=str(ws), agent="delta")
     manager.task_store.save(task)
 
     run = await manager._run_scheduled_task(task, trigger="manual")
@@ -350,7 +350,7 @@ async def test_scheduled_run_persists_continuable_session(tmp_path, monkeypatch)
         and any("Scheduled run" in (m.get("content") or "") for m in record.messages)
     )
     # …and it is continuable: a follow-up turn reuses the same thread
-    engine = manager.get_engine(run.session_id, workspace=str(ws), agent="cowork")
+    engine = manager.get_engine(run.session_id, workspace=str(ws), agent="delta")
     async for _ in engine.run("tell me more"):
         pass
     assert _last_assistant_text(engine.messages) == "Sure — here is more detail."
@@ -380,7 +380,7 @@ def test_task_engine_has_no_scheduling_tools(tmp_path, monkeypatch):
     ws = tmp_path / "ws"
     ws.mkdir()
     manager = SessionManager(data_dir=tmp_path / "data", provider=_Provider())
-    task = _task(workspace=str(ws), agent="cowork")
+    task = _task(workspace=str(ws), agent="delta")
     manager.task_store.save(task)
 
     engine = manager._build_task_engine(task, session_id="__run__test")
@@ -413,7 +413,7 @@ async def test_manual_run_prepare_and_finalize(tmp_path, monkeypatch):
             [AssistantTurn(text="Done — briefing ready.", finish_reason="stop")]
         ),
     )
-    task = _task(workspace=str(ws), agent="cowork")
+    task = _task(workspace=str(ws), agent="delta")
     manager.task_store.save(task)
 
     # prepare: a "running" run + a session to open live (NOT executed yet)
@@ -421,13 +421,13 @@ async def test_manual_run_prepare_and_finalize(tmp_path, monkeypatch):
     assert prep["ok"] and prep["session_id"] == f"__run__{prep['run_id']}"
     # The prompt wraps the instructions in execute-now framing (so the live agent runs the task
     # instead of re-scheduling it) and carries them verbatim.
-    assert prep["agent"] == "cowork"
+    assert prep["agent"] == "delta"
     assert task.instructions in prep["prompt"]
     assert "do not create or modify any scheduled tasks" in prep["prompt"]
     assert manager.task_store.runs(task.id)[0].status == "running"
 
     # the GUI drives the run live over the session, then finalize records the outcome
-    engine = manager.get_engine(prep["session_id"], workspace=str(ws), agent="cowork")
+    engine = manager.get_engine(prep["session_id"], workspace=str(ws), agent="delta")
     async for _ in engine.run(prep["prompt"]):
         pass
     manager.save(prep["session_id"], engine)
@@ -515,7 +515,7 @@ async def test_scheduled_run_broadcasts_run_started_event(tmp_path, monkeypatch)
     ws = tmp_path / "ws"
     ws.mkdir()
     manager = SessionManager(data_dir=tmp_path / "data", provider=ScriptedProvider())
-    task = _task(workspace=str(ws), agent="cowork")
+    task = _task(workspace=str(ws), agent="delta")
     manager.task_store.save(task)
 
     heard: list = []

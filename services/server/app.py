@@ -501,7 +501,7 @@ def create_app(manager: SessionManager) -> FastAPI:
         for sub in manager.subscriptions.all():
             rec = manager.session_store.load(sub.session_id)
             agent = rec.agent if rec else ""
-            routing = manager._routing_targets(sub.session_id, agent or "cowork")
+            routing = manager._routing_targets(sub.session_id, agent or "delta")
             out.append(
                 {
                     "session_id": sub.session_id,

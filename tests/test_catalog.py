@@ -1,8 +1,8 @@
 """Phase 0 gate — the vetted tool catalog.
 
-Asserts capabilities register, ``expand`` reproduces the Code and Cowork toolsets exactly
+Asserts capabilities register, ``expand`` reproduces the Code and Delta toolsets exactly
 (the equivalence net for the build_tools refactor), context prerequisites are honored
-(no shell without an executor, no files without a workspace), and the Code/Cowork file-tool
+(no shell without an executor, no files without a workspace), and the Code/Delta file-tool
 distinction (single-root numbered reader vs multi-root) is preserved."""
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ import pytest
 
 from core.agents.base import AgentContext
 from core.agents.code import CODE_CAPABILITIES, code_agent
-from core.agents.cowork import COWORK_CAPABILITIES, cowork_agent
+from core.agents.delta_agent import DELTA_CAPABILITIES, delta_agent
 from core.catalog import CATALOG, capability, expand, risk_summary
 from core.risk import RiskClass
 from integrations.tools.todo import TodoList
@@ -37,7 +37,7 @@ CODE_TOOLS = {
     "shell_task_kill",
     "todo_write",
 }
-COWORK_TOOLS = {
+DELTA_TOOLS = {
     "list_files",
     "read_file",  # ours: cite-aware multi-root
     "read_file_lines",  # ours: cite-aware multi-root
@@ -72,32 +72,32 @@ def test_expand_code_matches_expected(tmp_path):
     assert _names(tools) == CODE_TOOLS
 
 
-def test_expand_cowork_matches_expected(tmp_path):
-    tools = expand(COWORK_CAPABILITIES, _full_context(tmp_path))
-    assert _names(tools) == COWORK_TOOLS
+def test_expand_delta_matches_expected(tmp_path):
+    tools = expand(DELTA_CAPABILITIES, _full_context(tmp_path))
+    assert _names(tools) == DELTA_TOOLS
 
 
 def test_agents_use_catalog(tmp_path):
     # The agent factories build through the catalog now — same result as direct expand.
     ctx = _full_context(tmp_path)
     assert _names(code_agent().build_tools(ctx)) == CODE_TOOLS
-    assert _names(cowork_agent().build_tools(ctx)) == COWORK_TOOLS
+    assert _names(delta_agent().build_tools(ctx)) == DELTA_TOOLS
 
 
 def test_file_capability_distinction(tmp_path):
-    # Both Code and Cowork get our `read_file` AND our `read_file_lines` (v0.3.1:
+    # Both Code and Delta get our `read_file` AND our `read_file_lines` (v0.3.1:
     # `read_file_lines` gained a Source/Citation hook and was promoted from a
-    # Cowork-only windowed reader to a shared chokepoint). The remaining
+    # Delta-only windowed reader to a shared chokepoint). The remaining
     # distinction is what aisuite provides: Code has single-root + read_document,
-    # Cowork has multi-root roots-aware writes.
+    # Delta has multi-root roots-aware writes.
     code = _names(expand(["code_files"], _full_context(tmp_path)))
-    cowork = _names(expand(["files"], _full_context(tmp_path)))
+    delta = _names(expand(["files"], _full_context(tmp_path)))
     assert "read_file_lines" in code
-    assert "read_file_lines" in cowork
-    assert "read_file" in code and "read_file" in cowork
-    # Code has read_document; Cowork does not.
+    assert "read_file_lines" in delta
+    assert "read_file" in code and "read_file" in delta
+    # Code has read_document; Delta does not.
     assert "read_document" in code
-    assert "read_document" not in cowork
+    assert "read_document" not in delta
 
 
 def test_requirements_skip_unavailable(tmp_path):

@@ -1,9 +1,10 @@
 """Managed Capability Ports — Delta Hub architecture baseline.
 
 Delta Desktop can operate fully without any managed service (local-first).
-These protocols define the capability boundaries a future Delta Hub (or an
-optional OpenWorker Federation Adapter) can implement to unlock managed OAuth,
-relay, GitHub App token mint, and external identity federation.
+These protocols define the capability boundaries a future Delta Hub (or any
+federation adapter — OIDC, SAML, a third-party identity provider, etc.) can
+implement to unlock managed OAuth, relay, GitHub App token mint, and external
+identity federation.
 
 Current status: only interfaces and Null* defaults exist. No real broker is
 wired. Removing this entire package leaves Desktop fully functional via

@@ -145,7 +145,7 @@ def test_irreversible_tool_parks_even_in_auto(tmp_path):
     sid = "auto-ap"
     # Register the stub tool on the engine after build (escape hatch: the
     # raw TurnEngine owns the registry; the adapter only delegates).
-    engine = mgr.get_engine(sid, agent="cowork", workspace=str(tmp_path))
+    engine = mgr.get_engine(sid, agent="delta", workspace=str(tmp_path))
     engine.engine.registry.register(stub)
 
     async def scenario():
@@ -169,7 +169,7 @@ def test_irreversible_tool_denied_does_not_execute(tmp_path):
          _text("Acknowledged — email was not sent.")],
     )
     sid = "deny-ap"
-    engine = mgr.get_engine(sid, agent="cowork", workspace=str(tmp_path))
+    engine = mgr.get_engine(sid, agent="delta", workspace=str(tmp_path))
     engine.engine.registry.register(stub)
 
     async def scenario():
@@ -193,7 +193,7 @@ def test_approval_ledger_events_recorded(tmp_path):
          _text("Done.")],
     )
     sid = "ledger-ap"
-    engine = mgr.get_engine(sid, agent="cowork", workspace=str(tmp_path))
+    engine = mgr.get_engine(sid, agent="delta", workspace=str(tmp_path))
     engine.engine.registry.register(stub)
 
     async def scenario():

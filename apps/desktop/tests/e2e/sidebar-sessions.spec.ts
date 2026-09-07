@@ -7,7 +7,7 @@ import { test, expect } from "./fixtures";
 
 test("session list caps at the peek count with Show more", async ({ page }) => {
   await page.goto("/");
-  // Boot resumes a cowork session, so the Delta accordion body is expanded. The body holds
+  // Boot resumes a delta session, so the Delta accordion body is expanded. The body holds
   // 8 sessions (7 weekly plans + the Slack-origin one, §31 rev) against sessions_peek=5.
   await expect(page.getByTitle("Weekly plan 1")).toBeVisible();
   await expect(page.getByTitle("Weekly plan 5")).toBeVisible();

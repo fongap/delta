@@ -30,7 +30,7 @@
 
 - 身份：`ScheduledTask.id` (string)；
 - 名称 / 描述 / 触发方式（`schedule` 或 `trigger` 二选一）；
-- 关联 `agent="code"|"cowork"`；
+- 关联 `agent="code"|"delta"`（R1.6 起；2026-09-07 之前为 `"cowork"`，已 source-level rename 收口）。
 - 关联 `validation_criteria: ValidationCriteria`。
 
 ### 2.2 Run

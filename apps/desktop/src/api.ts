@@ -424,7 +424,7 @@ export async function revealArtifact(
   return res.json();
 }
 
-// -- session roots (orphan Cowork: scratch + added folders) -------------------
+// -- session roots (orphan Delta: scratch + added folders) -------------------
 export interface RootInfo {
   path: string;
   writable: boolean;
@@ -801,7 +801,7 @@ export async function closeBrowser(): Promise<{ ok?: boolean; error?: string }> 
 
 // -- settings (model API key, default model, onboarding) ----------------------
 export interface SurfaceVisibility {
-  cowork: boolean; // always true
+  delta: boolean; // always true
   chat: boolean;
   code: boolean;
 }
@@ -2257,7 +2257,7 @@ export class Session {
   }
 
   /** `model` = the composer's CURRENT selection, carried on every message so the turn uses
-   * exactly what the user sees — immune to set_model races across reconnects (a new cowork
+   * exactly what the user sees — immune to set_model races across reconnects (a new delta
    * session always reconnects once to adopt its scratch dir, which could drop a queued
    * set_model and leave the engine on a stale/resumed model; found 2026-07-04). */
   userMessage(text: string, attachments?: unknown[], model?: string, skill?: string) {

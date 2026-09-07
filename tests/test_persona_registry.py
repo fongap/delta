@@ -13,27 +13,27 @@ def _reg(tmp_path) -> PersonaRegistry:
 
 def test_builtins_present(tmp_path):
     reg = _reg(tmp_path)
-    assert {"code", "chat", "cowork", "ops"} <= set(reg.ids())
+    assert {"code", "chat", "delta", "ops"} <= set(reg.ids())
     assert reg.get("ops").builtin is True
     # Ops came from a markdown manifest; Code from a builder.
     assert reg.get("ops").manifest is not None
     assert reg.get("code").manifest is None
 
 
-def test_sidebar_defaults_to_cowork_only(tmp_path):
+def test_sidebar_defaults_to_delta_only(tmp_path):
     reg = _reg(tmp_path)
     sidebar = reg.sidebar()
     ids = [e["name"] for e in sidebar]
     # A fresh install offers ONLY the default persona (owner call 2026-07-09);
     # everything else is opt-in from Settings ▸ Personas.
-    assert ids == ["cowork"]
+    assert ids == ["delta"]
     assert sidebar[0]["default"] is True
     # Enabling adds to the picker (enable implies surface).
     reg.set_enabled("code", True)
     reg.set_enabled("ops", True)
     ids = [e["name"] for e in reg.sidebar()]
-    assert ids[0] == "cowork"
-    assert set(ids) == {"cowork", "code", "ops"}
+    assert ids[0] == "delta"
+    assert set(ids) == {"delta", "code", "ops"}
 
 
 def test_chat_disabled_by_default_but_resolvable(tmp_path):
@@ -58,11 +58,11 @@ def test_surface_toggle_filters_picker_but_keeps_resolvable(tmp_path):
 
 def test_disable_default_falls_back(tmp_path):
     reg = _reg(tmp_path)
-    assert reg.default_id() == DEFAULT_PERSONA_ID  # cowork
+    assert reg.default_id() == DEFAULT_PERSONA_ID  # delta
     reg.set_enabled("ops", True)  # another persona must be enabled to fall back to
-    reg.set_enabled("cowork", False)
-    # Cowork off → default resolves to another enabled persona, not cowork.
-    assert reg.default_id() != "cowork"
+    reg.set_enabled("delta", False)
+    # Delta off → default resolves to another enabled persona, not delta.
+    assert reg.default_id() != "delta"
     # Unknown / unspecified persona falls back to the (new) default, which is enabled.
     fallback = reg.agent(None)
     assert reg.is_enabled(fallback.name)
@@ -91,7 +91,7 @@ def test_list_all_carries_workspace_enum(tmp_path):
     reg = _reg(tmp_path)
     ws = {p["id"]: p["workspace"] for p in reg.list_all()}
     assert ws["code"] == "git"
-    assert ws["cowork"] == "deliverable"
+    assert ws["delta"] == "deliverable"
     assert ws["chat"] == "none"
     assert ws["ops"] == "deliverable"
 

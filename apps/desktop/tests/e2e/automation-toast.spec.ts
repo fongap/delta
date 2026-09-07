@@ -12,7 +12,7 @@ const RUN_STARTED = {
     task_title: "Daily AI News",
     session_id: "run-live-1",
     workspace: "/tmp/aw",
-    agent: "cowork",
+    agent: "delta",
     trigger: "schedule",
   },
 };

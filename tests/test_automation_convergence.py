@@ -34,7 +34,7 @@ def _task(tmp_path) -> ScheduledTask:
         instructions="noop",
         schedule=Schedule(kind="cron", cron="0 9 * * *"),
         workspace=str(ws),
-        agent="cowork",
+        agent="delta",
     )
 
 

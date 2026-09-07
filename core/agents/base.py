@@ -1,4 +1,4 @@
-"""Agent — a top-level surface (Code / Chat / Cowork).
+"""Agent — a top-level surface (Code / Chat / Delta).
 
 An agent owns its system prompt + base toolset + whether it needs a workspace. Distinct
 from a Skill: skills are Anthropic-format, loadable capabilities that ANY agent can pull

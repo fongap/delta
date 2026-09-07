@@ -30,25 +30,25 @@ function stubFetch(routes: { match: string; method?: string; json: any }[]) {
 
 const PERSONAS = {
   personas: [
-    { id: "cowork", name: "Delta", icon: "cowork", tagline: "general assistant", family: "knowledge", enabled: true, surfaced: true, default: true },
+    { id: "delta", name: "Delta", icon: "delta", tagline: "general assistant", family: "knowledge", enabled: true, surfaced: true, default: true },
     { id: "ops", name: "Ops", icon: "ops", tagline: "incidents, runbooks", family: "code", enabled: true, surfaced: true, default: false },
     { id: "code", name: "Code", icon: "code", tagline: "repository work", family: "code", enabled: true, surfaced: true, default: false },
-    { id: "secret", name: "Disabled One", icon: "cowork", tagline: "off", family: "knowledge", enabled: false, surfaced: false, default: false },
+    { id: "secret", name: "Disabled One", icon: "delta", tagline: "off", family: "knowledge", enabled: false, surfaced: false, default: false },
   ],
 };
 
 const SESSIONS: SessionInfo[] = [
   { session_id: "s-ops-1", title: "incident watch", workspace: "/w", agent: "ops", model: "m", mode: "interactive", updated_at: "2026-06-29", messages: 2 },
-  { session_id: "s-cowork-1", title: "hi there", workspace: "", agent: "cowork", model: "m", mode: "interactive", updated_at: "2026-06-29", messages: 1 },
+  { session_id: "s-delta-1", title: "hi there", workspace: "", agent: "delta", model: "m", mode: "interactive", updated_at: "2026-06-29", messages: 1 },
 ];
 
 const baseProps = {
-  agent: "cowork",
+  agent: "delta",
   workspace: "",
-  surfaces: { cowork: true, chat: false, code: false },
+  surfaces: { delta: true, chat: false, code: false },
   sessions: SESSIONS,
   projects: [],
-  activeSession: "s-cowork-1",
+  activeSession: "s-delta-1",
   onSwitchAgent: vi.fn(),
   onNewSession: vi.fn(),
   onSelectSession: vi.fn(),
@@ -177,7 +177,7 @@ describe("From Slack group (§31)", () => {
     session_id: "s-slack-1",
     title: "#general — check the deploy?",
     workspace: "",
-    agent: "cowork",
+    agent: "delta",
     model: "m",
     mode: "interactive",
     updated_at: "2026-07-13",
@@ -211,7 +211,7 @@ describe("New-session split button", () => {
       {
         match: "/v1/personas",
         method: "GET",
-        json: { personas: [PERSONAS.personas[0], PERSONAS.personas[3]] }, // cowork + a disabled one
+        json: { personas: [PERSONAS.personas[0], PERSONAS.personas[3]] }, // delta + a disabled one
       },
       { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
     ]);
@@ -221,11 +221,11 @@ describe("New-session split button", () => {
     // No ▾ — nothing to pick; the primary button starts the sole enabled persona.
     await waitFor(() => expect(screen.queryByLabelText("Choose a persona")).toBeNull());
     fireEvent.click(container.querySelector(".newsplit-primary")!);
-    expect(baseProps.onNewSession).toHaveBeenCalledWith("cowork");
+    expect(baseProps.onNewSession).toHaveBeenCalledWith("delta");
   });
 
   it("primary starts the last-used persona; the menu lists enabled personas + Manage personas…", async () => {
-    localStorage.setItem("ocw.flag.personas", "1"); // Manage entry is launch-flagged off
+    localStorage.setItem("delta.flag.personas", "1"); // Manage entry is launch-flagged off
     stubFetch([
       { match: "/v1/personas", method: "GET", json: PERSONAS },
       { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
@@ -235,7 +235,7 @@ describe("New-session split button", () => {
 
     // Primary action → a new session with the current (last-used) persona.
     fireEvent.click(container.querySelector(".newsplit-primary")!);
-    expect(baseProps.onNewSession).toHaveBeenCalledWith("cowork");
+    expect(baseProps.onNewSession).toHaveBeenCalledWith("delta");
 
     // ▾ opens the persona menu: enabled personas appear, the disabled one does not, plus a manage entry.
     fireEvent.click(screen.getByLabelText("Choose a persona"));
@@ -257,7 +257,7 @@ describe("New-session split button", () => {
   });
 
   it("hides Manage personas… while the launch flag is off (the default)", async () => {
-    localStorage.removeItem("ocw.flag.personas");
+    localStorage.removeItem("delta.flag.personas");
     stubFetch([
       { match: "/v1/personas", method: "GET", json: PERSONAS },
       { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },

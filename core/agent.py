@@ -239,7 +239,7 @@ def build_engine(
     if agent.needs_workspace and ws is None:
         raise ValueError(f"agent '{agent.name}' requires a workspace")
 
-    # The session's directories. Explicit `roots` (orphan Cowork: scratch + added folders) wins;
+    # The session's directories. Explicit `roots` (orphan Delta: scratch + added folders) wins;
     # otherwise the single workspace is the sole writable root. One shared, mutable list flows to
     # the file tools, the permission engine, and the context injector so add/remove is seen by all.
     if roots:
@@ -269,7 +269,7 @@ def build_engine(
     # MCP / connector tools (supplied by the manager) carry their own metadata + schema.
     if extra_tools:
         registry.register_all(extra_tools)
-    # Messaging personas (Cowork / Ops / MyHelper) expose send_message; MyHelper also uses it as
+    # Messaging personas (Delta / Ops / MyHelper) expose send_message; MyHelper also uses it as
     # the reply path for inbound Telegram/Slack super-agent sessions.
     secrets = secrets or SecretStore()
     if agent.messaging and any(s.enabled for s in load_settings(secrets).values()):
@@ -436,7 +436,7 @@ def build_engine(
     # Per-turn ephemeral context, appended to the latest user message since mid-thread system
     # messages aren't reliable across providers. Three producers: the plan-mode reminder (mode can
     # flip mid-session, so it's checked each turn, not baked into the instructions), the live
-    # directory list (orphan Cowork can gain folders mid-session; Cowork/MyHelper only), and the
+    # directory list (orphan Delta can gain folders mid-session; Delta/MyHelper only), and the
     # memory-SAVING notice (same reason as plan mode — the switch flips either way mid-chat).
     # Note what is NOT here: the memories and the user's rules. Those are knowledge, fixed at
     # session start (§7.1).

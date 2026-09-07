@@ -5,8 +5,7 @@ Delta (the application layer) owns sessions, approvals, sources, artifacts,
 automation, audit, and settings. A runtime owns only the intelligence loop:
 context assembly, model invocation, tool selection/consumption, compaction,
 and the step loop. This module pins that division behind a protocol so the
-TurnEngine (OpenWorker lineage) can be replaced or wrapped without the
-application layer noticing.
+TurnEngine can be replaced or wrapped without the application layer noticing.
 
 What a Runtime MAY do:
     context assembly · model invocation · tool selection & consumption ·
@@ -84,7 +83,7 @@ class RuntimePort(Protocol):
 
     @property
     def agent_name(self) -> str:
-        """The agent persona this runtime runs ("code", "cowork", …)."""
+        """The agent persona this runtime runs ("code", "delta", …)."""
         ...
 
     @property

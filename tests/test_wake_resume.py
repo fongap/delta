@@ -6,7 +6,7 @@ import asyncio
 
 from core.agent import build_engine
 from core.agents.code import code_agent
-from core.agents.cowork import cowork_agent
+from core.agents.delta_agent import delta_agent
 from core.automation.scheduler import Scheduler
 from core.selfwake import Wake, WakeStore
 from services.server.manager import SessionManager
@@ -43,7 +43,7 @@ def test_wake_messages_by_kind():
 
 def test_selfwake_tools_registered_for_knowledge(tmp_path):
     engine = build_engine(
-        agent=cowork_agent(),
+        agent=delta_agent(),
         workspace=tmp_path,
         wake_store=WakeStore(tmp_path / "wakes.json"),
         session_id="s1",

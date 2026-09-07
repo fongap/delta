@@ -32,7 +32,7 @@ def test_create_automation_success(tmp_path, monkeypatch):
     # it really landed in the store and is bound to a fresh scratch workspace
     saved = manager.task_store.get(task["id"])
     assert saved is not None
-    assert saved.agent == "cowork"
+    assert saved.agent == "delta"
     assert Path(saved.workspace).is_dir()
 
 

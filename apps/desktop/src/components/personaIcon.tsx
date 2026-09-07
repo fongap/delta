@@ -3,14 +3,14 @@
 // A persona's `icon` (from the manifest, or the built-in registry) resolves to, in order:
 //   1. an emoji        — rendered as-is (e.g. a manifest with `icon: 🛠️`),
 //   2. a named glyph    — a value from our Icon set (e.g. `icon: wrench`),
-//   3. a legacy logo-id — the built-ins' historic ids (cowork/code/chat/ops),
+//   3. a legacy logo-id — the built-ins' historic ids (delta/code/chat/ops),
 //   4. the family icon  — the fallback when a manifest declares nothing usable.
-// So personas are visually distinct (Ops→wrench, Code→code, Cowork→diamond) instead of all ◆.
+// So personas are visually distinct (Ops→wrench, Code→code, Delta→diamond) instead of all ◆.
 
 import { Icon, type IconName } from "./Icon";
 
 const LEGACY: Record<string, IconName> = {
-  cowork: "diamond",
+  delta: "diamond",
   chat: "chat",
   code: "code",
   ops: "wrench",

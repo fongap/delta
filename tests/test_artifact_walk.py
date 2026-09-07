@@ -1,7 +1,7 @@
 """list_artifacts must never descend into OS application-data directories.
 
 On macOS 14+, merely traversing ~/Library/Application Support (other apps' containers)
-trips the App Data TCC protection and the user gets an alarming "OpenWorker would like to
+trips the App Data TCC protection and the user gets an alarming "Delta would like to
 access data from other apps" prompt. The artifacts panel refreshes after every turn, so a
 home-directory workspace produced that prompt unprompted. Pruning must happen DURING the
 walk (rglob descends first and filters after, which is what caused the bug).

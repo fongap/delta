@@ -221,7 +221,7 @@ async def test_validation_failure_blocks_status_ok(tmp_path, manager):
         instructions="i",
         schedule=Schedule(kind="cron", cron="0 9 * * *"),
         workspace=str(ws),
-        agent="cowork",
+        agent="delta",
         validation_criteria={"min_artifacts": 1},
     )
     manager.task_store.save(task)
@@ -245,7 +245,7 @@ async def test_validation_passes_when_criteria_met(tmp_path, manager):
         instructions="i",
         schedule=Schedule(kind="cron", cron="0 9 * * *"),
         workspace=str(ws),
-        agent="cowork",
+        agent="delta",
         validation_criteria={
             "min_artifacts": 1,
             "required_paths": ["report.md"],
@@ -281,7 +281,7 @@ async def test_validation_skipped_for_default_criteria(tmp_path, manager):
         instructions="i",
         schedule=Schedule(kind="cron", cron="0 9 * * *"),
         workspace=str(ws),
-        agent="cowork",
+        agent="delta",
     )
     manager.task_store.save(task)
     run = await manager._run_scheduled_task(task, trigger="manual")

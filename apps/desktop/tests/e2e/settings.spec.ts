@@ -30,7 +30,7 @@ test("Settings opens as a full page and navigates sections", async ({ page }) =>
 // The launch flag brings the Personas tab back (local persona install, not the
 // removed cloud gallery).
 test("Settings: Personas tab returns behind the launch flag", async ({ page }) => {
-  await page.addInitScript(() => localStorage.setItem("ocw.flag.personas", "1"));
+  await page.addInitScript(() => localStorage.setItem("delta.flag.personas", "1"));
   await page.goto("/");
   await page.getByTestId("sidebar-footer-settings").click();
   await page.getByRole("button", { name: "Personas", exact: true }).click();

@@ -61,7 +61,7 @@ def test_long_session_survives_repeated_compaction(tmp_path):
     # primitives bind to the loop they first run on, so a per-turn asyncio.run() would
     # silently drop every stream after the first (found the hard way in the live smoke).
     async def scenario():
-        port = mgr.get_engine(sid, agent="cowork", workspace=str(tmp_path))
+        port = mgr.get_engine(sid, agent="delta", workspace=str(tmp_path))
         for i in range(8):
             async for _ in port.run(f"user step {i}: keep drafting the Q3 report"):
                 pass
@@ -81,7 +81,7 @@ def test_long_session_survives_repeated_compaction(tmp_path):
             mgr.save(sid, port)
             if i == 4:  # mid-conversation restart: state must survive the rebuild
                 mgr._runtimes.pop(sid)
-                port = mgr.get_engine(sid, agent="cowork", workspace=str(tmp_path))
+                port = mgr.get_engine(sid, agent="delta", workspace=str(tmp_path))
                 assert port.compaction_dict() is not None
         return port
 

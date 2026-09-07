@@ -14,7 +14,7 @@ describe("core runtime DTO fixtures", () => {
       parseSessionDto({
         session_id: "s1",
         workspace: "C:/work",
-        agent: "cowork",
+        agent: "delta",
         model: "custom:model",
         mode: "interactive",
         future: true,
@@ -22,7 +22,7 @@ describe("core runtime DTO fixtures", () => {
     ).toEqual({
       session_id: "s1",
       workspace: "C:/work",
-      agent: "cowork",
+      agent: "delta",
       model: "custom:model",
       mode: "interactive",
       updated_at: null,
@@ -64,7 +64,7 @@ describe("core runtime DTO fixtures", () => {
   });
 
   it.each([
-    [parseSessionDto, { workspace: "C:/work", agent: "cowork", model: "m", mode: "interactive" }],
+    [parseSessionDto, { workspace: "C:/work", agent: "delta", model: "m", mode: "interactive" }],
     [parseMessageDto, { content: "missing role" }],
     [parseApprovalDto, { arguments: {} }],
     [parseArtifactDto, { name: "a", kind: "text", size: 1, modified_at: 1 }],
