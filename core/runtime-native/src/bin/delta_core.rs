@@ -60,7 +60,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use delta_runtime_native::{
-    run_validation, validate_source_citation, ArtifactInput, ArtifactRegistryWriter,
+    run_validation, validate_all, validate_source_citation, ArtifactInput, ArtifactRegistryWriter,
     IdempotencyWriter, LedgerWriter, TaskStoreWriter,
 };
 use serde::Deserialize;
@@ -177,6 +177,12 @@ enum Command {
         source: Option<Value>,
         range: Value,
         workspace: Option<String>,
+    },
+    /// R2.1: canonicalize candidate ranges before persistence.
+    #[serde(rename = "citation.canonicalize")]
+    CitationCanonicalize {
+        #[serde(default)]
+        ranges: Vec<Value>,
     },
     /// R2.2: evaluate the deterministic completion contract in Rust.
     #[serde(rename = "validation.run")]
@@ -455,6 +461,14 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
             workspace.as_deref().map(std::path::Path::new),
         ))
         .map_err(|error| error.to_string()),
+        Command::CitationCanonicalize { ranges } => validate_all(&ranges).map(|validated| {
+            Value::Array(
+                validated
+                    .into_iter()
+                    .map(|citation| citation.range)
+                    .collect(),
+            )
+        }),
         Command::ValidationRun {
             criteria,
             artifacts,

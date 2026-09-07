@@ -282,11 +282,11 @@ pub fn validate_source_citation(
             .or_else(|| canonical.range.get("start"))
             .and_then(Value::as_u64)
             .unwrap_or(0) as usize;
-        // Compatibility with the Python baseline: an empty byte stream is
-        // currently counted as one logical line.  The empty-file contract is
-        // tightened in a separate convergence slice before authority switch.
-        let line_count = data.iter().filter(|byte| **byte == b'\n').count()
-            + usize::from(!data.ends_with(b"\n"));
+        let line_count = if data.is_empty() {
+            0
+        } else {
+            data.iter().filter(|byte| **byte == b'\n').count() + usize::from(!data.ends_with(b"\n"))
+        };
         if start == 0 || start > line_count || end > line_count {
             let mut result = verdict(
                 CitationValidity::RangeInvalid,
@@ -782,5 +782,27 @@ mod tests {
         );
         assert_eq!(result.validity, CitationValidity::UnsupportedKind);
         assert_eq!(result.reason, "unsupported_kind");
+    }
+
+    #[test]
+    fn typed_verdict_rejects_line_one_for_empty_file() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::write(dir.path().join("empty.txt"), b"").unwrap();
+        let source = json!({
+            "id": "source-empty",
+            "origin": "file",
+            "location": "empty.txt",
+            "fingerprint": format!("{:x}", Sha256::digest(b"")),
+            "status": "current"
+        });
+
+        let result = validate_source_citation(
+            Some(&source),
+            &json!({"kind": "lines", "start": 1}),
+            Some(dir.path()),
+        );
+
+        assert_eq!(result.validity, CitationValidity::RangeInvalid);
+        assert_eq!(result.current_line_count, Some(0));
     }
 }

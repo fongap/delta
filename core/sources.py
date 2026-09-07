@@ -426,7 +426,24 @@ class SourceStore:
         canonical form. A bad entry raises ``ValueError`` *before* any
         mutation so a partially-applied citation can never be persisted.
         """
-        normalized = normalize_cited_ranges(ranges)
+        from packages.storage_authority import is_rust_authority
+
+        if is_rust_authority("source_citation"):
+            from core.source_citation_delegate import canonicalize_citations_delegated
+
+            candidates = [
+                {
+                    key: item
+                    for key, item in asdict(value).items()
+                    if item is not None
+                }
+                if isinstance(value, CitationRange)
+                else value
+                for value in ranges
+            ]
+            normalized = canonicalize_citations_delegated(candidates)
+        else:
+            normalized = normalize_cited_ranges(ranges)
         with self._lock:
             ref = self._refs.get(ref_id)
             if ref is None:
@@ -701,7 +718,11 @@ class SourceStore:
                     "status": FRESH_CURRENT,
                     "reason": self.CITATION_OUT_OF_BOUNDS,
                 }
-            line_count = data.count(b"\n") + (0 if data.endswith(b"\n") else 1)
+            line_count = (
+                0
+                if not data
+                else data.count(b"\n") + (0 if data.endswith(b"\n") else 1)
+            )
             # Empty file = 0 lines; a citation for line 1 is
             # out-of-bounds in an empty file.
             if start < 1 or start > line_count:

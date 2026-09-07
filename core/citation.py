@@ -21,9 +21,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from core.sources import CitationRange
+from packages.delta_core_client import DeltaCoreError
 
 if TYPE_CHECKING:
     from core.sources import SourceStore
+
+
+class CitationCaptureError(RuntimeError):
+    """Citation audit evidence could not be captured in authority mode."""
 
 
 def cite(
@@ -64,18 +69,32 @@ def cite(
         if scope is None:
             return None
         run_id = scope[0]
+    from packages.storage_authority import is_rust_authority
+
+    fail_closed = is_rust_authority("source_citation")
     try:
         ref = source_store.capture_file(target, workspace=workspace)
-    except OSError:
+    except OSError as exc:
         # A file that was readable a moment ago may have moved; the read
         # call already returned its result, so we just drop the audit
         # row rather than fail the tool.
+        if fail_closed:
+            raise CitationCaptureError(
+                f"source capture failed for {target!s}"
+            ) from exc
         return None
     try:
         source_store.add_citation(ref.id, run_id, range_obj)
-    except ValueError:
+    except (ValueError, DeltaCoreError) as exc:
         # The reader produced a malformed range; drop the citation rather
         # than tear down the tool. The bug still gets caught by the
         # CitationRange unit tests + the e2e citation regression.
+        if fail_closed:
+            raise CitationCaptureError(
+                f"citation record failed for source {ref.id}"
+            ) from exc
         return None
     return ref.id
+
+
+__all__ = ["CitationCaptureError", "cite"]

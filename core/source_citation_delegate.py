@@ -57,4 +57,21 @@ def validate_citation_delegated(
     return result
 
 
-__all__ = ["validate_citation_delegated"]
+def canonicalize_citations_delegated(
+    ranges: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Canonicalize candidate ranges in Rust before store mutation."""
+    result = default_client().command(
+        {"cmd": "citation.canonicalize", "ranges": ranges}
+    )
+    if not isinstance(result, list) or not all(
+        isinstance(item, dict) for item in result
+    ):
+        raise DeltaCoreError(
+            "citation.canonicalize returned a malformed result; "
+            "refusing Python fallback"
+        )
+    return result
+
+
+__all__ = ["canonicalize_citations_delegated", "validate_citation_delegated"]
