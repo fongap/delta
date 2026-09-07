@@ -54,7 +54,7 @@ test("recent channels popover: opens on focus, filters, picks", async ({ page })
   await expect(pop.getByText("bob: deploy failed")).toBeVisible();
 
   // Typing part of the channel NAME filters too…
-  await input.fill("ocw");
+  await input.fill("delta");
   await expect(pop.getByText("#delta-test")).toBeVisible();
   await expect(pop.getByText("slack:C0BBB222")).toHaveCount(0);
   await input.fill("");

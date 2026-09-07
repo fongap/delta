@@ -1343,7 +1343,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
     if (p.endsWith("/v1/channels/recent"))
       return json({
         channels: [
-          { channel: "slack:C0AAA111", name: "delta-test", last_from: "amy", last_text: "hey ocw, can you summarize this thread?" },
+          { channel: "slack:C0AAA111", name: "delta-test", last_from: "amy", last_text: "hey delta, can you summarize this thread?" },
           { channel: "slack:C0BBB222", last_from: "bob", last_text: "deploy failed" },
         ],
       });
