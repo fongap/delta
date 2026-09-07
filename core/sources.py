@@ -640,6 +640,16 @@ class SourceStore:
         """
         with self._lock:
             ref = self._refs.get(ref_id)
+        from packages.storage_authority import is_rust_authority
+
+        if is_rust_authority("source_citation"):
+            from core.source_citation_delegate import validate_citation_delegated
+
+            return validate_citation_delegated(
+                asdict(ref) if ref is not None else None,
+                range_obj,
+                workspace=self.workspace,
+            )
         if ref is None:
             return {
                 "valid": False,

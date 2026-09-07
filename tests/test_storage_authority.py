@@ -259,9 +259,9 @@ def test_r2_read_domains_defined():
     # After PR132 (ADR-020): artifact is promoted to RUST_WRITE_DOMAINS
     # (the Rust write path for artifact.registered / artifact.completed
     # events landed). The remaining reader-only R2 domains are
-    # validation / checkpoint / source_citation.
+    # validation / checkpoint. Source/Citation validity was promoted in R2.1.
     assert RUST_READ_DOMAINS == frozenset({
-        "validation", "checkpoint", "source_citation",
+        "validation", "checkpoint",
     })
 
 
@@ -271,7 +271,8 @@ def test_r2_read_env_var_unset_returns_false(monkeypatch):
     monkeypatch.delenv("DELTA_RUST_READERS", raising=False)
     assert is_rust_shadow_reader("validation") is False
     assert is_rust_shadow_reader("checkpoint") is False
-    assert is_rust_shadow_reader("source_citation") is False
+    with pytest.raises(InvalidAuthorityTargetError):
+        is_rust_shadow_reader("source_citation")
 
 
 def test_r2_read_specific_domain(monkeypatch):
@@ -288,7 +289,8 @@ def test_r2_read_all_keyword(monkeypatch):
     monkeypatch.setenv("DELTA_RUST_READERS", "all")
     assert is_rust_shadow_reader("validation") is True
     assert is_rust_shadow_reader("checkpoint") is True
-    assert is_rust_shadow_reader("source_citation") is True
+    with pytest.raises(InvalidAuthorityTargetError):
+        is_rust_shadow_reader("source_citation")
 
 
 def test_r2_read_legacy_truthy(monkeypatch):
@@ -308,7 +310,9 @@ def test_r2_read_rejects_r1_write_domain(monkeypatch):
     )
 
     monkeypatch.setenv("DELTA_RUST_READERS", "validation")
-    for r1 in ("idempotency", "ledger", "task_identity", "artifact"):
+    for r1 in (
+        "idempotency", "ledger", "task_identity", "artifact", "source_citation"
+    ):
         with pytest.raises(InvalidAuthorityTargetError):
             is_rust_shadow_reader(r1)
 
@@ -373,9 +377,21 @@ def test_r1_write_rejects_r2_read_domain(monkeypatch):
         InvalidAuthorityTargetError, is_rust_authority,
     )
 
-    for r2 in ("validation", "checkpoint", "source_citation"):
+    for r2 in ("validation", "checkpoint"):
         with pytest.raises(InvalidAuthorityTargetError):
             is_rust_authority(r2)
+
+
+def test_source_citation_is_write_authority_domain(monkeypatch):
+    """R2.1 promotes final citation validity from shadow to authority."""
+    from packages.storage_authority import (
+        RUST_READ_DOMAINS, RUST_WRITE_DOMAINS, is_rust_authority,
+    )
+
+    assert "source_citation" in RUST_WRITE_DOMAINS
+    assert "source_citation" not in RUST_READ_DOMAINS
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "source_citation")
+    assert is_rust_authority("source_citation") is True
 
 
 # -- artifact is now an R1-style write domain (PR132 / ADR-020) -----------
