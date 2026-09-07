@@ -256,9 +256,12 @@ def test_idempotency_only_activates_idempotency_delegate_not_ledger(monkeypatch,
 def test_r2_read_domains_defined():
     from packages.storage_authority import RUST_READ_DOMAINS
 
-    # The four reader-eligible R2 domains.
+    # After PR132 (ADR-020): artifact is promoted to RUST_WRITE_DOMAINS
+    # (the Rust write path for artifact.registered / artifact.completed
+    # events landed). The remaining reader-only R2 domains are
+    # validation / checkpoint / source_citation.
     assert RUST_READ_DOMAINS == frozenset({
-        "artifact", "validation", "checkpoint", "source_citation",
+        "validation", "checkpoint", "source_citation",
     })
 
 
@@ -266,7 +269,6 @@ def test_r2_read_env_var_unset_returns_false(monkeypatch):
     from packages.storage_authority import is_rust_shadow_reader
 
     monkeypatch.delenv("DELTA_RUST_READERS", raising=False)
-    assert is_rust_shadow_reader("artifact") is False
     assert is_rust_shadow_reader("validation") is False
     assert is_rust_shadow_reader("checkpoint") is False
     assert is_rust_shadow_reader("source_citation") is False
@@ -275,16 +277,15 @@ def test_r2_read_env_var_unset_returns_false(monkeypatch):
 def test_r2_read_specific_domain(monkeypatch):
     from packages.storage_authority import is_rust_shadow_reader
 
-    monkeypatch.setenv("DELTA_RUST_READERS", "artifact")
-    assert is_rust_shadow_reader("artifact") is True
-    assert is_rust_shadow_reader("validation") is False
+    monkeypatch.setenv("DELTA_RUST_READERS", "validation")
+    assert is_rust_shadow_reader("validation") is True
+    assert is_rust_shadow_reader("checkpoint") is False
 
 
 def test_r2_read_all_keyword(monkeypatch):
     from packages.storage_authority import is_rust_shadow_reader
 
     monkeypatch.setenv("DELTA_RUST_READERS", "all")
-    assert is_rust_shadow_reader("artifact") is True
     assert is_rust_shadow_reader("validation") is True
     assert is_rust_shadow_reader("checkpoint") is True
     assert is_rust_shadow_reader("source_citation") is True
@@ -294,7 +295,7 @@ def test_r2_read_legacy_truthy(monkeypatch):
     from packages.storage_authority import is_rust_shadow_reader
 
     monkeypatch.setenv("DELTA_RUST_READERS", "1")
-    assert is_rust_shadow_reader("artifact") is True
+    assert is_rust_shadow_reader("validation") is True
     monkeypatch.setenv("DELTA_RUST_READERS", "true")
     assert is_rust_shadow_reader("checkpoint") is True
 
@@ -306,8 +307,8 @@ def test_r2_read_rejects_r1_write_domain(monkeypatch):
         InvalidAuthorityTargetError, is_rust_shadow_reader,
     )
 
-    monkeypatch.setenv("DELTA_RUST_READERS", "artifact")
-    for r1 in ("idempotency", "ledger", "task_identity"):
+    monkeypatch.setenv("DELTA_RUST_READERS", "validation")
+    for r1 in ("idempotency", "ledger", "task_identity", "artifact"):
         with pytest.raises(InvalidAuthorityTargetError):
             is_rust_shadow_reader(r1)
 
@@ -318,9 +319,8 @@ def test_r2_read_rejects_derived_and_coordination(monkeypatch):
     for bad in ("run_state", "storage_transaction"):
         monkeypatch.setenv("DELTA_RUST_READERS", bad)
         with pytest.raises(UnknownDomainError):
-            # Use the parse by setting and reading any R2 domain
             from packages.storage_authority import is_rust_shadow_reader
-            is_rust_shadow_reader("artifact")
+            is_rust_shadow_reader("validation")
 
 
 def test_r2_read_rejects_policy_and_approval(monkeypatch):
@@ -331,7 +331,7 @@ def test_r2_read_rejects_policy_and_approval(monkeypatch):
         InvalidAuthorityTargetError, is_rust_shadow_reader,
     )
 
-    monkeypatch.setenv("DELTA_RUST_READERS", "artifact")
+    monkeypatch.setenv("DELTA_RUST_READERS", "validation")
     with pytest.raises(InvalidAuthorityTargetError):
         is_rust_shadow_reader("policy")
     with pytest.raises(InvalidAuthorityTargetError):
@@ -355,24 +355,69 @@ def test_r2_read_disjoint_from_r1_write(monkeypatch):
     )
 
     monkeypatch.setenv("DELTA_RUST_AUTHORITY", "idempotency")
-    monkeypatch.setenv("DELTA_RUST_READERS", "artifact")
+    monkeypatch.setenv("DELTA_RUST_READERS", "validation")
     assert is_rust_authority("idempotency") is True
-    # R2 domain is not a valid R1 write target.
+    # Remaining R2 reader domain is not a valid R1 write target.
     with pytest.raises(InvalidAuthorityTargetError):
-        is_rust_authority("artifact")
-    assert is_rust_shadow_reader("artifact") is True
+        is_rust_authority("validation")
+    assert is_rust_shadow_reader("validation") is True
     # R1 domain is not a valid R2 reader target.
     with pytest.raises(InvalidAuthorityTargetError):
         is_rust_shadow_reader("idempotency")
 
 
 def test_r1_write_rejects_r2_read_domain(monkeypatch):
-    """is_rust_authority must reject R2 reader domains — those have a
-    Rust reader but no Rust write authority yet."""
+    """is_rust_authority must reject remaining R2 reader domains —
+    those have a Rust reader but no Rust write authority yet."""
     from packages.storage_authority import (
         InvalidAuthorityTargetError, is_rust_authority,
     )
 
-    for r2 in ("artifact", "validation", "checkpoint", "source_citation"):
+    for r2 in ("validation", "checkpoint", "source_citation"):
         with pytest.raises(InvalidAuthorityTargetError):
             is_rust_authority(r2)
+
+
+# -- artifact is now an R1-style write domain (PR132 / ADR-020) -----------
+
+
+def test_artifact_is_write_domain():
+    """Artifact was promoted from RUST_READ_DOMAINS to RUST_WRITE_DOMAINS
+    when the Rust write path landed (PR132). Use is_rust_authority
+    for the write switch, not is_rust_shadow_reader."""
+    from packages.storage_authority import (
+        RUST_READ_DOMAINS, RUST_WRITE_DOMAINS,
+    )
+    assert "artifact" in RUST_WRITE_DOMAINS
+    assert "artifact" not in RUST_READ_DOMAINS
+
+
+def test_artifact_authority_env_var(monkeypatch):
+    from packages.storage_authority import is_rust_authority
+
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "artifact")
+    assert is_rust_authority("artifact") is True
+
+
+def test_artifact_authority_rejects_r1_only(monkeypatch):
+    """When only DELTA_RUST_AUTHORITY=artifact is set, the R1 domains
+    must NOT be active (per-domain selector)."""
+    from packages.storage_authority import is_rust_authority
+
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "artifact")
+    assert is_rust_authority("artifact") is True
+    assert is_rust_authority("idempotency") is False
+    assert is_rust_authority("ledger") is False
+    assert is_rust_authority("task_identity") is False
+
+
+def test_artifact_rejected_from_r2_reader(monkeypatch):
+    """is_rust_shadow_reader must reject artifact (it's now a write
+    domain, not a reader)."""
+    from packages.storage_authority import (
+        InvalidAuthorityTargetError, is_rust_shadow_reader,
+    )
+
+    monkeypatch.setenv("DELTA_RUST_READERS", "validation")
+    with pytest.raises(InvalidAuthorityTargetError):
+        is_rust_shadow_reader("artifact")

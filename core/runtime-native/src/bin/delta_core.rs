@@ -59,7 +59,9 @@ use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use delta_runtime_native::{IdempotencyWriter, LedgerWriter, TaskStoreWriter};
+use delta_runtime_native::{
+    ArtifactInput, ArtifactRegistryWriter, IdempotencyWriter, LedgerWriter, TaskStoreWriter,
+};
 use serde::Deserialize;
 use serde_json::Value;
 
@@ -150,6 +152,24 @@ enum Command {
     Ping {},
     #[serde(rename = "hello")]
     Hello { protocol_version: u32 },
+    /// R2 / PR132: register one artifact. Appends `artifact.registered`
+    /// and (if not incomplete) `artifact.completed` events to the run
+    /// ledger, mirroring `core/artifact.py:register_artifact`.
+    #[serde(rename = "artifact.register")]
+    ArtifactRegister {
+        db: String,
+        path: String,
+        name: String,
+        kind: String,
+        size: i64,
+        modified_at: f64,
+        run_id: String,
+        sha256: String,
+        incomplete: bool,
+        registered_at: f64,
+        ts: Option<f64>,
+        workspace: Option<String>,
+    },
 }
 
 struct ConnCache {
@@ -359,6 +379,53 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
                     "protocol_version": PROTOCOL_VERSION,
                     "server": "delta_core",
                 }))
+            }
+        }
+        Command::ArtifactRegister {
+            db,
+            path,
+            name,
+            kind,
+            size,
+            modified_at,
+            run_id,
+            sha256,
+            incomplete,
+            registered_at,
+            ts,
+            workspace,
+        } => {
+            let ledger = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let artifact = ArtifactInput {
+                path,
+                name,
+                kind,
+                size,
+                modified_at,
+                run_id,
+                sha256,
+                incomplete,
+                registered_at,
+            };
+            let writer = ArtifactRegistryWriter::new(ledger);
+            // Default ts to 0.0; LedgerWriter doesn't need a real ts
+            // for hash correctness (it serializes whatever is given).
+            match writer.register(
+                &artifact,
+                ts.unwrap_or(0.0),
+                workspace.as_deref().unwrap_or(""),
+            ) {
+                Ok(result) => {
+                    let completed_present = result.completed.is_some();
+                    Ok(serde_json::json!({
+                        "registered": result.registered,
+                        "completed_present": completed_present,
+                    }))
+                }
+                Err(e) => Err(e.to_string()),
             }
         }
     };

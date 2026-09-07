@@ -75,6 +75,7 @@ RUST_WRITE_DOMAINS: Final[frozenset[str]] = frozenset({
     "idempotency",      # side-effects.db
     "ledger",           # run_events.db
     "task_identity",    # tasks.db
+    "artifact",         # run_events.db (artifact.registered + artifact.completed events)
 })
 
 #: Rust shadow-reader domains (R2, ADR-019). These have Rust *readers*
@@ -82,8 +83,12 @@ RUST_WRITE_DOMAINS: Final[frozenset[str]] = frozenset({
 #: NOT Rust write authorities yet. Policy and Approval are deliberately
 #: excluded — they are evaluation/decision surfaces, not data with a
 #: sha256 to verify.
+#
+# Note (PR132 / ADR-020): ``artifact`` was promoted to
+# :data:`RUST_WRITE_DOMAINS` when the Rust write path landed
+# (artifact.registered / artifact.completed events). The reader is
+# still useful for cross-check but the write path takes precedence.
 RUST_READ_DOMAINS: Final[frozenset[str]] = frozenset({
-    "artifact",         # core/artifact.py — file sha256 + ledger events
     "validation",       # core/validation.py — deterministic rule engine
     "checkpoint",       # core/recovery.py — JSON snapshot schema
     "source_citation",  # core/source_citation.py — citation range resolve

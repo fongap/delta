@@ -46,6 +46,14 @@ STORAGE_AUTHORITY_IMPORT = re.compile(
 IDEMPOTENCY_LOG_DIRECT = re.compile(r"IdempotencyLog\s*\(")
 RUN_LEDGER_DIRECT = re.compile(r"RunEventLedger\s*\(")
 TASK_STORE_DIRECT = re.compile(r"TaskStore\s*\(")
+# R2 (PR132 / ADR-020): artifact registration. The Python authority
+# path is `register_artifact(...)` / `register_run_artifacts(...)`;
+# the delegate path is `register_artifact_delegated(...)` /
+# `register_run_artifacts_delegated(...)` / `maybe_wrap_artifact(...)`.
+# We match function calls (not class instantiations) and require the
+# caller to also import the delegate module.
+ARTIFACT_REGISTER_DIRECT = re.compile(r"\bregister_artifact\s*\(")
+ARTIFACT_REGISTER_RUN_DIRECT = re.compile(r"\bregister_run_artifacts\s*\(")
 
 MAYBE_WRAP_OR_DELEGATE = re.compile(
     r"maybe_wrap\s*\(|IdempotencyLogWithDelegate\s*\("
@@ -56,11 +64,17 @@ MAYBE_WRAP_OR_DELEGATE_LEDGER = re.compile(
 MAYBE_WRAP_OR_DELEGATE_TASKSTORE = re.compile(
     r"maybe_wrap_taskstore\s*\(|TaskStoreWithDelegate\s*\("
 )
+MAYBE_WRAP_OR_DELEGATE_ARTIFACT = re.compile(
+    r"register_artifact_delegated\s*\(|"
+    r"register_run_artifacts_delegated\s*\(|"
+    r"maybe_wrap\s*\("
+)
 
 TESTS = REPO / "tests"
 CORE_REFERENCE = re.compile(r"from\s+core\.idemlog_delegate\s+import")
 LEDGER_REFERENCE = re.compile(r"from\s+core\.ledger_delegate\s+import")
 TASKSTORE_REFERENCE = re.compile(r"from\s+core\.automation\.store_delegate\s+import")
+ARTIFACT_REFERENCE = re.compile(r"from\s+core\.artifact_delegate\s+import")
 
 # Map each R1 domain to the file path(s) that own it. The mapping is
 # explicit (not heuristic) so the guard is stable across refactors.
@@ -69,13 +83,22 @@ DOMAIN_TO_FILES: dict[str, tuple[str, ...]] = {
     "ledger": ("core/ledger.py",),
     "run_state": ("core/ledger.py",),
     "task_identity": ("core/automation/store.py",),
+    # R2 (PR132 / ADR-020): artifact is the first R2 domain to gain a
+    # write authority. The Python authority lives in core/artifact.py;
+    # the delegate wrapper is core/artifact_delegate.py.
+    "artifact": ("core/artifact.py",),
 }
 
 # The delegate wrapper files are allowed to instantiate the underlying
 # class — that is how the wrapper is constructed. The guard must not
 # flag itself.
 DELEGATE_FILES: frozenset[str] = frozenset(
-    {"core/idemlog_delegate.py", "core/ledger_delegate.py", "core/automation/store_delegate.py"}
+    {
+        "core/idemlog_delegate.py",
+        "core/ledger_delegate.py",
+        "core/automation/store_delegate.py",
+        "core/artifact_delegate.py",
+    }
 )
 
 
@@ -86,6 +109,17 @@ def _file_owns_domain(path: Path, domain: str) -> bool:
     except ValueError:
         return False
     return rel in DOMAIN_TO_FILES.get(domain, ())
+
+
+# Files that legitimately contain the *definition* of a domain's direct
+# write API. These are excluded from the enforcement scan (they are the
+# home of the function, not a caller of it). The owning file for each
+# domain is the same set as DOMAIN_TO_FILES values flattened.
+OWNED_FILES: frozenset[str] = frozenset(
+    path
+    for paths in DOMAIN_TO_FILES.values()
+    for path in paths
+)
 
 
 def _scan_structural() -> list[tuple[Path, str]]:
@@ -128,6 +162,8 @@ def _scan_enforcement() -> list[tuple[Path, int, str, str]]:
                 continue
             if rel in DELEGATE_FILES:
                 continue
+            if rel in OWNED_FILES:
+                continue
             try:
                 text = py.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError):
@@ -153,6 +189,20 @@ def _scan_enforcement() -> list[tuple[Path, int, str, str]]:
                     if MAYBE_WRAP_OR_DELEGATE_TASKSTORE.search(text) and TASKSTORE_REFERENCE.search(text):
                         continue
                     violations.append((py, line_no, match.group(), "task_identity"))
+
+            # R2 (PR132 / ADR-020): artifact registration. Match direct
+            # calls to `register_artifact(...)` / `register_run_artifacts(...)`
+            # (not the module-level imports — only actual call sites).
+            if is_rust_authority("artifact"):
+                if MAYBE_WRAP_OR_DELEGATE_ARTIFACT.search(text) and ARTIFACT_REFERENCE.search(text):
+                    pass  # caller uses the delegate, no violation
+                else:
+                    for match in ARTIFACT_REGISTER_DIRECT.finditer(text):
+                        line_no = text[: match.start()].count("\n") + 1
+                        violations.append((py, line_no, match.group(), "artifact"))
+                    for match in ARTIFACT_REGISTER_RUN_DIRECT.finditer(text):
+                        line_no = text[: match.start()].count("\n") + 1
+                        violations.append((py, line_no, match.group(), "artifact"))
     return violations
 
 

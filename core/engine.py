@@ -1328,7 +1328,7 @@ class TurnEngine:
                     if tool_call.name in _WRITE_TOOLS and isinstance(
                         tool_call.arguments, dict
                     ):
-                        from core.artifact import register_artifact
+                        from core.artifact_delegate import register_artifact_delegated
 
                         ws = self.audit_context.get("workspace", "")
                         file_path = (
@@ -1336,12 +1336,13 @@ class TurnEngine:
                             or tool_call.arguments.get("file_path")
                             or ""
                         )
-                        if ws and file_path:
+                        if ws and file_path and self.ledger is not None:
                             try:
-                                register_artifact(
+                                register_artifact_delegated(
                                     ws,
                                     file_path,
                                     run_id=run_id,
+                                    ledger_db_path=str(self.ledger.db_path),
                                     ledger=self.ledger,
                                 )
                             except Exception:

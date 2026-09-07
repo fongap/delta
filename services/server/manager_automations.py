@@ -158,13 +158,13 @@ class AutomationsMixin(ManagerHostState):
             async for _event in runtime.run(opening):
                 pass
             run.result_text = _last_assistant_text(runtime.messages)
-            from core.artifact import register_run_artifacts
+            from core.artifact_delegate import register_run_artifacts_delegated
 
-            artifacts = register_run_artifacts(
+            artifacts = register_run_artifacts_delegated(
                 task.workspace,
                 run_id=run.run_id,
                 since=run.started_at,
-                ledger=self.run_ledger,
+                ledger_db_path=str(self.run_ledger.db_path),
             )
             run.artifacts = [a.to_dict() for a in artifacts]
             # ADR-005 WS3: deterministic validation gate. The engine returning
@@ -534,13 +534,13 @@ class AutomationsMixin(ManagerHostState):
         if self.run_ledger.derive_run_status(run.run_id, fallback=run.status) == "running":
             record = self.session_store.load(run.session_id)
             run.result_text = _last_assistant_text(record.messages) if record else None
-            from core.artifact import register_run_artifacts
+            from core.artifact_delegate import register_run_artifacts_delegated
 
-            artifacts = register_run_artifacts(
+            artifacts = register_run_artifacts_delegated(
                 task.workspace,
                 run_id=run.run_id,
                 since=run.started_at,
-                ledger=self.run_ledger,
+                ledger_db_path=str(self.run_ledger.db_path),
             )
             run.artifacts = [a.to_dict() for a in artifacts]
             run.status = "ok"
