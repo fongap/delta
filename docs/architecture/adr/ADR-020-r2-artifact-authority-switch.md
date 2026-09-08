@@ -1,6 +1,8 @@
 # ADR-020 — R2 Artifact Registry Authority Switch
 
-- 状态：Accepted
+> **Superseded（2026-09-09）**：本 ADR 描述的"可选 authority switch"（`DELTA_RUST_AUTHORITY=artifact` + `core/artifact_delegate.py` + `maybe_wrap`）已被 ADR-026 Hard-Cut 取代。`core/artifact_delegate.py` 已物理删除，`tests/test_artifact_delegate.py` 已删除，`artifact` 已从 `RUST_WRITE_DOMAINS` 移除。Artifact 域现在由 Rust `delta_core` 作为唯一事实来源，不存在 authority switch、Python fallback、delegate wrapper 或 feature flag。详见 ADR-026。
+
+- 状态：Superseded by ADR-026
 - 日期：2026-09-07
 - 范围：R2 Trusted Execution 第一域 — Artifact Registry 的 Python→Rust 权威切换
 - 决策类型：迁移阶段（单领域权威切换，per ADR-018 提议顺序）

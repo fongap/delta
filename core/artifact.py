@@ -7,14 +7,28 @@ from the workspace folder. The blueprint requires:
   - Artifacts must be addressable by id/sha256, not embedded in payloads
   - The Artifact object must be replayable from the run ledger
 
-This module introduces `Artifact` (path, kind, size, sha256, run_id,
-incomplete) and a `register_artifact` helper that:
+This module defines `Artifact` (path, kind, size, sha256, run_id,
+incomplete) and the discovery surface: `register_artifact` and
+`register_run_artifacts` scan the workspace, stat each candidate, compute
+its sha256, and classify its kind.
+
+The R2 Artifact Registry Hard-Cut (ADR-026) makes Rust ``delta_core`` the
+**sole** authority for artifact facts.  This module only performs file
+discovery and candidate construction:
 
   1. Walks the workspace, computing sha256 for each candidate file
   2. Marks files whose IO fails (truncated, vanished) as `incomplete=True`
-  3. Emits an `artifact.registered` ledger event for each new artifact
-  4. Emits `artifact.completed` once the sha256 was readable
-  5. Reuses the file-kind classifier from `services.server.manager_support`
+  3. Sends each candidate to ``delta_core`` via the single
+     ``artifact.register`` command (through
+     :class:`~packages.delta_core_client.DeltaCoreClient`), which appends
+     the ``artifact.registered`` / ``artifact.completed`` ledger events.
+
+Python never writes artifact facts or artifact ledger events directly.
+Registration is fail-closed: if ``delta_core`` is unavailable or returns
+a malformed response, :class:`~packages.delta_core_client.DeltaCoreError`
+is raised (no Python fallback).  File-level errors (missing path, stat
+OSError, hash OSError) remain non-fatal and surface as `None` or
+`incomplete=True`, exactly as before.
 
 The old `list[str]` `TaskRun.artifacts` field is now `list[Artifact]`. The
 field is forward-compatible: `Artifact.to_dict()` and `Artifact.from_dict()`
@@ -29,6 +43,8 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
+
+from packages.delta_core_client import default_client
 
 if TYPE_CHECKING:
     from core.ledger import RunEventLedger
@@ -90,6 +106,38 @@ def _sha256_of(path: Path, *, chunk: int = 65536) -> str:
     return h.hexdigest()
 
 
+def _register_via_rust(
+    artifact: Artifact,
+    *,
+    db_path: str,
+    workspace: str,
+) -> None:
+    """Send one ``artifact.register`` command to Rust.
+
+    Rust ``delta_core`` is the sole authority for artifact facts: it
+    appends ``artifact.registered`` and (if not incomplete)
+    ``artifact.completed`` to the run ledger.  This call is fail-closed
+    — any protocol error, malformed response, or unavailable binary
+    surfaces as :class:`DeltaCoreError` and is not swallowed.
+    """
+    default_client().command(
+        {
+            "cmd": "artifact.register",
+            "db": db_path,
+            "path": artifact.path,
+            "name": artifact.name,
+            "kind": artifact.kind,
+            "size": artifact.size,
+            "modified_at": artifact.modified_at,
+            "run_id": artifact.run_id,
+            "sha256": artifact.sha256 or "",
+            "incomplete": artifact.incomplete,
+            "registered_at": artifact.registered_at,
+            "workspace": workspace or "",
+        }
+    )
+
+
 def register_artifact(
     workspace: str,
     path: str,
@@ -105,7 +153,14 @@ def register_artifact(
     is registered immediately (not waiting for the post-run mtime scan).
     The workspace scanner remains as a fallback/reconciliation layer.
 
-    Returns None if the file does not exist or cannot be read.
+    The file is discovered/classified here in Python; the resulting fact
+    is persisted by Rust ``delta_core`` (ADR-026).  When ``ledger`` is
+    provided it supplies the run-events DB path (and therefore the Rust
+    write target).  When ``ledger`` is ``None`` the artifact is computed
+    but no fact is persisted (matches the historical "no ledger" path).
+
+    Returns None if the file does not exist or cannot be read.  Raises
+    :class:`DeltaCoreError` if Rust registration fails.
     """
     if kind_classifier is None:
         from services.server.manager_support import _artifact_kind
@@ -133,28 +188,7 @@ def register_artifact(
     except OSError:
         artifact.incomplete = True
     if ledger is not None:
-        try:
-            ledger.append(
-                run_id,
-                "artifact.registered",
-                actor="system",
-                payload=artifact.to_dict(),
-                workspace=workspace or None,
-            )
-            if not artifact.incomplete:
-                ledger.append(
-                    run_id,
-                    "artifact.completed",
-                    actor="system",
-                    payload={
-                        "path": artifact.path,
-                        "sha256": artifact.sha256,
-                        "size": artifact.size,
-                    },
-                    workspace=workspace or None,
-                )
-        except Exception:
-            pass
+        _register_via_rust(artifact, db_path=str(ledger.db_path), workspace=workspace)
     return artifact
 
 
@@ -217,23 +251,5 @@ def register_run_artifacts(
 
     if ledger is not None:
         for a in out:
-            try:
-                ledger.append(
-                    run_id,
-                    "artifact.registered",
-                    actor="system",
-                    payload=a.to_dict(),
-                    workspace=workspace or None,
-                )
-                if not a.incomplete:
-                    ledger.append(
-                        run_id,
-                        "artifact.completed",
-                        actor="system",
-                        payload={"path": a.path, "sha256": a.sha256, "size": a.size},
-                        workspace=workspace or None,
-                    )
-            except Exception:
-                # The artifact is in the return value; ledger is best-effort.
-                pass
+            _register_via_rust(a, db_path=str(ledger.db_path), workspace=workspace)
     return out

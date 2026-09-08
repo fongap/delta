@@ -8,6 +8,8 @@
 
 > 2026-09-08 后续决策：ADR-021 取代本 ADR 对 Source/Citation “只读影子、不存在权威切换语义”的定位，并暂停原计划中随后的 Approval / Policy / Checkpoint 权威迁移。新顺序为 Source/Citation → Validation → Trusted Execution Convergence → Runtime Boundary Audit → Product Reality Gate。
 
+> 2026-09-09 后续决策：ADR-026 完成 Artifact Registry Hard-Cut。Artifact 域现在由 Rust `delta_core` 作为唯一 Authority（`core/artifact_delegate.py` 已删除，`artifact` 已从 `RUST_WRITE_DOMAINS` 移除，无 fallback / delegate / feature flag）。下一域为 Source/Citation。
+
 ## 背景
 
 R1 State Foundation（ADR-017）已在 2026-09-07 完成：5 个领域（Idempotency / Ledger / Task identity / Run state / Storage transaction boundary）的 Rust delegate wrapper + 统一 `delta_core` 进程入口 + CI gate 全部就位。Rust authority 能力可用（opt-in via `DELTA_RUST_AUTHORITY`），但生产默认权威仍是 Python（Pre-R2 Gate / R1.7 明确的三态澄清）。

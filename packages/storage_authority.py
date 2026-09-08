@@ -75,8 +75,11 @@ READER_ENV_VAR: Final[str] = "DELTA_RUST_READERS"
 #: Real Rust write authority domains. These have Rust implementations
 #: in core/runtime-native and are the only domains that accept
 #: ``DELTA_RUST_AUTHORITY`` declarations.
+#:
+#: Note (ADR-026): ``artifact`` was hard-cut to Rust and removed from
+#: this set — it is no longer a selectable authority (see
+#: :data:`RUST_WRITE_DOMAINS` pre-ADR-026 for the historical state).
 RUST_WRITE_DOMAINS: Final[frozenset[str]] = frozenset({
-    "artifact",         # run_events.db (artifact.registered + artifact.completed events)
     "source_citation",  # typed citation validity evaluation via delta_core
     "validation",       # deterministic completion gate via delta_core
 })
@@ -87,10 +90,6 @@ RUST_WRITE_DOMAINS: Final[frozenset[str]] = frozenset({
 #: excluded — they are evaluation/decision surfaces, not data with a
 #: sha256 to verify.
 #
-# Note (PR132 / ADR-020): ``artifact`` was promoted to
-# :data:`RUST_WRITE_DOMAINS` when the Rust write path landed
-# (artifact.registered / artifact.completed events). The reader is
-# still useful for cross-check but the write path takes precedence.
 RUST_READ_DOMAINS: Final[frozenset[str]] = frozenset({
     "checkpoint",       # core/recovery.py — JSON snapshot schema
 })
@@ -267,7 +266,7 @@ def is_rust_authority(domain: str) -> bool:
     :returns: ``True`` if Rust is the declared write authority.
     :raises InvalidAuthorityTargetError: if ``domain`` is derived
         (``run_state``), an R2
-        reader domain (``artifact`` / ``validation`` / ``checkpoint`` /
+        reader domain (``validation`` / ``checkpoint`` /
         ``checkpoint``), or unknown.
     """
     if domain not in RUST_WRITE_DOMAINS:
