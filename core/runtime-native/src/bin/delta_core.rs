@@ -468,9 +468,7 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
                 Err(e) => return err(e.to_string()),
             };
             match reader.runs() {
-                Ok(runs) => Ok(Value::Array(
-                    runs.into_iter().map(Value::String).collect(),
-                )),
+                Ok(runs) => Ok(Value::Array(runs.into_iter().map(Value::String).collect())),
                 Err(e) => Err(e.to_string()),
             }
         }
@@ -484,9 +482,7 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
                 Err(e) => return err(e.to_string()),
             };
             match reader.open_runs() {
-                Ok(runs) => Ok(Value::Array(
-                    runs.into_iter().map(Value::String).collect(),
-                )),
+                Ok(runs) => Ok(Value::Array(runs.into_iter().map(Value::String).collect())),
                 Err(e) => Err(e.to_string()),
             }
         }

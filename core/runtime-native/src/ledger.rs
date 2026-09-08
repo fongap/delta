@@ -71,10 +71,7 @@ impl LedgerReader {
             )"#,
         )?;
         conn.execute_batch("CREATE INDEX idx_run_events_run ON run_events(run_id, seq)")?;
-        Ok(Self {
-            conn,
-            _owned: true,
-        })
+        Ok(Self { conn, _owned: true })
     }
 
     /// List all events for a run, ordered by seq.
@@ -266,7 +263,10 @@ impl LedgerWriter {
         ] {
             let _ = conn.execute_batch(ddl);
         }
-        Ok(Self { db_path: path, conn })
+        Ok(Self {
+            db_path: path,
+            conn,
+        })
     }
 
     /// Open an in-memory DB (for tests).
