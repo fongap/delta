@@ -84,8 +84,6 @@ class IdempotencyLog:
     def __init__(self, db_path: Path | str):
         self.db_path = Path(db_path).expanduser()
         self._db_path = str(self.db_path)
-        # CoreStorage still coordinates calls with this process-local lock.
-        # It does not protect a Python database connection.
         self._lock = threading.RLock()
         self._invoke("idem.initialize")
 

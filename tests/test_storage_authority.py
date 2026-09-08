@@ -5,8 +5,11 @@ control. The parser replaces the old global boolean semantics with
 a comma-separated domain list, while maintaining backward
 compatibility with legacy ``1``/``true``/``yes``/``on`` spellings.
 
-R1.7 (P0-1): unknown domains raise, derived/coordination domains
-raise, ``all`` maps only to ``RUST_WRITE_DOMAINS``.
+R1.7 (P0-1): unknown domains raise, derived domains raise, ``all``
+maps only to ``RUST_WRITE_DOMAINS``.
+
+R1 Final Convergence (ADR-025): ``storage_transaction`` coordination
+domain removed. It is now treated as an unknown domain.
 """
 
 from __future__ import annotations
@@ -75,10 +78,12 @@ def test_run_state_rejected(monkeypatch):
 
 
 def test_storage_transaction_rejected(monkeypatch):
+    """storage_transaction is no longer a coordination domain (ADR-025).
+    It is treated as an unknown domain."""
     monkeypatch.setenv("DELTA_RUST_AUTHORITY", "storage_transaction")
     with pytest.raises(UnknownDomainError) as exc:
         _parse_domains(os_env())
-    assert "coordination boundary" in str(exc.value)
+    assert "unknown domain" in str(exc.value)
 
 
 def test_unknown_domain_raises(monkeypatch):
@@ -174,9 +179,10 @@ def test_run_state_raises_invalid_target():
 
 
 def test_storage_transaction_raises_invalid_target():
+    """storage_transaction is no longer a coordination domain (ADR-025)."""
     with pytest.raises(InvalidAuthorityTargetError) as exc:
         is_rust_authority("storage_transaction")
-    assert "coordination boundary" in str(exc.value)
+    assert "unknown domain" in str(exc.value)
 
 
 def test_unknown_domain_raises_invalid_target():
@@ -189,9 +195,11 @@ def test_unknown_domain_raises_invalid_target():
 
 
 def test_constants_consistency():
-    # Derived and coordination are subsets of ALL_DOMAINS
+    # Derived are subsets of ALL_DOMAINS
     assert DERIVED_DOMAINS.keys() <= ALL_DOMAINS
-    assert COORDINATION_DOMAINS <= ALL_DOMAINS
+    # COORDINATION_DOMAINS is empty after ADR-025 (storage_transaction removed)
+    assert COORDINATION_DOMAINS == frozenset()
+    assert COORDINATION_DOMAINS.isdisjoint(ALL_DOMAINS)
     # R2 reader domains are subsets of ALL_DOMAINS but disjoint from R1
     assert RUST_READ_DOMAINS <= ALL_DOMAINS
     assert RUST_WRITE_DOMAINS.isdisjoint(RUST_READ_DOMAINS)
@@ -199,7 +207,6 @@ def test_constants_consistency():
     assert RUST_WRITE_DOMAINS == (
         ALL_DOMAINS
         - frozenset(DERIVED_DOMAINS)
-        - COORDINATION_DOMAINS
         - RUST_READ_DOMAINS
     )
     # run_state derived from ledger
@@ -278,7 +285,7 @@ def test_r2_read_rejects_r1_write_domain(monkeypatch):
             is_rust_shadow_reader(r1)
 
 
-def test_r2_read_rejects_derived_and_coordination(monkeypatch):
+def test_r2_read_rejects_derived_and_unknown(monkeypatch):
     from packages.storage_authority import UnknownDomainError
 
     for bad in ("run_state", "storage_transaction"):

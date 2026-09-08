@@ -40,7 +40,7 @@ R2 Trusted Execution **不立即开始单领域切换**。本 ADR 提议**先做
    - Artifact 不是"表的主键写入"，而是"文件系统 + ledger event"双写（`register_artifact` 同时改 `TaskRun.artifacts` list + 写 `artifact.registered` / `artifact.completed` ledger event）；
    - Policy 不是"数据写入"，而是"执行前评估函数"（`_evaluate_slice2_policy` 在每个 tool call 前被调用）；
    - Approval 不是"数据写入"，而是"交互式决策"（`ApprovalOutcome` enum + `audit` 表 approval 字段）；
-   - Checkpoint 不是"独立表"，而是"全状态快照写入 conversations 表"（与 R1.5 的 `CoreTransaction` 协调锁序紧密耦合）。
+   - Checkpoint 不是"独立表"，而是"全状态快照写入 conversations 表"。R1 Final Convergence（ADR-025）已删除 `CoreTransaction` 抽象；Checkpoint 后续应基于 Rust authoritative state + 明确 snapshot contract。
 
    直接切换任何一个领域都需要先明确"权威持有什么"——是文件 + ledger 写入权、还是评估函数权、还是交互决策权。
 
@@ -48,7 +48,7 @@ R2 Trusted Execution **不立即开始单领域切换**。本 ADR 提议**先做
 
 3. **Capability ABI 边界未完成**：R0 规划了 Capability ABI（process supervisor + capability registry + capability discovery），R1 只做了 Process Supervisor 最小集（`DeltaCoreClient` 统一进程入口）。R2 的 Policy / Approval 评估如果 Rust 化，Rust 端需要 capability 调用接口（"调用 Policy engine 评估这个 tool_call"）—— 这正是 Capability ABI 的设计目标，但 ABI 本身尚未落地。
 
-4. **Checkpoint 跨领域耦合**：Checkpoint 是"全状态快照"，包含 R1 的 5 个领域 + R2 的 6 个领域状态。R1 切换时 Checkpoint 的 Rust 表示需要等所有领域都迁完才完整；R2 期间做 Checkpoint 切换会与 R1 末尾的 `CoreTransaction` 抽象产生循环依赖。
+4. **Checkpoint 跨领域耦合**：Checkpoint 是"全状态快照"，包含 R1 的 5 个领域 + R2 的 6 个领域状态。R1 切换时 Checkpoint 的 Rust 表示需要等所有领域都迁完才完整；R2 期间做 Checkpoint 切换应基于 Rust authoritative state + 明确 snapshot contract（ADR-025 删除 `CoreTransaction` 后，不再依赖 Python 假事务抽象）。
 
 5. **Source/Citation 是只读领域**：`core/source_citation.py` 主要消费 ledger 事件 + 读 source 文件，没有"权威写入"概念。它的 R2 迁移实质是"Rust 端能够重放 citation 计算"——这是 R3 Execution Lifecycle 的影子读模式，不是 R2 的权威切换。
 

@@ -84,6 +84,21 @@ def test_status_includes_run_with_only_tool_events(ledger):
     assert ledger.run_status("r1") == "unknown"
 
 
+def test_status_skipped_after_skip_event(ledger):
+    """A run that was explicitly skipped has a ledger event and derives
+    ``skipped`` from it — no fallback to ``TaskRun.status``."""
+    ledger.append("r1", "run.skipped", payload={"reason": "not_due"})
+    assert ledger.run_status("r1") == "skipped"
+
+
+def test_status_cancelled_after_cancel_event(ledger):
+    """A run that was cancelled has a ledger event and derives
+    ``cancelled`` from it."""
+    ledger.append("r1", "run.started")
+    ledger.append("r1", "run.cancelled", payload={"reason": "user_abort"})
+    assert ledger.run_status("r1") == "cancelled"
+
+
 # -- P0-4: derive_run_status (ledger is single source of truth) ---------------
 
 
@@ -94,24 +109,19 @@ def test_derive_run_status_terminal_state_overrides_cached(ledger):
     ledger.append("r1", "run.started")
     ledger.append("r1", "run.completed")
     # Stale cached value: the run is actually done.
-    assert ledger.derive_run_status("r1", fallback="running") == "ok"
+    assert ledger.derive_run_status("r1") == "ok"
 
 
-def test_derive_run_status_fallback_for_never_started_runs(ledger):
-    """A run with no ledger events (e.g. a skipped task) falls back to
-    the cached ``TaskRun.status`` so we can still surface 'skipped'."""
-    assert ledger.derive_run_status("never-run", fallback="skipped") == "skipped"
-
-
-def test_derive_run_status_no_fallback_returns_unknown(ledger):
-    """No events and no fallback → 'unknown' (the run was never seen)."""
-    assert ledger.derive_run_status("never-seen", fallback=None) == "unknown"
+def test_derive_run_status_returns_unknown_with_no_events(ledger):
+    """No events and no fallback → 'unknown' (the run was never seen).
+    There is no silent fallback to ``TaskRun.status``."""
+    assert ledger.derive_run_status("never-seen") == "unknown"
 
 
 def test_derive_run_status_covers_all_required_states(ledger):
-    """R1.5 contract: running, ok, error, validation_failed, interrupted,
-    unknown are all derived from the ledger (no second copy of terminal
-    facts in TaskRun.status)."""
+    """R1 Final Convergence: running, ok, error, validation_failed,
+    interrupted, skipped, cancelled, unknown are all derived from the
+    ledger (no second copy of terminal facts in TaskRun.status)."""
     # running
     ledger.append("r-run", "run.started")
     assert ledger.derive_run_status("r-run") == "running"
@@ -131,5 +141,65 @@ def test_derive_run_status_covers_all_required_states(ledger):
     ledger.append("r-int", "run.started")
     ledger.recover_stale()
     assert ledger.derive_run_status("r-int") == "interrupted"
+    # skipped
+    ledger.append("r-skip", "run.skipped")
+    assert ledger.derive_run_status("r-skip") == "skipped"
+    # cancelled
+    ledger.append("r-cancel", "run.started")
+    ledger.append("r-cancel", "run.cancelled")
+    assert ledger.derive_run_status("r-cancel") == "cancelled"
     # unknown
     assert ledger.derive_run_status("r-unknown") == "unknown"
+
+
+# -- R1 Final Convergence: TaskRun.status has NO authority --------------------
+
+class FakeTaskRun:
+    """Minimal stand-in for ``TaskRun`` so tests can show that the
+    ``TaskRun.status`` column has no influence on the derived status."""
+
+    def __init__(self, run_id: str, status: str):
+        self.run_id = run_id
+        self.status = status
+
+
+def test_taskrun_status_error_does_not_override_ledger_ok(ledger):
+    """Reverse guard: ``TaskRun.status = 'error'`` must NOT override a
+    ledger ``run.completed`` event. The ledger wins."""
+    ledger.append("r1", "run.started")
+    ledger.append("r1", "run.completed")
+    run = FakeTaskRun("r1", "error")
+    assert ledger.derive_run_status(run.run_id) == "ok"
+
+
+def test_taskrun_status_ok_does_not_override_ledger_failed(ledger):
+    """Reverse guard: ``TaskRun.status = 'ok'`` must NOT override a
+    ledger ``run.failed`` event. The ledger wins."""
+    ledger.append("r1", "run.started")
+    ledger.append("r1", "run.failed", payload={"reason": "boom"})
+    run = FakeTaskRun("r1", "ok")
+    assert ledger.derive_run_status(run.run_id) == "error"
+
+
+def test_taskrun_status_running_does_not_override_ledger_skipped(ledger):
+    """Reverse guard: ``TaskRun.status = 'running'`` must NOT override a
+    ledger ``run.skipped`` event. The ledger wins."""
+    ledger.append("r1", "run.skipped", payload={"reason": "not_due"})
+    run = FakeTaskRun("r1", "running")
+    assert ledger.derive_run_status(run.run_id) == "skipped"
+
+
+def test_taskrun_status_ok_does_not_override_ledger_interrupted(ledger):
+    """Reverse guard: ``TaskRun.status = 'ok'`` must NOT override a
+    ledger ``run.interrupted`` event. The ledger wins."""
+    ledger.append("r1", "run.started")
+    ledger.recover_stale()
+    run = FakeTaskRun("r1", "ok")
+    assert ledger.derive_run_status(run.run_id) == "interrupted"
+
+
+def test_unknown_with_stale_taskrun_status_stays_unknown(ledger):
+    """When the ledger has no events at all, the status is ``unknown``
+    even if ``TaskRun.status`` says otherwise. No silent fallback."""
+    run = FakeTaskRun("never-ran", "completed")
+    assert ledger.derive_run_status(run.run_id) == "unknown"

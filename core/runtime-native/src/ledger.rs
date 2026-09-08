@@ -157,7 +157,8 @@ impl LedgerReader {
             "SELECT DISTINCT run_id FROM run_events \
              WHERE run_id NOT IN ( \
                  SELECT run_id FROM run_events WHERE type IN \
-                 ('run.completed', 'run.failed', 'run.interrupted') \
+                 ('run.completed', 'run.failed', 'run.interrupted', \
+                  'run.skipped', 'run.cancelled') \
              )",
         )?;
         let rows = stmt.query_map([], |row| row.get(0))?;
@@ -168,30 +169,46 @@ impl LedgerReader {
         Ok(out)
     }
 
-    /// Derive a run's lifecycle status from its last event.
+    /// Derive a run's lifecycle status from its last **terminal** event.
     ///
     /// Mirrors `core/ledger.py` `RunEventLedger.run_status()`.
+    /// Scans events in reverse order for the first terminal event
+    /// (run.completed / run.failed / run.interrupted / run.skipped /
+    /// run.cancelled / validation.failed). Non-terminal events like
+    /// tool.finished do not mask the terminal status.
     pub fn run_status(&self, run_id: &str) -> Result<String, ShadowReadError> {
         if run_id.is_empty() {
             return Ok("unknown".to_string());
         }
-        let row = self.conn.query_row(
-            "SELECT type FROM run_events WHERE run_id = ? ORDER BY seq DESC LIMIT 1",
-            params![run_id],
-            |row| row.get::<_, String>(0),
-        );
-        match row {
-            Ok(event_type) => Ok(match event_type.as_str() {
-                "run.completed" => "ok",
-                "run.failed" => "error",
-                "run.interrupted" => "interrupted",
-                "run.started" => "running",
-                "run.resumed" => "resumed",
-                "validation.failed" => "validation_failed",
-                _ => "unknown",
+        // Scan all events in reverse order, find the first terminal event.
+        let mut stmt = self
+            .conn
+            .prepare("SELECT type FROM run_events WHERE run_id = ? ORDER BY seq DESC")?;
+        let rows = stmt.query_map(params![run_id], |row| row.get::<_, String>(0))?;
+        let mut last_non_terminal = String::new();
+        for row in rows {
+            let event_type = row?;
+            match event_type.as_str() {
+                "run.completed" => return Ok("ok".to_string()),
+                "run.failed" => return Ok("error".to_string()),
+                "run.interrupted" => return Ok("interrupted".to_string()),
+                "run.skipped" => return Ok("skipped".to_string()),
+                "run.cancelled" => return Ok("cancelled".to_string()),
+                "validation.failed" => return Ok("validation_failed".to_string()),
+                // Non-terminal: remember the FIRST one found when scanning
+                // backwards (which is the LAST event chronologically).
+                _ => {
+                    if last_non_terminal.is_empty() {
+                        last_non_terminal = event_type;
+                    }
+                }
             }
-            .to_string()),
-            Err(_) => Ok("unknown".to_string()),
+        }
+        // No terminal events found. map last non-terminal to running/resumed.
+        match last_non_terminal.as_str() {
+            "run.started" => Ok("running".to_string()),
+            "run.resumed" => Ok("resumed".to_string()),
+            _ => Ok("unknown".to_string()),
         }
     }
 

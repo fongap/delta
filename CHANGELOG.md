@@ -70,7 +70,7 @@ v0.3.2 之后开启 Rust Control Plane 迁移（ADR-009）。R1 State Foundation
 | P0-2 | **二进制命名一致性** | Cargo `delta_core` / build script `delta_core.exe` / `DeltaCoreClient` 查找名统一（修复 `delta-core.exe` 拼写 bug）；新增便携式布局查找测试。 |
 | P0-3 | **Authority fail-closed** | `DELTA_RUST_AUTHORITY` 声明某领域后 `delta_core` 不可用 → `DeltaCoreError`；禁止静默回 Python。 |
 | P0-4 | **Run status 单一事实源** | 新增 `RunEventLedger.derive_run_status()`；Analyzer 改用其聚合；`TaskRun.status` 明确为非规范化缓存。 |
-| P0-5 | **Storage transaction 真实化** | `CoreTransaction.rollback()` 明确为 no-op；文档/ADR/test 与 Python 两 DB 现实一致；真正跨 DB 原子性留到 Rust Core 后续。 |
+| P0-5 | **Storage transaction 真实化** | ~~`CoreTransaction.rollback()` 明确为 no-op~~ → **已删除（ADR-025）** |
 | P0-6 | **Production Authority CI** | 新增 `tests/test_production_authority_chain.py`：SessionManager → delegate → DeltaCoreClient → delta_core → SQLite → Python read-back 全链路 + 反向守卫。 |
 | P1-1 | **DeltaCoreClient 生命周期** | command timeout（默认 30s）+ stderr 排水线程（防 PIPE 死锁）+ close 清理 drainer。 |
 | P1-2 | **Portable 实机 smoke** | 中文 + 空格路径下 `DELTA_PORTABLE_ROOT` 查找；Data/ 唯一用户态目录；Rust authority 不 fallback。 |
@@ -82,11 +82,37 @@ v0.3.2 之后开启 Rust Control Plane 迁移（ADR-009）。R1 State Foundation
 
 | 领域 | 当前权威 | 状态 |
 |---|---|---|
-| Idempotency | Python（opt-in Rust delegate via env var） | R1 完成 |
-| Ledger | Python（opt-in Rust delegate via env var） | R1 完成 |
-| Task identity | Python（opt-in Rust delegate via env var） | R1 完成 |
-| Run state | Python（`run_status()` 从 ledger 派生） | R1 完成 |
-| Storage transaction boundary | Python（`CoreTransaction` 协调锁序；非跨 DB 原子事务） | R1.5 收口 |
+| Idempotency | **Rust（ADR-022 hard-cut）** | Complete |
+| Ledger | **Rust（ADR-023 hard-cut）** | Complete |
+| Task identity | **Rust（ADR-024 hard-cut）** | Complete |
+| Run state | **Ledger only（ADR-025）** | Complete |
+| Storage transaction boundary | **已删除（ADR-025）** | Complete |
+
+**R1 Final Convergence（ADR-025，2026-09-09）**：R1 State Foundation 正式封板。
+
+- Run State Authority = Ledger only，`derive_run_status()` 无 fallback 参数，`TaskRun.status` 不参与任何控制流判断。
+- `core/storage_transaction.py`、`CoreStorage`、`CoreTransaction`、`tests/test_storage_transaction.py` 已全部删除。
+- `run.skipped` / `run.cancelled` 已补齐 Ledger event。
+- `packages/storage_authority.py` 的 `COORDINATION_DOMAINS` 已清空。
+
+**R1 最终完成定义**：
+
+```text
+Task Identity      ✅ Rust only
+Run Identity       ✅ Rust only
+Run State          ✅ Ledger only
+Ledger             ✅ Rust only
+Idempotency        ✅ Rust only
+
+Python writer      0
+Python fallback    0
+Delegate           0
+Authority switch   0
+Fake transaction   0
+Migration scaffold 0
+```
+
+**R1 = CLOSED。** 后续不允许继续扩展 R1 范围，除非是真实 bug 修复。
 
 **R1.5 生产切权状态**：三个 delegate 全部走统一 `delta_core` 进程入口；per-op CLI 仅诊断。Authority 声明后 binary 缺失 fail-closed。Run status 单一事实源（`TaskRun.status` 仅为非规范化缓存）。Storage transaction 文档与现实一致。Production Authority CI 覆盖 SessionManager → delegate → DeltaCoreClient → delta_core → SQLite → Python read-back 全链路。
 

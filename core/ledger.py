@@ -4,8 +4,9 @@ ADR-023 R1 Ledger Hard-Cut: Rust ``delta_core`` is the sole authority for
 all ledger writes and reads.  Python retains only the public adapter used
 by the current runtime and the stable value types from the v0.3.2 contract.
 
-There is deliberately no Python SQLite writer and no runtime fallback.  A
-missing, incompatible, or failed Rust Core process raises ``DeltaCoreError``.
+R1 Final Convergence (ADR-025): No Python fallback exists.  The ledger is
+the sole source of truth for run state.  ``TaskRun.status`` is never
+consulted by production control flow.
 
 Implements docs/architecture/adr/ADR-001-run-event-ledger.md slice 1:
 
@@ -28,7 +29,13 @@ from typing import Any, Iterable
 
 from packages.delta_core_client import DeltaCoreError, default_client
 
-TERMINAL_EVENTS = frozenset({"run.completed", "run.failed", "run.interrupted"})
+TERMINAL_EVENTS = frozenset({
+    "run.completed",
+    "run.failed",
+    "run.interrupted",
+    "run.skipped",
+    "run.cancelled",
+})
 
 # Event vocabulary (ADR-005).  All ``tool.*`` / ``approval.*`` / ``artifact.*``
 # / ``validation.*`` / ``side_effect.*`` / ``run.resumed`` events flow through
@@ -41,6 +48,8 @@ KNOWN_EVENT_TYPES = frozenset(
         "run.failed",
         "run.interrupted",
         "run.resumed",
+        "run.skipped",
+        "run.cancelled",
         # Tool calls
         "tool.proposed",
         "tool.started",
@@ -81,8 +90,6 @@ class RunEventLedger:
         self.db_path = Path(db_path).expanduser()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._db_path = str(self.db_path)
-        # CoreStorage coordinates calls with this process-local lock.
-        # It does not protect a Python database connection.
         self._lock = threading.RLock()
         # Schema creation (CREATE TABLE IF NOT EXISTS) is handled by the
         # Rust LedgerWriter::open on first command — no Python init needed.
@@ -167,6 +174,8 @@ class RunEventLedger:
         * ``run.completed``  → ``"ok"``
         * ``run.failed``     → ``"error"``
         * ``run.interrupted`` → ``"interrupted"`` (crash recovery)
+        * ``run.skipped``    → ``"skipped"``
+        * ``run.cancelled``  → ``"cancelled"``
         * ``validation.failed`` last → ``"validation_failed"``
         * any other state    → ``"unknown"``
         """
@@ -175,18 +184,13 @@ class RunEventLedger:
             raise DeltaCoreError("invalid ledger.run_status response")
         return result["status"]
 
-    def derive_run_status(self, run_id: str, fallback: str | None = None) -> str:
-        """P0-4: Derive the authoritative run status from the ledger.
+    def derive_run_status(self, run_id: str) -> str:
+        """Derive the authoritative run status from the ledger.
 
-        The ``fallback`` is consulted only when the ledger returns
-        ``"unknown"`` (no events at all).  This covers ``skipped``
-        runs that never wrote to the ledger, and legacy rows
-        predating the ledger migration.
+        The ledger is the sole source of truth.  No fallback is
+        consulted — ``"unknown"`` means the run has no ledger events.
         """
-        status = self.run_status(run_id)
-        if status == "unknown" and fallback:
-            return fallback
-        return status
+        return self.run_status(run_id)
 
     def recover_stale(self) -> Iterable[dict[str, Any]]:
         """Cold-start sweep: close every open run with a synthetic interrupted event."""

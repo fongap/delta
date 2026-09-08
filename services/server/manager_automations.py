@@ -520,11 +520,10 @@ class AutomationsMixin(ManagerHostState):
         # finalize gives us a chance to upgrade the row in place.
         if not run.workspace and task.workspace:
             run.workspace = task.workspace
-        # P0-4: the reconnect path gates on the ledger's authoritative
-        # status, not the denormalized ``TaskRun.status`` column. A
-        # crashed run whose ``run.interrupted`` was written by cold-start
-        # recovery must not be re-finalized here.
-        if self.run_ledger.derive_run_status(run.run_id, fallback=run.status) == "running":
+        # P0-4: the reconnect path gates on whether the run has already been
+        # finalized (finished_at is set). A crashed run whose run.interrupted
+        # was written by cold-start recovery must not be re-finalized here.
+        if run.finished_at is None:
             record = self.session_store.load(run.session_id)
             run.result_text = _last_assistant_text(record.messages) if record else None
             from core.artifact_delegate import register_run_artifacts_delegated
