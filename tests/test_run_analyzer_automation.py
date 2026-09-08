@@ -253,9 +253,8 @@ def test_automation_health_uses_ledger_status_not_cached(tmp_path):
         store.close()
 
 
-def test_automation_health_falls_back_to_cached_for_skipped(tmp_path):
-    """A task that was skipped (no ledger events at all) surfaces its
-    cached 'skipped' status via the fallback in derive_run_status."""
+def test_automation_health_counts_skipped_run_with_ledger_event(tmp_path):
+    """A task that was skipped has a ledger event and is counted correctly."""
     ws = tmp_path / "ws"
     ws.mkdir()
     led = RunEventLedger(tmp_path / "events.db")
@@ -275,7 +274,8 @@ def test_automation_health_falls_back_to_cached_for_skipped(tmp_path):
             status="skipped",
         )
         store.add_run(skipped_run)
-        # No ledger events for this run — it's truly skipped.
+        # Write run.skipped event to ledger instead of relying on TaskRun.status fallback.
+        led.append("skipped-run", "run.skipped", payload={"reason": "not_due"})
 
         analyzer = Analyzer(workspace=str(ws), ledger=led, task_store=store)
         h = analyzer.automation_health(task.id)

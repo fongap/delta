@@ -25,8 +25,9 @@ R1.7 (Authority Domain 收口, P0-1):
 - ``run_state`` is derived from ``ledger`` — it is not an independent
   Rust write authority. ``is_rust_authority("run_state")`` raises
   ``ValueError``.
-- ``storage_transaction`` is a Python coordination boundary (ADR-015,
-  CoreTransaction). It does not accept Rust authority declarations.
+- ``storage_transaction`` was a Python coordination boundary (ADR-015,
+  CoreTransaction). It has been removed in R1 Final Convergence
+  (ADR-025) — no production authority / no false atomicity abstraction.
 - Unknown domains are rejected at config-parse time with ``ValueError``
   — no silent ignoring.
 - ``all`` maps only to ``RUST_WRITE_DOMAINS`` (the domains that actually
@@ -109,9 +110,7 @@ DERIVED_DOMAINS: Final[dict[str, str]] = {
 
 #: Python coordination boundaries. These coordinate across domains but
 #: do not have Rust write authority. They accept no Rust declarations.
-COORDINATION_DOMAINS: Final[frozenset[str]] = frozenset({
-    "storage_transaction",
-})
+COORDINATION_DOMAINS: Final[frozenset[str]] = frozenset()
 
 #: All domain names recognized by the selector. Derived and coordination
 #: domains are NOT valid targets for is_rust_authority().
@@ -148,14 +147,14 @@ def _parse_domains(value: str | None) -> frozenset[str]:
     - ``"1"``, ``"true"``, ``"yes"``, ``"on"`` → ``RUST_WRITE_DOMAINS``
     - ``"all"`` → ``RUST_WRITE_DOMAINS``
     - ``"idempotency,ledger"`` → ``{idempotency, ledger}``
-    - ``"run_state"`` / ``"storage_transaction"`` → ``ValueError``
-      (these are derived/coordination, not Rust write authority)
+    - ``"run_state"`` → ``ValueError``
+      (these are derived, not Rust write authority)
     - unknown domains → ``ValueError`` (fail-fast, no silent ignore)
     - whitespace and case → normalized
 
     :raises UnknownDomainError: if any token is not in ``ALL_DOMAINS``.
-    :raises InvalidAuthorityTargetError: if ``run_state`` or
-        ``storage_transaction`` appears in the list.
+    :raises InvalidAuthorityTargetError: if ``run_state`` appears in
+        the list.
     """
     if value is None or not value.strip():
         return frozenset()
@@ -205,7 +204,7 @@ def _parse_reader_domains(value: str | None) -> frozenset[str]:
     - ``"artifact,validation"`` → ``{artifact, validation}``
     - R1 write domains (idempotency / ledger / task_identity) → error
       (use DELTA_RUST_AUTHORITY for write authority)
-    - ``run_state`` / ``storage_transaction`` → error
+    - ``run_state`` → error
     - ``policy`` / ``approval`` → error
       (these are evaluation/decision surfaces, not data readers;
       they will get a different hook in their per-domain ADR)
@@ -267,7 +266,7 @@ def is_rust_authority(domain: str) -> bool:
     :param domain: one of :data:`RUST_WRITE_DOMAINS`.
     :returns: ``True`` if Rust is the declared write authority.
     :raises InvalidAuthorityTargetError: if ``domain`` is derived
-        (``run_state``), coordination (``storage_transaction``), an R2
+        (``run_state``), an R2
         reader domain (``artifact`` / ``validation`` / ``checkpoint`` /
         ``checkpoint``), or unknown.
     """

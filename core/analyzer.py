@@ -269,11 +269,8 @@ class Analyzer:
             # P0-4: the ledger is the single source of truth for run
             # status. The denormalized ``TaskRun.status`` column in
             # automation.db is only a cache; it can lag the ledger by
-            # one write. For terminal states (ok / error / interrupted
-            # / validation_failed) the ledger always wins. For non-
-            # terminal states with no ledger events (skipped), the
-            # cached value is the only source and is used as fallback.
-            status = self.ledger.derive_run_status(run.run_id, fallback=run.status)
+            # one write. The ledger always wins.
+            status = self.ledger.derive_run_status(run.run_id)
             status_counts[status] += 1
             if run.finished_at is not None and run.started_at:
                 durations.append(max(0.0, run.finished_at - run.started_at))

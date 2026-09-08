@@ -1,10 +1,10 @@
 # ADR-017 — R1 State Foundation 完成
 
-- 状态：Active
+- 状态：Complete
 - 日期：2026-09-07
 - 范围：Delta Core R1 State Foundation 全部 5 个领域 + 统一进程入口
 - 决策类型：迁移阶段完成记录
-- 关联：ADR-009（Delta Core Architecture）、ADR-010（Shadow-Read）、ADR-011（Authority Switch Plan）、ADR-012~016（各领域 Delegate）、`docs/governance/rust-core-migration.md` §5 R1
+- 关联：ADR-009（Delta Core Architecture）、ADR-010（Shadow-Read）、ADR-011（Authority Switch Plan）、ADR-012~016（各领域 Delegate）、ADR-022（Idempotency Hard-Cut）、ADR-023（Ledger Hard-Cut）、ADR-024（Task Identity Hard-Cut）、ADR-025（R1 Final Convergence）、`docs/governance/rust-core-migration.md` §5 R1
 
 ## 背景
 
@@ -32,22 +32,22 @@ R1 State Foundation 在 v0.4.0-dev 线上完成以下 13 个 PR：
 | P0-2 | Binary naming consistency | Cargo `delta_core` / build script `delta_core.exe` / `DeltaCoreClient` 查找名统一 |
 | P0-3 | Authority fail-closed | authority 声明后 binary 缺失 → `DeltaCoreError`，禁止静默 fallback |
 | P0-4 | Run state single source of truth | `RunEventLedger.derive_run_status()` 派生；`TaskRun.status` 仅为 cache |
-| P0-5 | Storage transaction reality | `CoreTransaction` 文档与实现一致：协调锁序，非跨 DB 原子事务 |
+| P0-5 | Storage transaction reality | ~~`CoreTransaction` 文档与实现一致：协调锁序，非跨 DB 原子事务~~ → **已删除（ADR-025）** |
 | P0-6 | Production authority CI | 真实生产调用链测试（SessionManager → delegate → DeltaCoreClient → delta_core → SQLite → Python read-back） |
 | P1-E | 统一 Delta Core 进程入口 | `delta_core` Rust 二进制（stdin/stdout JSON line protocol）+ `DeltaCoreClient` Python 客户端 |
 | P1-F | Package Delta Core | 便携版构建脚本集成 `delta_core.exe`；多位置 binary lookup |
 | P1-G | CI gates | `rust-core-smoke` CI job + `check_rust_core_smoke.py` 脚本 + 迁移数据库测试 |
 | Docs | Authority Matrix + ADR | 本 ADR + Authority Matrix 更新 |
 
-### Authority Matrix（R1 完成后 → R1 Hard-Cut 后）
+### Authority Matrix（R1 Final Convergence 后）
 
-| 领域 | R1 前 | R1 完成后 | R1 Hard-Cut 后 |
+| 领域 | R1 前 | R1 完成后 | R1 Final Convergence 后 |
 |---|---|---|---|
 | Idempotency | Python | Python（opt-in Rust delegate） | **Rust（唯一事实来源，ADR-022）** |
 | Ledger | Python | Python（opt-in Rust delegate） | **Rust（唯一事实来源，ADR-023）** |
 | Task identity | Python | Python（opt-in Rust delegate） | **Rust（唯一事实来源，ADR-024）** |
-| Run state | Python | Python（`run_status()` 从 ledger 派生） | — |
-| Storage transaction | Python | Python（`CoreTransaction` 协调锁序；非跨 DB 原子事务） | — |
+| Run state | Python | Python（`run_status()` 从 ledger 派生） | **Ledger only（ADR-025）** |
+| Storage transaction | Python | Python（`CoreTransaction` 协调锁序；非跨 DB 原子事务） | **已删除（ADR-025）** |
 
 ### 统一进程入口（P1-E）
 
@@ -151,6 +151,58 @@ R1 全部 13 个 PR 完成后再做一次"生产切权"收口（`Delta R1.5 — 
 | Rust Core 不可用时 fail-closed | ✅ |
 | 架构守卫测试（6 个） | ✅ |
 | 便携版 + 历史数据库验证 | ✅ |
+
+## R1 Final Convergence（ADR-025，2026-09-09）
+
+R1 最终收口完成（ADR-025），R1 State Foundation 正式宣布 **Complete**：
+
+| 任务 | 状态 |
+|---|---|
+| Run State Authority = Ledger only | ✅ |
+| `derive_run_status()` 无 fallback 参数 | ✅ |
+| Analyzer 无 `TaskRun.status` fallback | ✅ |
+| manager_automations 无 `TaskRun.status` fallback | ✅ |
+| `run.skipped` / `run.cancelled` Ledger event | ✅ |
+| `core/storage_transaction.py` 物理删除 | ✅ |
+| `CoreStorage` / `CoreTransaction` 全部删除 | ✅ |
+| `tests/test_storage_transaction.py` 删除 | ✅ |
+| `rollback()` no-op 删除 | ✅ |
+| Authority Matrix 更新 | ✅ |
+| CI 防回流 guard | ✅ |
+| `packages/storage_authority.py` `COORDINATION_DOMAINS` 清空 | ✅ |
+
+**R1 Authority Matrix（Final）**：
+
+| Domain | Authority |
+|---|---|
+| Task Identity | Rust |
+| Run Identity | Rust |
+| Run State | Rust Ledger |
+| Ledger | Rust |
+| Idempotency | Rust |
+| Task persistence | Rust |
+| Run persistence | Rust |
+| Storage coordination | No separate authority |
+| Python fallback | None |
+
+**R1 最终完成定义**：
+
+```text
+Task Identity      ✅ Rust only
+Run Identity       ✅ Rust only
+Run State          ✅ Ledger only
+Ledger             ✅ Rust only
+Idempotency        ✅ Rust only
+
+Python writer      0
+Python fallback    0
+Delegate           0
+Authority switch   0
+Fake transaction   0
+Migration scaffold 0
+```
+
+**R1 = CLOSED**。后续不允许继续扩展 R1 范围，除非是真实 bug 修复。
 
 ## 明确不做
 
