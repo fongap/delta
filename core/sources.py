@@ -201,24 +201,75 @@ def to_range_dict(value: Any) -> dict[str, Any]:
             raise ValueError("lines citation needs at least one of start/end")
         for k in ("start", "end"):
             v = payload.get(k)
-            if v is not None and not isinstance(v, int):
+            if v is not None and type(v) is not int:
                 raise ValueError(f"lines citation {k} must be int, got {type(v).__name__}")
+            if v is not None and v < 1:
+                raise ValueError(f"lines citation {k} must be >= 1, got {v}")
+        start = payload.get("start", payload.get("end"))
+        end = payload.get("end", payload.get("start"))
+        assert start is not None and end is not None
+        if end < start:
+            raise ValueError(f"lines citation end ({end}) < start ({start})")
     elif kind == KIND_PAGE:
         if not any(payload.get(k) is not None for k in ("page", "page_end")):
             raise ValueError("page citation needs at least one of page/page_end")
         for k in ("page", "page_end"):
             v = payload.get(k)
-            if v is not None and not isinstance(v, int):
+            if v is not None and type(v) is not int:
                 raise ValueError(f"page citation {k} must be int, got {type(v).__name__}")
+            if v is not None and v < 1:
+                raise ValueError(f"page citation {k} must be >= 1, got {v}")
+        page = payload.get("page", payload.get("page_end"))
+        page_end = payload.get("page_end", payload.get("page"))
+        assert page is not None and page_end is not None
+        if page_end < page:
+            raise ValueError(
+                f"page citation page_end ({page_end}) < page ({page})"
+            )
     elif kind in (KIND_CELLS, KIND_ROW, KIND_COLUMN, KIND_SHEET):
+        sheet = payload.get("sheet")
+        if not isinstance(sheet, str) or not sheet:
+            raise ValueError(f"{kind} citation needs a 'sheet' name")
         for k in ("row_start", "row_end", "col_start", "col_end"):
             v = payload.get(k)
-            if v is not None and not isinstance(v, int):
+            if v is not None and type(v) is not int:
                 raise ValueError(
                     f"{kind} citation {k} must be int, got {type(v).__name__}"
                 )
-        if kind == KIND_SHEET and not payload.get("sheet"):
-            raise ValueError("sheet citation needs a 'sheet' name")
+            if v is not None and v < 1:
+                raise ValueError(f"{kind} citation {k} must be >= 1, got {v}")
+        for start_name, end_name in (
+            ("row_start", "row_end"),
+            ("col_start", "col_end"),
+        ):
+            start = payload.get(start_name)
+            end = payload.get(end_name)
+            if start is not None and end is not None and end < start:
+                raise ValueError(
+                    f"{kind} citation {end_name} ({end}) < {start_name} ({start})"
+                )
+        if kind == KIND_CELLS:
+            numeric_locator = any(
+                payload.get(k) is not None
+                for k in ("row_start", "row_end", "col_start", "col_end")
+            )
+            a1_locator = any(
+                payload.get(k) is not None for k in ("cell_start", "cell_end")
+            )
+            if not numeric_locator and not a1_locator:
+                raise ValueError("cells citation needs a cell or row/column range")
+            for k in ("cell_start", "cell_end"):
+                v = payload.get(k)
+                if v is not None and (not isinstance(v, str) or not v):
+                    raise ValueError(f"cells citation {k} must be a non-empty string")
+        elif kind == KIND_ROW and not any(
+            payload.get(k) is not None for k in ("row_start", "row_end")
+        ):
+            raise ValueError("row citation needs at least one of row_start/row_end")
+        elif kind == KIND_COLUMN and not any(
+            payload.get(k) is not None for k in ("col_start", "col_end")
+        ):
+            raise ValueError("column citation needs at least one of col_start/col_end")
     elif kind == KIND_MESSAGE_ID:
         if not payload.get("message_id"):
             raise ValueError("message_id citation needs a 'message_id'")
@@ -375,7 +426,24 @@ class SourceStore:
         canonical form. A bad entry raises ``ValueError`` *before* any
         mutation so a partially-applied citation can never be persisted.
         """
-        normalized = normalize_cited_ranges(ranges)
+        from packages.storage_authority import is_rust_authority
+
+        if is_rust_authority("source_citation"):
+            from core.source_citation_delegate import canonicalize_citations_delegated
+
+            candidates = [
+                {
+                    key: item
+                    for key, item in asdict(value).items()
+                    if item is not None
+                }
+                if isinstance(value, CitationRange)
+                else value
+                for value in ranges
+            ]
+            normalized = canonicalize_citations_delegated(candidates)
+        else:
+            normalized = normalize_cited_ranges(ranges)
         with self._lock:
             ref = self._refs.get(ref_id)
             if ref is None:
@@ -589,6 +657,16 @@ class SourceStore:
         """
         with self._lock:
             ref = self._refs.get(ref_id)
+        from packages.storage_authority import is_rust_authority
+
+        if is_rust_authority("source_citation"):
+            from core.source_citation_delegate import validate_citation_delegated
+
+            return validate_citation_delegated(
+                asdict(ref) if ref is not None else None,
+                range_obj,
+                workspace=self.workspace,
+            )
         if ref is None:
             return {
                 "valid": False,
@@ -629,8 +707,8 @@ class SourceStore:
         # have a meaningful "past the end" check.
         kind = range_obj.get("kind")
         if kind == KIND_LINES:
-            start = range_obj.get("start")
-            end = range_obj.get("end") if "end" in range_obj else start
+            start = range_obj.get("start", range_obj.get("end"))
+            end = range_obj.get("end", range_obj.get("start"))
             if start is None:
                 # Defensive: a lines citation should always have at
                 # least a start (validated at capture). If somehow
@@ -640,7 +718,11 @@ class SourceStore:
                     "status": FRESH_CURRENT,
                     "reason": self.CITATION_OUT_OF_BOUNDS,
                 }
-            line_count = data.count(b"\n") + (0 if data.endswith(b"\n") else 1)
+            line_count = (
+                0
+                if not data
+                else data.count(b"\n") + (0 if data.endswith(b"\n") else 1)
+            )
             # Empty file = 0 lines; a citation for line 1 is
             # out-of-bounds in an empty file.
             if start < 1 or start > line_count:

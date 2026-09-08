@@ -233,6 +233,68 @@ async def test_validation_failure_blocks_status_ok(tmp_path, manager):
     assert "validation.failed" in types
 
 
+@pytest.mark.asyncio
+async def test_manual_finalize_runs_same_validation_gate(tmp_path, manager):
+    """A GUI-driven manual Automation run cannot bypass completion validation."""
+    from core.automation.models import Schedule, ScheduledTask
+
+    ws = tmp_path / "manual-ws"
+    ws.mkdir()
+    task = ScheduledTask(
+        title="Manual validation",
+        instructions="Produce a report",
+        schedule=Schedule(kind="cron", cron="0 9 * * *"),
+        workspace=str(ws),
+        agent="delta",
+        validation_criteria={"min_artifacts": 1},
+    )
+    manager.task_store.save(task)
+    prepared = manager.prepare_manual_run(task.id)
+    engine = manager.get_engine(
+        prepared["session_id"], workspace=str(ws), agent="delta"
+    )
+    async for _ in engine.run(prepared["prompt"]):
+        pass
+    manager.save(prepared["session_id"], engine)
+
+    result = manager.finalize_manual_run(task.id, prepared["run_id"])
+
+    assert result["run"]["status"] == "validation_failed"
+    assert manager.task_store.get(task.id).last_status == "validation_failed"
+    types = [
+        event["type"]
+        for event in manager.run_ledger.events(prepared["run_id"])
+    ]
+    assert "validation.failed" in types
+
+
+def test_validation_verdict_persistence_failure_is_not_silent(
+    tmp_path, manager, monkeypatch
+):
+    """No run may become successful unless its Validation verdict is durable."""
+    from core.automation.models import Schedule, ScheduledTask, TaskRun
+
+    ws = tmp_path / "ledger-failure-ws"
+    ws.mkdir()
+    task = ScheduledTask(
+        title="Ledger failure",
+        instructions="Validate",
+        schedule=Schedule(kind="cron", cron="0 9 * * *"),
+        workspace=str(ws),
+        agent="delta",
+        validation_criteria={"min_artifacts": 0},
+    )
+    run = TaskRun(task_id=task.id, workspace=str(ws))
+
+    def broken_append(*_args, **_kwargs):
+        raise OSError("validation ledger unavailable")
+
+    monkeypatch.setattr(manager.run_ledger, "append", broken_append)
+
+    with pytest.raises(OSError, match="validation ledger unavailable"):
+        manager._validate_run(run, task, [])
+
+
 async def test_validation_passes_when_criteria_met(tmp_path, manager):
     """Engine returns successfully and the artifact matches the criteria → status
     is `ok`."""

@@ -308,17 +308,16 @@ class AutomationsMixin(ManagerHostState):
             workspace=task.workspace,
             valid_citation_count=self._count_valid_citations(task.workspace, run.run_id),
         )
-        # Ledger the verdict so a follow-up can replay the gate decision.
-        try:
-            self.run_ledger.append(
-                run.run_id,
-                "validation.passed" if result.ok else "validation.failed",
-                actor="system",
-                payload=result.to_dict(),
-                workspace=run.workspace or (task.workspace or None),
-            )
-        except Exception:
-            pass
+        # The verdict must be durable before it can drive completion. A
+        # persistence failure propagates so the caller records an error rather
+        # than presenting an un-auditable successful run.
+        self.run_ledger.append(
+            run.run_id,
+            "validation.passed" if result.ok else "validation.failed",
+            actor="system",
+            payload=result.to_dict(),
+            workspace=run.workspace or (task.workspace or None),
+        )
         return gate_status(result, engine_succeeded=True)
 
 
@@ -537,10 +536,10 @@ class AutomationsMixin(ManagerHostState):
                 ledger_db_path=str(self.run_ledger.db_path),
             )
             run.artifacts = [a.to_dict() for a in artifacts]
-            run.status = "ok"
+            run.status = self._validate_run(run, task, artifacts)
             run.finished_at = _epoch()
             self.task_store.add_run(run)
-            task.last_run, task.last_status = run.finished_at, "ok"
+            task.last_run, task.last_status = run.finished_at, run.status
             task.run_count += 1
             self.task_store.save(task)
         return {"ok": True, "run": run.to_dict()}

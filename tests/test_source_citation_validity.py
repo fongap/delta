@@ -96,6 +96,23 @@ def test_validate_citation_out_of_bounds_when_file_truncated(tmp_path):
     assert out["current_line_count"] == 2
 
 
+def test_validate_citation_empty_file_has_zero_lines(tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    path = ws / "empty.txt"
+    path.write_bytes(b"")
+    store = SourceStore(tmp_path / "sources.json", workspace=ws)
+    ref = store.capture_file(path)
+
+    out = store.validate_citation(
+        ref.id, "run-empty", {"kind": KIND_LINES, "start": 1}
+    )
+
+    assert out["valid"] is False
+    assert out["reason"] == CITATION_OUT_OF_BOUNDS
+    assert out["current_line_count"] == 0
+
+
 def test_validate_citation_content_changed_marks_invalid(tmp_path):
     _ws, f, store, _ = _make_store_and_analyzer(tmp_path)
     ref = store.capture_file(f)

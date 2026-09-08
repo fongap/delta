@@ -60,7 +60,8 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use delta_runtime_native::{
-    ArtifactInput, ArtifactRegistryWriter, IdempotencyWriter, LedgerWriter, TaskStoreWriter,
+    run_validation, validate_all, validate_source_citation, ArtifactInput, ArtifactRegistryWriter,
+    IdempotencyWriter, LedgerWriter, TaskStoreWriter,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -169,6 +170,28 @@ enum Command {
         registered_at: f64,
         ts: Option<f64>,
         workspace: Option<String>,
+    },
+    /// R2.1: evaluate a citation against a compatibility SourceRef snapshot.
+    #[serde(rename = "citation.validate")]
+    CitationValidate {
+        source: Option<Value>,
+        range: Value,
+        workspace: Option<String>,
+    },
+    /// R2.1: canonicalize candidate ranges before persistence.
+    #[serde(rename = "citation.canonicalize")]
+    CitationCanonicalize {
+        #[serde(default)]
+        ranges: Vec<Value>,
+    },
+    /// R2.2: evaluate the deterministic completion contract in Rust.
+    #[serde(rename = "validation.run")]
+    ValidationRun {
+        criteria: Value,
+        #[serde(default)]
+        artifacts: Vec<Value>,
+        workspace: Option<String>,
+        valid_citation_count: Option<usize>,
     },
 }
 
@@ -428,6 +451,36 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
                 Err(e) => Err(e.to_string()),
             }
         }
+        Command::CitationValidate {
+            source,
+            range,
+            workspace,
+        } => serde_json::to_value(validate_source_citation(
+            source.as_ref(),
+            &range,
+            workspace.as_deref().map(std::path::Path::new),
+        ))
+        .map_err(|error| error.to_string()),
+        Command::CitationCanonicalize { ranges } => validate_all(&ranges).map(|validated| {
+            Value::Array(
+                validated
+                    .into_iter()
+                    .map(|citation| citation.range)
+                    .collect(),
+            )
+        }),
+        Command::ValidationRun {
+            criteria,
+            artifacts,
+            workspace,
+            valid_citation_count,
+        } => run_validation(
+            &artifacts,
+            &criteria,
+            workspace.as_deref().map(std::path::Path::new),
+            valid_citation_count,
+        )
+        .and_then(|result| serde_json::to_value(result).map_err(|error| error.to_string())),
     };
     match result {
         Ok(v) => serde_json::json!({"ok": true, "result": v}),

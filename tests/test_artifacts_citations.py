@@ -104,9 +104,8 @@ def test_validation_require_citations_fails_below_floor():
     assert "3" in failed[0].detail
 
 
-def test_validation_require_citations_skipped_when_count_unknown():
-    """When the caller doesn't pass valid_citation_count, the citation
-    check is skipped — never blocks the run."""
+def test_validation_require_citations_fails_closed_when_count_unknown():
+    """A required citation count that cannot be established blocks completion."""
     criteria = ValidationCriteria(
         min_artifacts=0,
         require_citations=True,
@@ -114,7 +113,10 @@ def test_validation_require_citations_skipped_when_count_unknown():
     )
     arts: list[dict] = []
     result = run_validation(arts, criteria)  # no valid_citation_count
-    assert result.ok
+    assert not result.ok
+    assert result.checks[-1].name == "min_valid_citations"
+    assert result.checks[-1].detail == "valid citation count unavailable"
+    assert result.evidence["valid_citation_count"] is None
 
 
 def test_validation_criteria_roundtrip():

@@ -17,8 +17,9 @@ R1.7 (Authority Domain 收口, P0-1):
 
 - The selector distinguishes **Rust write authority** (real Rust
   implementations) from **derived** and **coordination** domains.
-- Only the three real Rust write domains accept ``DELTA_RUST_AUTHORITY``
-  declarations: ``idempotency``, ``ledger``, ``task_identity``.
+- Only domains with a live Rust authority path accept
+  ``DELTA_RUST_AUTHORITY`` declarations. R2 domains are promoted into this
+  set one at a time after their production delegate lands.
 - ``run_state`` is derived from ``ledger`` — it is not an independent
   Rust write authority. ``is_rust_authority("run_state")`` raises
   ``ValueError``.
@@ -76,6 +77,8 @@ RUST_WRITE_DOMAINS: Final[frozenset[str]] = frozenset({
     "ledger",           # run_events.db
     "task_identity",    # tasks.db
     "artifact",         # run_events.db (artifact.registered + artifact.completed events)
+    "source_citation",  # typed citation validity evaluation via delta_core
+    "validation",       # deterministic completion gate via delta_core
 })
 
 #: Rust shadow-reader domains (R2, ADR-019). These have Rust *readers*
@@ -89,9 +92,7 @@ RUST_WRITE_DOMAINS: Final[frozenset[str]] = frozenset({
 # (artifact.registered / artifact.completed events). The reader is
 # still useful for cross-check but the write path takes precedence.
 RUST_READ_DOMAINS: Final[frozenset[str]] = frozenset({
-    "validation",       # core/validation.py — deterministic rule engine
     "checkpoint",       # core/recovery.py — JSON snapshot schema
-    "source_citation",  # core/source_citation.py — citation range resolve
 })
 
 #: Domains derived from another Rust authority. They do not have
@@ -263,7 +264,7 @@ def is_rust_authority(domain: str) -> bool:
     :raises InvalidAuthorityTargetError: if ``domain`` is derived
         (``run_state``), coordination (``storage_transaction``), an R2
         reader domain (``artifact`` / ``validation`` / ``checkpoint`` /
-        ``source_citation``), or unknown.
+        ``checkpoint``), or unknown.
     """
     if domain not in RUST_WRITE_DOMAINS:
         if domain in DERIVED_DOMAINS:
@@ -302,8 +303,8 @@ def is_rust_shadow_reader(domain: str) -> bool:
     Reads ``DELTA_RUST_READERS`` once per call (no caching — the env
     var is intended for test/CI scenarios, not hot paths).
 
-    :param domain: one of :data:`RUST_READ_DOMAINS` (``artifact`` /
-        ``validation`` / ``checkpoint`` / ``source_citation``).
+    :param domain: one of :data:`RUST_READ_DOMAINS`
+        (``validation`` / ``checkpoint``).
     :returns: ``True`` if the Rust reader is enabled.
     :raises InvalidAuthorityTargetError: if ``domain`` is an R1 write
         domain, derived, coordination, ``policy`` / ``approval``, or
