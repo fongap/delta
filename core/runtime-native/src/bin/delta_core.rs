@@ -28,13 +28,20 @@
 //! runtime from silently talking to a stale or upgraded binary.
 //!
 //! ```json
-//! {"cmd": "hello", "protocol_version": 1}
-//! {"ok": true, "result": {"protocol_version": 1, "server": "delta_core"}}
+//! {"cmd": "hello", "protocol_version": 2}
+//! {"ok": true, "result": {"protocol_version": 2, "server": "delta_core"}}
 //! ```
 //!
 //! Supported commands (R1 minimum):
 //!
 //! - `ledger.append` — append one event to ``run_events.db``.
+//! - `ledger.events` — list events for a run.
+//! - `ledger.events_in_workspace` — list events filtered by workspace.
+//! - `ledger.runs` — list all run_ids.
+//! - `ledger.open_runs` — list runs without terminal events.
+//! - `ledger.run_status` — derive lifecycle status from last event.
+//! - `ledger.verify` — verify hash chain for a run.
+//! - `ledger.recover_stale` — close open runs with synthetic interrupted events.
 //! - `idem.record_planned` / `idem.mark_executing` / `idem.commit` /
 //!   `idem.mark_failed` / `idem.mark_uncertain` — state transitions
 //!   on ``side_effects.db``.
@@ -76,7 +83,7 @@ use serde_json::Value;
 /// immediately after subprocess startup; a mismatch raises
 /// :class:`DeltaCoreError` (fail-closed) so we never silently talk to
 /// an incompatible binary.
-const PROTOCOL_VERSION: u32 = 1;
+const PROTOCOL_VERSION: u32 = 3;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "cmd")]
@@ -92,6 +99,26 @@ enum Command {
         payload: Option<Value>,
         workspace: Option<String>,
     },
+    #[serde(rename = "ledger.events")]
+    LedgerEvents { db: String, run_id: String },
+    #[serde(rename = "ledger.events_in_workspace")]
+    LedgerEventsInWorkspace {
+        db: String,
+        run_id: String,
+        workspace: String,
+    },
+    #[serde(rename = "ledger.runs")]
+    LedgerRuns { db: String },
+    #[serde(rename = "ledger.open_runs")]
+    LedgerOpenRuns { db: String },
+    #[serde(rename = "ledger.run_status")]
+    LedgerRunStatus { db: String, run_id: String },
+    #[serde(rename = "ledger.verify")]
+    LedgerVerify { db: String, run_id: String },
+    #[serde(rename = "ledger.recover_stale")]
+    LedgerRecoverStale { db: String },
+    #[serde(rename = "ledger.close")]
+    LedgerClose { db: String },
     #[serde(rename = "idem.identify")]
     IdemIdentify {
         run_id: String,
@@ -286,6 +313,20 @@ fn err(s: String) -> Value {
     serde_json::json!({"ok": false, "error": s})
 }
 
+fn event_to_json(ev: delta_runtime_native::LedgerEvent) -> Value {
+    serde_json::json!({
+        "run_id": ev.run_id,
+        "seq": ev.seq,
+        "type": ev.r#type,
+        "ts": ev.ts,
+        "actor": ev.actor,
+        "payload": ev.payload,
+        "prev_hash": ev.prev_hash,
+        "hash": ev.hash,
+        "workspace": ev.workspace,
+    })
+}
+
 fn lookup_entry_json(entry: SideEffectEntry) -> Value {
     match entry.state {
         SideEffectState::Uncertain => serde_json::json!({
@@ -382,6 +423,116 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
                 Ok(v) => Ok(v),
                 Err(e) => Err(e.to_string()),
             }
+        }
+        Command::LedgerEvents { db, run_id } => {
+            let writer = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let reader = match writer.reader() {
+                Ok(r) => r,
+                Err(e) => return err(e.to_string()),
+            };
+            match reader.events(&run_id) {
+                Ok(events) => Ok(Value::Array(
+                    events.into_iter().map(event_to_json).collect(),
+                )),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::LedgerEventsInWorkspace {
+            db,
+            run_id,
+            workspace,
+        } => {
+            let writer = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let reader = match writer.reader() {
+                Ok(r) => r,
+                Err(e) => return err(e.to_string()),
+            };
+            match reader.events_in_workspace(&run_id, &workspace) {
+                Ok(events) => Ok(Value::Array(
+                    events.into_iter().map(event_to_json).collect(),
+                )),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::LedgerRuns { db } => {
+            let writer = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let reader = match writer.reader() {
+                Ok(r) => r,
+                Err(e) => return err(e.to_string()),
+            };
+            match reader.runs() {
+                Ok(runs) => Ok(Value::Array(runs.into_iter().map(Value::String).collect())),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::LedgerOpenRuns { db } => {
+            let writer = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let reader = match writer.reader() {
+                Ok(r) => r,
+                Err(e) => return err(e.to_string()),
+            };
+            match reader.open_runs() {
+                Ok(runs) => Ok(Value::Array(runs.into_iter().map(Value::String).collect())),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::LedgerRunStatus { db, run_id } => {
+            let writer = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let reader = match writer.reader() {
+                Ok(r) => r,
+                Err(e) => return err(e.to_string()),
+            };
+            match reader.run_status(&run_id) {
+                Ok(status) => Ok(serde_json::json!({"status": status})),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::LedgerVerify { db, run_id } => {
+            let writer = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let reader = match writer.reader() {
+                Ok(r) => r,
+                Err(e) => return err(e.to_string()),
+            };
+            match reader.verify(&run_id) {
+                Ok(valid) => Ok(serde_json::json!({"valid": valid})),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::LedgerRecoverStale { db } => {
+            let writer = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            match writer.recover_stale() {
+                Ok(recovered) => Ok(serde_json::json!({
+                    "recovered": recovered.len(),
+                    "events": recovered,
+                })),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::LedgerClose { db } => {
+            let path = PathBuf::from(&db);
+            let closed = cache.ledgers.remove(&path).is_some();
+            Ok(serde_json::json!({ "closed": closed }))
         }
         Command::IdemIdentify {
             run_id,

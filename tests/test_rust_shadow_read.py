@@ -116,7 +116,9 @@ def test_python_writes_rust_verifies_single_event(rust_binary):
 def test_python_writes_rust_verifies_empty_run(rust_binary):
     with tempfile.TemporaryDirectory() as tmp:
         db = Path(tmp) / "run-events.db"
-        RunEventLedger(db).close()
+        ledger = RunEventLedger(db)
+        ledger.runs()  # trigger delta_core to create the DB schema
+        ledger.close()
 
         run_id = "run_empty"
 

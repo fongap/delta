@@ -42,13 +42,13 @@ def test_unset_env_returns_empty_set(monkeypatch):
 
 
 def test_single_domain(monkeypatch):
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "ledger")
-    assert _parse_domains(os_env()) == frozenset({"ledger"})
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "task_identity")
+    assert _parse_domains(os_env()) == frozenset({"task_identity"})
 
 
 def test_two_domains(monkeypatch):
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "ledger,task_identity")
-    assert _parse_domains(os_env()) == frozenset({"ledger", "task_identity"})
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "task_identity,artifact")
+    assert _parse_domains(os_env()) == frozenset({"task_identity", "artifact"})
 
 
 def test_all_keyword(monkeypatch):
@@ -57,13 +57,13 @@ def test_all_keyword(monkeypatch):
 
 
 def test_case_insensitive(monkeypatch):
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "Task_Identity,Ledger")
-    assert _parse_domains(os_env()) == frozenset({"task_identity", "ledger"})
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "Task_Identity,Artifact")
+    assert _parse_domains(os_env()) == frozenset({"task_identity", "artifact"})
 
 
 def test_whitespace_normalized(monkeypatch):
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "  task_identity , ledger  ")
-    assert _parse_domains(os_env()) == frozenset({"task_identity", "ledger"})
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "  task_identity , artifact  ")
+    assert _parse_domains(os_env()) == frozenset({"task_identity", "artifact"})
 
 
 def test_run_state_rejected(monkeypatch):
@@ -82,7 +82,7 @@ def test_storage_transaction_rejected(monkeypatch):
 
 
 def test_unknown_domain_raises(monkeypatch):
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "ledger,fictional_domain")
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "task_identity,fictional_domain")
     with pytest.raises(UnknownDomainError) as exc:
         _parse_domains(os_env())
     assert "fictional_domain" in str(exc.value)
@@ -96,7 +96,7 @@ def test_only_unknown_domains_raises(monkeypatch):
 
 
 def test_mixed_known_unknown_raises(monkeypatch):
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "ledger,fictional_a,unknown_b")
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "task_identity,fictional_a,unknown_b")
     with pytest.raises(UnknownDomainError) as exc:
         _parse_domains(os_env())
     assert "fictional_a" in str(exc.value)
@@ -135,10 +135,13 @@ def test_idempotency_is_not_selectable_after_hard_cut(monkeypatch):
         _parse_domains(os_env())
 
 
-def test_ledger_and_task_identity(monkeypatch):
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "ledger,task_identity")
-    assert is_rust_authority("ledger")
-    assert is_rust_authority("task_identity")
+def test_ledger_is_not_selectable_after_hard_cut(monkeypatch):
+    """ADR-023: ledger is a hard-cut Rust facade, not a selectable authority."""
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "ledger")
+    with pytest.raises(InvalidAuthorityTargetError):
+        is_rust_authority("ledger")
+    with pytest.raises(UnknownDomainError):
+        _parse_domains(os_env())
 
 
 def test_all_enables_every_rust_write_domain(monkeypatch):
@@ -316,9 +319,12 @@ def test_r2_read_disjoint_from_r1_write(monkeypatch):
         InvalidAuthorityTargetError, is_rust_authority, is_rust_shadow_reader,
     )
 
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "ledger")
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "task_identity")
     monkeypatch.setenv("DELTA_RUST_READERS", "checkpoint")
-    assert is_rust_authority("ledger") is True
+    assert is_rust_authority("task_identity") is True
+    # ADR-023: ledger is a hard-cut facade, not a selectable authority.
+    with pytest.raises(InvalidAuthorityTargetError):
+        is_rust_authority("ledger")
     # Remaining R2 reader domain is not a valid write target.
     with pytest.raises(InvalidAuthorityTargetError):
         is_rust_authority("checkpoint")
@@ -393,7 +399,9 @@ def test_artifact_authority_rejects_r1_only(monkeypatch):
     assert is_rust_authority("artifact") is True
     with pytest.raises(InvalidAuthorityTargetError):
         is_rust_authority("idempotency")
-    assert is_rust_authority("ledger") is False
+    # ADR-023: ledger is a hard-cut facade, not a selectable authority.
+    with pytest.raises(InvalidAuthorityTargetError):
+        is_rust_authority("ledger")
     assert is_rust_authority("task_identity") is False
 
 

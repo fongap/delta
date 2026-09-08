@@ -33,7 +33,6 @@ from typing import Any
 from core.automation.models import ScheduledTask
 from core.automation.store import TaskStore
 from core.ledger import KNOWN_EVENT_TYPES, RunEventLedger
-from core.ledger_delegate import maybe_wrap_ledger
 from core.sources import SourceStore
 
 
@@ -550,7 +549,7 @@ def _isolated_ledger() -> RunEventLedger:
 
     os.close(fd)
     Path(path).unlink()
-    return maybe_wrap_ledger(RunEventLedger(path))  # type: ignore[return-value]
+    return RunEventLedger(path)  # type: ignore[return-value]
 
 
 __all__ = [

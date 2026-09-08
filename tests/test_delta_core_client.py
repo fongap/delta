@@ -236,13 +236,34 @@ def test_close_after_stdin_write_failure_restarts(client, db_path):
     client.command({"cmd": "ping"})
     proc = client._proc
     assert proc is not None
-    # Simulate broken pipe by closing stdin from other side
-    proc.stdin.close()
+    assert proc.stdin is not None
+
+    # Simulate broken pipe by wrapping stdin with a failing write.
+    # Closing stdin directly sends EOF which the Rust process handles
+    # gracefully, causing it to exit and Python to auto-restart —
+    # not the deterministic BrokenPipeError we want to test.
+    class BrokenStdin:
+        def __init__(self, stream):
+            self._stream = stream
+
+        def write(self, _data):
+            raise BrokenPipeError("simulated broken pipe")
+
+        def flush(self):
+            pass
+
+        def close(self):
+            self._stream.close()
+
+    proc.stdin = BrokenStdin(proc.stdin)
+
     with pytest.raises(DeltaCoreError, match="stdin write failed"):
         client.command({"cmd": "ping"})
+
     # Dead proc should be cleaned
     assert client._proc is None
-    # New command should work
+
+    # New command should work (auto-restart)
     result = client.command({"cmd": "ping"})
     assert result == {"pong": True}
 
@@ -465,9 +486,9 @@ def test_hello_handshake_succeeds_on_startup():
         c.close()
     except Exception:
         pass
-    # If startup succeeded without raising, the handshake passed.
-    # The PROTOCOL_VERSION constant must match the Rust side.
-    assert PROTOCOL_VERSION == 1
+# If startup succeeded without raising, the handshake passed.
+        # The PROTOCOL_VERSION constant must match the Rust side.
+        assert PROTOCOL_VERSION == 3
 
 
 def test_hello_handshake_fails_on_protocol_mismatch(monkeypatch, tmp_path):

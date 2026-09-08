@@ -1,4 +1,4 @@
-"""Control-plane authority guard (ADR-012/015/016/020/022).
+"""Control-plane authority guard (ADR-012/015/016/020/022/023).
 
 Two-tier checks:
 
@@ -6,15 +6,15 @@ Two-tier checks:
    calls and verifies that each R1 candidate module forward-declares the
    ``is_rust_authority`` import for domains that are still migrating.
 
-   Idempotency is hard-cut: its deleted delegate must stay absent and its
-   Python facade may not contain SQLite or authority-switch code.
+   Idempotency (ADR-022) and Ledger (ADR-023) are hard-cut: their
+   delegates are deleted and the Python facade is always the Rust
+   authority.
 
 2. **Enforcement (opt-in)**: when ``DELTA_RUST_AUTHORITY=1`` AND this
    script is invoked with the ``--enforce-rust-authority`` flag, scans
-   for direct ``RunEventLedger(...)`` / ``TaskStore(...)`` instantiations
-   in non-test code and verifies they
-   go through the corresponding ``maybe_wrap`` / delegate wrapper
-   (ADR-014/015/016).
+   for direct ``TaskStore(...)`` instantiations in non-test code and
+   verifies they go through the corresponding ``maybe_wrap`` / delegate
+   wrapper (ADR-016).
 
 Run::
 
@@ -33,7 +33,7 @@ from pathlib import Path
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))
 
-from packages.storage_authority import ALL_DOMAINS, RUST_WRITE_DOMAINS, is_rust_authority  # noqa: E402
+from packages.storage_authority import RUST_WRITE_DOMAINS, is_rust_authority  # noqa: E402
 
 CORE = REPO / "core"
 SERVICES = REPO / "services"
@@ -46,7 +46,6 @@ STORAGE_AUTHORITY_IMPORT = re.compile(
     r"from\s+packages\s+import\s+storage_authority"
 )
 
-RUN_LEDGER_DIRECT = re.compile(r"RunEventLedger\s*\(")
 TASK_STORE_DIRECT = re.compile(r"TaskStore\s*\(")
 # R2 (PR132 / ADR-020): artifact registration. The Python authority
 # path is `register_artifact(...)` / `register_run_artifacts(...)`;
@@ -57,9 +56,6 @@ TASK_STORE_DIRECT = re.compile(r"TaskStore\s*\(")
 ARTIFACT_REGISTER_DIRECT = re.compile(r"\bregister_artifact\s*\(")
 ARTIFACT_REGISTER_RUN_DIRECT = re.compile(r"\bregister_run_artifacts\s*\(")
 
-MAYBE_WRAP_OR_DELEGATE_LEDGER = re.compile(
-    r"maybe_wrap_ledger\s*\(|RunEventLedgerWithDelegate\s*\("
-)
 MAYBE_WRAP_OR_DELEGATE_TASKSTORE = re.compile(
     r"maybe_wrap_taskstore\s*\(|TaskStoreWithDelegate\s*\("
 )
@@ -70,7 +66,6 @@ MAYBE_WRAP_OR_DELEGATE_ARTIFACT = re.compile(
 )
 
 TESTS = REPO / "tests"
-LEDGER_REFERENCE = re.compile(r"from\s+core\.ledger_delegate\s+import")
 TASKSTORE_REFERENCE = re.compile(r"from\s+core\.automation\.store_delegate\s+import")
 ARTIFACT_REFERENCE = re.compile(r"from\s+core\.artifact_delegate\s+import")
 
@@ -91,7 +86,6 @@ DOMAIN_TO_FILES: dict[str, tuple[str, ...]] = {
 # flag itself.
 DELEGATE_FILES: frozenset[str] = frozenset(
     {
-        "core/ledger_delegate.py",
         "core/automation/store_delegate.py",
         "core/artifact_delegate.py",
     }
@@ -165,19 +159,9 @@ def _scan_enforcement() -> list[tuple[Path, int, str, str]]:
             except (OSError, UnicodeDecodeError):
                 continue
 
-            if is_rust_authority("idempotency"):
-                for match in IDEMPOTENCY_LOG_DIRECT.finditer(text):
-                    line_no = text[: match.start()].count("\n") + 1
-                    if MAYBE_WRAP_OR_DELEGATE.search(text) and CORE_REFERENCE.search(text):
-                        continue
-                    violations.append((py, line_no, match.group(), "idempotency"))
-
-            if is_rust_authority("ledger"):
-                for match in RUN_LEDGER_DIRECT.finditer(text):
-                    line_no = text[: match.start()].count("\n") + 1
-                    if MAYBE_WRAP_OR_DELEGATE_LEDGER.search(text) and LEDGER_REFERENCE.search(text):
-                        continue
-                    violations.append((py, line_no, match.group(), "ledger"))
+            # Idempotency and Ledger are hard-cut (ADR-022 / ADR-023):
+            # their delegates are deleted and the Python facade is always
+            # the Rust authority.  No enforcement guard needed.
 
             if is_rust_authority("task_identity"):
                 for match in TASK_STORE_DIRECT.finditer(text):

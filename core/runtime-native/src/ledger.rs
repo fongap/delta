@@ -6,7 +6,7 @@
 //!
 //! Contract: `docs/architecture/runtime-public-contract.md` §2.3.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use rusqlite::{params, Connection};
 use serde_json::Value;
@@ -31,6 +31,7 @@ pub struct LedgerEvent {
 /// Read-only handle to a `run_events.db` file.
 pub struct LedgerReader {
     conn: Connection,
+    _owned: bool,
 }
 
 impl LedgerReader {
@@ -38,7 +39,18 @@ impl LedgerReader {
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, ShadowReadError> {
         let conn = Connection::open(path)?;
         conn.execute_batch("PRAGMA query_only = ON;")?;
-        Ok(Self { conn })
+        Ok(Self { conn, _owned: true })
+    }
+
+    /// Wrap an existing connection for read-only access.
+    ///
+    /// Used by `LedgerWriter::reader()` to reuse the writer's connection
+    /// for read operations without opening a second handle.
+    pub fn from_connection(conn: Connection) -> Self {
+        Self {
+            conn,
+            _owned: false,
+        }
     }
 
     /// Open an in-memory DB (for tests).
@@ -59,7 +71,7 @@ impl LedgerReader {
             )"#,
         )?;
         conn.execute_batch("CREATE INDEX idx_run_events_run ON run_events(run_id, seq)")?;
-        Ok(Self { conn })
+        Ok(Self { conn, _owned: true })
     }
 
     /// List all events for a run, ordered by seq.
@@ -68,27 +80,30 @@ impl LedgerReader {
             "SELECT run_id, seq, type, ts, actor, payload, prev_hash, hash, workspace
              FROM run_events WHERE run_id = ? ORDER BY seq",
         )?;
-        let rows = stmt.query_map(params![run_id], |row| {
-            let payload_str: String = row.get(5)?;
-            let payload: Value = serde_json::from_str(&payload_str).unwrap_or(Value::Null);
-            let workspace: Option<String> = row.get(8)?;
-            Ok(LedgerEvent {
-                run_id: row.get(0)?,
-                seq: row.get(1)?,
-                r#type: row.get(2)?,
-                ts: row.get(3)?,
-                actor: row.get(4)?,
-                payload,
-                prev_hash: row.get(6)?,
-                hash: row.get(7)?,
-                workspace: workspace.unwrap_or_default(),
-            })
-        })?;
+        let rows = stmt.query_map(params![run_id], Self::map_event_row)?;
         let mut out = Vec::new();
         for row in rows {
             out.push(row?);
         }
         Ok(out)
+    }
+
+    /// Map a SQLite row to a `LedgerEvent`.
+    fn map_event_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<LedgerEvent> {
+        let payload_str: String = row.get(5)?;
+        let payload: Value = serde_json::from_str(&payload_str).unwrap_or(Value::Null);
+        let workspace: Option<String> = row.get(8)?;
+        Ok(LedgerEvent {
+            run_id: row.get(0)?,
+            seq: row.get(1)?,
+            r#type: row.get(2)?,
+            ts: row.get(3)?,
+            actor: row.get(4)?,
+            payload,
+            prev_hash: row.get(6)?,
+            hash: row.get(7)?,
+            workspace: workspace.unwrap_or_default(),
+        })
     }
 
     /// List all run_ids that have at least one event.
@@ -102,6 +117,82 @@ impl LedgerReader {
             out.push(row?);
         }
         Ok(out)
+    }
+
+    /// List events for a run filtered by workspace.
+    ///
+    /// Mirrors `core/ledger.py` `RunEventLedger.events_in_workspace()`.
+    /// Empty `workspace` matches rows where the column is NULL or empty.
+    pub fn events_in_workspace(
+        &self,
+        run_id: &str,
+        workspace: &str,
+    ) -> Result<Vec<LedgerEvent>, ShadowReadError> {
+        let sql = if workspace.is_empty() {
+            "SELECT run_id, seq, type, ts, actor, payload, prev_hash, hash, workspace \
+             FROM run_events WHERE run_id = ? AND (workspace IS NULL OR workspace = '') \
+             ORDER BY seq"
+        } else {
+            "SELECT run_id, seq, type, ts, actor, payload, prev_hash, hash, workspace \
+             FROM run_events WHERE run_id = ? AND workspace = ? ORDER BY seq"
+        };
+        let mut stmt = self.conn.prepare(sql)?;
+        let rows = if workspace.is_empty() {
+            stmt.query_map(params![run_id], Self::map_event_row)?
+        } else {
+            stmt.query_map(params![run_id, workspace], Self::map_event_row)?
+        };
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    /// List run_ids that have at least one event but no terminal event.
+    ///
+    /// Mirrors `core/ledger.py` `RunEventLedger.open_runs()`.
+    pub fn open_runs(&self) -> Result<Vec<String>, ShadowReadError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT DISTINCT run_id FROM run_events \
+             WHERE run_id NOT IN ( \
+                 SELECT run_id FROM run_events WHERE type IN \
+                 ('run.completed', 'run.failed', 'run.interrupted') \
+             )",
+        )?;
+        let rows = stmt.query_map([], |row| row.get(0))?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    /// Derive a run's lifecycle status from its last event.
+    ///
+    /// Mirrors `core/ledger.py` `RunEventLedger.run_status()`.
+    pub fn run_status(&self, run_id: &str) -> Result<String, ShadowReadError> {
+        if run_id.is_empty() {
+            return Ok("unknown".to_string());
+        }
+        let row = self.conn.query_row(
+            "SELECT type FROM run_events WHERE run_id = ? ORDER BY seq DESC LIMIT 1",
+            params![run_id],
+            |row| row.get::<_, String>(0),
+        );
+        match row {
+            Ok(event_type) => Ok(match event_type.as_str() {
+                "run.completed" => "ok",
+                "run.failed" => "error",
+                "run.interrupted" => "interrupted",
+                "run.started" => "running",
+                "run.resumed" => "resumed",
+                "validation.failed" => "validation_failed",
+                _ => "unknown",
+            }
+            .to_string()),
+            Err(_) => Ok("unknown".to_string()),
+        }
     }
 
     /// Recompute the hash chain for one run; true iff every link matches.
@@ -138,13 +229,15 @@ impl LedgerReader {
 /// through `packages/sanitize.py` before forwarding), so the hash basis
 /// matches what Python would compute.
 pub struct LedgerWriter {
+    db_path: PathBuf,
     conn: Connection,
 }
 
 impl LedgerWriter {
     /// Open (or create) a `run_events.db` for read-write access.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Self, ShadowReadError> {
-        let conn = Connection::open(path)?;
+        let path = path.as_ref().to_path_buf();
+        let conn = Connection::open(&path)?;
         conn.execute_batch(
             r#"CREATE TABLE IF NOT EXISTS run_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -162,7 +255,18 @@ impl LedgerWriter {
         conn.execute_batch(
             "CREATE INDEX IF NOT EXISTS idx_run_events_run ON run_events(run_id, seq)",
         )?;
-        Ok(Self { conn })
+        // Workspace index migration (ADR-007 §10.6). Idempotent: ALTER TABLE
+        // fails silently on subsequent boots when the column already exists.
+        for ddl in &[
+            "ALTER TABLE run_events ADD COLUMN workspace TEXT",
+            "CREATE INDEX IF NOT EXISTS idx_run_events_workspace ON run_events(workspace, run_id, seq)",
+        ] {
+            let _ = conn.execute_batch(ddl);
+        }
+        Ok(Self {
+            db_path: path,
+            conn,
+        })
     }
 
     /// Open an in-memory DB (for tests).
@@ -183,7 +287,10 @@ impl LedgerWriter {
             )"#,
         )?;
         conn.execute_batch("CREATE INDEX idx_run_events_run ON run_events(run_id, seq)")?;
-        Ok(Self { conn })
+        Ok(Self {
+            conn,
+            db_path: PathBuf::new(),
+        })
     }
 
     /// Append one event, extending the run's hash chain.
@@ -249,6 +356,41 @@ impl LedgerWriter {
             "workspace": workspace,
         }))
     }
+
+    /// Return a `LedgerReader` backed by a read-only connection to the same DB.
+    ///
+    /// Opens a separate read-only handle so reads don't block writes.
+    pub fn reader(&self) -> Result<LedgerReader, ShadowReadError> {
+        LedgerReader::open(&self.db_path)
+    }
+
+    /// Cold-start sweep: close every open run with a synthetic interrupted event.
+    ///
+    /// Mirrors `core/ledger.py` `RunEventLedger.recover_stale()`.
+    /// Returns the list of synthetic events that were appended.
+    pub fn recover_stale(&self) -> Result<Vec<Value>, ShadowReadError> {
+        let reader = self.reader()?;
+        let open_run_ids = reader.open_runs()?;
+        let mut recovered = Vec::new();
+        for run_id in &open_run_ids {
+            let events = reader.events(run_id)?;
+            let last_seq = events.last().map(|e| e.seq).unwrap_or(0);
+            let ts = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs_f64())
+                .unwrap_or(0.0);
+            let row = self.append(
+                run_id,
+                "run.interrupted",
+                "system",
+                ts,
+                &serde_json::json!({"reason": "crashed", "last_event_seq": last_seq}),
+                "",
+            )?;
+            recovered.push(row);
+        }
+        Ok(recovered)
+    }
 }
 
 /// Python `repr(float)` for the hash basis.
@@ -292,7 +434,7 @@ fn write_canonical(value: &Value, buf: &mut String) {
                     buf.push(',');
                 }
                 buf.push('"');
-                buf.push_str(escape_json_string(k));
+                buf.push_str(&escape_json_string(k));
                 buf.push_str("\":");
                 write_canonical(v, buf);
             }
@@ -310,7 +452,7 @@ fn write_canonical(value: &Value, buf: &mut String) {
         }
         Value::String(s) => {
             buf.push('"');
-            buf.push_str(escape_json_string(s));
+            buf.push_str(&escape_json_string(s));
             buf.push('"');
         }
         Value::Number(n) => {
@@ -325,13 +467,24 @@ fn write_canonical(value: &Value, buf: &mut String) {
     }
 }
 
-fn escape_json_string(s: &str) -> &str {
-    // serde_json handles escaping during serialization; for our shadow-read
-    // purposes the Python side rarely has special characters in keys, and
-    // exact byte-for-byte matching against Python json.dumps output is only
-    // needed for non-ASCII or control characters. We pass through as-is
-    // for now and can refine if tests fail.
-    s
+fn escape_json_string(s: &str) -> String {
+    let mut buf = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '"' => buf.push_str("\\\""),
+            '\\' => buf.push_str("\\\\"),
+            '\x08' => buf.push_str("\\b"),
+            '\x0c' => buf.push_str("\\f"),
+            '\n' => buf.push_str("\\n"),
+            '\r' => buf.push_str("\\r"),
+            '\t' => buf.push_str("\\t"),
+            c if c < '\x20' => {
+                buf.push_str(&format!("\\u{:04x}", c as u32));
+            }
+            c => buf.push(c),
+        }
+    }
+    buf
 }
 
 fn hex_encode_sha256(data: &[u8]) -> String {
