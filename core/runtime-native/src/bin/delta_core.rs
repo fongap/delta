@@ -83,7 +83,7 @@ use serde_json::Value;
 /// immediately after subprocess startup; a mismatch raises
 /// :class:`DeltaCoreError` (fail-closed) so we never silently talk to
 /// an incompatible binary.
-const PROTOCOL_VERSION: u32 = 2;
+const PROTOCOL_VERSION: u32 = 3;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "cmd")]
@@ -117,6 +117,8 @@ enum Command {
     LedgerVerify { db: String, run_id: String },
     #[serde(rename = "ledger.recover_stale")]
     LedgerRecoverStale { db: String },
+    #[serde(rename = "ledger.close")]
+    LedgerClose { db: String },
     #[serde(rename = "idem.identify")]
     IdemIdentify {
         run_id: String,
@@ -526,6 +528,11 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
                 })),
                 Err(e) => Err(e.to_string()),
             }
+        }
+        Command::LedgerClose { db } => {
+            let path = PathBuf::from(&db);
+            let closed = cache.ledgers.remove(&path).is_some();
+            Ok(serde_json::json!({ "closed": closed }))
         }
         Command::IdemIdentify {
             run_id,

@@ -203,4 +203,9 @@ class RunEventLedger:
         return bool(result["valid"])
 
     def close(self) -> None:
-        """No-op — the Rust subprocess owns the SQLite handles."""
+        """Release the SQLite handle for this ledger in the Rust ConnCache.
+
+        Idempotent: calling multiple times is safe. After close, subsequent
+        operations on this instance will reopen the handle transparently.
+        """
+        self._invoke("ledger.close")
