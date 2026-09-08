@@ -139,6 +139,30 @@ Migration scaffold 0
 下一阶段：R2 Trusted Execution。
 
 
+### R2 — Artifact Registry Hard-Cut（#150 / ADR-026）
+
+R2 Trusted Execution 第一域 Artifact Registry 完成 hard-cut。
+
+**Authority**：
+
+- Before：Python Artifact Registry，可选 Rust authority delegate（`DELTA_RUST_AUTHORITY=artifact` + `core/artifact_delegate.py` / `register_artifact_delegated` / `register_run_artifacts_delegated` / `maybe_wrap`）。
+- After：Rust `delta_core` 是唯一 Artifact Registry authority。Python 只做文件扫描 / stat / SHA256 / kind 分类 / candidate 构造，通过 `DeltaCoreClient` 发送 `artifact.register` 命令。
+
+**删除的旧路径**：
+
+- `core/artifact_delegate.py`
+- `register_artifact_delegated` / `register_run_artifacts_delegated` / `maybe_wrap` / `_is_delegate_active`
+- `artifact` runtime authority selector（`is_rust_authority("artifact")`）
+- Python artifact ledger writer
+- production shadow / fallback path
+
+**失败行为**：`delta_core` 不可用 / 协议不匹配 / malformed response → `DeltaCoreError`（fail-closed），禁止 Python fallback。回滚仅 Git revert。
+
+**Authority Matrix**：Artifact Registry = **Rust（ADR-026 hard-cut）** Complete。下一域：Source/Citation。
+
+> 相关 ADR：ADR-026（新增），ADR-020（标记 Superseded by ADR-026），ADR-018（更新 Artifact 状态）。
+
+
 ### R1.6 — Legacy Cleanup（`cowork` → `delta` 全栈重命名）
 
 **Breaking Change**：本节列出的标识符、模块名、env var、事件前缀、bot handle 均已从 `cowork` / `@ocw` / `OpenWorker*` 重命名为 `delta` / `@delta` / `delta.*`。依赖旧标识符的下游脚本/集成需要同步更新。

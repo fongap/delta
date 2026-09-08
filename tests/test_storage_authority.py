@@ -45,13 +45,13 @@ def test_unset_env_returns_empty_set(monkeypatch):
 
 
 def test_single_domain(monkeypatch):
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "artifact")
-    assert _parse_domains(os_env()) == frozenset({"artifact"})
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "validation")
+    assert _parse_domains(os_env()) == frozenset({"validation"})
 
 
 def test_two_domains(monkeypatch):
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "artifact,validation")
-    assert _parse_domains(os_env()) == frozenset({"artifact", "validation"})
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "source_citation,validation")
+    assert _parse_domains(os_env()) == frozenset({"source_citation", "validation"})
 
 
 def test_all_keyword(monkeypatch):
@@ -60,13 +60,13 @@ def test_all_keyword(monkeypatch):
 
 
 def test_case_insensitive(monkeypatch):
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "Artifact,Validation")
-    assert _parse_domains(os_env()) == frozenset({"artifact", "validation"})
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "Validation,Source_citation")
+    assert _parse_domains(os_env()) == frozenset({"validation", "source_citation"})
 
 
 def test_whitespace_normalized(monkeypatch):
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "  artifact , validation  ")
-    assert _parse_domains(os_env()) == frozenset({"artifact", "validation"})
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "  validation , source_citation  ")
+    assert _parse_domains(os_env()) == frozenset({"validation", "source_citation"})
 
 
 def test_run_state_rejected(monkeypatch):
@@ -87,7 +87,7 @@ def test_storage_transaction_rejected(monkeypatch):
 
 
 def test_unknown_domain_raises(monkeypatch):
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "artifact,fictional_domain")
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "validation,fictional_domain")
     with pytest.raises(UnknownDomainError) as exc:
         _parse_domains(os_env())
     assert "fictional_domain" in str(exc.value)
@@ -101,7 +101,7 @@ def test_only_unknown_domains_raises(monkeypatch):
 
 
 def test_mixed_known_unknown_raises(monkeypatch):
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "artifact,fictional_a,unknown_b")
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "validation,fictional_a,unknown_b")
     with pytest.raises(UnknownDomainError) as exc:
         _parse_domains(os_env())
     assert "fictional_a" in str(exc.value)
@@ -278,7 +278,7 @@ def test_r2_read_rejects_r1_write_domain(monkeypatch):
 
     monkeypatch.setenv("DELTA_RUST_READERS", "checkpoint")
     for r1 in (
-        "idempotency", "ledger", "task_identity", "artifact", "source_citation",
+        "idempotency", "ledger", "task_identity", "source_citation",
         "validation",
     ):
         with pytest.raises(InvalidAuthorityTargetError):
@@ -326,15 +326,18 @@ def test_r2_read_disjoint_from_r1_write(monkeypatch):
         InvalidAuthorityTargetError, is_rust_authority, is_rust_shadow_reader,
     )
 
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "artifact")
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "validation")
     monkeypatch.setenv("DELTA_RUST_READERS", "checkpoint")
-    assert is_rust_authority("artifact") is True
+    assert is_rust_authority("validation") is True
     # ADR-023: ledger is a hard-cut facade, not a selectable authority.
     with pytest.raises(InvalidAuthorityTargetError):
         is_rust_authority("ledger")
     # ADR-024: task_identity is a hard-cut facade, not a selectable authority.
     with pytest.raises(InvalidAuthorityTargetError):
         is_rust_authority("task_identity")
+    # ADR-026: artifact is hard-cut, not a selectable authority.
+    with pytest.raises(InvalidAuthorityTargetError):
+        is_rust_authority("artifact")
     # Remaining R2 reader domain is not a valid write target.
     with pytest.raises(InvalidAuthorityTargetError):
         is_rust_authority("checkpoint")
@@ -379,47 +382,32 @@ def test_validation_is_write_authority_domain(monkeypatch):
     assert is_rust_authority("validation") is True
 
 
-# -- artifact is now an R1-style write domain (PR132 / ADR-020) -----------
+# -- artifact is hard-cut to Rust (ADR-026) --------------------------------
 
 
-def test_artifact_is_write_domain():
-    """Artifact was promoted from RUST_READ_DOMAINS to RUST_WRITE_DOMAINS
-    when the Rust write path landed (PR132). Use is_rust_authority
-    for the write switch, not is_rust_shadow_reader."""
+def test_artifact_is_not_a_selectable_write_domain():
+    """ADR-026: artifact is hard-cut to Rust and is no longer a
+    selectable authority. It is not in RUST_WRITE_DOMAINS and not in
+    RUST_READ_DOMAINS."""
     from packages.storage_authority import (
         RUST_READ_DOMAINS, RUST_WRITE_DOMAINS,
     )
-    assert "artifact" in RUST_WRITE_DOMAINS
+    assert "artifact" not in RUST_WRITE_DOMAINS
     assert "artifact" not in RUST_READ_DOMAINS
 
 
-def test_artifact_authority_env_var(monkeypatch):
-    from packages.storage_authority import is_rust_authority
-
+def test_artifact_authority_env_var_is_rejected(monkeypatch):
+    """DELTA_RUST_AUTHORITY=artifact must raise (artifact is hard-cut)."""
     monkeypatch.setenv("DELTA_RUST_AUTHORITY", "artifact")
-    assert is_rust_authority("artifact") is True
-
-
-def test_artifact_authority_rejects_r1_only(monkeypatch):
-    """When only DELTA_RUST_AUTHORITY=artifact is set, the R1 domains
-    must NOT be active (per-domain selector)."""
-    from packages.storage_authority import is_rust_authority
-
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "artifact")
-    assert is_rust_authority("artifact") is True
     with pytest.raises(InvalidAuthorityTargetError):
-        is_rust_authority("idempotency")
-    # ADR-023: ledger is a hard-cut facade, not a selectable authority.
-    with pytest.raises(InvalidAuthorityTargetError):
-        is_rust_authority("ledger")
-    # ADR-024: task_identity is a hard-cut facade, not a selectable authority.
-    with pytest.raises(InvalidAuthorityTargetError):
-        is_rust_authority("task_identity")
+        is_rust_authority("artifact")
+    with pytest.raises(UnknownDomainError):
+        _parse_domains(os_env())
 
 
 def test_artifact_rejected_from_r2_reader(monkeypatch):
-    """is_rust_shadow_reader must reject artifact (it's now a write
-    domain, not a reader)."""
+    """is_rust_shadow_reader must reject artifact (it is neither a
+    write domain nor a shadow-reader domain after ADR-026)."""
     from packages.storage_authority import (
         InvalidAuthorityTargetError, is_rust_shadow_reader,
     )
