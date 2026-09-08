@@ -41,10 +41,10 @@ R1 State Foundation 在 v0.4.0-dev 线上完成以下 13 个 PR：
 
 ### Authority Matrix（R1 完成后 → R1 Hard-Cut 后）
 
-| 领域 | R1 前 | R1 完成后 | R1 Hard-Cut 后（ADR-022） |
+| 领域 | R1 前 | R1 完成后 | R1 Hard-Cut 后 |
 |---|---|---|---|
-| Idempotency | Python | Python（opt-in Rust delegate） | **Rust（唯一事实来源）** |
-| Ledger | Python | Python（opt-in Rust delegate） | Python（opt-in Rust delegate） |
+| Idempotency | Python | Python（opt-in Rust delegate） | **Rust（唯一事实来源，ADR-022）** |
+| Ledger | Python | Python（opt-in Rust delegate） | **Rust（唯一事实来源，ADR-023）** |
 | Task identity | Python | Python（opt-in Rust delegate） | Python（opt-in Rust delegate） |
 | Run state | Python | Python（`run_status()` 从 ledger 派生） | — |
 | Storage transaction | Python | Python（`CoreTransaction` 协调锁序；非跨 DB 原子事务） | — |
@@ -118,6 +118,22 @@ R1 全部 13 个 PR 完成后再做一次"生产切权"收口（`Delta R1.5 — 
 | Rust Core 不可用时 fail-closed | ✅ |
 | CI binary provisioning 修复 | ✅ |
 | 架构守卫测试（4 个） | ✅ |
+| 便携版 + 历史数据库验证 | ✅ |
+
+## R1.5 Ledger Hard-Cut（ADR-023）
+
+2026-09-08：Ledger 域完成 hard-cut（ADR-023）：
+
+| 任务 | 状态 |
+|---|---|
+| `core/ledger_delegate.py` 物理删除 | ✅ |
+| `tests/test_ledger_delegate.py` 删除 | ✅ |
+| `DELTA_RUST_AUTHORITY=ledger` 选择逻辑删除 | ✅ |
+| `is_rust_authority("ledger")` 从 `storage_authority.py` 移除 | ✅ |
+| `core/ledger.py` 改为 Rust Authority 薄门面 | ✅ |
+| Rust Core 不可用时 fail-closed | ✅ |
+| `canonical_json` escape bug 修复（ledger.rs + idemlog.rs） | ✅ |
+| 架构守卫测试 | ✅ |
 | 便携版 + 历史数据库验证 | ✅ |
 
 ## 明确不做

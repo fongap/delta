@@ -39,12 +39,12 @@
 | Scheduler | Python | Rust |
 | Policy | Python | Rust |
 | Approval | Python | Rust |
-| Ledger | Python（opt-in Rust delegate） | Rust |
+| Ledger | Python（opt-in Rust delegate） | **Rust（ADR-023 hard-cut）** |
 | Checkpoint | Python | Rust |
 | Resume | Python | Rust |
 | Artifact Registry | Python | Rust |
 | Validation | Python | Rust |
-| Idempotency | Python（opt-in Rust delegate） | Rust |
+| Idempotency | Python（opt-in Rust delegate） | **Rust（ADR-022 hard-cut）** |
 | Tool lifecycle | Python | Rust |
 | Worker lifecycle | 分散 | Rust |
 | Provider Core | Python | Rust-first |
@@ -58,6 +58,8 @@
 > **R1 State Foundation 完成状态（ADR-017）**：Idempotency / Ledger / Task identity 三个领域的 Rust delegate 路径已就位，灰度开关 `DELTA_RUST_AUTHORITY` 默认关闭。三个 delegate 全部走统一 `delta_core` 进程（`DeltaCoreClient`），per-op CLI 仅作诊断工具。Run state 通过 `RunEventLedger.derive_run_status()` 从 ledger 事件派生（`TaskRun.status` 仅为非规范化缓存）。Storage transaction boundary 通过 `CoreTransaction` 提供协调锁序（非跨 DB 原子事务 — 真正的跨 DB 原子性留到 Rust Core 后续阶段）。Authority 声明后 binary 缺失走 fail-closed，禁止静默 fallback。CI smoke gate 覆盖 authority regression + cross-language contract + production call chain。
 >
 > **R1 Idempotency Hard-Cut（ADR-022，2026-09-08）**：Idempotency 域已完成 hard-cut。Rust `delta_core` 是唯一事实来源。Python `core/idemlog.py` 是薄门面。`core/idemlog_delegate.py` 和 `tests/test_idemlog_delegate.py` 已物理删除。`DELTA_RUST_AUTHORITY=idempotency` 选择逻辑已移除。不存在 Python fallback writer、delegate wrapper 或双 Authority 路径。回滚方式仅为 Git revert。
+>
+> **R1 Ledger Hard-Cut（ADR-023，2026-09-08）**：Ledger 域已完成 hard-cut。Rust `delta_core` 是唯一事实来源。Python `core/ledger.py` 是薄门面。`core/ledger_delegate.py` 和 `tests/test_ledger_delegate.py` 已物理删除。`DELTA_RUST_AUTHORITY=ledger` 选择逻辑已移除。不存在 Python fallback writer、delegate wrapper 或双 Authority 路径。回滚方式仅为 Git revert。
 
 每次迁移必须更新实际 Authority Matrix。
 

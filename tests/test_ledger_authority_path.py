@@ -1,11 +1,13 @@
-"""Ledger authority path — concurrency and crash safety tests (ADR-023).
+"""Ledger authority path — architecture guard + concurrency + crash tests (ADR-023).
 
 Tests two aspects of the RunEventLedger authority path:
 
-1. **Concurrency**: multiple threads appending to the same run must
+1. **Architecture guard**: delegate is deleted, facade has no Python writer,
+   production constructs Rust facade directly.
+2. **Concurrency**: multiple threads appending to the same run must
    produce unique ``seq`` values, a continuous hash chain, and no
    lost updates.
-2. **Crash safety**: a crash between ``INSERT`` and ``commit()`` must
+3. **Crash safety**: a crash between ``INSERT`` and ``commit()`` must
    not produce a half-event; a crash after ``commit()`` must persist.
 
 ADR-023 structural guard: the delegate and ``maybe_wrap_ledger`` are
@@ -16,10 +18,61 @@ wrapping is needed.
 from __future__ import annotations
 
 import threading
+from pathlib import Path
 
 import pytest
 
 from core.ledger import RunEventLedger
+
+REPO = Path(__file__).resolve().parent.parent
+
+
+# -- architecture guard tests (ADR-023) ------------------------------------
+
+
+def test_legacy_ledger_delegate_is_deleted():
+    """core/ledger_delegate.py must not exist after ADR-023 hard-cut."""
+    assert not (REPO / "core" / "ledger_delegate.py").exists()
+
+
+def test_ledger_delegate_test_file_deleted():
+    """tests/test_ledger_delegate.py must not exist after ADR-023 hard-cut."""
+    assert not (REPO / "tests" / "test_ledger_delegate.py").exists()
+
+
+def test_ledger_facade_has_no_python_writer_or_switch():
+    """core/ledger.py must be a thin Rust facade with no Python SQLite
+    writer, no authority selector, and no DELTA_RUST_AUTHORITY reference."""
+    source = (REPO / "core" / "ledger.py").read_text(encoding="utf-8")
+    assert "sqlite3" not in source
+    assert "is_rust_authority" not in source
+    assert "DELTA_RUST_AUTHORITY" not in source
+    assert "default_client().command" in source
+
+
+def test_production_constructs_ledger_facade_directly():
+    """manager.py must construct RunEventLedger directly, not via delegate."""
+    source = (REPO / "services" / "server" / "manager.py").read_text(encoding="utf-8")
+    assert "from core.ledger import RunEventLedger" in source
+    assert "idemlog_delegate" not in source
+    assert "ledger_delegate" not in source
+    assert "maybe_wrap_ledger" not in source
+
+
+def test_no_production_file_imports_deleted_ledger_delegate():
+    """No production file should import the deleted ledger_delegate module."""
+    violations = []
+    for root in (REPO / "core", REPO / "services"):
+        for path in root.rglob("*.py"):
+            if "core.ledger_delegate" in path.read_text(encoding="utf-8"):
+                violations.append(path.relative_to(REPO).as_posix())
+    assert not violations, "deleted delegate imported by: " + ", ".join(violations)
+
+
+def test_ledger_is_not_in_rust_write_domains():
+    """ledger must not be in RUST_WRITE_DOMAINS — it's a hard-cut facade."""
+    from packages.storage_authority import RUST_WRITE_DOMAINS
+    assert "ledger" not in RUST_WRITE_DOMAINS
 
 
 # -- concurrency tests ------------------------------------------------------
