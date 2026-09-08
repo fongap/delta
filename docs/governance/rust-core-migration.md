@@ -33,7 +33,7 @@
 
 | 领域 | 当前可能实现 | 最终 Authority |
 | --- | --- | --- |
-| Task | Python（opt-in Rust delegate） | Rust |
+| Task | Python（opt-in Rust delegate） | **Rust（ADR-024 hard-cut）** |
 | Run | Python（`run_status()` 从 ledger 派生） | Rust |
 | Runtime | Python | Rust |
 | Scheduler | Python | Rust |
@@ -60,6 +60,8 @@
 > **R1 Idempotency Hard-Cut（ADR-022，2026-09-08）**：Idempotency 域已完成 hard-cut。Rust `delta_core` 是唯一事实来源。Python `core/idemlog.py` 是薄门面。`core/idemlog_delegate.py` 和 `tests/test_idemlog_delegate.py` 已物理删除。`DELTA_RUST_AUTHORITY=idempotency` 选择逻辑已移除。不存在 Python fallback writer、delegate wrapper 或双 Authority 路径。回滚方式仅为 Git revert。
 >
 > **R1 Ledger Hard-Cut（ADR-023，2026-09-08）**：Ledger 域已完成 hard-cut。Rust `delta_core` 是唯一事实来源。Python `core/ledger.py` 是薄门面。`core/ledger_delegate.py` 和 `tests/test_ledger_delegate.py` 已物理删除。`DELTA_RUST_AUTHORITY=ledger` 选择逻辑已移除。不存在 Python fallback writer、delegate wrapper 或双 Authority 路径。回滚方式仅为 Git revert。
+>
+> **R1 Task Identity Hard-Cut（ADR-024，2026-09-08）**：Task Identity 域已完成 hard-cut。Rust `delta_core` 是唯一事实来源。Python `core/automation/store.py` 是薄门面。`core/automation/store_delegate.py` 和 `tests/test_taskstore_delegate.py` 已物理删除。`DELTA_RUST_AUTHORITY=task_identity` 选择逻辑已移除。不存在 Python fallback writer、delegate wrapper 或双 Authority 路径。回滚方式仅为 Git revert。
 
 每次迁移必须更新实际 Authority Matrix。
 

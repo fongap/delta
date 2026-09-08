@@ -27,7 +27,7 @@ import pytest
 
 from core.automation.models import Schedule, ScheduledTask, TaskRun
 from core.automation.scheduler import Scheduler
-from core.automation.store import TaskStore
+from core.automation.store import TaskStore, compute_next_run
 
 
 def _now() -> float:
@@ -44,27 +44,28 @@ def _task(*, next_run: float | None = None) -> ScheduledTask:
     )
 
 
-def _insert_due(store: TaskStore, task: ScheduledTask, *, next_run: float) -> ScheduledTask:
-    """Insert a task directly into the store with an explicit `next_run`.
+def _insert_due(store: TaskStore, task: ScheduledTask, *, next_run: float, monkeypatch) -> ScheduledTask:
+    """Insert a task with an explicit `next_run` via monkeypatched compute_next_run.
 
     `TaskStore.save` always overwrites `next_run` via `compute_next_run` (which
-    only returns a value in the future), so we can't seed a "due" row by
-    going through `save`. Bypass the API for fixture purposes: this is the
-    shape `recover_stale` would write to disk when restoring a previous run.
+    only returns a value in the future), so we patch it to return the desired
+    past time, save through the normal API, then immediately restore the real
+    function so the scheduler's own save() advances next_run properly.
     """
-    import json
-    task.next_run = next_run
-    with store._lock:  # noqa: SLF001 — test fixture reaches into the store
-        store._conn.execute(  # noqa: SLF001
-            "INSERT OR REPLACE INTO scheduled_tasks (id, enabled, next_run, data) VALUES (?, ?, ?, ?)",
-            (task.id, 1 if task.enabled else 0, next_run, json.dumps(task.to_dict())),
-        )
-        store._conn.commit()
+    monkeypatch.setattr(
+        "core.automation.store.compute_next_run",
+        lambda _task, after=None: next_run,
+    )
+    store.save(task)
+    monkeypatch.setattr(
+        "core.automation.store.compute_next_run",
+        compute_next_run,
+    )
     return task
 
 
 @pytest.mark.asyncio
-async def test_stop_does_not_leave_running_status(tmp_path):
+async def test_stop_does_not_leave_running_status(tmp_path, monkeypatch):
     """If the runner is mid-flight when stop() cancels it, the scheduler must
     not leave a `running` TaskRun in the store. The runner is the
     engine-side producer; the scheduler owns the overlap guard. Without
@@ -73,7 +74,7 @@ async def test_stop_does_not_leave_running_status(tmp_path):
     or (b) nothing — but never a phantom `running`.
     """
     store = TaskStore(tmp_path / "tasks.db")
-    task = _insert_due(store, _task(), next_run=_now() - 60)
+    task = _insert_due(store, _task(), next_run=_now() - 60, monkeypatch=monkeypatch)
 
     started = asyncio.Event()
     cancel_seen = asyncio.Event()
@@ -117,14 +118,14 @@ async def test_stop_does_not_leave_running_status(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_catchup_fires_exactly_once_per_start(tmp_path):
+async def test_catchup_fires_exactly_once_per_start(tmp_path, monkeypatch):
     """The catch-up path is `_loop()`'s first tick with `trigger="catchup"`.
     Once the first catch-up has fired and advanced the task's next_run, a
     second catch-up in the same process must not re-run the same task.
     """
     store = TaskStore(tmp_path / "tasks.db")
     # A due task: next_run sits in the past, so the first catch-up picks it up.
-    task = _insert_due(store, _task(), next_run=_now() - 60)
+    task = _insert_due(store, _task(), next_run=_now() - 60, monkeypatch=monkeypatch)
 
     run_calls: list[str] = []
 
@@ -177,7 +178,7 @@ async def test_catchup_fires_exactly_once_per_start(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_committed_side_effect_not_replayed_on_restart(tmp_path):
+async def test_committed_side_effect_not_replayed_on_restart(tmp_path, monkeypatch):
     """If a runner committed a side effect (the engine wrote the idemlog),
     then stop() cancels the run before the TaskRun row is appended, a
     subsequent scheduler instance must not run the same task again until
@@ -186,7 +187,7 @@ async def test_committed_side_effect_not_replayed_on_restart(tmp_path):
     on a same-process restart.
     """
     store = TaskStore(tmp_path / "tasks.db")
-    task = _insert_due(store, _task(), next_run=_now() - 60)
+    task = _insert_due(store, _task(), next_run=_now() - 60, monkeypatch=monkeypatch)
 
     run_count = 0
 

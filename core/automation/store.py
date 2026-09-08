@@ -1,22 +1,24 @@
-"""SQLite-backed store for scheduled tasks + run history.
+"""Thin Rust-authoritative facade for scheduled tasks + run history.
 
-Tasks/runs are stored as JSON blobs with a few indexed columns (next_run, enabled) so the
-scheduler can cheaply find what's due. `next_run` is computed with croniter, honoring the
-task's timezone. Thread-safe (check_same_thread=False + a lock) since the scheduler and the
-request handlers touch it from different threads.
+After the R1 Task Identity Hard-Cut (ADR-024), Rust ``delta_core``
+is the sole authority for the ``task_identity`` domain.  This module
+delegates all persistence to Rust via :class:`DeltaCoreClient` and
+contains **no** SQLite writer, fallback path, or authority selector.
+
+``compute_next_run()`` remains in Python (R4 domain — scheduler
+computes next fire times locally).
 """
 
 from __future__ import annotations
 
 import json
-import sqlite3
-import threading
 from datetime import datetime, timezone
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from core.automation.models import ScheduledTask, TaskRun
-from packages.storage_authority import is_rust_authority  # noqa: F401
+from packages.delta_core_client import DeltaCoreClient, DeltaCoreError
 
 
 def compute_next_run(
@@ -81,141 +83,116 @@ def _epoch_now() -> float:
 
 
 class TaskStore:
+    """Rust-authoritative task store facade.
+
+    All read/write operations are delegated to ``delta_core`` via
+    :class:`DeltaCoreClient`.  There is no Python SQLite writer,
+    fallback path, or authority selector.
+    """
+
     def __init__(self, path: str | Path) -> None:
         self.path = str(path)
-        self._lock = threading.RLock()
-        self._conn = sqlite3.connect(self.path, check_same_thread=False)
-        self._conn.row_factory = sqlite3.Row
-        self._init()
+        self._client = DeltaCoreClient()
 
-    def _init(self) -> None:
-        with self._lock:
-            self._conn.executescript("""
-                CREATE TABLE IF NOT EXISTS scheduled_tasks (
-                    id TEXT PRIMARY KEY,
-                    enabled INTEGER NOT NULL DEFAULT 1,
-                    next_run REAL,
-                    data TEXT NOT NULL
-                );
-                CREATE TABLE IF NOT EXISTS task_runs (
-                    run_id TEXT PRIMARY KEY,
-                    task_id TEXT NOT NULL,
-                    started_at REAL NOT NULL,
-                    data TEXT NOT NULL,
-                    workspace TEXT
-                );
-                CREATE INDEX IF NOT EXISTS idx_runs_task ON task_runs(task_id, started_at DESC);
-                """)
-            # ADR-007 §10.6 path: ``workspace`` is a denormalized index
-            # hint for cross-workspace queries (mirrors the
-            # ``run_events.workspace`` migration in ``core/ledger.py``).
-            # The migration is idempotent: a fresh DB gets the column via
-            # CREATE TABLE; an existing DB gets it via ALTER TABLE once,
-            # and the OperationalError is swallowed on subsequent boots.
-            for ddl in (
-                "ALTER TABLE task_runs ADD COLUMN workspace TEXT",
-                "CREATE INDEX IF NOT EXISTS idx_runs_workspace "
-                "ON task_runs(workspace, started_at DESC)",
-            ):
-                try:
-                    self._conn.execute(ddl)
-                except sqlite3.OperationalError:
-                    pass
-            self._conn.commit()
+    # -- helpers ----------------------------------------------------------------
+
+    def _invoke(self, cmd: str, **kwargs: Any) -> Any:
+        """Send a command to delta_core and return the result.
+
+        Raises :class:`DeltaCoreError` on any failure (fail-closed).
+        """
+        payload = {"cmd": cmd, "db": self.path, **kwargs}
+        return self._client.command(payload)
+
+    @staticmethod
+    def _validate_dict(result: Any, cmd: str) -> dict:
+        """Validate that result is a dict; raise DeltaCoreError otherwise."""
+        if not isinstance(result, dict):
+            raise DeltaCoreError(f"invalid {cmd} response: not a dict")
+        return result
+
+    @staticmethod
+    def _validate_list(result: Any, cmd: str) -> list:
+        """Validate that result is a list; raise DeltaCoreError otherwise."""
+        if not isinstance(result, list):
+            raise DeltaCoreError(f"invalid {cmd} response: not a list")
+        return result
 
     # -- tasks ------------------------------------------------------------------
+
     def save(self, task: ScheduledTask) -> ScheduledTask:
         task.updated_at = _epoch_now()
         task.next_run = compute_next_run(task) if task.enabled else None
-        with self._lock:
-            self._conn.execute(
-                "INSERT OR REPLACE INTO scheduled_tasks (id, enabled, next_run, data) VALUES (?, ?, ?, ?)",
-                (
-                    task.id,
-                    1 if task.enabled else 0,
-                    task.next_run,
-                    json.dumps(task.to_dict()),
-                ),
-            )
-            self._conn.commit()
+        self._invoke(
+            "task.save",
+            task_id=task.id,
+            enabled=task.enabled,
+            next_run=task.next_run,
+            data=json.dumps(task.to_dict()),
+        )
         return task
 
     def get(self, task_id: str) -> ScheduledTask | None:
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT data FROM scheduled_tasks WHERE id=?", (task_id,)
-            ).fetchone()
-        return ScheduledTask.from_dict(json.loads(row["data"])) if row else None
+        result = self._invoke("task.get", task_id=task_id)
+        if result is None:
+            return None
+        self._validate_dict(result, "task.get")
+        return ScheduledTask.from_dict(result)
 
     def list(self) -> list[ScheduledTask]:
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT data FROM scheduled_tasks ORDER BY next_run IS NULL, next_run"
-            ).fetchall()
-        return [ScheduledTask.from_dict(json.loads(r["data"])) for r in rows]
+        result = self._invoke("task.list")
+        items = self._validate_list(result, "task.list")
+        return [ScheduledTask.from_dict(item) for item in items]
 
     def delete(self, task_id: str) -> bool:
-        with self._lock:
-            cur = self._conn.execute(
-                "DELETE FROM scheduled_tasks WHERE id=?", (task_id,)
-            )
-            self._conn.execute("DELETE FROM task_runs WHERE task_id=?", (task_id,))
-            self._conn.commit()
-            return cur.rowcount > 0
+        result = self._invoke("task.delete", task_id=task_id)
+        self._validate_dict(result, "task.delete")
+        deleted = result.get("deleted")
+        if not isinstance(deleted, bool):
+            raise DeltaCoreError("invalid task.delete response: missing 'deleted' bool")
+        return deleted
 
     def due(self, *, now: float | None = None) -> list[ScheduledTask]:
         now = now if now is not None else _epoch_now()
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT data FROM scheduled_tasks WHERE enabled=1 AND next_run IS NOT NULL AND next_run<=? ORDER BY next_run",
-                (now,),
-            ).fetchall()
-        return [ScheduledTask.from_dict(json.loads(r["data"])) for r in rows]
+        result = self._invoke("task.due", now=now)
+        items = self._validate_list(result, "task.due")
+        return [ScheduledTask.from_dict(item) for item in items]
 
     # -- runs -------------------------------------------------------------------
+
     def add_run(self, run: TaskRun) -> TaskRun:
-        # ``workspace`` is denormalized onto the run for the ADR-007 P3
-        # Analyzer path; we read it from the dataclass if set, otherwise
-        # from the caller's ``TaskRun.workspace`` field (which
-        # ``from_dict`` already populates from the persisted row).
-        with self._lock:
-            self._conn.execute(
-                "INSERT OR REPLACE INTO task_runs (run_id, task_id, started_at, data, workspace) "
-                "VALUES (?, ?, ?, ?, ?)",
-                (
-                    run.run_id,
-                    run.task_id,
-                    run.started_at,
-                    json.dumps(run.to_dict()),
-                    run.workspace or "",
-                ),
-            )
-            self._conn.commit()
+        self._invoke(
+            "task.add_run",
+            run_id=run.run_id,
+            task_id=run.task_id,
+            started_at=run.started_at,
+            data=json.dumps(run.to_dict()),
+            workspace=run.workspace or "",
+        )
         return run
 
     def find_run(self, run_id: str) -> TaskRun | None:
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT data FROM task_runs WHERE run_id=?", (run_id,)
-            ).fetchone()
-        return TaskRun.from_dict(json.loads(row["data"])) if row else None
+        result = self._invoke("task.find_run", run_id=run_id)
+        if result is None:
+            return None
+        self._validate_dict(result, "task.find_run")
+        return TaskRun.from_dict(result)
 
     def task_for_run_session(self, session_id: str) -> ScheduledTask | None:
         """The owning task of a run session ('__run__<run_id>'), or None. How standing
         scoped approvals resolve which automation a live approval belongs to (§25)."""
         if not session_id.startswith("__run__"):
             return None
-        run = self.find_run(session_id[len("__run__") :])
-        return self.get(run.task_id) if run else None
+        result = self._invoke("task.task_for_run_session", session_id=session_id)
+        if result is None:
+            return None
+        self._validate_dict(result, "task.task_for_run_session")
+        return ScheduledTask.from_dict(result)
 
     def runs(self, task_id: str, *, limit: int = 50) -> list[TaskRun]:
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT data FROM task_runs WHERE task_id=? ORDER BY started_at DESC LIMIT ?",
-                (task_id, limit),
-            ).fetchall()
-        return [TaskRun.from_dict(json.loads(r["data"])) for r in rows]
+        result = self._invoke("task.runs", task_id=task_id, limit=limit)
+        items = self._validate_list(result, "task.runs")
+        return [TaskRun.from_dict(item) for item in items]
 
     def close(self) -> None:
-        with self._lock:
-            self._conn.close()
+        self._invoke("task.close")

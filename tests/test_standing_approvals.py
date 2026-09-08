@@ -11,7 +11,7 @@ import asyncio
 
 import aisuite as ai
 
-from core.automation import Schedule, ScheduledTask, Scheduler, TaskRun, TaskStore
+from core.automation import Schedule, ScheduledTask, Scheduler, TaskRun, TaskStore, compute_next_run
 from core.automation.models import grant_entries, rule_entry, rule_parts
 from core.automation.tools import scheduling_tools
 from core.engine import ApprovalOutcome, PermissionRequest
@@ -393,16 +393,21 @@ def test_create_automation_grants_and_revoke(tmp_path, monkeypatch):
 # -- scheduler: a suspended run must not stall the loop ---------------------------
 
 
-async def test_blocked_run_does_not_stall_other_tasks(tmp_path):
+async def test_blocked_run_does_not_stall_other_tasks(tmp_path, monkeypatch):
     store = TaskStore(tmp_path / "auto.db")
     blocked = _task(title="blocked")
     quick = _task(title="quick")
+    # Force tasks due: patch compute_next_run, save, then restore.
+    monkeypatch.setattr(
+        "core.automation.store.compute_next_run",
+        lambda _task, after=None: 1.0,
+    )
     for t in (blocked, quick):
         store.save(t)
-        store._conn.execute(
-            "UPDATE scheduled_tasks SET next_run=1.0 WHERE id=?", (t.id,)
-        )
-    store._conn.commit()
+    monkeypatch.setattr(
+        "core.automation.store.compute_next_run",
+        compute_next_run,
+    )
 
     gate = asyncio.Event()
 

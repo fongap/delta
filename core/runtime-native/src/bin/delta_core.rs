@@ -2,11 +2,9 @@
 //!
 //! R1 (P1-E): unifies the per-write subprocess pattern into a single
 //! host process. Reads line-delimited JSON commands from stdin and
-//! writes one JSON response per line to stdout. The Python delegate
-//! modules (`core/idemlog_delegate.py`, `core/ledger_delegate.py`,
-//! `core/automation/store_delegate.py`) hold a persistent connection
-//! to this process instead of spawning a fresh `write_idemlog` /
-//! `write_ledger` / `write_tasks` subprocess for every command.
+//! writes one JSON response per line to stdout. The Python facade
+//! modules hold a persistent connection to this process instead of
+//! spawning a fresh subprocess for every command.
 //!
 //! Protocol (request):
 //!
@@ -54,7 +52,7 @@
 //!   id negotiation, no streaming, no async. The Python side keeps
 //!   a single subprocess open and round-robins commands.
 //! - The existing per-operation CLI binaries (`write_idemlog`,
-//!   `write_ledger`, `write_tasks`) remain in place as migration
+//!   `write_ledger`) remain in place as migration
 //!   diagnostic tools. The new `delta-core` is the production
 //!   writer.
 //! - Each request opens (and holds) a connection to the named DB
@@ -69,7 +67,7 @@ use std::sync::Mutex;
 use delta_runtime_native::{
     args_sha256, operation_id, run_validation, validate_all, validate_source_citation,
     ArtifactInput, ArtifactRegistryWriter, IdempotencyWriter, LedgerWriter, SideEffectEntry,
-    SideEffectState, TaskStoreWriter,
+    SideEffectState, TaskStore,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -83,7 +81,7 @@ use serde_json::Value;
 /// immediately after subprocess startup; a mismatch raises
 /// :class:`DeltaCoreError` (fail-closed) so we never silently talk to
 /// an incompatible binary.
-const PROTOCOL_VERSION: u32 = 3;
+const PROTOCOL_VERSION: u32 = 4;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "cmd")]
@@ -209,8 +207,24 @@ enum Command {
         next_run: Option<f64>,
         data: String,
     },
+    #[serde(rename = "task.get")]
+    TaskGet { db: String, task_id: String },
+    #[serde(rename = "task.list")]
+    TaskList { db: String },
+    #[serde(rename = "task.due")]
+    TaskDue { db: String, now: f64 },
     #[serde(rename = "task.delete")]
     TaskDelete { db: String, task_id: String },
+    #[serde(rename = "task.find_run")]
+    TaskFindRun { db: String, run_id: String },
+    #[serde(rename = "task.runs")]
+    TaskRuns {
+        db: String,
+        task_id: String,
+        limit: usize,
+    },
+    #[serde(rename = "task.task_for_run_session")]
+    TaskForRunSession { db: String, session_id: String },
     #[serde(rename = "task.add_run")]
     TaskAddRun {
         db: String,
@@ -220,6 +234,8 @@ enum Command {
         data: String,
         workspace: String,
     },
+    #[serde(rename = "task.close")]
+    TaskClose { db: String },
     #[serde(rename = "ping")]
     Ping {},
     #[serde(rename = "hello")]
@@ -269,7 +285,7 @@ enum Command {
 struct ConnCache {
     ledgers: HashMap<PathBuf, LedgerWriter>,
     idems: HashMap<PathBuf, IdempotencyWriter>,
-    tasks: HashMap<PathBuf, TaskStoreWriter>,
+    tasks: HashMap<PathBuf, TaskStore>,
 }
 
 impl ConnCache {
@@ -299,10 +315,10 @@ impl ConnCache {
         Ok(self.idems.get_mut(&path).unwrap())
     }
 
-    fn task(&mut self, db: &str) -> Result<&mut TaskStoreWriter, String> {
+    fn task(&mut self, db: &str) -> Result<&mut TaskStore, String> {
         let path = PathBuf::from(db);
         if !self.tasks.contains_key(&path) {
-            let w = TaskStoreWriter::open(&path).map_err(|e| e.to_string())?;
+            let w = TaskStore::open(&path).map_err(|e| e.to_string())?;
             self.tasks.insert(path.clone(), w);
         }
         Ok(self.tasks.get_mut(&path).unwrap())
@@ -715,22 +731,154 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
             next_run,
             data,
         } => {
-            let writer = match cache.task(&db) {
+            let store = match cache.task(&db) {
                 Ok(w) => w,
                 Err(e) => return err(e),
             };
-            match writer.save_task(&task_id, enabled, next_run, &data) {
-                Ok(_) => Ok(Value::Null),
+            match store.save_task(&task_id, enabled, next_run, &data) {
+                Ok(_) => Ok(serde_json::json!({"saved": true})),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::TaskGet { db, task_id } => {
+            let store = match cache.task(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            match store.get_task(&task_id) {
+                Ok(Some(entry)) => {
+                    let mut val = entry.data.clone();
+                    if let Some(obj) = val.as_object_mut() {
+                        obj.insert("enabled".into(), Value::Bool(entry.enabled));
+                        if let Some(nr) = entry.next_run {
+                            obj.insert("next_run".into(), Value::from(nr));
+                        }
+                    }
+                    Ok(val)
+                }
+                Ok(None) => Ok(Value::Null),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::TaskList { db } => {
+            let store = match cache.task(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            match store.list_tasks() {
+                Ok(entries) => Ok(Value::Array(
+                    entries
+                        .into_iter()
+                        .map(|e| {
+                            let mut val = e.data.clone();
+                            if let Some(obj) = val.as_object_mut() {
+                                obj.insert("enabled".into(), Value::Bool(e.enabled));
+                                if let Some(nr) = e.next_run {
+                                    obj.insert("next_run".into(), Value::from(nr));
+                                }
+                            }
+                            val
+                        })
+                        .collect(),
+                )),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::TaskDue { db, now } => {
+            let store = match cache.task(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            match store.due_tasks(now) {
+                Ok(entries) => Ok(Value::Array(
+                    entries
+                        .into_iter()
+                        .map(|e| {
+                            let mut val = e.data.clone();
+                            if let Some(obj) = val.as_object_mut() {
+                                obj.insert("enabled".into(), Value::Bool(e.enabled));
+                                if let Some(nr) = e.next_run {
+                                    obj.insert("next_run".into(), Value::from(nr));
+                                }
+                            }
+                            val
+                        })
+                        .collect(),
+                )),
                 Err(e) => Err(e.to_string()),
             }
         }
         Command::TaskDelete { db, task_id } => {
-            let writer = match cache.task(&db) {
+            let store = match cache.task(&db) {
                 Ok(w) => w,
                 Err(e) => return err(e),
             };
-            match writer.delete_task(&task_id) {
-                Ok(_) => Ok(Value::Null),
+            match store.delete_task(&task_id) {
+                Ok(deleted) => Ok(serde_json::json!({"deleted": deleted})),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::TaskFindRun { db, run_id } => {
+            let store = match cache.task(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            match store.find_run(&run_id) {
+                Ok(Some(entry)) => {
+                    let mut val = entry.data.clone();
+                    if let Some(obj) = val.as_object_mut() {
+                        obj.insert("run_id".into(), Value::String(entry.run_id));
+                        obj.insert("task_id".into(), Value::String(entry.task_id));
+                        obj.insert("started_at".into(), Value::from(entry.started_at));
+                        obj.insert("workspace".into(), Value::String(entry.workspace));
+                    }
+                    Ok(val)
+                }
+                Ok(None) => Ok(Value::Null),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::TaskRuns { db, task_id, limit } => {
+            let store = match cache.task(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            match store.runs(&task_id, limit) {
+                Ok(entries) => Ok(Value::Array(
+                    entries
+                        .into_iter()
+                        .map(|e| {
+                            let mut val = e.data.clone();
+                            if let Some(obj) = val.as_object_mut() {
+                                obj.insert("run_id".into(), Value::String(e.run_id));
+                                obj.insert("task_id".into(), Value::String(e.task_id));
+                                obj.insert("started_at".into(), Value::from(e.started_at));
+                                obj.insert("workspace".into(), Value::String(e.workspace));
+                            }
+                            val
+                        })
+                        .collect(),
+                )),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::TaskForRunSession { db, session_id } => {
+            let store = match cache.task(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            match store.task_for_run_session(&session_id) {
+                Ok(Some(entry)) => {
+                    let mut val = entry.data.clone();
+                    if let Some(obj) = val.as_object_mut() {
+                        obj.insert("enabled".into(), Value::Bool(entry.enabled));
+                        if let Some(nr) = entry.next_run {
+                            obj.insert("next_run".into(), Value::from(nr));
+                        }
+                    }
+                    Ok(val)
+                }
+                Ok(None) => Ok(Value::Null),
                 Err(e) => Err(e.to_string()),
             }
         }
@@ -742,14 +890,19 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
             data,
             workspace,
         } => {
-            let writer = match cache.task(&db) {
+            let store = match cache.task(&db) {
                 Ok(w) => w,
                 Err(e) => return err(e),
             };
-            match writer.add_run(&run_id, &task_id, started_at, &data, &workspace) {
-                Ok(_) => Ok(Value::Null),
+            match store.add_run(&run_id, &task_id, started_at, &data, &workspace) {
+                Ok(_) => Ok(serde_json::json!({"added": true})),
                 Err(e) => Err(e.to_string()),
             }
+        }
+        Command::TaskClose { db } => {
+            let path = PathBuf::from(&db);
+            let closed = cache.tasks.remove(&path).is_some();
+            Ok(serde_json::json!({ "closed": closed }))
         }
         Command::Ping {} => Ok(serde_json::json!({"pong": true})),
         Command::Hello { protocol_version } => {

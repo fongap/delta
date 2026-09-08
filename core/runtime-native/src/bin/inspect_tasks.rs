@@ -1,7 +1,7 @@
 use std::env;
 use std::process::ExitCode;
 
-use delta_runtime_native::TaskStoreReader;
+use delta_runtime_native::TaskStore;
 use serde_json::json;
 
 fn main() -> ExitCode {
@@ -27,7 +27,7 @@ fn main() -> ExitCode {
         }
     };
 
-    let reader = match TaskStoreReader::open(&db) {
+    let store = match TaskStore::open(&db) {
         Ok(r) => r,
         Err(e) => {
             eprintln!("error: cannot open {db}: {e}");
@@ -35,9 +35,9 @@ fn main() -> ExitCode {
         }
     };
 
-    let result = match mode.as_str() {
+    let result: Result<Vec<_>, String> = match mode.as_str() {
         "tasks" => {
-            let tasks = match reader.tasks() {
+            let tasks = match store.list_tasks() {
                 Ok(t) => t,
                 Err(e) => {
                     eprintln!("error: {e}");
@@ -64,18 +64,21 @@ fn main() -> ExitCode {
                     return ExitCode::from(2);
                 }
             };
-            reader.runs(&tid).map(|r| {
-                r.iter()
-                    .map(|r| {
-                        json!({
-                            "run_id": r.run_id,
-                            "task_id": r.task_id,
-                            "started_at": r.started_at,
-                            "workspace": r.workspace,
+            store
+                .runs(&tid, 50)
+                .map(|r| {
+                    r.iter()
+                        .map(|r| {
+                            json!({
+                                "run_id": r.run_id,
+                                "task_id": r.task_id,
+                                "started_at": r.started_at,
+                                "workspace": r.workspace,
+                            })
                         })
-                    })
-                    .collect::<Vec<_>>()
-            })
+                        .collect::<Vec<_>>()
+                })
+                .map_err(|e| e.to_string())
         }
         "run" => {
             let rid = match task_id {
@@ -85,18 +88,21 @@ fn main() -> ExitCode {
                     return ExitCode::from(2);
                 }
             };
-            reader.find_run(&rid).map(|opt| {
-                opt.map(|r| {
-                    json!({
-                        "run_id": r.run_id,
-                        "task_id": r.task_id,
-                        "started_at": r.started_at,
-                        "workspace": r.workspace,
+            store
+                .find_run(&rid)
+                .map(|opt| {
+                    opt.map(|r| {
+                        json!({
+                            "run_id": r.run_id,
+                            "task_id": r.task_id,
+                            "started_at": r.started_at,
+                            "workspace": r.workspace,
+                        })
                     })
+                    .into_iter()
+                    .collect::<Vec<_>>()
                 })
-                .into_iter()
-                .collect::<Vec<_>>()
-            })
+                .map_err(|e| e.to_string())
         }
         _ => {
             eprintln!("unknown mode: {mode}");
