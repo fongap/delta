@@ -75,7 +75,6 @@ READER_ENV_VAR: Final[str] = "DELTA_RUST_READERS"
 #: in core/runtime-native and are the only domains that accept
 #: ``DELTA_RUST_AUTHORITY`` declarations.
 RUST_WRITE_DOMAINS: Final[frozenset[str]] = frozenset({
-    "task_identity",    # tasks.db
     "artifact",         # run_events.db (artifact.registered + artifact.completed events)
     "source_citation",  # typed citation validity evaluation via delta_core
     "validation",       # deterministic completion gate via delta_core

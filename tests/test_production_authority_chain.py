@@ -56,9 +56,8 @@ class _NoopProvider:
 @pytest.fixture
 def rust_authority_all_on(monkeypatch):
     _skip_if_no_binary()
-    # ADR-023: ledger is a hard-cut Rust facade (no selector needed).
-    # Only task_identity remains as a selectable R1 domain.
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "task_identity")
+    # ADR-022/023/024: idempotency, ledger, and task_identity are hard-cut
+    # Rust facades (no selector needed). No DELTA_RUST_AUTHORITY required.
 
 
 # -- Idempotency: full production call chain ---------------------------------
@@ -205,17 +204,23 @@ def test_ledger_full_production_chain(rust_authority_all_on, tmp_path):
 
 
 def test_task_identity_full_production_chain(rust_authority_all_on, tmp_path):
-    """SessionManager → TaskStoreWithDelegate → DeltaCoreClient →
+    """SessionManager → TaskStore (Rust facade) → DeltaCoreClient →
     delta_core → SQLite → Python read-back.
 
     Covers: save, update, add_run, delete.
     """
     from core.automation.models import Schedule, ScheduledTask, TaskRun
+    from core.automation.store import TaskStore
     from services.server.manager import SessionManager
 
     data_dir = tmp_path / "delta-state"
     mgr = SessionManager(data_dir=data_dir, provider=_NoopProvider())
     try:
+        # Verify the production factory creates the Rust-authoritative TaskStore facade.
+        assert isinstance(mgr.task_store, TaskStore), (
+            "SessionManager did not create a TaskStore; "
+            "ADR-024 hard-cut: task_identity is a thin Rust facade."
+        )
         store = mgr.task_store
         task = ScheduledTask(
             title="prod-chain-test",
@@ -264,38 +269,28 @@ def test_task_identity_full_production_chain(rust_authority_all_on, tmp_path):
 def test_reverse_guard_no_direct_python_write_when_authority_on(
     rust_authority_all_on, tmp_path, monkeypatch
 ):
-    """P0-6 reverse guard: when DELTA_RUST_AUTHORITY declares a
-    domain as Rust, the production write path MUST go through the
-    delegate (and thus through delta_core). A direct Python write
-    that bypasses the delegate must be detectable and fail the CI.
-
-    Implementation: the delegate wrapper's `_delegate` flag is set
-    at construction time based on whether the Rust authority is
-    declared AND the delta_core binary is available. If the
-    SessionManager factory creates a delegate wrapper (which it
-    must under authority=on), then a direct
-    ``IdempotencyLog(path).record_planned(...)`` from production
-    code is a violation of the migration contract.
+    """P0-6 reverse guard: when Rust authority is active for idempotency
+    and ledger, the production write path MUST go through the
+    Rust facade (and thus through delta_core). A direct Python write
+    that bypasses the facade must be detectable and fail the CI.
 
     This test constructs a SessionManager and verifies that:
-    1. The factory actually created a delegate wrapper (not a
-       plain IdempotencyLog).
-    2. A Python read-back of a write made through the delegate
+    1. The factory actually created the Rust-authoritative facades.
+    2. A Python read-back of a write made through the facade
        confirms the data went to SQLite (not just in-memory).
     3. The delta_core subprocess is actually running (proves
        writes are not falling through to a Python-only path).
     """
+    from core.automation.store import TaskStore
+    from core.idemlog import IdempotencyLog
+    from core.ledger import RunEventLedger
     from packages.delta_core_client import default_client
     from services.server.manager import SessionManager
 
     data_dir = tmp_path / "delta-state"
     mgr = SessionManager(data_dir=data_dir, provider=_NoopProvider())
     try:
-        # 1. Idempotency is hard-cut; the other R1 domains still use wrappers.
-        from core.idemlog import IdempotencyLog
-        from core.ledger import RunEventLedger
-        from core.automation.store_delegate import TaskStoreWithDelegate
-
+        # 1. Idempotency and Ledger are hard-cut; Task identity is hard-cut.
         assert isinstance(mgr.idem_log, IdempotencyLog), (
             "SessionManager did not create the Rust-authoritative IdempotencyLog facade."
         )
@@ -303,12 +298,12 @@ def test_reverse_guard_no_direct_python_write_when_authority_on(
             "SessionManager did not create a RunEventLedger; "
             "ADR-023 hard-cut: ledger is a thin Rust facade."
         )
-        assert isinstance(mgr.task_store, TaskStoreWithDelegate), (
-            "SessionManager did not create a TaskStoreWithDelegate; "
-            "the production factory must go through maybe_wrap_taskstore."
+        assert isinstance(mgr.task_store, TaskStore), (
+            "SessionManager did not create a TaskStore; "
+            "ADR-024 hard-cut: task_identity is a thin Rust facade."
         )
 
-        # 2. Write through the delegate; read back through Python.
+        # 2. Write through the facade; read back through Python.
         mgr.idem_log.record_planned(
             "r-guard-1", "tc-guard", "write_file", {"path": "g.txt"}
         )
@@ -328,7 +323,7 @@ def test_reverse_guard_no_direct_python_write_when_authority_on(
         # write actually went through Rust, not Python fallback).
         client = default_client()
         assert client._proc is not None, (
-            "delta_core subprocess is not running; the delegate is "
+            "delta_core subprocess is not running; the facade is "
             "not actually using Rust."
         )
         assert client._proc.poll() is None, (
@@ -347,7 +342,7 @@ def test_portable_smoke_chinese_space_path(rust_authority_all_on, tmp_path):
     """P1-2: simulate the Windows Portable layout under a path with
     Chinese characters and spaces. The delta_core binary must be
     discoverable via DELTA_PORTABLE_ROOT, the SessionManager must
-    wire up delegates, and writes must reach SQLite through Rust.
+    wire up facades, and writes must reach SQLite through Rust.
 
     This is the closest the CI can get to a real machine smoke
     without actually running tauri build + PyInstaller. The
@@ -358,7 +353,7 @@ def test_portable_smoke_chinese_space_path(rust_authority_all_on, tmp_path):
     3. ``delta_core.exe`` is found at
        ``<root>/App/Delta/delta_core.exe`` via
        ``DELTA_PORTABLE_ROOT``.
-    4. Idempotency is hard-cut; the remaining two delegates activate.
+    4. Idempotency, Ledger, and Task identity are hard-cut.
     5. Rust authority does NOT fall back to Python.
     """
     import shutil
@@ -380,14 +375,14 @@ def test_portable_smoke_chinese_space_path(rust_authority_all_on, tmp_path):
 
     mgr = SessionManager(data_dir=data_dir, provider=_NoopProvider())
     try:
-        # 1. Idempotency is hard-cut; the remaining delegates are active.
-        from core.automation.store_delegate import TaskStoreWithDelegate
+        # 1. All three R1 domains are hard-cut.
+        from core.automation.store import TaskStore
         from core.idemlog import IdempotencyLog
         from core.ledger import RunEventLedger
 
         assert isinstance(mgr.idem_log, IdempotencyLog)
         assert isinstance(mgr.run_ledger, RunEventLedger)
-        assert isinstance(mgr.task_store, TaskStoreWithDelegate)
+        assert isinstance(mgr.task_store, TaskStore)
 
         # 2. The delta_core binary was found via DELTA_PORTABLE_ROOT.
         from packages.delta_core_client import _find_delta_core_binary
@@ -406,7 +401,7 @@ def test_portable_smoke_chinese_space_path(rust_authority_all_on, tmp_path):
             if saved is not None:
                 os.environ["DELTA_CORE_BINARY"] = saved
 
-        # 3. A real write through the delegate reaches SQLite.
+        # 3. A real write through the facade reaches SQLite.
         mgr.idem_log.record_planned(
             "r-portable-1", "tc-portable-1", "write_file", {"path": "x.txt"}
         )
@@ -418,7 +413,17 @@ def test_portable_smoke_chinese_space_path(rust_authority_all_on, tmp_path):
             payload={"kind": "run"},
         )
 
-        # 4. Read-back from the same SQLite DB files (now under Data/).
+        # 4. Task identity: create a task to ensure automation.db is created.
+        from core.automation.models import Schedule, ScheduledTask
+        task = ScheduledTask(
+            title="portable-test",
+            instructions="test",
+            schedule=Schedule(kind="cron", cron="0 * * * *"),
+            workspace=str(data_dir / "ws"),
+        )
+        mgr.task_store.save(task)
+
+        # 5. Read-back from the same SQLite DB files (now under Data/).
         committed = mgr.idem_log.committed_for_run("r-portable-1")
         # record_planned creates a row but not yet committed; check
         # via the lookup path.
@@ -431,7 +436,7 @@ def test_portable_smoke_chinese_space_path(rust_authority_all_on, tmp_path):
         assert events[1]["type"] == "run.completed"
         assert mgr.run_ledger.verify("r-portable-1") is True
 
-        # 5. The data files landed under Data/, not elsewhere.
+        # 6. The data files landed under Data/, not elsewhere.
         assert (data_dir / "side-effects.db").exists()
         assert (data_dir / "run-events.db").exists()
         assert (data_dir / "automation.db").exists()

@@ -1,6 +1,6 @@
 # ADR-016 — R1 Task Identity Authority Switch: 阶段 B（实际委托）
 
-- 状态：Accepted (历史)
+- 状态：Superseded by ADR-024
 - 日期：2026-09-06
 - 范围：R1 Task identity 域权威切换（Python → Rust）阶段 B
 - 关联：ADR-009 / ADR-010 / ADR-011 / ADR-012 / ADR-014 / ADR-015 / `docs/governance/rust-core-migration.md` §5 / §6 / §7 / §11

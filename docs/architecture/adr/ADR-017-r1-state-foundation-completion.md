@@ -45,7 +45,7 @@ R1 State Foundation 在 v0.4.0-dev 线上完成以下 13 个 PR：
 |---|---|---|---|
 | Idempotency | Python | Python（opt-in Rust delegate） | **Rust（唯一事实来源，ADR-022）** |
 | Ledger | Python | Python（opt-in Rust delegate） | **Rust（唯一事实来源，ADR-023）** |
-| Task identity | Python | Python（opt-in Rust delegate） | Python（opt-in Rust delegate） |
+| Task identity | Python | Python（opt-in Rust delegate） | **Rust（唯一事实来源，ADR-024）** |
 | Run state | Python | Python（`run_status()` 从 ledger 派生） | — |
 | Storage transaction | Python | Python（`CoreTransaction` 协调锁序；非跨 DB 原子事务） | — |
 
@@ -134,6 +134,22 @@ R1 全部 13 个 PR 完成后再做一次"生产切权"收口（`Delta R1.5 — 
 | Rust Core 不可用时 fail-closed | ✅ |
 | `canonical_json` escape bug 修复（ledger.rs + idemlog.rs） | ✅ |
 | 架构守卫测试 | ✅ |
+| 便携版 + 历史数据库验证 | ✅ |
+
+## R1.5 Task Identity Hard-Cut（ADR-024）
+
+2026-09-08：Task Identity 域完成 hard-cut（ADR-024）：
+
+| 任务 | 状态 |
+|---|---|
+| `core/automation/store_delegate.py` 物理删除 | ✅ |
+| `tests/test_taskstore_delegate.py` 删除 | ✅ |
+| `DELTA_RUST_AUTHORITY=task_identity` 选择逻辑删除 | ✅ |
+| `is_rust_authority("task_identity")` 从 `storage_authority.py` 移除 | ✅ |
+| `core/automation/store.py` 改为 Rust Authority 薄门面 | ✅ |
+| `PROTOCOL_VERSION` 从 3 升级到 4 | ✅ |
+| Rust Core 不可用时 fail-closed | ✅ |
+| 架构守卫测试（6 个） | ✅ |
 | 便携版 + 历史数据库验证 | ✅ |
 
 ## 明确不做

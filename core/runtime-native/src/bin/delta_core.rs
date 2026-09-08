@@ -69,7 +69,7 @@ use std::sync::Mutex;
 use delta_runtime_native::{
     args_sha256, operation_id, run_validation, validate_all, validate_source_citation,
     ArtifactInput, ArtifactRegistryWriter, IdempotencyWriter, LedgerWriter, SideEffectEntry,
-    SideEffectState, TaskStoreWriter,
+    SideEffectState, TaskStore,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -83,7 +83,7 @@ use serde_json::Value;
 /// immediately after subprocess startup; a mismatch raises
 /// :class:`DeltaCoreError` (fail-closed) so we never silently talk to
 /// an incompatible binary.
-const PROTOCOL_VERSION: u32 = 3;
+const PROTOCOL_VERSION: u32 = 4;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "cmd")]
@@ -220,6 +220,24 @@ enum Command {
         data: String,
         workspace: String,
     },
+    #[serde(rename = "task.get")]
+    TaskGet { db: String, task_id: String },
+    #[serde(rename = "task.list")]
+    TaskList { db: String },
+    #[serde(rename = "task.due")]
+    TaskDue { db: String, now: f64 },
+    #[serde(rename = "task.find_run")]
+    TaskFindRun { db: String, run_id: String },
+    #[serde(rename = "task.runs")]
+    TaskRuns {
+        db: String,
+        task_id: String,
+        limit: usize,
+    },
+    #[serde(rename = "task.task_for_run_session")]
+    TaskForRunSession { db: String, session_id: String },
+    #[serde(rename = "task.close")]
+    TaskClose { db: String },
     #[serde(rename = "ping")]
     Ping {},
     #[serde(rename = "hello")]
@@ -269,7 +287,7 @@ enum Command {
 struct ConnCache {
     ledgers: HashMap<PathBuf, LedgerWriter>,
     idems: HashMap<PathBuf, IdempotencyWriter>,
-    tasks: HashMap<PathBuf, TaskStoreWriter>,
+    tasks: HashMap<PathBuf, TaskStore>,
 }
 
 impl ConnCache {
@@ -299,10 +317,10 @@ impl ConnCache {
         Ok(self.idems.get_mut(&path).unwrap())
     }
 
-    fn task(&mut self, db: &str) -> Result<&mut TaskStoreWriter, String> {
+    fn task(&mut self, db: &str) -> Result<&mut TaskStore, String> {
         let path = PathBuf::from(db);
         if !self.tasks.contains_key(&path) {
-            let w = TaskStoreWriter::open(&path).map_err(|e| e.to_string())?;
+            let w = TaskStore::open(&path).map_err(|e| e.to_string())?;
             self.tasks.insert(path.clone(), w);
         }
         Ok(self.tasks.get_mut(&path).unwrap())
@@ -730,7 +748,7 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
                 Err(e) => return err(e),
             };
             match writer.delete_task(&task_id) {
-                Ok(_) => Ok(Value::Null),
+                Ok(deleted) => Ok(serde_json::json!({ "deleted": deleted })),
                 Err(e) => Err(e.to_string()),
             }
         }
@@ -750,6 +768,112 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
                 Ok(_) => Ok(Value::Null),
                 Err(e) => Err(e.to_string()),
             }
+        }
+        Command::TaskGet { db, task_id } => {
+            let writer = match cache.task(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            match writer.get_task(&task_id) {
+                Ok(Some(task)) => Ok(serde_json::json!({
+                    "id": task.id,
+                    "enabled": task.enabled,
+                    "next_run": task.next_run,
+                    "data": task.data,
+                })),
+                Ok(None) => Ok(Value::Null),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::TaskList { db } => {
+            let writer = match cache.task(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            match writer.list_tasks() {
+                Ok(tasks) => Ok(serde_json::json!({
+                    "tasks": tasks.into_iter().map(|t| serde_json::json!({
+                        "id": t.id,
+                        "enabled": t.enabled,
+                        "next_run": t.next_run,
+                        "data": t.data,
+                    })).collect::<Vec<_>>()
+                })),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::TaskDue { db, now } => {
+            let writer = match cache.task(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            match writer.due_tasks(now) {
+                Ok(tasks) => Ok(serde_json::json!({
+                    "tasks": tasks.into_iter().map(|t| serde_json::json!({
+                        "id": t.id,
+                        "enabled": t.enabled,
+                        "next_run": t.next_run,
+                        "data": t.data,
+                    })).collect::<Vec<_>>()
+                })),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::TaskFindRun { db, run_id } => {
+            let writer = match cache.task(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            match writer.find_run(&run_id) {
+                Ok(Some(run)) => Ok(serde_json::json!({
+                    "run_id": run.run_id,
+                    "task_id": run.task_id,
+                    "started_at": run.started_at,
+                    "data": run.data.to_string(),
+                    "workspace": run.workspace,
+                })),
+                Ok(None) => Ok(Value::Null),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::TaskRuns { db, task_id, limit } => {
+            let writer = match cache.task(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            match writer.runs(&task_id, limit) {
+                Ok(runs) => Ok(serde_json::json!({
+                    "runs": runs.into_iter().map(|r| serde_json::json!({
+                        "run_id": r.run_id,
+                        "task_id": r.task_id,
+                        "started_at": r.started_at,
+                        "data": r.data.to_string(),
+                        "workspace": r.workspace,
+                    })).collect::<Vec<_>>()
+                })),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::TaskForRunSession { db, session_id } => {
+            let writer = match cache.task(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            match writer.task_for_run_session(&session_id) {
+                Ok(Some(task)) => Ok(serde_json::json!({
+                    "id": task.id,
+                    "enabled": task.enabled,
+                    "next_run": task.next_run,
+                    "data": task.data,
+                })),
+                Ok(None) => Ok(Value::Null),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::TaskClose { db } => {
+            let path = PathBuf::from(&db);
+            let closed = cache.tasks.remove(&path).is_some();
+            Ok(serde_json::json!({ "closed": closed }))
         }
         Command::Ping {} => Ok(serde_json::json!({"pong": true})),
         Command::Hello { protocol_version } => {

@@ -1,67 +1,54 @@
-"""Task identity authority path — structural guard test (P1-B).
-
-Verifies that all production ``TaskStore(...)`` instantiations go
-through ``maybe_wrap_taskstore(...)``. The Rust authority is already
-wired in ADR-016 (save, delete, add_run). This test guarantees no
-production code path bypasses the delegate.
+"""Task identity authority path — architecture guard test (ADR-024).
+ 
+Verifies the R1 Task Identity hard-cut: Rust is the sole authority,
+no delegate wrapper, no authority selector, no Python SQLite writer.
 """
 
-from __future__ import annotations
-
-import re
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-CORE = REPO / "core"
-SERVICES = REPO / "services"
-
-TASK_STORE_DIRECT = re.compile(r"TaskStore\s*\(")
-MAYBE_WRAP_TASKSTORE = re.compile(r"maybe_wrap_taskstore\s*\(")
-DELEGATE_IMPORT = re.compile(r"from\s+core\.automation\.store_delegate\s+import")
-
-EXEMPT_FILES: frozenset[str] = frozenset(
-    {
-        "core/automation/store.py",
-        "core/automation/store_delegate.py",
-        "scripts/check_rust_authority_migration.py",
-    }
-)
 
 
-def _production_py_files():
-    for search_dir in (CORE, SERVICES):
-        if not search_dir.exists():
-            continue
-        for py in search_dir.rglob("*.py"):
-            try:
-                rel = py.relative_to(REPO).as_posix()
-            except ValueError:
-                continue
-            if rel in EXEMPT_FILES:
-                continue
-            yield py, rel
+def test_legacy_taskstore_delegate_is_deleted():
+    """core/automation/store_delegate.py must not exist after ADR-024 hard-cut."""
+    assert not (REPO / "core" / "automation" / "store_delegate.py").exists()
 
 
-def test_no_direct_task_store_instantiation_without_maybe_wrap():
-    """Production code must not directly instantiate TaskStore(...)
-    without wrapping it through maybe_wrap_taskstore."""
-    violations: list[str] = []
+def test_taskstore_delegate_test_file_deleted():
+    """tests/test_taskstore_delegate.py must not exist after ADR-024 hard-cut."""
+    assert not (REPO / "tests" / "test_taskstore_delegate.py").exists()
 
-    for py, rel in _production_py_files():
-        try:
-            text = py.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        if not TASK_STORE_DIRECT.search(text):
-            continue
-        if MAYBE_WRAP_TASKSTORE.search(text) and DELEGATE_IMPORT.search(text):
-            continue
-        for match in TASK_STORE_DIRECT.finditer(text):
-            line_no = text[: match.start()].count("\n") + 1
-            violations.append(f"{rel}:{line_no}")
 
-    assert not violations, (
-        "Production code must not directly instantiate TaskStore(...) "
-        "without wrapping through maybe_wrap_taskstore. Violations:\n  "
-        + "\n  ".join(violations)
-    )
+def test_taskstore_facade_has_no_python_writer_or_switch():
+    """core/automation/store.py must be a thin Rust facade with no Python SQLite
+    writer, no authority selector, and no DELTA_RUST_AUTHORITY reference."""
+    source = (REPO / "core" / "automation" / "store.py").read_text(encoding="utf-8")
+    assert "sqlite3" not in source
+    assert "is_rust_authority" not in source
+    assert "DELTA_RUST_AUTHORITY" not in source
+    assert "default_client().command" in source
+
+
+def test_production_constructs_taskstore_facade_directly():
+    """manager.py must construct TaskStore directly, not via delegate."""
+    source = (REPO / "services" / "server" / "manager.py").read_text(encoding="utf-8")
+    assert "from core.automation import" in source and "TaskStore" in source
+    assert "store_delegate" not in source
+    assert "maybe_wrap_taskstore" not in source
+    assert "TaskStoreWithDelegate" not in source
+
+
+def test_no_production_file_imports_deleted_taskstore_delegate():
+    """No production file should import the deleted store_delegate module."""
+    violations = []
+    for root in (REPO / "core", REPO / "services"):
+        for path in root.rglob("*.py"):
+            if "core.automation.store_delegate" in path.read_text(encoding="utf-8"):
+                violations.append(path.relative_to(REPO).as_posix())
+    assert not violations, "deleted delegate imported by: " + ", ".join(violations)
+
+
+def test_task_identity_not_in_rust_write_domains():
+    """task_identity must not be in RUST_WRITE_DOMAINS — it's a hard-cut facade."""
+    from packages.storage_authority import RUST_WRITE_DOMAINS
+    assert "task_identity" not in RUST_WRITE_DOMAINS

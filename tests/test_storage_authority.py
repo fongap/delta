@@ -42,13 +42,13 @@ def test_unset_env_returns_empty_set(monkeypatch):
 
 
 def test_single_domain(monkeypatch):
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "task_identity")
-    assert _parse_domains(os_env()) == frozenset({"task_identity"})
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "artifact")
+    assert _parse_domains(os_env()) == frozenset({"artifact"})
 
 
 def test_two_domains(monkeypatch):
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "task_identity,artifact")
-    assert _parse_domains(os_env()) == frozenset({"task_identity", "artifact"})
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "artifact,validation")
+    assert _parse_domains(os_env()) == frozenset({"artifact", "validation"})
 
 
 def test_all_keyword(monkeypatch):
@@ -57,13 +57,13 @@ def test_all_keyword(monkeypatch):
 
 
 def test_case_insensitive(monkeypatch):
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "Task_Identity,Artifact")
-    assert _parse_domains(os_env()) == frozenset({"task_identity", "artifact"})
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "Artifact,Validation")
+    assert _parse_domains(os_env()) == frozenset({"artifact", "validation"})
 
 
 def test_whitespace_normalized(monkeypatch):
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "  task_identity , artifact  ")
-    assert _parse_domains(os_env()) == frozenset({"task_identity", "artifact"})
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "  artifact , validation  ")
+    assert _parse_domains(os_env()) == frozenset({"artifact", "validation"})
 
 
 def test_run_state_rejected(monkeypatch):
@@ -319,9 +319,9 @@ def test_r2_read_disjoint_from_r1_write(monkeypatch):
         InvalidAuthorityTargetError, is_rust_authority, is_rust_shadow_reader,
     )
 
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "task_identity")
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "artifact")
     monkeypatch.setenv("DELTA_RUST_READERS", "checkpoint")
-    assert is_rust_authority("task_identity") is True
+    assert is_rust_authority("artifact") is True
     # ADR-023: ledger is a hard-cut facade, not a selectable authority.
     with pytest.raises(InvalidAuthorityTargetError):
         is_rust_authority("ledger")
@@ -402,7 +402,9 @@ def test_artifact_authority_rejects_r1_only(monkeypatch):
     # ADR-023: ledger is a hard-cut facade, not a selectable authority.
     with pytest.raises(InvalidAuthorityTargetError):
         is_rust_authority("ledger")
-    assert is_rust_authority("task_identity") is False
+    # ADR-024: task_identity is a hard-cut facade, not a selectable authority.
+    with pytest.raises(InvalidAuthorityTargetError):
+        is_rust_authority("task_identity")
 
 
 def test_artifact_rejected_from_r2_reader(monkeypatch):

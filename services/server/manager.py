@@ -207,13 +207,8 @@ class SessionManager(
         self._event_clients: set[Any] = set()
         # Automation: scheduled tasks store + the tick scheduler (started in the lifespan).
         # The scheduler also resumes self-wake'd sessions each tick (extra_tick).
-        # ADR-016: task identity authority switch. When DELTA_RUST_AUTHORITY=1 +
-        # Rust binary is built, writes are forwarded to write_tasks.
-        from core.automation.store_delegate import maybe_wrap_taskstore
-
-        self.task_store = maybe_wrap_taskstore(  # type: ignore[assignment]
-            TaskStore(base / "automation.db")
-        )
+        # ADR-024: Task identity hard-cut — Rust is the sole authority.
+        self.task_store = TaskStore(base / "automation.db")
         self.scheduler = Scheduler(
             self.task_store, self._run_scheduled_task, extra_tick=self.resume_due_wakes
         )
