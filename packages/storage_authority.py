@@ -75,7 +75,6 @@ READER_ENV_VAR: Final[str] = "DELTA_RUST_READERS"
 #: in core/runtime-native and are the only domains that accept
 #: ``DELTA_RUST_AUTHORITY`` declarations.
 RUST_WRITE_DOMAINS: Final[frozenset[str]] = frozenset({
-    "ledger",           # run_events.db
     "task_identity",    # tasks.db
     "artifact",         # run_events.db (artifact.registered + artifact.completed events)
     "source_citation",  # typed citation validity evaluation via delta_core
@@ -99,6 +98,12 @@ RUST_READ_DOMAINS: Final[frozenset[str]] = frozenset({
 #: Domains derived from another Rust authority. They do not have
 #: independent Rust write authority; they are computed from a Rust
 #: write domain.
+#:
+#: Note (ADR-023): ``run_state`` was previously derived from ``ledger``.
+#: After the ledger hard-cut, ``RunEventLedger`` is a thin Rust facade
+#: and ``run_state`` is computed directly from it.  The derivation
+#: entry is retained for backward compatibility but ``is_rust_authority``
+#: still raises for derived domains.
 DERIVED_DOMAINS: Final[dict[str, str]] = {
     "run_state": "ledger",
 }

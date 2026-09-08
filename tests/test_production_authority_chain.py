@@ -56,7 +56,9 @@ class _NoopProvider:
 @pytest.fixture
 def rust_authority_all_on(monkeypatch):
     _skip_if_no_binary()
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "ledger,task_identity")
+    # ADR-023: ledger is a hard-cut Rust facade (no selector needed).
+    # Only task_identity remains as a selectable R1 domain.
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "task_identity")
 
 
 # -- Idempotency: full production call chain ---------------------------------
@@ -291,15 +293,15 @@ def test_reverse_guard_no_direct_python_write_when_authority_on(
     try:
         # 1. Idempotency is hard-cut; the other R1 domains still use wrappers.
         from core.idemlog import IdempotencyLog
-        from core.ledger_delegate import RunEventLedgerWithDelegate
+        from core.ledger import RunEventLedger
         from core.automation.store_delegate import TaskStoreWithDelegate
 
         assert isinstance(mgr.idem_log, IdempotencyLog), (
             "SessionManager did not create the Rust-authoritative IdempotencyLog facade."
         )
-        assert isinstance(mgr.run_ledger, RunEventLedgerWithDelegate), (
-            "SessionManager did not create a RunEventLedgerWithDelegate; "
-            "the production factory must go through maybe_wrap_ledger."
+        assert isinstance(mgr.run_ledger, RunEventLedger), (
+            "SessionManager did not create a RunEventLedger; "
+            "ADR-023 hard-cut: ledger is a thin Rust facade."
         )
         assert isinstance(mgr.task_store, TaskStoreWithDelegate), (
             "SessionManager did not create a TaskStoreWithDelegate; "
@@ -381,10 +383,10 @@ def test_portable_smoke_chinese_space_path(rust_authority_all_on, tmp_path):
         # 1. Idempotency is hard-cut; the remaining delegates are active.
         from core.automation.store_delegate import TaskStoreWithDelegate
         from core.idemlog import IdempotencyLog
-        from core.ledger_delegate import RunEventLedgerWithDelegate
+        from core.ledger import RunEventLedger
 
         assert isinstance(mgr.idem_log, IdempotencyLog)
-        assert isinstance(mgr.run_ledger, RunEventLedgerWithDelegate)
+        assert isinstance(mgr.run_ledger, RunEventLedger)
         assert isinstance(mgr.task_store, TaskStoreWithDelegate)
 
         # 2. The delta_core binary was found via DELTA_PORTABLE_ROOT.

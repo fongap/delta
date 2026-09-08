@@ -28,12 +28,17 @@ from core.ledger import RunEventLedger
 
 def test_new_ledger_has_workspace_column(tmp_path):
     """A fresh DB has the column at CREATE TABLE time (no ALTER needed)."""
-    led = RunEventLedger(tmp_path / "events.db")
-    cols = [
-        r[1] for r in led._conn.execute("PRAGMA table_info(run_events)").fetchall()
-    ]
-    assert "workspace" in cols
+    import sqlite3
+
+    db_path = tmp_path / "events.db"
+    led = RunEventLedger(db_path)
+    # Trigger schema creation via Rust.
+    led.append("init", "system.init")
     led.close()
+    conn = sqlite3.connect(db_path)
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(run_events)").fetchall()]
+    conn.close()
+    assert "workspace" in cols
 
 
 def test_legacy_db_migrates_to_workspace_column(tmp_path):
@@ -64,15 +69,17 @@ def test_legacy_db_migrates_to_workspace_column(tmp_path):
 
     led = RunEventLedger(db)
     try:
-        # Column now exists thanks to the ALTER TABLE migration.
-        cols = [
-            r[1]
-            for r in led._conn.execute("PRAGMA table_info(run_events)").fetchall()
-        ]
+        # Trigger schema migration via Rust ( LedgerWriter::open runs ALTER TABLE).
+        led.append("legacy-run", "run.resumed", ts=1001.0)
+        # Column now exists thanks to the ALTER TABLE migration (via Rust).
+        # Verify via a direct SQLite connection.
+        conn = sqlite3.connect(db)
+        cols = [r[1] for r in conn.execute("PRAGMA table_info(run_events)").fetchall()]
+        conn.close()
         assert "workspace" in cols
         # Legacy row reads back with workspace = "" (NULL → empty).
         events = led.events("legacy-run")
-        assert len(events) == 1
+        assert len(events) == 2
         assert events[0]["workspace"] == ""
     finally:
         led.close()

@@ -467,7 +467,7 @@ def test_hello_handshake_succeeds_on_startup():
         pass
     # If startup succeeded without raising, the handshake passed.
     # The PROTOCOL_VERSION constant must match the Rust side.
-    assert PROTOCOL_VERSION == 1
+    assert PROTOCOL_VERSION == 2
 
 
 def test_hello_handshake_fails_on_protocol_mismatch(monkeypatch, tmp_path):

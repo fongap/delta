@@ -207,6 +207,26 @@ fn canonical_json(value: &Value) -> String {
     buf
 }
 
+fn escape_json_string(s: &str) -> String {
+    let mut buf = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '"' => buf.push_str("\\\""),
+            '\\' => buf.push_str("\\\\"),
+            '\x08' => buf.push_str("\\b"),
+            '\x0c' => buf.push_str("\\f"),
+            '\n' => buf.push_str("\\n"),
+            '\r' => buf.push_str("\\r"),
+            '\t' => buf.push_str("\\t"),
+            c if c < '\x20' => {
+                buf.push_str(&format!("\\u{:04x}", c as u32));
+            }
+            c => buf.push(c),
+        }
+    }
+    buf
+}
+
 fn write_canonical(value: &Value, buf: &mut String) {
     match value {
         Value::Object(map) => {
@@ -218,7 +238,7 @@ fn write_canonical(value: &Value, buf: &mut String) {
                     buf.push(',');
                 }
                 buf.push('"');
-                buf.push_str(k);
+                buf.push_str(&escape_json_string(k));
                 buf.push_str("\":");
                 write_canonical(v, buf);
             }
@@ -236,7 +256,7 @@ fn write_canonical(value: &Value, buf: &mut String) {
         }
         Value::String(s) => {
             buf.push('"');
-            buf.push_str(s);
+            buf.push_str(&escape_json_string(s));
             buf.push('"');
         }
         Value::Number(n) => {

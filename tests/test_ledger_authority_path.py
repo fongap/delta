@@ -1,87 +1,29 @@
-"""Ledger authority path — structural, concurrency, and crash safety tests (P1-A).
+"""Ledger authority path — concurrency and crash safety tests (ADR-023).
 
-Tests three aspects of the RunEventLedger authority path:
+Tests two aspects of the RunEventLedger authority path:
 
-1. **Structural**: all production ``RunEventLedger(...)`` instantiations
-   go through ``maybe_wrap_ledger(...)``.
-2. **Concurrency**: multiple threads appending to the same run must
+1. **Concurrency**: multiple threads appending to the same run must
    produce unique ``seq`` values, a continuous hash chain, and no
    lost updates.
-3. **Crash safety**: a crash between ``INSERT`` and ``commit()`` must
+2. **Crash safety**: a crash between ``INSERT`` and ``commit()`` must
    not produce a half-event; a crash after ``commit()`` must persist.
+
+ADR-023 structural guard: the delegate and ``maybe_wrap_ledger`` are
+deleted.  ``RunEventLedger`` is now the Rust authority facade; no
+wrapping is needed.
 """
 
 from __future__ import annotations
 
-import re
 import threading
-from pathlib import Path
 
 import pytest
 
 from core.ledger import RunEventLedger
 
-REPO = Path(__file__).resolve().parent.parent
-CORE = REPO / "core"
-SERVICES = REPO / "services"
-
-
-# -- structural test ---------------------------------------------------------
-
-RUN_LEDGER_DIRECT = re.compile(r"RunEventLedger\s*\(")
-MAYBE_WRAP_LEDGER = re.compile(r"maybe_wrap_ledger\s*\(")
-DELEGATE_IMPORT = re.compile(r"from\s+core\.ledger_delegate\s+import")
-
-EXEMPT_FILES: frozenset[str] = frozenset(
-    {
-        "core/ledger.py",
-        "core/ledger_delegate.py",
-        "core/ledger_event.py",
-        "scripts/check_rust_authority_migration.py",
-    }
-)
-
-
-def _production_py_files():
-    for search_dir in (CORE, SERVICES):
-        if not search_dir.exists():
-            continue
-        for py in search_dir.rglob("*.py"):
-            try:
-                rel = py.relative_to(REPO).as_posix()
-            except ValueError:
-                continue
-            if rel in EXEMPT_FILES:
-                continue
-            yield py, rel
-
-
-def test_no_direct_run_event_ledger_instantiation_without_maybe_wrap():
-    """Production code must not directly instantiate RunEventLedger(...)
-    without wrapping it through maybe_wrap_ledger."""
-    violations: list[str] = []
-
-    for py, rel in _production_py_files():
-        try:
-            text = py.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        if not RUN_LEDGER_DIRECT.search(text):
-            continue
-        if MAYBE_WRAP_LEDGER.search(text) and DELEGATE_IMPORT.search(text):
-            continue
-        for match in RUN_LEDGER_DIRECT.finditer(text):
-            line_no = text[: match.start()].count("\n") + 1
-            violations.append(f"{rel}:{line_no}")
-
-    assert not violations, (
-        "Production code must not directly instantiate RunEventLedger(...) "
-        "without wrapping through maybe_wrap_ledger. Violations:\n  "
-        + "\n  ".join(violations)
-    )
-
 
 # -- concurrency tests ------------------------------------------------------
+
 
 @pytest.fixture
 def ledger(tmp_path) -> RunEventLedger:
@@ -140,6 +82,7 @@ def test_rapid_sequential_appends_preserve_chain(ledger):
 
 
 # -- crash safety tests ----------------------------------------------------
+
 
 def test_crash_before_commit_produces_no_half_event(tmp_path):
     """If the process crashes between INSERT and commit(), no half-event

@@ -47,14 +47,16 @@ def test_append_chains_hashes_per_run(tmp_path):
 
 
 def test_verify_detects_tampering(tmp_path):
+    import sqlite3
+
     led = RunEventLedger(tmp_path / "events.db")
     led.append("r1", "run.started")
     led.append("r1", "run.completed", payload={"status": "ok"})
     # Tamper with the middle of the chain directly in SQLite.
-    led._conn.execute(
-        "UPDATE run_events SET type = 'run.failed' WHERE seq = 1"
-    )
-    led._conn.commit()
+    conn = sqlite3.connect(tmp_path / "events.db")
+    conn.execute("UPDATE run_events SET type = 'run.failed' WHERE seq = 1")
+    conn.commit()
+    conn.close()
     assert not led.verify("r1")
 
 
