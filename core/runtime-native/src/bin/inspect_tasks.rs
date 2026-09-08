@@ -64,18 +64,21 @@ fn main() -> ExitCode {
                     return ExitCode::from(2);
                 }
             };
-            store.runs(&tid, 50).map(|r| {
-                r.iter()
-                    .map(|r| {
-                        json!({
-                            "run_id": r.run_id,
-                            "task_id": r.task_id,
-                            "started_at": r.started_at,
-                            "workspace": r.workspace,
+            store
+                .runs(&tid, 50)
+                .map(|r| {
+                    r.iter()
+                        .map(|r| {
+                            json!({
+                                "run_id": r.run_id,
+                                "task_id": r.task_id,
+                                "started_at": r.started_at,
+                                "workspace": r.workspace,
+                            })
                         })
-                    })
-                    .collect::<Vec<_>>()
-            }).map_err(|e| e.to_string())
+                        .collect::<Vec<_>>()
+                })
+                .map_err(|e| e.to_string())
         }
         "run" => {
             let rid = match task_id {
@@ -85,18 +88,21 @@ fn main() -> ExitCode {
                     return ExitCode::from(2);
                 }
             };
-            store.find_run(&rid).map(|opt| {
-                opt.map(|r| {
-                    json!({
-                        "run_id": r.run_id,
-                        "task_id": r.task_id,
-                        "started_at": r.started_at,
-                        "workspace": r.workspace,
+            store
+                .find_run(&rid)
+                .map(|opt| {
+                    opt.map(|r| {
+                        json!({
+                            "run_id": r.run_id,
+                            "task_id": r.task_id,
+                            "started_at": r.started_at,
+                            "workspace": r.workspace,
+                        })
                     })
+                    .into_iter()
+                    .collect::<Vec<_>>()
                 })
-                .into_iter()
-                .collect::<Vec<_>>()
-            }).map_err(|e| e.to_string())
+                .map_err(|e| e.to_string())
         }
         _ => {
             eprintln!("unknown mode: {mode}");

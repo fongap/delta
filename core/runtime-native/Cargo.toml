@@ -27,10 +27,6 @@ name = "write_ledger"
 path = "src/bin/write_ledger.rs"
 
 [[bin]]
-name = "write_tasks"
-path = "src/bin/write_tasks.rs"
-
-[[bin]]
 name = "inspect_tasks"
 path = "src/bin/inspect_tasks.rs"
 

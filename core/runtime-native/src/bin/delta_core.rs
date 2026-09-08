@@ -2,11 +2,9 @@
 //!
 //! R1 (P1-E): unifies the per-write subprocess pattern into a single
 //! host process. Reads line-delimited JSON commands from stdin and
-//! writes one JSON response per line to stdout. The Python delegate
-//! modules (`core/idemlog_delegate.py`, `core/ledger_delegate.py`,
-//! `core/automation/store_delegate.py`) hold a persistent connection
-//! to this process instead of spawning a fresh `write_idemlog` /
-//! `write_ledger` / `write_tasks` subprocess for every command.
+//! writes one JSON response per line to stdout. The Python facade
+//! modules hold a persistent connection to this process instead of
+//! spawning a fresh subprocess for every command.
 //!
 //! Protocol (request):
 //!
@@ -54,7 +52,7 @@
 //!   id negotiation, no streaming, no async. The Python side keeps
 //!   a single subprocess open and round-robins commands.
 //! - The existing per-operation CLI binaries (`write_idemlog`,
-//!   `write_ledger`, `write_tasks`) remain in place as migration
+//!   `write_ledger`) remain in place as migration
 //!   diagnostic tools. The new `delta-core` is the production
 //!   writer.
 //! - Each request opens (and holds) a connection to the named DB
@@ -840,11 +838,7 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
                 Err(e) => Err(e.to_string()),
             }
         }
-        Command::TaskRuns {
-            db,
-            task_id,
-            limit,
-        } => {
+        Command::TaskRuns { db, task_id, limit } => {
             let store = match cache.task(&db) {
                 Ok(w) => w,
                 Err(e) => return err(e),

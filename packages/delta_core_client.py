@@ -1,7 +1,7 @@
 """Delta Core host client — Python interface to the delta-core Rust process.
 
 R1 (P1-E): the unified Delta Core process entrypoint. Instead of
-spawning a fresh `write_idemlog` / `write_ledger` / `write_tasks`
+spawning a fresh `write_idemlog` / `write_ledger`
 subprocess for every command, the Python delegate modules hold a
 persistent connection to a single long-running ``delta_core``
 process.

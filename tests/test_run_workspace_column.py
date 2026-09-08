@@ -161,14 +161,16 @@ def test_workspace_accepts_none(tmp_path):
 
 
 def test_task_runs_has_workspace_column(tmp_path):
-    store = TaskStore(tmp_path / "tasks.db")
-    try:
-        cols = [
-            r[1] for r in store._conn.execute("PRAGMA table_info(task_runs)").fetchall()
-        ]
-        assert "workspace" in cols
-    finally:
-        store.close()
+    db = tmp_path / "tasks.db"
+    store = TaskStore(db)
+    # Trigger schema creation via a no-op write.
+    from core.automation.models import Schedule, ScheduledTask
+    store.save(ScheduledTask(title="t", instructions="i", schedule=Schedule(kind="once"), workspace="/tmp"))
+    store.close()
+    conn = sqlite3.connect(str(db))
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(task_runs)").fetchall()]
+    conn.close()
+    assert "workspace" in cols
 
 
 def test_task_runs_legacy_db_migrates(tmp_path):
@@ -192,17 +194,17 @@ def test_task_runs_legacy_db_migrates(tmp_path):
 
     store = TaskStore(db)
     try:
-        cols = [
-            r[1]
-            for r in store._conn.execute("PRAGMA table_info(task_runs)").fetchall()
-        ]
-        assert "workspace" in cols
         # Legacy row still loads; workspace is the dataclass default.
         run = store.find_run("run-legacy")
         assert run is not None
         assert run.workspace == ""
     finally:
         store.close()
+    # Schema check: verify workspace column exists (after closing store).
+    conn = sqlite3.connect(str(db))
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(task_runs)").fetchall()]
+    conn.close()
+    assert "workspace" in cols
 
 
 def test_task_run_to_from_dict_round_trip_includes_workspace():
@@ -244,19 +246,20 @@ def test_add_run_persists_workspace(tmp_path):
     try:
         run = TaskRun(task_id="t1", run_id="r1", workspace="/ws-A")
         store.add_run(run)
-        # Read back from SQL directly so we know the column actually got
-        # written, not just round-tripped via JSON.
-        row = store._conn.execute(
-            "SELECT workspace FROM task_runs WHERE run_id=?", ("r1",)
-        ).fetchone()
-        assert row is not None
-        assert row["workspace"] == "/ws-A"
-        # And the in-memory round trip also preserves it.
+        # Read back via the public API to verify workspace round-trips.
         rehydrated = store.find_run("r1")
         assert rehydrated is not None
         assert rehydrated.workspace == "/ws-A"
     finally:
         store.close()
+    # Schema check: verify the workspace column value in SQLite directly.
+    conn = sqlite3.connect(str(tmp_path / "tasks.db"))
+    row = conn.execute(
+        "SELECT workspace FROM task_runs WHERE run_id=?", ("r1",)
+    ).fetchone()
+    conn.close()
+    assert row is not None
+    assert row[0] == "/ws-A"
 
 
 def test_add_run_workspace_round_trip_via_runs_query(tmp_path):

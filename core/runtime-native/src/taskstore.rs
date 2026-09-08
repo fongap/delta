@@ -272,11 +272,7 @@ impl TaskStore {
     }
 
     /// List task runs for one task_id, ordered newest first.
-    pub fn runs(
-        &self,
-        task_id: &str,
-        limit: usize,
-    ) -> Result<Vec<TaskRunEntry>, ShadowReadError> {
+    pub fn runs(&self, task_id: &str, limit: usize) -> Result<Vec<TaskRunEntry>, ShadowReadError> {
         let mut stmt = self.conn.prepare(
             "SELECT run_id, task_id, started_at, data, workspace FROM task_runs
              WHERE task_id = ? ORDER BY started_at DESC LIMIT ?",
@@ -491,9 +487,7 @@ mod tests {
         store
             .save_task("task_1", true, None, r#"{"id":"task_1"}"#)
             .unwrap();
-        store
-            .add_run("run_1", "task_1", 1000.0, "{}", "")
-            .unwrap();
+        store.add_run("run_1", "task_1", 1000.0, "{}", "").unwrap();
 
         let task = store.task_for_run_session("__run__run_1").unwrap();
         assert!(task.is_some());
@@ -502,12 +496,7 @@ mod tests {
         // Non-run session
         assert!(store.task_for_run_session("other").unwrap().is_none());
         // Non-existent run
-        assert!(
-            store
-                .task_for_run_session("__run__nope")
-                .unwrap()
-                .is_none()
-        );
+        assert!(store.task_for_run_session("__run__nope").unwrap().is_none());
     }
 
     #[test]
@@ -557,7 +546,7 @@ mod tests {
         assert!(run.is_some());
         let run = run.unwrap();
         assert_eq!(run.workspace, ""); // default empty
-        // Verify workspace column exists via direct connection
+                                       // Verify workspace column exists via direct connection
         drop(store);
         let conn = Connection::open(&db).unwrap();
         let has_workspace: bool = {

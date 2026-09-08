@@ -152,16 +152,20 @@ def test_store_runs_history(tmp_path):
 
 
 # -- scheduler loop ------------------------------------------------------------
-async def test_scheduler_runs_due_task_and_advances(tmp_path):
+async def test_scheduler_runs_due_task_and_advances(tmp_path, monkeypatch):
     store = TaskStore(tmp_path / "auto.db")
     t = _task(schedule=Schedule(kind="cron", cron="* * * * *"))
+    # Force task due: patch compute_next_run to return 1.0, save, then
+    # immediately restore so the scheduler's own save() advances next_run.
+    monkeypatch.setattr(
+        "core.automation.store.compute_next_run",
+        lambda _task, after=None: 1.0,
+    )
     store.save(t)
-    # force it due now
-    t.next_run = 1.0
-    store.save(t)
-    t.next_run = 1.0  # save() recomputes; push it into the past again
-    store._conn.execute("UPDATE scheduled_tasks SET next_run=1.0 WHERE id=?", (t.id,))
-    store._conn.commit()
+    monkeypatch.setattr(
+        "core.automation.store.compute_next_run",
+        compute_next_run,
+    )
 
     ran: list[str] = []
     ran_once = asyncio.Event()
@@ -210,7 +214,7 @@ async def test_scheduler_skips_overlapping_run(tmp_path):
     await first
 
 
-async def test_tick_while_run_is_parked_never_redispatches_it(tmp_path):
+async def test_tick_while_run_is_parked_never_redispatches_it(tmp_path, monkeypatch):
     """The overlap guard is claimed at dispatch, not inside the spawned run.
 
     Regression: a tick's due() snapshot still lists a task whose run is parked on an
@@ -223,9 +227,16 @@ async def test_tick_while_run_is_parked_never_redispatches_it(tmp_path):
     the code fix was already implemented here)."""
     store = TaskStore(tmp_path / "auto.db")
     task = _task(title="parked")
+    # Force task due: patch compute_next_run, save, then restore.
+    monkeypatch.setattr(
+        "core.automation.store.compute_next_run",
+        lambda _task, after=None: 1.0,
+    )
     store.save(task)
-    store._conn.execute("UPDATE scheduled_tasks SET next_run=1.0 WHERE id=?", (task.id,))
-    store._conn.commit()
+    monkeypatch.setattr(
+        "core.automation.store.compute_next_run",
+        compute_next_run,
+    )
 
     gate = asyncio.Event()
     started = asyncio.Event()

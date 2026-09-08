@@ -382,7 +382,6 @@ def test_portable_smoke_chinese_space_path(rust_authority_all_on, tmp_path):
     try:
         # 1. Idempotency, Ledger, and Task Identity are hard-cut (ADR-024).
         from core.automation.store import TaskStore
-        from core.automation.store import TaskStore
         from core.idemlog import IdempotencyLog
         from core.ledger import RunEventLedger
 
