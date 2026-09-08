@@ -42,13 +42,13 @@ def test_unset_env_returns_empty_set(monkeypatch):
 
 
 def test_single_domain(monkeypatch):
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "idempotency")
-    assert _parse_domains(os_env()) == frozenset({"idempotency"})
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "ledger")
+    assert _parse_domains(os_env()) == frozenset({"ledger"})
 
 
 def test_two_domains(monkeypatch):
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "idempotency,ledger")
-    assert _parse_domains(os_env()) == frozenset({"idempotency", "ledger"})
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "ledger,task_identity")
+    assert _parse_domains(os_env()) == frozenset({"ledger", "task_identity"})
 
 
 def test_all_keyword(monkeypatch):
@@ -57,13 +57,13 @@ def test_all_keyword(monkeypatch):
 
 
 def test_case_insensitive(monkeypatch):
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "Idempotency,Ledger")
-    assert _parse_domains(os_env()) == frozenset({"idempotency", "ledger"})
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "Task_Identity,Ledger")
+    assert _parse_domains(os_env()) == frozenset({"task_identity", "ledger"})
 
 
 def test_whitespace_normalized(monkeypatch):
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "  idempotency , ledger  ")
-    assert _parse_domains(os_env()) == frozenset({"idempotency", "ledger"})
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "  task_identity , ledger  ")
+    assert _parse_domains(os_env()) == frozenset({"task_identity", "ledger"})
 
 
 def test_run_state_rejected(monkeypatch):
@@ -82,7 +82,7 @@ def test_storage_transaction_rejected(monkeypatch):
 
 
 def test_unknown_domain_raises(monkeypatch):
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "idempotency,fictional_domain")
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "ledger,fictional_domain")
     with pytest.raises(UnknownDomainError) as exc:
         _parse_domains(os_env())
     assert "fictional_domain" in str(exc.value)
@@ -96,7 +96,7 @@ def test_only_unknown_domains_raises(monkeypatch):
 
 
 def test_mixed_known_unknown_raises(monkeypatch):
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "idempotency,fictional_a,unknown_b")
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "ledger,fictional_a,unknown_b")
     with pytest.raises(UnknownDomainError) as exc:
         _parse_domains(os_env())
     assert "fictional_a" in str(exc.value)
@@ -127,18 +127,18 @@ def test_unset_means_python_for_all_domains(monkeypatch):
         assert not is_rust_authority(d)
 
 
-def test_idempotency_only(monkeypatch):
+def test_idempotency_is_not_selectable_after_hard_cut(monkeypatch):
     monkeypatch.setenv("DELTA_RUST_AUTHORITY", "idempotency")
-    assert is_rust_authority("idempotency")
-    assert not is_rust_authority("ledger")
-    assert not is_rust_authority("task_identity")
+    with pytest.raises(InvalidAuthorityTargetError):
+        is_rust_authority("idempotency")
+    with pytest.raises(UnknownDomainError):
+        _parse_domains(os_env())
 
 
-def test_idempotency_and_ledger(monkeypatch):
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "idempotency,ledger")
-    assert is_rust_authority("idempotency")
+def test_ledger_and_task_identity(monkeypatch):
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "ledger,task_identity")
     assert is_rust_authority("ledger")
-    assert not is_rust_authority("task_identity")
+    assert is_rust_authority("task_identity")
 
 
 def test_all_enables_every_rust_write_domain(monkeypatch):
@@ -206,48 +206,6 @@ def test_constants_consistency():
     # R2 reader env var is distinct from R1 write env var
     from packages.storage_authority import READER_ENV_VAR
     assert READER_ENV_VAR != "DELTA_RUST_AUTHORITY"
-
-
-# -- per-domain delegate behavior -------------------------------------------
-
-
-def test_idempotency_only_activates_idempotency_delegate_not_ledger(monkeypatch, tmp_path):
-    """DELTA_RUST_AUTHORITY=idempotency must not activate the ledger delegate.
-
-    The delegate modules gate on is_rust_authority(domain) individually,
-    so a per-domain env var activates only the matching delegate.
-    Binary presence alone must NOT enable all delegates.
-    """
-    import sys
-    from pathlib import Path
-
-    from core.idemlog import IdempotencyLog
-    from core.idemlog_delegate import IdempotencyLogWithDelegate, maybe_wrap
-    from core.ledger import RunEventLedger
-    from core.ledger_delegate import RunEventLedgerWithDelegate, maybe_wrap_ledger
-
-    repo_root = Path(__file__).resolve().parent.parent
-    crate_dir = repo_root / "core" / "runtime-native"
-    binary = crate_dir / "target" / "debug" / (
-        "delta_core.exe" if sys.platform == "win32" else "delta_core"
-    )
-    if not binary.exists():
-        pytest.skip("delta_core binary not built")
-
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "idempotency")
-
-    db = tmp_path / "side-effects.db"
-    log = IdempotencyLog(db)
-    wrapped = maybe_wrap(log, str(db))
-    assert isinstance(wrapped, IdempotencyLogWithDelegate), (
-        "idempotency delegate must activate when DELTA_RUST_AUTHORITY=idempotency"
-    )
-
-    led = RunEventLedger(tmp_path / "run_events.db")
-    wrapped_ledger = maybe_wrap_ledger(led)
-    assert not isinstance(wrapped_ledger, RunEventLedgerWithDelegate), (
-        "ledger delegate must NOT activate when only idempotency is in the authority set"
-    )
 
 
 # -- R2 shadow-reader API (ADR-019) ------------------------------------------
@@ -358,9 +316,9 @@ def test_r2_read_disjoint_from_r1_write(monkeypatch):
         InvalidAuthorityTargetError, is_rust_authority, is_rust_shadow_reader,
     )
 
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "idempotency")
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "ledger")
     monkeypatch.setenv("DELTA_RUST_READERS", "checkpoint")
-    assert is_rust_authority("idempotency") is True
+    assert is_rust_authority("ledger") is True
     # Remaining R2 reader domain is not a valid write target.
     with pytest.raises(InvalidAuthorityTargetError):
         is_rust_authority("checkpoint")
@@ -433,7 +391,8 @@ def test_artifact_authority_rejects_r1_only(monkeypatch):
 
     monkeypatch.setenv("DELTA_RUST_AUTHORITY", "artifact")
     assert is_rust_authority("artifact") is True
-    assert is_rust_authority("idempotency") is False
+    with pytest.raises(InvalidAuthorityTargetError):
+        is_rust_authority("idempotency")
     assert is_rust_authority("ledger") is False
     assert is_rust_authority("task_identity") is False
 

@@ -3,11 +3,13 @@
 This module parses the ``DELTA_RUST_AUTHORITY`` environment variable
 into a set of domain names. Each domain can be independently controlled:
 
-    DELTA_RUST_AUTHORITY=idempotency           # only idempotency → Rust
-    DELTA_RUST_AUTHORITY=idempotency,ledger    # two domains → Rust
+    DELTA_RUST_AUTHORITY=ledger                # ledger → Rust
     DELTA_RUST_AUTHORITY=all                  # all Rust write domains → Rust
     DELTA_RUST_AUTHORITY=1                    # legacy = all (deprecated)
-    (unset)                                  # Python (default)
+    (unset)                                    # remaining domains use Python
+
+Idempotency is no longer selectable: ADR-022 hard-cut it to Rust and removed
+the Python writer, fallback, and migration delegate.
 
 The API :func:`is_rust_authority` returns ``True`` only when the
 specified domain is in the parsed set. Callers do not need to know
@@ -73,7 +75,6 @@ READER_ENV_VAR: Final[str] = "DELTA_RUST_READERS"
 #: in core/runtime-native and are the only domains that accept
 #: ``DELTA_RUST_AUTHORITY`` declarations.
 RUST_WRITE_DOMAINS: Final[frozenset[str]] = frozenset({
-    "idempotency",      # side-effects.db
     "ledger",           # run_events.db
     "task_identity",    # tasks.db
     "artifact",         # run_events.db (artifact.registered + artifact.completed events)

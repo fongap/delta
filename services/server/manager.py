@@ -121,19 +121,12 @@ class SessionManager(
         self.run_ledger = maybe_wrap_ledger(  # type: ignore[assignment]
             RunEventLedger(base / "run-events.db")
         )
-        # ADR-005 WS4: durable dedupe of side effects. Survives a crash so
-        # resume() can tell "this call's effect already happened" from "this
-        # call is new". Lives next to the run ledger.
-        # ADR-014 stage C: when DELTA_RUST_AUTHORITY=1 + Rust binary is
-        # built, writes are forwarded to write_idemlog. Default behavior
-        # is identical to a plain IdempotencyLog.
+        # ADR-005 WS4 / ADR-022: durable side-effect dedupe is a hard-cut
+        # Rust domain. IdempotencyLog is now a thin fail-closed Core facade;
+        # there is no Python writer, feature flag, or migration delegate delegate.
         from core.idemlog import IdempotencyLog
-        from core.idemlog_delegate import maybe_wrap
 
-        self.idem_log = maybe_wrap(  # type: ignore[assignment]
-            IdempotencyLog(base / "side-effects.db"),
-            str(base / "side-effects.db"),
-        )
+        self.idem_log = IdempotencyLog(base / "side-effects.db")
         # P0-B Recovery Production Wiring: the recovery snapshot store.
         # One snapshot per session, written at each pause point, cleared
         # on successful resume. Advisory — resume works from messages +
