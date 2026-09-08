@@ -144,6 +144,10 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
+    env:
+      # Force uv to use the matrix Python version instead of .python-version.
+      UV_PYTHON: ${{ matrix.python-version }}
+
     strategy:
       fail-fast: false
 

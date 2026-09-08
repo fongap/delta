@@ -29,19 +29,22 @@ import pytest
 from packages.delta_core_client import DeltaCoreClient, DeltaCoreError
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-BINARY = (
-    REPO_ROOT
-    / "core"
-    / "runtime-native"
-    / "target"
-    / "debug"
-    / ("delta_core.exe" if sys.platform == "win32" else "delta_core")
+TARGET = "delta_core.exe" if sys.platform == "win32" else "delta_core"
+
+DEV_BINARIES = (
+    REPO_ROOT / "core" / "runtime-native" / "target" / "release" / TARGET,
+    REPO_ROOT / "core" / "runtime-native" / "target" / "debug" / TARGET,
 )
+
+
+def _dev_binary() -> Path | None:
+    """Return the first existing dev binary (release preferred over debug)."""
+    return next((p for p in DEV_BINARIES if p.exists()), None)
 
 
 @pytest.fixture
 def client() -> DeltaCoreClient:
-    if not BINARY.exists():
+    if _dev_binary() is None:
         pytest.skip("delta_core binary not built")
     c = DeltaCoreClient()
     yield c
@@ -158,17 +161,24 @@ def test_missing_binary_raises():
 
 def test_default_lookup_finds_dev_build():
     """When no env var is set, the default lookup finds the dev
-    build at ``core/runtime-native/target/{release,debug}/``."""
+    build at ``core/runtime-native/target/{release,debug}/``.
+
+    Priority: release > debug. If neither exists, returns None."""
     import os as _os
     from packages.delta_core_client import _find_delta_core_binary
 
     _os.environ.pop("DELTA_CORE_BINARY", None)
     found = _find_delta_core_binary()
-    if not BINARY.exists():
+    dev = _dev_binary()
+    if dev is None:
         assert found is None
     else:
         assert found is not None
+        assert found == dev
         assert found.name in ("delta_core.exe", "delta_core")
+        # Verify release takes priority over debug when both exist.
+        if DEV_BINARIES[0].exists():
+            assert found == DEV_BINARIES[0]
 
 
 def test_close_is_idempotent(client):
@@ -283,7 +293,7 @@ def test_command_timeout_raises_delta_core_error(monkeypatch, tmp_path):
     closes the client and raises DeltaCoreError."""
     from packages.delta_core_client import DeltaCoreClient
 
-    if not BINARY.exists():
+    if _dev_binary() is None:
         pytest.skip("delta_core binary not built")
 
     c = DeltaCoreClient(command_timeout=0.2)
@@ -315,7 +325,7 @@ def test_command_timeout_uses_default():
         DeltaCoreClient,
     )
 
-    if not BINARY.exists():
+    if _dev_binary() is None:
         pytest.skip("delta_core binary not built")
     c = DeltaCoreClient()
     try:
