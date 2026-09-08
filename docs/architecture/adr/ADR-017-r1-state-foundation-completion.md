@@ -39,13 +39,13 @@ R1 State Foundation 在 v0.4.0-dev 线上完成以下 13 个 PR：
 | P1-G | CI gates | `rust-core-smoke` CI job + `check_rust_core_smoke.py` 脚本 + 迁移数据库测试 |
 | Docs | Authority Matrix + ADR | 本 ADR + Authority Matrix 更新 |
 
-### Authority Matrix（R1 完成后）
+### Authority Matrix（R1 完成后 → R1 Hard-Cut 后）
 
-| 领域 | R1 前 | R1 后 | 灰度开关 |
+| 领域 | R1 前 | R1 完成后 | R1 Hard-Cut 后（ADR-022） |
 |---|---|---|---|
-| Idempotency | Python | Python（opt-in Rust delegate） | `DELTA_RUST_AUTHORITY=idempotency` |
-| Ledger | Python | Python（opt-in Rust delegate） | `DELTA_RUST_AUTHORITY=ledger` |
-| Task identity | Python | Python（opt-in Rust delegate） | `DELTA_RUST_AUTHORITY=task_identity` |
+| Idempotency | Python | Python（opt-in Rust delegate） | **Rust（唯一事实来源）** |
+| Ledger | Python | Python（opt-in Rust delegate） | Python（opt-in Rust delegate） |
+| Task identity | Python | Python（opt-in Rust delegate） | Python（opt-in Rust delegate） |
 | Run state | Python | Python（`run_status()` 从 ledger 派生） | — |
 | Storage transaction | Python | Python（`CoreTransaction` 协调锁序；非跨 DB 原子事务） | — |
 
@@ -103,6 +103,22 @@ R1 全部 13 个 PR 完成后再做一次"生产切权"收口（`Delta R1.5 — 
 | Production Default Authority | Python（未切换） | `DELTA_RUST_AUTHORITY` 未设置时，所有写入走 Python 路径；生产主路径不变 |
 
 > 注意：`Operationally Complete` 仅表示 R1 迁移阶段的基础设施交付完成，**不代表** 生产默认权威已切换到 Rust Core。默认权威切换是独立决策，需在 R2 前基于用户验证数据单独裁定。
+
+## R1.5 Idempotency Hard-Cut（ADR-022）
+
+2026-09-08：Idempotency 域完成 hard-cut（ADR-022）：
+
+| 任务 | 状态 |
+|---|---|
+| `core/idemlog_delegate.py` 物理删除 | ✅ |
+| `tests/test_idemlog_delegate.py` 删除 | ✅ |
+| `DELTA_RUST_AUTHORITY=idempotency` 选择逻辑删除 | ✅ |
+| `is_rust_authority("idempotency")` 从 `storage_authority.py` 移除 | ✅ |
+| `core/idemlog.py` 改为 Rust Authority 薄门面 | ✅ |
+| Rust Core 不可用时 fail-closed | ✅ |
+| CI binary provisioning 修复 | ✅ |
+| 架构守卫测试（4 个） | ✅ |
+| 便携版 + 历史数据库验证 | ✅ |
 
 ## 明确不做
 

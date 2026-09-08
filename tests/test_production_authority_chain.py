@@ -391,11 +391,18 @@ def test_portable_smoke_chinese_space_path(rust_authority_all_on, tmp_path):
         from packages.delta_core_client import _find_delta_core_binary
 
         # Set DELTA_PORTABLE_ROOT and verify the lookup finds the staged binary.
+        # Unset DELTA_CORE_BINARY so it doesn't shadow the portable lookup.
         import os
+        saved = os.environ.pop("DELTA_CORE_BINARY", None)
         os.environ["DELTA_PORTABLE_ROOT"] = str(portable_root)
-        found = _find_delta_core_binary()
-        assert found is not None
-        assert found == app_delta / BINARY.name
+        try:
+            found = _find_delta_core_binary()
+            assert found is not None
+            assert found == app_delta / BINARY.name
+        finally:
+            os.environ.pop("DELTA_PORTABLE_ROOT", None)
+            if saved is not None:
+                os.environ["DELTA_CORE_BINARY"] = saved
 
         # 3. A real write through the delegate reaches SQLite.
         mgr.idem_log.record_planned(

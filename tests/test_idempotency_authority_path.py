@@ -31,3 +31,21 @@ def test_no_production_file_imports_deleted_delegate():
             if "core.idemlog_delegate" in path.read_text(encoding="utf-8"):
                 violations.append(path.relative_to(REPO).as_posix())
     assert not violations, "deleted delegate imported by: " + ", ".join(violations)
+
+
+def test_idempotency_has_no_shadow_sqlite_writer():
+    """No production file should create a direct sqlite3 connection
+    for the idempotency domain (side_effects.db). Test fixtures that
+    create legacy databases for migration testing are allowed."""
+    violations = []
+    idem_db_patterns = ("side_effects.db", "side-effects.db")
+    for root in (REPO / "core", REPO / "services"):
+        for path in root.rglob("*.py"):
+            source = path.read_text(encoding="utf-8")
+            if "sqlite3" in source and any(p in source for p in idem_db_patterns):
+                violations.append(path.relative_to(REPO).as_posix())
+    assert not violations, "direct sqlite3 for idempotency found in production: " + ", ".join(violations)
+
+
+def test_idemlog_delegate_test_file_deleted():
+    assert not (REPO / "tests" / "test_idemlog_delegate.py").exists()
