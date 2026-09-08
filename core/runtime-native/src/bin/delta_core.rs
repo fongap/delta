@@ -60,8 +60,9 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use delta_runtime_native::{
-    run_validation, validate_all, validate_source_citation, ArtifactInput, ArtifactRegistryWriter,
-    IdempotencyWriter, LedgerWriter, TaskStoreWriter,
+    args_sha256, operation_id, run_validation, validate_all, validate_source_citation,
+    ArtifactInput, ArtifactRegistryWriter, IdempotencyWriter, LedgerWriter, SideEffectEntry,
+    SideEffectState, TaskStoreWriter,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -90,6 +91,13 @@ enum Command {
         ts: Option<f64>,
         payload: Option<Value>,
         workspace: Option<String>,
+    },
+    #[serde(rename = "idem.identify")]
+    IdemIdentify {
+        run_id: String,
+        tool_call_id: String,
+        #[serde(default)]
+        args: Value,
     },
     #[serde(rename = "idem.record_planned")]
     IdemRecordPlanned {
@@ -129,6 +137,42 @@ enum Command {
         db: String,
         run_id: String,
         tool_call_id: String,
+    },
+    #[serde(rename = "idem.initialize")]
+    IdemInitialize { db: String },
+    #[serde(rename = "idem.lookup")]
+    IdemLookup {
+        db: String,
+        run_id: String,
+        tool_call_id: String,
+        #[serde(default)]
+        args: Value,
+    },
+    #[serde(rename = "idem.get")]
+    IdemGet {
+        db: String,
+        run_id: String,
+        tool_call_id: String,
+    },
+    #[serde(rename = "idem.list")]
+    IdemList {
+        db: String,
+        run_id: String,
+        view: String,
+    },
+    #[serde(rename = "idem.sweep_stale")]
+    IdemSweepStale {
+        db: String,
+        interrupted_run_ids: Vec<String>,
+    },
+    #[serde(rename = "idem.resolve_uncertain")]
+    IdemResolveUncertain {
+        db: String,
+        run_id: String,
+        tool_call_id: String,
+        resolution: String,
+        #[serde(default)]
+        result: Value,
     },
     #[serde(rename = "task.save")]
     TaskSave {
@@ -242,6 +286,73 @@ fn err(s: String) -> Value {
     serde_json::json!({"ok": false, "error": s})
 }
 
+fn lookup_entry_json(entry: SideEffectEntry) -> Value {
+    match entry.state {
+        SideEffectState::Uncertain => serde_json::json!({
+            "tool_name": entry.tool_name,
+            "result": Value::Null,
+            "state": "uncertain",
+            "operation_id": entry.operation_id,
+            "committed_at": entry.committed_at,
+        }),
+        SideEffectState::Committed => serde_json::json!({
+            "tool_name": entry.tool_name,
+            "result": entry.result,
+            "state": "committed",
+            "operation_id": entry.operation_id,
+            "committed_at": entry.committed_at,
+        }),
+        _ => Value::Null,
+    }
+}
+
+fn raw_entry_json(entry: SideEffectEntry) -> Value {
+    serde_json::json!({
+        "run_id": entry.run_id,
+        "tool_call_id": entry.tool_call_id,
+        "tool_name": entry.tool_name,
+        "args_sha256": entry.args_sha256,
+        "result": entry.result,
+        "state": entry.state.as_str(),
+        "operation_id": entry.operation_id,
+        "committed_at": entry.committed_at,
+        "updated_at": entry.updated_at,
+    })
+}
+
+fn listed_entry_json(entry: SideEffectEntry, view: &str) -> Value {
+    match view {
+        "uncommitted" => serde_json::json!({
+            "tool_call_id": entry.tool_call_id,
+            "tool_name": entry.tool_name,
+            "state": entry.state.as_str(),
+            "operation_id": entry.operation_id,
+            "updated_at": entry.updated_at,
+        }),
+        "uncertain" => serde_json::json!({
+            "tool_call_id": entry.tool_call_id,
+            "tool_name": entry.tool_name,
+            "operation_id": entry.operation_id,
+            "updated_at": entry.updated_at,
+        }),
+        "committed" => serde_json::json!({
+            "tool_call_id": entry.tool_call_id,
+            "tool_name": entry.tool_name,
+            "args_sha256": entry.args_sha256,
+            "result": entry.result,
+            "operation_id": entry.operation_id,
+            "committed_at": entry.committed_at,
+        }),
+        "swept" => serde_json::json!({
+            "run_id": entry.run_id,
+            "tool_call_id": entry.tool_call_id,
+            "tool_name": entry.tool_name,
+            "operation_id": entry.operation_id,
+        }),
+        _ => Value::Null,
+    }
+}
+
 fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
     let mut cache = cache.lock().unwrap();
     let result: Result<Value, String> = match cmd {
@@ -269,6 +380,104 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
             let workspace = workspace.unwrap_or_default();
             match writer.append(&run_id, &event_type, &actor, ts, &payload, &workspace) {
                 Ok(v) => Ok(v),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::IdemIdentify {
+            run_id,
+            tool_call_id,
+            args,
+        } => Ok(serde_json::json!({
+            "args_sha256": args_sha256(&args),
+            "operation_id": operation_id(&run_id, &tool_call_id),
+        })),
+        Command::IdemInitialize { db } => match cache.idem(&db) {
+            Ok(_) => Ok(serde_json::json!({"initialized": true})),
+            Err(e) => Err(e),
+        },
+        Command::IdemLookup {
+            db,
+            run_id,
+            tool_call_id,
+            args,
+        } => {
+            let writer = match cache.idem(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            match writer.lookup(&run_id, &tool_call_id, &args) {
+                Ok(Some(entry)) => Ok(lookup_entry_json(entry)),
+                Ok(None) => Ok(Value::Null),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::IdemGet {
+            db,
+            run_id,
+            tool_call_id,
+        } => {
+            let writer = match cache.idem(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            match writer.get(&run_id, &tool_call_id) {
+                Ok(Some(entry)) => Ok(raw_entry_json(entry)),
+                Ok(None) => Ok(Value::Null),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::IdemList { db, run_id, view } => {
+            let writer = match cache.idem(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let entries = match view.as_str() {
+                "uncommitted" => writer.uncommitted_for_run(&run_id),
+                "uncertain" => writer.uncertain_for_run(&run_id),
+                "committed" => writer.committed_for_run(&run_id),
+                _ => return err(format!("unknown idempotency list view: {view}")),
+            };
+            match entries {
+                Ok(items) => Ok(Value::Array(
+                    items
+                        .into_iter()
+                        .map(|entry| listed_entry_json(entry, &view))
+                        .collect(),
+                )),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::IdemSweepStale {
+            db,
+            interrupted_run_ids,
+        } => {
+            let writer = match cache.idem(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            match writer.sweep_stale(&interrupted_run_ids) {
+                Ok(items) => Ok(Value::Array(
+                    items
+                        .into_iter()
+                        .map(|entry| listed_entry_json(entry, "swept"))
+                        .collect(),
+                )),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::IdemResolveUncertain {
+            db,
+            run_id,
+            tool_call_id,
+            resolution,
+            result,
+        } => {
+            let writer = match cache.idem(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            match writer.resolve_uncertain(&run_id, &tool_call_id, &resolution, &result) {
+                Ok(_) => Ok(Value::Null),
                 Err(e) => Err(e.to_string()),
             }
         }

@@ -1,15 +1,18 @@
-"""Storage authority migration guard — R1 plumbing + enforcement (ADR-012/014/015/016).
+"""Control-plane authority guard (ADR-012/015/016/020/022).
 
 Two-tier checks:
 
 1. **Structural (always on)**: scans ``core/`` for direct ``sqlite3.connect``
    calls and verifies that each R1 candidate module forward-declares the
-   ``is_rust_authority`` import. Lands in PR11 (ADR-012).
+   ``is_rust_authority`` import for domains that are still migrating.
+
+   Idempotency is hard-cut: its deleted delegate must stay absent and its
+   Python facade may not contain SQLite or authority-switch code.
 
 2. **Enforcement (opt-in)**: when ``DELTA_RUST_AUTHORITY=1`` AND this
    script is invoked with the ``--enforce-rust-authority`` flag, scans
-   for direct ``IdempotencyLog(...)`` / ``RunEventLedger(...)`` /
-   ``TaskStore(...)`` instantiations in non-test code and verifies they
+   for direct ``RunEventLedger(...)`` / ``TaskStore(...)`` instantiations
+   in non-test code and verifies they
    go through the corresponding ``maybe_wrap`` / delegate wrapper
    (ADR-014/015/016).
 
@@ -43,7 +46,6 @@ STORAGE_AUTHORITY_IMPORT = re.compile(
     r"from\s+packages\s+import\s+storage_authority"
 )
 
-IDEMPOTENCY_LOG_DIRECT = re.compile(r"IdempotencyLog\s*\(")
 RUN_LEDGER_DIRECT = re.compile(r"RunEventLedger\s*\(")
 TASK_STORE_DIRECT = re.compile(r"TaskStore\s*\(")
 # R2 (PR132 / ADR-020): artifact registration. The Python authority
@@ -55,9 +57,6 @@ TASK_STORE_DIRECT = re.compile(r"TaskStore\s*\(")
 ARTIFACT_REGISTER_DIRECT = re.compile(r"\bregister_artifact\s*\(")
 ARTIFACT_REGISTER_RUN_DIRECT = re.compile(r"\bregister_run_artifacts\s*\(")
 
-MAYBE_WRAP_OR_DELEGATE = re.compile(
-    r"maybe_wrap\s*\(|IdempotencyLogWithDelegate\s*\("
-)
 MAYBE_WRAP_OR_DELEGATE_LEDGER = re.compile(
     r"maybe_wrap_ledger\s*\(|RunEventLedgerWithDelegate\s*\("
 )
@@ -71,7 +70,6 @@ MAYBE_WRAP_OR_DELEGATE_ARTIFACT = re.compile(
 )
 
 TESTS = REPO / "tests"
-CORE_REFERENCE = re.compile(r"from\s+core\.idemlog_delegate\s+import")
 LEDGER_REFERENCE = re.compile(r"from\s+core\.ledger_delegate\s+import")
 TASKSTORE_REFERENCE = re.compile(r"from\s+core\.automation\.store_delegate\s+import")
 ARTIFACT_REFERENCE = re.compile(r"from\s+core\.artifact_delegate\s+import")
@@ -79,7 +77,6 @@ ARTIFACT_REFERENCE = re.compile(r"from\s+core\.artifact_delegate\s+import")
 # Map each R1 domain to the file path(s) that own it. The mapping is
 # explicit (not heuristic) so the guard is stable across refactors.
 DOMAIN_TO_FILES: dict[str, tuple[str, ...]] = {
-    "idempotency": ("core/idemlog.py",),
     "ledger": ("core/ledger.py",),
     "run_state": ("core/ledger.py",),
     "task_identity": ("core/automation/store.py",),
@@ -94,7 +91,6 @@ DOMAIN_TO_FILES: dict[str, tuple[str, ...]] = {
 # flag itself.
 DELEGATE_FILES: frozenset[str] = frozenset(
     {
-        "core/idemlog_delegate.py",
         "core/ledger_delegate.py",
         "core/automation/store_delegate.py",
         "core/artifact_delegate.py",

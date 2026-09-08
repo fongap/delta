@@ -87,33 +87,7 @@ impl IdempotencyReader {
 
     /// List all side effects for a run, ordered by updated_at.
     pub fn for_run(&self, run_id: &str) -> Result<Vec<SideEffectEntry>, ShadowReadError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT run_id, tool_call_id, tool_name, args_sha256,
-                    result_json, state, operation_id, committed_at, updated_at
-             FROM side_effects WHERE run_id = ? ORDER BY updated_at",
-        )?;
-        let rows = stmt.query_map(params![run_id], |row| {
-            let result_str: String = row.get(4)?;
-            let result: Value = serde_json::from_str(&result_str).unwrap_or(Value::Null);
-            let state_str: String = row.get(5)?;
-            let state = SideEffectState::parse(&state_str).unwrap_or(SideEffectState::Committed);
-            Ok(SideEffectEntry {
-                run_id: row.get(0)?,
-                tool_call_id: row.get(1)?,
-                tool_name: row.get(2)?,
-                args_sha256: row.get(3)?,
-                result,
-                state,
-                operation_id: row.get(6)?,
-                committed_at: row.get(7)?,
-                updated_at: row.get(8)?,
-            })
-        })?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(row?);
-        }
-        Ok(out)
+        entries_for_run(&self.conn, run_id)
     }
 
     /// List all uncommitted (Planned or Executing) side effects for a run.
@@ -142,6 +116,39 @@ impl IdempotencyReader {
             .filter(|e| e.state == SideEffectState::Committed)
             .collect())
     }
+}
+
+fn entries_for_run(
+    conn: &Connection,
+    run_id: &str,
+) -> Result<Vec<SideEffectEntry>, ShadowReadError> {
+    let mut stmt = conn.prepare(
+        "SELECT run_id, tool_call_id, tool_name, args_sha256,
+                result_json, state, operation_id, committed_at, updated_at
+         FROM side_effects WHERE run_id = ? ORDER BY updated_at",
+    )?;
+    let rows = stmt.query_map(params![run_id], |row| {
+        let result_str: String = row.get(4)?;
+        let result: Value = serde_json::from_str(&result_str).unwrap_or(Value::Null);
+        let state_str: String = row.get(5)?;
+        let state = SideEffectState::parse(&state_str).unwrap_or(SideEffectState::Committed);
+        Ok(SideEffectEntry {
+            run_id: row.get(0)?,
+            tool_call_id: row.get(1)?,
+            tool_name: row.get(2)?,
+            args_sha256: row.get(3)?,
+            result,
+            state,
+            operation_id: row.get(6)?,
+            committed_at: row.get(7)?,
+            updated_at: row.get(8)?,
+        })
+    })?;
+    let mut out = Vec::new();
+    for row in rows {
+        out.push(row?);
+    }
+    Ok(out)
 }
 
 /// Initialize the `side_effects` table + index. Shared by reader and writer.
@@ -455,6 +462,132 @@ impl IdempotencyWriter {
                 SideEffectState::Executing.as_str(),
             ],
         )?;
+        Ok(())
+    }
+
+    /// Return one entry by its stable `(run_id, tool_call_id)` identity.
+    pub fn get(
+        &self,
+        run_id: &str,
+        tool_call_id: &str,
+    ) -> Result<Option<SideEffectEntry>, ShadowReadError> {
+        Ok(entries_for_run(&self.conn, run_id)?
+            .into_iter()
+            .find(|entry| entry.tool_call_id == tool_call_id))
+    }
+
+    /// Resolve replay eligibility inside the Rust authority.
+    pub fn lookup(
+        &self,
+        run_id: &str,
+        tool_call_id: &str,
+        arguments: &Value,
+    ) -> Result<Option<SideEffectEntry>, ShadowReadError> {
+        let Some(entry) = self.get(run_id, tool_call_id)? else {
+            return Ok(None);
+        };
+        if entry.args_sha256 != args_sha256(arguments) {
+            return Ok(None);
+        }
+        if matches!(
+            entry.state,
+            SideEffectState::Committed | SideEffectState::Uncertain
+        ) {
+            return Ok(Some(entry));
+        }
+        Ok(None)
+    }
+
+    pub fn uncommitted_for_run(
+        &self,
+        run_id: &str,
+    ) -> Result<Vec<SideEffectEntry>, ShadowReadError> {
+        Ok(entries_for_run(&self.conn, run_id)?
+            .into_iter()
+            .filter(|entry| !entry.state.is_terminal())
+            .collect())
+    }
+
+    pub fn uncertain_for_run(&self, run_id: &str) -> Result<Vec<SideEffectEntry>, ShadowReadError> {
+        Ok(entries_for_run(&self.conn, run_id)?
+            .into_iter()
+            .filter(|entry| entry.state == SideEffectState::Uncertain)
+            .collect())
+    }
+
+    pub fn committed_for_run(&self, run_id: &str) -> Result<Vec<SideEffectEntry>, ShadowReadError> {
+        Ok(entries_for_run(&self.conn, run_id)?
+            .into_iter()
+            .filter(|entry| entry.state == SideEffectState::Committed)
+            .collect())
+    }
+
+    /// Atomically identify and transition every stale side effect selected
+    /// by the caller's interrupted-run set. The returned entries are the
+    /// pre-transition rows used for audit projection.
+    pub fn sweep_stale(
+        &self,
+        interrupted_run_ids: &[String],
+    ) -> Result<Vec<SideEffectEntry>, ShadowReadError> {
+        let mut swept = Vec::new();
+        for run_id in interrupted_run_ids {
+            let stale = self.uncommitted_for_run(run_id)?;
+            for entry in stale {
+                self.mark_uncertain(run_id, &entry.tool_call_id)?;
+                swept.push(entry);
+            }
+        }
+        Ok(swept)
+    }
+
+    /// Apply an operator decision to an Uncertain side effect.
+    pub fn resolve_uncertain(
+        &self,
+        run_id: &str,
+        tool_call_id: &str,
+        resolution: &str,
+        result: &Value,
+    ) -> Result<(), ShadowReadError> {
+        if run_id.is_empty() || tool_call_id.is_empty() {
+            return Ok(());
+        }
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64();
+        if resolution == "confirmed" {
+            let confirmed = if result.is_null() {
+                serde_json::json!({"confirmed": true})
+            } else {
+                result.clone()
+            };
+            self.conn.execute(
+                "UPDATE side_effects SET state=?, result_json=?, committed_at=?, updated_at=?
+                 WHERE run_id=? AND tool_call_id=? AND state=?",
+                params![
+                    SideEffectState::Committed.as_str(),
+                    serde_json::to_string(&confirmed)?,
+                    now,
+                    now,
+                    run_id,
+                    tool_call_id,
+                    SideEffectState::Uncertain.as_str(),
+                ],
+            )?;
+        } else {
+            self.conn.execute(
+                "UPDATE side_effects SET state=?, result_json=?, updated_at=?
+                 WHERE run_id=? AND tool_call_id=? AND state=?",
+                params![
+                    SideEffectState::Failed.as_str(),
+                    serde_json::to_string(&serde_json::json!({"resolution": resolution}))?,
+                    now,
+                    run_id,
+                    tool_call_id,
+                    SideEffectState::Uncertain.as_str(),
+                ],
+            )?;
+        }
         Ok(())
     }
 }

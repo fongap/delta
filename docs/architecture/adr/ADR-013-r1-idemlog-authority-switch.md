@@ -6,7 +6,7 @@
 - 决策类型：迁移阶段设计（已被 ADR-017 的完成记录取代）
 - 关联：ADR-009 / ADR-010 / ADR-011 / ADR-012 / ADR-017（R1 State Foundation 完成）/ `docs/governance/rust-core-migration.md` §5 / §6 / §7 / §11
 
-> **Superseded 说明**：本 ADR 描述的三阶段渐进路径（A→B→C）已被 ADR-017 的实际实现取代。ADR-017 记录了最终落地的 per-domain authority selector + `DeltaCoreClient` 统一进程入口，不再使用 subprocess 委托模式。本文件保留作为历史设计参考。
+> **Superseded 说明**：本 ADR 描述的三阶段渐进路径（A→B→C）已被 ADR-017 的实际实现取代，最终由 ADR-022 hard-cut 完成。ADR-022 删除了 delegate wrapper、fallback 路径和选择开关，Rust 成为 Idempotency 域的唯一事实来源。本文件保留作为历史设计参考。
 
 ## 背景
 

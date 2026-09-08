@@ -5,7 +5,7 @@ shortcut that bypasses the delegate wrappers:
 
     SessionManager (production factory)
         ↓
-    delegate wrapper (IdempotencyLogWithDelegate / ...)
+    Rust-authoritative facade / remaining migration wrappers
         ↓
     DeltaCoreClient (persistent connection)
         ↓
@@ -56,14 +56,14 @@ class _NoopProvider:
 @pytest.fixture
 def rust_authority_all_on(monkeypatch):
     _skip_if_no_binary()
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "idempotency,ledger,task_identity")
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "ledger,task_identity")
 
 
 # -- Idempotency: full production call chain ---------------------------------
 
 
 def test_idempotency_full_production_chain(rust_authority_all_on, tmp_path):
-    """SessionManager → IdempotencyLogWithDelegate → DeltaCoreClient →
+    """SessionManager → IdempotencyLog → DeltaCoreClient →
     delta_core → SQLite → Python read-back.
 
     Covers all five idempotency states: planned, executing, committed,
@@ -289,14 +289,13 @@ def test_reverse_guard_no_direct_python_write_when_authority_on(
     data_dir = tmp_path / "delta-state"
     mgr = SessionManager(data_dir=data_dir, provider=_NoopProvider())
     try:
-        # 1. The factory must create delegate wrappers.
-        from core.idemlog_delegate import IdempotencyLogWithDelegate
+        # 1. Idempotency is hard-cut; the other R1 domains still use wrappers.
+        from core.idemlog import IdempotencyLog
         from core.ledger_delegate import RunEventLedgerWithDelegate
         from core.automation.store_delegate import TaskStoreWithDelegate
 
-        assert isinstance(mgr.idem_log, IdempotencyLogWithDelegate), (
-            "SessionManager did not create an IdempotencyLogWithDelegate; "
-            "the production factory must go through maybe_wrap."
+        assert isinstance(mgr.idem_log, IdempotencyLog), (
+            "SessionManager did not create the Rust-authoritative IdempotencyLog facade."
         )
         assert isinstance(mgr.run_ledger, RunEventLedgerWithDelegate), (
             "SessionManager did not create a RunEventLedgerWithDelegate; "
@@ -317,7 +316,7 @@ def test_reverse_guard_no_direct_python_write_when_authority_on(
         # record_planned creates a planned row, not committed; check
         # via the uncommitted_for_run path instead.
         uncommitted = mgr.idem_log.uncommitted_for_run("r-guard-1")
-        assert len(uncommitted) >= 0  # row exists in SQLite
+        assert len(uncommitted) >= 1  # row exists in SQLite
 
         events = mgr.run_ledger.events("r-guard-1")
         assert len(events) == 1
@@ -357,7 +356,7 @@ def test_portable_smoke_chinese_space_path(rust_authority_all_on, tmp_path):
     3. ``delta_core.exe`` is found at
        ``<root>/App/Delta/delta_core.exe`` via
        ``DELTA_PORTABLE_ROOT``.
-    4. Authority switch: all three delegates activate.
+    4. Idempotency is hard-cut; the remaining two delegates activate.
     5. Rust authority does NOT fall back to Python.
     """
     import shutil
@@ -379,12 +378,12 @@ def test_portable_smoke_chinese_space_path(rust_authority_all_on, tmp_path):
 
     mgr = SessionManager(data_dir=data_dir, provider=_NoopProvider())
     try:
-        # 1. The three delegates must all be active.
+        # 1. Idempotency is hard-cut; the remaining delegates are active.
         from core.automation.store_delegate import TaskStoreWithDelegate
-        from core.idemlog_delegate import IdempotencyLogWithDelegate
+        from core.idemlog import IdempotencyLog
         from core.ledger_delegate import RunEventLedgerWithDelegate
 
-        assert isinstance(mgr.idem_log, IdempotencyLogWithDelegate)
+        assert isinstance(mgr.idem_log, IdempotencyLog)
         assert isinstance(mgr.run_ledger, RunEventLedgerWithDelegate)
         assert isinstance(mgr.task_store, TaskStoreWithDelegate)
 
@@ -392,11 +391,18 @@ def test_portable_smoke_chinese_space_path(rust_authority_all_on, tmp_path):
         from packages.delta_core_client import _find_delta_core_binary
 
         # Set DELTA_PORTABLE_ROOT and verify the lookup finds the staged binary.
+        # Unset DELTA_CORE_BINARY so it doesn't shadow the portable lookup.
         import os
+        saved = os.environ.pop("DELTA_CORE_BINARY", None)
         os.environ["DELTA_PORTABLE_ROOT"] = str(portable_root)
-        found = _find_delta_core_binary()
-        assert found is not None
-        assert found == app_delta / BINARY.name
+        try:
+            found = _find_delta_core_binary()
+            assert found is not None
+            assert found == app_delta / BINARY.name
+        finally:
+            os.environ.pop("DELTA_PORTABLE_ROOT", None)
+            if saved is not None:
+                os.environ["DELTA_CORE_BINARY"] = saved
 
         # 3. A real write through the delegate reaches SQLite.
         mgr.idem_log.record_planned(

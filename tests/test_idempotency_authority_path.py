@@ -1,71 +1,51 @@
-"""Structural test: all production Idempotency paths go through maybe_wrap (P0-D).
+"""Architecture guard for the R1 Idempotency hard cut (ADR-022)."""
 
-This test verifies that no production code outside the exempt set
-(delegate module, tests, migration tool) directly instantiates
-``IdempotencyLog(...)`` without wrapping it through ``maybe_wrap``.
-
-The CI guard ``scripts/check_rust_authority_migration.py`` enforces the
-same check at a static-analysis level; this test provides a pytest-level
-safety net that runs in the default test suite.
-"""
-
-from __future__ import annotations
-
-import re
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-CORE = REPO / "core"
-SERVICES = REPO / "services"
-
-IDEMPOTENCY_LOG_DIRECT = re.compile(r"IdempotencyLog\s*\(")
-MAYBE_WRAP = re.compile(r"maybe_wrap\s*\(")
-DELEGATE_IMPORT = re.compile(r"from\s+core\.idemlog_delegate\s+import")
-
-EXEMPT_FILES: frozenset[str] = frozenset(
-    {
-        "core/idemlog.py",
-        "core/idemlog_delegate.py",
-        "core/reference_harness.py",  # docstring mention only
-        "scripts/check_rust_authority_migration.py",
-    }
-)
 
 
-def _production_py_files():
-    for search_dir in (CORE, SERVICES):
-        if not search_dir.exists():
-            continue
-        for py in search_dir.rglob("*.py"):
-            try:
-                rel = py.relative_to(REPO).as_posix()
-            except ValueError:
-                continue
-            if rel in EXEMPT_FILES:
-                continue
-            yield py, rel
+def test_legacy_idempotency_delegate_is_deleted():
+    assert not (REPO / "core" / "idemlog_delegate.py").exists()
 
 
-def test_no_direct_idempotency_log_instantiation_without_maybe_wrap():
-    """Production code must not directly instantiate IdempotencyLog(...)
-    without wrapping it through maybe_wrap."""
-    violations: list[str] = []
+def test_idempotency_facade_has_no_python_writer_or_switch():
+    source = (REPO / "core" / "idemlog.py").read_text(encoding="utf-8")
+    assert "sqlite3" not in source
+    assert "is_rust_authority" not in source
+    assert "DELTA_RUST_AUTHORITY" not in source
+    assert "default_client().command" in source
 
-    for py, rel in _production_py_files():
-        try:
-            text = py.read_text(encoding="utf-8")
-        except (OSError, UnicodeDecodeError):
-            continue
-        if not IDEMPOTENCY_LOG_DIRECT.search(text):
-            continue
-        if MAYBE_WRAP.search(text) and DELEGATE_IMPORT.search(text):
-            continue
-        for match in IDEMPOTENCY_LOG_DIRECT.finditer(text):
-            line_no = text[: match.start()].count("\n") + 1
-            violations.append(f"{rel}:{line_no}")
 
-    assert not violations, (
-        "Production code must not directly instantiate IdempotencyLog(...) "
-        "without wrapping through maybe_wrap. Violations:\n  "
-        + "\n  ".join(violations)
-    )
+def test_production_constructs_rust_facade_directly():
+    source = (REPO / "services" / "server" / "manager.py").read_text(encoding="utf-8")
+    assert "from core.idemlog import IdempotencyLog" in source
+    assert 'self.idem_log = IdempotencyLog(base / "side-effects.db")' in source
+    assert "idemlog_delegate" not in source
+
+
+def test_no_production_file_imports_deleted_delegate():
+    violations = []
+    for root in (REPO / "core", REPO / "services"):
+        for path in root.rglob("*.py"):
+            if "core.idemlog_delegate" in path.read_text(encoding="utf-8"):
+                violations.append(path.relative_to(REPO).as_posix())
+    assert not violations, "deleted delegate imported by: " + ", ".join(violations)
+
+
+def test_idempotency_has_no_shadow_sqlite_writer():
+    """No production file should create a direct sqlite3 connection
+    for the idempotency domain (side_effects.db). Test fixtures that
+    create legacy databases for migration testing are allowed."""
+    violations = []
+    idem_db_patterns = ("side_effects.db", "side-effects.db")
+    for root in (REPO / "core", REPO / "services"):
+        for path in root.rglob("*.py"):
+            source = path.read_text(encoding="utf-8")
+            if "sqlite3" in source and any(p in source for p in idem_db_patterns):
+                violations.append(path.relative_to(REPO).as_posix())
+    assert not violations, "direct sqlite3 for idempotency found in production: " + ", ".join(violations)
+
+
+def test_idemlog_delegate_test_file_deleted():
+    assert not (REPO / "tests" / "test_idemlog_delegate.py").exists()
