@@ -1,4 +1,4 @@
-"""Control-plane authority guard (ADR-012/015/016/020/022/023).
+"""Control-plane authority guard (ADR-012/015/020/022/023/024).
 
 Two-tier checks:
 
@@ -6,15 +6,14 @@ Two-tier checks:
    calls and verifies that each R1 candidate module forward-declares the
    ``is_rust_authority`` import for domains that are still migrating.
 
-   Idempotency (ADR-022) and Ledger (ADR-023) are hard-cut: their
-   delegates are deleted and the Python facade is always the Rust
-   authority.
+   Idempotency (ADR-022), Ledger (ADR-023), and Task Identity (ADR-024)
+   are hard-cut: their delegates are deleted and the Python facade is
+   always the Rust authority.
 
 2. **Enforcement (opt-in)**: when ``DELTA_RUST_AUTHORITY=1`` AND this
    script is invoked with the ``--enforce-rust-authority`` flag, scans
-   for direct ``TaskStore(...)`` instantiations in non-test code and
-   verifies they go through the corresponding ``maybe_wrap`` / delegate
-   wrapper (ADR-016).
+   for direct ``register_artifact(...)`` calls in non-test code and
+   verifies they go through the corresponding delegate wrapper (ADR-020).
 
 Run::
 
@@ -56,9 +55,6 @@ TASK_STORE_DIRECT = re.compile(r"TaskStore\s*\(")
 ARTIFACT_REGISTER_DIRECT = re.compile(r"\bregister_artifact\s*\(")
 ARTIFACT_REGISTER_RUN_DIRECT = re.compile(r"\bregister_run_artifacts\s*\(")
 
-MAYBE_WRAP_OR_DELEGATE_TASKSTORE = re.compile(
-    r"maybe_wrap_taskstore\s*\(|TaskStoreWithDelegate\s*\("
-)
 MAYBE_WRAP_OR_DELEGATE_ARTIFACT = re.compile(
     r"register_artifact_delegated\s*\(|"
     r"register_run_artifacts_delegated\s*\(|"
@@ -66,7 +62,6 @@ MAYBE_WRAP_OR_DELEGATE_ARTIFACT = re.compile(
 )
 
 TESTS = REPO / "tests"
-TASKSTORE_REFERENCE = re.compile(r"from\s+core\.automation\.store_delegate\s+import")
 ARTIFACT_REFERENCE = re.compile(r"from\s+core\.artifact_delegate\s+import")
 
 # Map each R1 domain to the file path(s) that own it. The mapping is
@@ -74,7 +69,6 @@ ARTIFACT_REFERENCE = re.compile(r"from\s+core\.artifact_delegate\s+import")
 DOMAIN_TO_FILES: dict[str, tuple[str, ...]] = {
     "ledger": ("core/ledger.py",),
     "run_state": ("core/ledger.py",),
-    "task_identity": ("core/automation/store.py",),
     # R2 (PR132 / ADR-020): artifact is the first R2 domain to gain a
     # write authority. The Python authority lives in core/artifact.py;
     # the delegate wrapper is core/artifact_delegate.py.
@@ -86,7 +80,6 @@ DOMAIN_TO_FILES: dict[str, tuple[str, ...]] = {
 # flag itself.
 DELEGATE_FILES: frozenset[str] = frozenset(
     {
-        "core/automation/store_delegate.py",
         "core/artifact_delegate.py",
     }
 )
@@ -159,16 +152,10 @@ def _scan_enforcement() -> list[tuple[Path, int, str, str]]:
             except (OSError, UnicodeDecodeError):
                 continue
 
-            # Idempotency and Ledger are hard-cut (ADR-022 / ADR-023):
-            # their delegates are deleted and the Python facade is always
-            # the Rust authority.  No enforcement guard needed.
-
-            if is_rust_authority("task_identity"):
-                for match in TASK_STORE_DIRECT.finditer(text):
-                    line_no = text[: match.start()].count("\n") + 1
-                    if MAYBE_WRAP_OR_DELEGATE_TASKSTORE.search(text) and TASKSTORE_REFERENCE.search(text):
-                        continue
-                    violations.append((py, line_no, match.group(), "task_identity"))
+            # Idempotency, Ledger, and Task Identity are hard-cut
+            # (ADR-022 / ADR-023 / ADR-024): their delegates are deleted
+            # and the Python facade is always the Rust authority.
+            # No enforcement guard needed for these domains.
 
             # R2 (PR132 / ADR-020): artifact registration. Match direct
             # calls to `register_artifact(...)` / `register_run_artifacts(...)`

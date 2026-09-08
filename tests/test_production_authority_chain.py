@@ -205,7 +205,7 @@ def test_ledger_full_production_chain(rust_authority_all_on, tmp_path):
 
 
 def test_task_identity_full_production_chain(rust_authority_all_on, tmp_path):
-    """SessionManager → TaskStoreWithDelegate → DeltaCoreClient →
+    """SessionManager → TaskStore → DeltaCoreClient →
     delta_core → SQLite → Python read-back.
 
     Covers: save, update, add_run, delete.
@@ -291,10 +291,10 @@ def test_reverse_guard_no_direct_python_write_when_authority_on(
     data_dir = tmp_path / "delta-state"
     mgr = SessionManager(data_dir=data_dir, provider=_NoopProvider())
     try:
-        # 1. Idempotency is hard-cut; the other R1 domains still use wrappers.
+        # 1. Idempotency and Ledger are hard-cut; Task Identity is hard-cut (ADR-024).
         from core.idemlog import IdempotencyLog
         from core.ledger import RunEventLedger
-        from core.automation.store_delegate import TaskStoreWithDelegate
+        from core.automation.store import TaskStore
 
         assert isinstance(mgr.idem_log, IdempotencyLog), (
             "SessionManager did not create the Rust-authoritative IdempotencyLog facade."
@@ -303,9 +303,9 @@ def test_reverse_guard_no_direct_python_write_when_authority_on(
             "SessionManager did not create a RunEventLedger; "
             "ADR-023 hard-cut: ledger is a thin Rust facade."
         )
-        assert isinstance(mgr.task_store, TaskStoreWithDelegate), (
-            "SessionManager did not create a TaskStoreWithDelegate; "
-            "the production factory must go through maybe_wrap_taskstore."
+        assert isinstance(mgr.task_store, TaskStore), (
+            "SessionManager did not create a TaskStore; "
+            "ADR-024 hard-cut: task store is a thin Rust facade."
         )
 
         # 2. Write through the delegate; read back through Python.
@@ -380,14 +380,15 @@ def test_portable_smoke_chinese_space_path(rust_authority_all_on, tmp_path):
 
     mgr = SessionManager(data_dir=data_dir, provider=_NoopProvider())
     try:
-        # 1. Idempotency is hard-cut; the remaining delegates are active.
-        from core.automation.store_delegate import TaskStoreWithDelegate
+        # 1. Idempotency, Ledger, and Task Identity are hard-cut (ADR-024).
+        from core.automation.store import TaskStore
+        from core.automation.store import TaskStore
         from core.idemlog import IdempotencyLog
         from core.ledger import RunEventLedger
 
         assert isinstance(mgr.idem_log, IdempotencyLog)
         assert isinstance(mgr.run_ledger, RunEventLedger)
-        assert isinstance(mgr.task_store, TaskStoreWithDelegate)
+        assert isinstance(mgr.task_store, TaskStore)
 
         # 2. The delta_core binary was found via DELTA_PORTABLE_ROOT.
         from packages.delta_core_client import _find_delta_core_binary
@@ -417,6 +418,19 @@ def test_portable_smoke_chinese_space_path(rust_authority_all_on, tmp_path):
             "r-portable-1", "run.completed", actor="system",
             payload={"kind": "run"},
         )
+
+        # 3b. A task save through the TaskStore creates automation.db.
+        from core.automation.models import Schedule, ScheduledTask
+
+        task = ScheduledTask(
+            title="Portable smoke task",
+            instructions="test",
+            schedule=Schedule(kind="once"),
+            workspace="portable_ws",
+        )
+        mgr.task_store.save(task)
+        tasks = mgr.task_store.list()
+        assert len(tasks) >= 1
 
         # 4. Read-back from the same SQLite DB files (now under Data/).
         committed = mgr.idem_log.committed_for_run("r-portable-1")

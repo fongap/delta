@@ -1,7 +1,7 @@
 use std::env;
 use std::process::ExitCode;
 
-use delta_runtime_native::TaskStoreWriter;
+use delta_runtime_native::TaskStore;
 
 fn main() -> ExitCode {
     let mut db: Option<String> = None;
@@ -43,7 +43,7 @@ fn main() -> ExitCode {
         }
     };
 
-    let writer = match TaskStoreWriter::open(&db) {
+    let writer = match TaskStore::open(&db) {
         Ok(w) => w,
         Err(e) => {
             eprintln!("error: cannot open {db}: {e}");
