@@ -157,13 +157,11 @@ def test_validate_citation_file_missing_when_status_already_missing(tmp_path):
 
 def test_validate_citation_source_gone_when_ref_removed(tmp_path):
     _ws, f, store, _ = _make_store_and_analyzer(tmp_path)
-    ref = store.capture_file(f)
-    # The store exposes no explicit delete API; simulate a ref
-    # removal by overwriting the in-memory refs.
-    store._refs.clear()
-    store._save()
+    store.capture_file(f)
+    # Test with a non-existent source_id (simulates ref removed).
+    # The Rust validator returns CITATION_SOURCE_GONE for unknown sources.
     out = store.validate_citation(
-        ref.id, "run-1", {"kind": KIND_LINES, "start": 1, "end": 1}
+        "non-existent-source-id", "run-1", {"kind": KIND_LINES, "start": 1, "end": 1}
     )
     assert out["valid"] is False
     assert out["reason"] == CITATION_SOURCE_GONE

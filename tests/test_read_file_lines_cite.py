@@ -41,12 +41,15 @@ def test_read_file_lines_returns_numbered_window(tmp_path):
 def test_read_file_lines_cite_hook_records_lines_citation(tmp_path):
     """Reads through read_file_lines must land as a `lines` citation in the
     run's source ledger (Source/Citation chokepoint shared with read_file)."""
+    from core.ledger import RunEventLedger
     from core.sources import KIND_LINES, SourceStore
 
     target = tmp_path / "data.txt"
     target.write_text("alpha\nbeta\ngamma\n", encoding="utf-8")
 
-    store = SourceStore(path=tmp_path / "sources.json")
+    ledger_db = tmp_path / "run-events.db"
+    RunEventLedger(ledger_db)
+    store = SourceStore(ledger_db, workspace=tmp_path)
     run_id = "run_test_r4"
 
     tools = file_tools(
@@ -118,6 +121,7 @@ def test_read_file_lines_path_escape_returns_error(tmp_path):
 def test_read_file_lines_resolves_against_second_root(tmp_path):
     """Multi-root: a path inside the second root must be readable, and the
     citation is recorded against the matching root (not the primary)."""
+    from core.ledger import RunEventLedger
     from core.sources import SourceStore
 
     primary = tmp_path / "primary"
@@ -126,7 +130,9 @@ def test_read_file_lines_resolves_against_second_root(tmp_path):
     second.mkdir()
     (second / "shared.txt").write_text("alpha\nbeta\ngamma\n", encoding="utf-8")
 
-    store = SourceStore(path=tmp_path / "sources.json")
+    ledger_db = tmp_path / "run-events.db"
+    RunEventLedger(ledger_db)
+    store = SourceStore(ledger_db, workspace=tmp_path)
 
     tools = file_tools(
         str(primary),

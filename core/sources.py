@@ -8,20 +8,34 @@ path to ``changed`` — versioning by fingerprint, never by copying user files.
 Freshness is a background check, not a blocking gate: runs record what they saw;
 ``check_freshness`` re-hashes file-backed locations asynchronously and surfaces drift
 (``changed`` / ``missing``) in the ledger for UI/audit to act on.
+
+R2 Hard-Cut (ADR-027): Rust ``delta_core`` is the **sole** authority for Source /
+Citation trusted facts. This module is a thin Python facade that performs
+file I/O and fingerprint computation (extraction), then delegates all
+persistence and final verdicts to Rust via :class:`~packages.delta_core_client.DeltaCoreClient`.
+
+Python responsibilities:
+- Read file bytes, compute sha256, stat for mtime/size
+- Construct candidate range dicts from :class:`CitationRange`
+
+Rust responsibilities (via ``delta_core``):
+- Source identity, revision, and fingerprint facts
+- Citation marking and range validation
+- Stale detection and status transitions
+- All trusted persistence in the run-event ledger
 """
 
 from __future__ import annotations
 
 import asyncio
 import hashlib
-import threading
-import uuid
-from dataclasses import asdict, dataclass, field
+import time
+from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Literal
 
-from packages.jsonstate import load_json_state, save_json_state
+from packages.delta_core_client import DeltaCoreError, default_client
 
 ORIGIN_FILE = "file"
 ORIGIN_URL = "url"
@@ -158,6 +172,10 @@ def to_range_dict(value: Any) -> dict[str, Any]:
     UI cannot render. Only fields relevant to the chosen kind are kept; extra
     fields on a ``CitationRange`` (a wide carrier for ergonomics) and on
     already-dict input are dropped so the persisted shape round-trips.
+
+    This function is a **candidate construction helper**. The authoritative
+    range validation and normalization is performed by Rust ``delta_core``
+    during ``citation.mark``.
     """
     if isinstance(value, CitationRange):
         kind = value.kind
@@ -287,6 +305,10 @@ def normalize_cited_ranges(
 
     Empty / None input returns an empty list — not an error, so callers can
     safely call this with no-op citations.
+
+    This function is a **candidate construction helper**. The authoritative
+    range validation and normalization is performed by Rust ``delta_core``
+    during ``citation.mark``.
     """
     if not ranges:
         return []
@@ -294,29 +316,23 @@ def normalize_cited_ranges(
 
 
 class SourceStore:
+    """Thin facade over the Rust ``delta_core`` Source/Citation authority.
+
+    All trusted Source/Citation facts are persisted in the run-event ledger
+    (``run_events.db``) by the Rust process. This class performs file I/O
+    and fingerprint computation locally, then delegates to Rust via the
+    :class:`~packages.delta_core_client.DeltaCoreClient`.
+
+    The constructor takes the ledger database path (``run_events.db``) and
+    the workspace root. The legacy ``sources.json`` file is no longer used.
+    """
+
     def __init__(
-        self, path: str | Path | None = None, *, workspace: str | Path | None = None
+        self, db_path: str | Path | None = None, *, workspace: str | Path | None = None
     ) -> None:
-        self.path = Path(path) if path else None
+        self.db_path = Path(db_path) if db_path else None
         self.workspace = Path(workspace) if workspace else None
-        self._lock = threading.Lock()
-        self._refs: dict[str, SourceRef] = {}
-        self._load()
 
-    # -- persistence ------------------------------------------------------------
-    def _load(self) -> None:
-        if self.path and self.path.is_file():
-            data = load_json_state(self.path, {}) or {}
-            for raw in data.get("refs", []):
-                ref = SourceRef(**raw)
-                self._refs[ref.id] = ref
-
-    def _save(self) -> None:
-        if not self.path:
-            return
-        save_json_state(self.path, {"refs": [asdict(r) for r in self._refs.values()]})
-
-    # -- capturing --------------------------------------------------------------
     def _resolve(self, location: str) -> Path:
         p = Path(location)
         if not p.is_absolute() and self.workspace:
@@ -333,6 +349,16 @@ class SourceStore:
                 pass
         return str(p)
 
+    def _require_db(self) -> str:
+        if not self.db_path:
+            raise DeltaCoreError("SourceStore requires a ledger db_path")
+        return str(self.db_path)
+
+    def _send_command(self, cmd: dict[str, Any]) -> Any:
+        """Send a command to delta_core, raising DeltaCoreError on failure."""
+        return default_client().command(cmd)
+
+    # -- capturing --------------------------------------------------------------
     def capture_file(
         self,
         path: str | Path,
@@ -340,9 +366,10 @@ class SourceStore:
         workspace: str | Path | None = None,
         permissions: dict[str, Any] | None = None,
     ) -> SourceRef:
-        """Capture one version of a workspace file: hash its content bytes and record a
-        SourceRef. Older refs for the same path flip to ``changed``; re-capturing
-        byte-identical content returns the existing ref (no duplicates)."""
+        """Capture one version of a workspace file: hash its content bytes and register
+        the source via Rust. Older refs for the same path flip to ``changed``;
+        re-capturing byte-identical content returns the existing ref (no duplicates).
+        """
         ws = Path(workspace) if workspace else self.workspace
         p = Path(path)
         if not p.is_absolute() and ws:
@@ -362,38 +389,60 @@ class SourceStore:
             size_bytes = st.st_size
         except OSError:
             pass
-        with self._lock:
-            for ref in self._refs.values():
-                if ref.origin == ORIGIN_FILE and ref.location == location:
-                    if ref.fingerprint == fingerprint:
-                        ref.checked_at = _now()
-                        ref.status = FRESH_CURRENT
-                        ref.mtime_ns = mtime_ns
-                        ref.size_bytes = size_bytes
-                        self._save()
-                        return ref
-                    ref.status = FRESH_CHANGED
-                    ref.checked_at = _now()
-                    ref.mtime_ns = mtime_ns
-                    ref.size_bytes = size_bytes
-            ref = SourceRef(
-                id=uuid.uuid4().hex,
-                origin=ORIGIN_FILE,
-                location=location,
-                fingerprint=fingerprint,
-                captured_at=_now(),
-                checked_at=_now(),
-                mtime_ns=mtime_ns,
-                size_bytes=size_bytes,
-                permissions=dict(permissions or {}),
-            )
-            self._refs[ref.id] = ref
-            self._save()
-            return ref
+
+        captured_at = _now()
+        result = self._send_command({
+            "cmd": "source.register",
+            "db": self._require_db(),
+            "origin": ORIGIN_FILE,
+            "location": location,
+            "fingerprint": fingerprint,
+            "captured_at": captured_at,
+            "mtime_ns": mtime_ns,
+            "size_bytes": size_bytes,
+            "permissions": permissions or {},
+            "run_id": "",  # source events use $source namespace
+            "ts": time.time(),
+            "workspace": str(ws) if ws else "",
+        })
+
+        # Convert Rust response to SourceRef
+        return SourceRef(
+            id=result["id"],
+            origin=result["origin"],
+            location=result["location"],
+            fingerprint=result["fingerprint"],
+            captured_at=result["captured_at"],
+            checked_at=result.get("checked_at"),
+            status=result["status"],
+            mtime_ns=result.get("mtime_ns"),
+            size_bytes=result.get("size_bytes"),
+            cited_ranges=result.get("cited_ranges", []),
+            permissions=result.get("permissions", {}),
+        )
 
     # -- queries ----------------------------------------------------------------
     def get(self, ref_id: str) -> SourceRef | None:
-        return self._refs.get(ref_id)
+        result = self._send_command({
+            "cmd": "source.get",
+            "db": self._require_db(),
+            "source_id": ref_id,
+        })
+        if result is None:
+            return None
+        return SourceRef(
+            id=result["id"],
+            origin=result["origin"],
+            location=result["location"],
+            fingerprint=result["fingerprint"],
+            captured_at=result["captured_at"],
+            checked_at=result.get("checked_at"),
+            status=result["status"],
+            mtime_ns=result.get("mtime_ns"),
+            size_bytes=result.get("size_bytes"),
+            cited_ranges=result.get("cited_ranges", []),
+            permissions=result.get("permissions", {}),
+        )
 
     def list(
         self,
@@ -402,18 +451,54 @@ class SourceStore:
         location: str | None = None,
         status: str | None = None,
     ) -> list[SourceRef]:
-        out = list(self._refs.values())
-        if origin is not None:
-            out = [r for r in out if r.origin == origin]
-        if location is not None:
-            out = [r for r in out if r.location == location]
-        if status is not None:
-            out = [r for r in out if r.status == status]
-        return sorted(out, key=lambda r: r.captured_at)
+        result = self._send_command({
+            "cmd": "source.list",
+            "db": self._require_db(),
+            "origin": origin,
+            "location": location,
+            "status": status,
+        })
+        if not isinstance(result, list):
+            return []
+        return [
+            SourceRef(
+                id=r["id"],
+                origin=r["origin"],
+                location=r["location"],
+                fingerprint=r["fingerprint"],
+                captured_at=r["captured_at"],
+                checked_at=r.get("checked_at"),
+                status=r["status"],
+                mtime_ns=r.get("mtime_ns"),
+                size_bytes=r.get("size_bytes"),
+                cited_ranges=r.get("cited_ranges", []),
+                permissions=r.get("permissions", {}),
+            )
+            for r in result
+        ]
 
     def latest(self, location: str, *, origin: str = ORIGIN_FILE) -> SourceRef | None:
-        refs = self.list(origin=origin, location=location)
-        return refs[-1] if refs else None
+        result = self._send_command({
+            "cmd": "source.latest",
+            "db": self._require_db(),
+            "location": location,
+            "origin": origin,
+        })
+        if result is None:
+            return None
+        return SourceRef(
+            id=result["id"],
+            origin=result["origin"],
+            location=result["location"],
+            fingerprint=result["fingerprint"],
+            captured_at=result["captured_at"],
+            checked_at=result.get("checked_at"),
+            status=result["status"],
+            mtime_ns=result.get("mtime_ns"),
+            size_bytes=result.get("size_bytes"),
+            cited_ranges=result.get("cited_ranges", []),
+            permissions=result.get("permissions", {}),
+        )
 
     # -- citations --------------------------------------------------------------
     def mark_cited(
@@ -422,35 +507,44 @@ class SourceStore:
         """Attach a run's citation ranges (pages / rows / message ids) to a source.
 
         ``ranges`` is a list of :class:`CitationRange` or matching dicts; each
-        entry is validated via :func:`normalize_cited_ranges` and stored in
-        canonical form. A bad entry raises ``ValueError`` *before* any
-        mutation so a partially-applied citation can never be persisted.
+        entry is validated by Rust ``delta_core`` and stored in canonical form.
+        A bad entry raises ``DeltaCoreError`` (fail-closed) — no Python fallback.
         """
-        from packages.storage_authority import is_rust_authority
-
-        if is_rust_authority("source_citation"):
-            from core.source_citation_delegate import canonicalize_citations_delegated
-
-            candidates = [
-                {
-                    key: item
-                    for key, item in asdict(value).items()
-                    if item is not None
+        # Convert CitationRange objects to dicts for the wire protocol
+        wire_ranges: list[dict[str, Any]] = []
+        for value in ranges:
+            if isinstance(value, CitationRange):
+                d = {
+                    "kind": value.kind,
+                    "start": value.start,
+                    "end": value.end,
+                    "page": value.page,
+                    "page_end": value.page_end,
+                    "sheet": value.sheet,
+                    "row_start": value.row_start,
+                    "row_end": value.row_end,
+                    "col_start": value.col_start,
+                    "col_end": value.col_end,
+                    "cell_start": value.cell_start,
+                    "cell_end": value.cell_end,
+                    "message_id": value.message_id,
+                    "descriptor": value.descriptor,
                 }
-                if isinstance(value, CitationRange)
-                else value
-                for value in ranges
-            ]
-            normalized = canonicalize_citations_delegated(candidates)
-        else:
-            normalized = normalize_cited_ranges(ranges)
-        with self._lock:
-            ref = self._refs.get(ref_id)
-            if ref is None:
-                return False
-            ref.cited_ranges.append({"run_id": run_id, "ranges": normalized})
-            self._save()
-            return True
+                # Drop None values to keep payload minimal
+                wire_ranges.append({k: v for k, v in d.items() if v is not None})
+            else:
+                wire_ranges.append(value)
+
+        result = self._send_command({
+            "cmd": "citation.mark",
+            "db": self._require_db(),
+            "source_id": ref_id,
+            "run_id": run_id,
+            "ranges": wire_ranges,
+            "ts": time.time(),
+            "workspace": str(self.workspace) if self.workspace else "",
+        })
+        return bool(result.get("marked", False))
 
     def add_citation(
         self,
@@ -460,7 +554,7 @@ class SourceStore:
     ) -> bool:
         """Single-citation convenience. Same contract as ``mark_cited`` but takes
         one range so readers (PDF, XLSX, ``read_file``) can cite without
-        building a list. Validates and appends."""
+        building a list. Validates and appends via Rust."""
         return self.mark_cited(ref_id, run_id, [range])
 
     # -- freshness --------------------------------------------------------------
@@ -474,76 +568,96 @@ class SourceStore:
         the ref's last-seen values we know the content hasn't changed
         and skip the sha256 entirely — the same content-currency
         guarantee at a tiny fraction of the cost for large files.
+
+        This method performs the file I/O and hash computation locally,
+        then sends the observations to Rust for the final status verdict.
         """
-        drifted: list[SourceRef] = []
-        now = _now()
-        with self._lock:
-            for ref in self._refs.values():
-                if ref.origin != ORIGIN_FILE:
+        refs = self.list()
+        checks = []
+        for ref in refs:
+            if ref.origin != ORIGIN_FILE:
+                continue
+            p = self._resolve(ref.location)
+            try:
+                st = p.stat()
+                current_mtime_ns = getattr(st, "st_mtime_ns", None) or int(
+                    st.st_mtime * 1_000_000_000
+                )
+                current_size = st.st_size
+                if (
+                    ref.mtime_ns is not None
+                    and ref.size_bytes is not None
+                    and ref.mtime_ns == current_mtime_ns
+                    and ref.size_bytes == current_size
+                ):
+                    # Fast path: mtime+size unchanged, no need to re-hash
+                    checks.append({
+                        "source_id": ref.id,
+                        "fingerprint": ref.fingerprint,
+                        "mtime_ns": current_mtime_ns,
+                        "size_bytes": current_size,
+                    })
                     continue
-                p = self._resolve(ref.location)
-                new_status = self._classify_against_disk(ref, p)
-                if new_status == FRESH_CURRENT and ref.mtime_ns is not None:
-                    # Refresh the cached stat so the next pass can keep
-                    # skipping the hash (mostly a no-op; matters on
-                    # filesystems with mtime granularity finer than
-                    # the capture's call to stat()).
-                    try:
-                        st = p.stat()
-                        ref.mtime_ns = getattr(st, "st_mtime_ns", None) or int(
-                            st.st_mtime * 1_000_000_000
-                        )
-                        ref.size_bytes = st.st_size
-                    except OSError:
-                        pass
-                if new_status != FRESH_CURRENT:
-                    drifted.append(ref)
-                ref.status = new_status
-                ref.checked_at = now
-            self._save()
+                # Mtime/size differ: re-hash and send observation
+                try:
+                    data = p.read_bytes()
+                    current_fp = _sha256(data)
+                    checks.append({
+                        "source_id": ref.id,
+                        "fingerprint": current_fp,
+                        "mtime_ns": current_mtime_ns,
+                        "size_bytes": current_size,
+                    })
+                except OSError:
+                    # File unreadable
+                    checks.append({
+                        "source_id": ref.id,
+                        "fingerprint": None,
+                        "mtime_ns": None,
+                        "size_bytes": None,
+                    })
+            except OSError:
+                # File missing
+                checks.append({
+                    "source_id": ref.id,
+                    "fingerprint": None,
+                    "mtime_ns": None,
+                    "size_bytes": None,
+                })
+
+        if not checks:
+            return []
+
+        result = self._send_command({
+            "cmd": "source.refresh",
+            "db": self._require_db(),
+            "checks": checks,
+            "ts": time.time(),
+            "workspace": str(self.workspace) if self.workspace else "",
+        })
+
+        # Convert drifted sources back to SourceRef
+        drifted: list[SourceRef] = []
+        if isinstance(result, list):
+            for r in result:
+                drifted.append(SourceRef(
+                    id=r["id"],
+                    origin=r["origin"],
+                    location=r["location"],
+                    fingerprint=r["fingerprint"],
+                    captured_at=r["captured_at"],
+                    checked_at=r.get("checked_at"),
+                    status=r["status"],
+                    mtime_ns=r.get("mtime_ns"),
+                    size_bytes=r.get("size_bytes"),
+                    cited_ranges=r.get("cited_ranges", []),
+                    permissions=r.get("permissions", {}),
+                ))
         return drifted
 
     async def check_freshness_async(self) -> list[SourceRef]:
         """The background-check entry point: runs never block on freshness."""
         return await asyncio.to_thread(self.check_freshness)
-
-    @staticmethod
-    def _classify_against_disk(ref: SourceRef, p: Path) -> Literal["current", "changed", "missing"]:
-        """One ref vs one file path: mtime fast path → sha256 → missing.
-
-        Order of checks:
-
-        1. ``stat()`` fails → ``missing``.
-        2. ``(mtime_ns, size_bytes)`` unchanged from the last successful
-           pass → ``current`` without reading bytes. Cheap; common
-           case for stable files.
-        3. mtime/size differ → re-hash and compare. Equal hash means
-           ``current`` (the file was rewritten with identical content
-           — possible after a ``touch``/restore). Differing hash means
-           ``changed``.
-        4. mtime/size not recorded (older refs, non-file origins) →
-           always re-hash. The legacy behavior is preserved.
-        """
-        try:
-            st = p.stat()
-        except OSError:
-            return FRESH_MISSING
-        current_mtime_ns = getattr(st, "st_mtime_ns", None) or int(
-            st.st_mtime * 1_000_000_000
-        )
-        current_size = st.st_size
-        if (
-            ref.mtime_ns is not None
-            and ref.size_bytes is not None
-            and ref.mtime_ns == current_mtime_ns
-            and ref.size_bytes == current_size
-        ):
-            return FRESH_CURRENT
-        try:
-            matches = _sha256(p.read_bytes()) == ref.fingerprint
-        except OSError:
-            return FRESH_MISSING
-        return FRESH_CURRENT if matches else FRESH_CHANGED
 
     def reindex_stale(self, force: bool = False) -> list[SourceRef]:
         """Targeted freshness re-check for the refs that have actually
@@ -561,47 +675,117 @@ class SourceStore:
         ``current`` (mtime fast path or hash match) are not in the
         return value.
         """
-        drifted: list[SourceRef] = []
-        now = _now()
-        with self._lock:
-            for ref in self._refs.values():
-                if ref.origin != ORIGIN_FILE:
+        refs = self.list()
+        checks = []
+        for ref in refs:
+            if ref.origin != ORIGIN_FILE:
+                continue
+            p = self._resolve(ref.location)
+            if force:
+                # Skip the mtime fast path; always hash.
+                try:
+                    st = p.stat()
+                except OSError:
+                    checks.append({
+                        "source_id": ref.id,
+                        "fingerprint": None,
+                        "mtime_ns": None,
+                        "size_bytes": None,
+                    })
                     continue
-                p = self._resolve(ref.location)
-                if force:
-                    # Skip the mtime fast path; always hash.
+                try:
+                    data = p.read_bytes()
+                    current_fp = _sha256(data)
+                    current_mtime_ns = getattr(st, "st_mtime_ns", None) or int(
+                        st.st_mtime * 1_000_000_000
+                    )
+                    current_size = st.st_size
+                    checks.append({
+                        "source_id": ref.id,
+                        "fingerprint": current_fp,
+                        "mtime_ns": current_mtime_ns,
+                        "size_bytes": current_size,
+                    })
+                except OSError:
+                    checks.append({
+                        "source_id": ref.id,
+                        "fingerprint": None,
+                        "mtime_ns": None,
+                        "size_bytes": None,
+                    })
+            else:
+                try:
+                    st = p.stat()
+                    current_mtime_ns = getattr(st, "st_mtime_ns", None) or int(
+                        st.st_mtime * 1_000_000_000
+                    )
+                    current_size = st.st_size
+                    if (
+                        ref.mtime_ns is not None
+                        and ref.size_bytes is not None
+                        and ref.mtime_ns == current_mtime_ns
+                        and ref.size_bytes == current_size
+                    ):
+                        # Fast path: mtime+size unchanged
+                        checks.append({
+                            "source_id": ref.id,
+                            "fingerprint": ref.fingerprint,
+                            "mtime_ns": current_mtime_ns,
+                            "size_bytes": current_size,
+                        })
+                        continue
+                    # Mtime/size differ: re-hash
                     try:
-                        st = p.stat()
+                        data = p.read_bytes()
+                        current_fp = _sha256(data)
+                        checks.append({
+                            "source_id": ref.id,
+                            "fingerprint": current_fp,
+                            "mtime_ns": current_mtime_ns,
+                            "size_bytes": current_size,
+                        })
                     except OSError:
-                        new_status = FRESH_MISSING
-                    else:
-                        try:
-                            matches = _sha256(p.read_bytes()) == ref.fingerprint
-                        except OSError:
-                            new_status = FRESH_MISSING
-                        else:
-                            new_status = FRESH_CURRENT if matches else FRESH_CHANGED
-                        ref.mtime_ns = getattr(st, "st_mtime_ns", None) or int(
-                            st.st_mtime * 1_000_000_000
-                        )
-                        ref.size_bytes = st.st_size
-                else:
-                    new_status = self._classify_against_disk(ref, p)
-                    if new_status == FRESH_CURRENT:
-                        try:
-                            st = p.stat()
-                            ref.mtime_ns = getattr(st, "st_mtime_ns", None) or int(
-                                st.st_mtime * 1_000_000_000
-                            )
-                            ref.size_bytes = st.st_size
-                        except OSError:
-                            pass
-                if new_status != ref.status:
-                    ref.status = new_status
-                if new_status != FRESH_CURRENT:
-                    drifted.append(ref)
-                ref.checked_at = now
-            self._save()
+                        checks.append({
+                            "source_id": ref.id,
+                            "fingerprint": None,
+                            "mtime_ns": None,
+                            "size_bytes": None,
+                        })
+                except OSError:
+                    checks.append({
+                        "source_id": ref.id,
+                        "fingerprint": None,
+                        "mtime_ns": None,
+                        "size_bytes": None,
+                    })
+
+        if not checks:
+            return []
+
+        result = self._send_command({
+            "cmd": "source.refresh",
+            "db": self._require_db(),
+            "checks": checks,
+            "ts": time.time(),
+            "workspace": str(self.workspace) if self.workspace else "",
+        })
+
+        drifted: list[SourceRef] = []
+        if isinstance(result, list):
+            for r in result:
+                drifted.append(SourceRef(
+                    id=r["id"],
+                    origin=r["origin"],
+                    location=r["location"],
+                    fingerprint=r["fingerprint"],
+                    captured_at=r["captured_at"],
+                    checked_at=r.get("checked_at"),
+                    status=r["status"],
+                    mtime_ns=r.get("mtime_ns"),
+                    size_bytes=r.get("size_bytes"),
+                    cited_ranges=r.get("cited_ranges", []),
+                    permissions=r.get("permissions", {}),
+                ))
         return drifted
 
     # -- citation validity (P3 §7.3 Source 完整能力) ----------------------------
@@ -654,110 +838,21 @@ class SourceStore:
         - ``source_gone`` — the ref itself was removed from the
           store. Cross-checked before filesystem access so a
           bookkeeping cleanup doesn't masquerade as a missing file.
+
+        The final verdict is always computed by Rust ``delta_core``.
+        File-level errors (missing path, stat OSError, hash OSError)
+        are handled by the Rust side as part of the verdict.
         """
-        with self._lock:
-            ref = self._refs.get(ref_id)
-        from packages.storage_authority import is_rust_authority
-
-        if is_rust_authority("source_citation"):
-            from core.source_citation_delegate import validate_citation_delegated
-
-            return validate_citation_delegated(
-                asdict(ref) if ref is not None else None,
-                range_obj,
-                workspace=self.workspace,
-            )
-        if ref is None:
-            return {
-                "valid": False,
-                "status": "missing",
-                "reason": self.CITATION_SOURCE_GONE,
-            }
-        # Cheap pre-check: status already says missing → no point
-        # touching the filesystem.
-        if ref.status == FRESH_MISSING:
-            return {
-                "valid": False,
-                "status": FRESH_MISSING,
-                "reason": self.CITATION_FILE_MISSING,
-            }
-        # Open the file to (a) confirm it's still readable, (b)
-        # compare sha256, (c) bound-check the range for lines kind.
-        p = self._resolve(ref.location)
-        try:
-            data = p.read_bytes()
-        except OSError:
-            return {
-                "valid": False,
-                "status": FRESH_MISSING,
-                "reason": self.CITATION_FILE_MISSING,
-            }
-        current_sha = _sha256(data)
-        if current_sha != ref.fingerprint:
-            # File content changed. The citation may still happen to
-            # point at valid lines, but we don't trust the bytes to
-            # match the run's evidence — treat as invalid.
-            return {
-                "valid": False,
-                "status": FRESH_CHANGED,
-                "reason": self.CITATION_CONTENT_CHANGED,
-                "current_sha256": current_sha,
-            }
-        # Status: current. Now bound-check the range for kinds that
-        # have a meaningful "past the end" check.
-        kind = range_obj.get("kind")
-        if kind == KIND_LINES:
-            start = range_obj.get("start", range_obj.get("end"))
-            end = range_obj.get("end", range_obj.get("start"))
-            if start is None:
-                # Defensive: a lines citation should always have at
-                # least a start (validated at capture). If somehow
-                # not, treat as invalid rather than crashing.
-                return {
-                    "valid": False,
-                    "status": FRESH_CURRENT,
-                    "reason": self.CITATION_OUT_OF_BOUNDS,
-                }
-            line_count = (
-                0
-                if not data
-                else data.count(b"\n") + (0 if data.endswith(b"\n") else 1)
-            )
-            # Empty file = 0 lines; a citation for line 1 is
-            # out-of-bounds in an empty file.
-            if start < 1 or start > line_count:
-                return {
-                    "valid": False,
-                    "status": FRESH_CURRENT,
-                    "reason": self.CITATION_OUT_OF_BOUNDS,
-                    "current_line_count": line_count,
-                }
-            if end is not None and end > line_count:
-                return {
-                    "valid": False,
-                    "status": FRESH_CURRENT,
-                    "reason": self.CITATION_OUT_OF_BOUNDS,
-                    "current_line_count": line_count,
-                }
-            return {
-                "valid": True,
-                "status": FRESH_CURRENT,
-                "reason": self.CITATION_VALID,
-                "current_line_count": line_count,
-                "current_sha256": current_sha,
-            }
-        # For page / cells / message_id / custom kinds we don't have a
-        # cheap bound check. The file is current and the source still
-        # exists — the locator may or may not resolve in the new
-        # document, but we can't tell without re-parsing the whole
-        # thing. Mark valid; the reader that opens it will error if
-        # the page is actually missing.
-        return {
-            "valid": True,
-            "status": FRESH_CURRENT,
-            "reason": self.CITATION_VALID,
-            "current_sha256": current_sha,
-        }
+        result = self._send_command({
+            "cmd": "citation.validate",
+            "db": self._require_db(),
+            "source_id": ref_id,
+            "range": range_obj,
+            "workspace": str(self.workspace) if self.workspace else "",
+        })
+        if not isinstance(result, dict):
+            raise DeltaCoreError("citation.validate returned non-object result")
+        return result
 
 
 def to_dto(ref: SourceRef) -> dict[str, Any]:
@@ -780,3 +875,29 @@ def to_dto(ref: SourceRef) -> dict[str, Any]:
         location=ref.location,
         cited_ranges=list(ref.cited_ranges),
     ).model_dump()
+
+
+__all__ = [
+    "CitationRange",
+    "FRESH_CURRENT",
+    "FRESH_CHANGED",
+    "FRESH_MISSING",
+    "KIND_CELLS",
+    "KIND_COLUMN",
+    "KIND_CUSTOM",
+    "KIND_LINES",
+    "KIND_MESSAGE_ID",
+    "KIND_PAGE",
+    "KIND_ROW",
+    "KIND_SHEET",
+    "ORIGIN_FILE",
+    "ORIGIN_URL",
+    "ORIGIN_CONNECTOR",
+    "ORIGIN_DB",
+    "ORIGIN_MANUAL",
+    "SourceRef",
+    "SourceStore",
+    "normalize_cited_ranges",
+    "to_dto",
+    "to_range_dict",
+]

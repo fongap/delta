@@ -47,7 +47,7 @@ DEFAULT_COMMAND_TIMEOUT_SECONDS: float = 30.0
 # ``core/runtime-native/src/bin/delta_core.rs``. The Python client
 # sends this in a ``hello`` command immediately after subprocess
 # startup; a mismatch raises :class:`DeltaCoreError` (fail-closed).
-PROTOCOL_VERSION: int = 4
+PROTOCOL_VERSION: int = 5
 
 
 def _find_delta_core_binary() -> Path | None:

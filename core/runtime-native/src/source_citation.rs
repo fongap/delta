@@ -1,16 +1,42 @@
-//! Read-only shadow validator for citation ranges (R2, ADR-019).
+//! Rust Authority for Source / Citation trusted facts (R2, ADR-027).
 //!
-//! Citations are stored as ``CitationRange`` dicts on ``SourceRef`` rows
-//! in ``sources.db`` (the source ledger). The Python ``to_range_dict``
-//! in ``core/sources.py`` is the authoritative validator. This reader
-//! reimplements the same kind-specific required-field rules so the
-//! Python implementation can be cross-checked against an independent
-//! implementation.
+//! Before the hard-cut, Source and Citation facts were persisted by the
+//! Python ``SourceStore`` (``core/sources.py``) to a JSON file
+//! (``<workspace>/.delta/sources.json``), with an optional
+//! ``source_citation_delegate.py`` providing a Rust final verdict when
+//! ``DELTA_RUST_AUTHORITY=source_citation`` was set.
 //!
-//! Contract: ``core/sources.py:CitationRange`` and ``to_range_dict``.
+//! After the hard-cut (ADR-027):
 //!
-//! Kinds and required fields (must match Python, kind names are the
-//! canonical strings defined in ``core/sources.py``):
+//! - **Rust is the sole Source / Citation trusted authority.**
+//! - Python only performs **extraction and candidate construction**
+//!   (file reading, content hashing, fingerprint input, range candidate
+//!   building).
+//! - All trusted facts are persisted as ledger events in the run-event
+//!   ledger (``run_events.db``) via the unified ``delta_core``
+//!   process. The event types are ``source.registered``,
+//!   ``source.revised``, ``source.stale``, and ``citation.marked``.
+//! - No Python fallback, dual-write, shadow production path, or
+//!   migration delegate remains.
+//!
+//! This module contains:
+//!
+//! 1. The **range validator** (``validate_citation``,
+//!    ``validate_all``) — normalises and validates CitationRange
+//!    candidate dicts against the canonical schema.
+//! 2. The **citation evaluator** (``validate_source_citation``) —
+//!    derives the final validity verdict from a SourceRef snapshot +
+//!    a candidate range.
+//! 3. The **write authority** (``SourceCitationWriter``) — appends
+//!    Source / Citation facts to the run-event ledger.
+//! 4. The **read / replay layer** (``SourceCitationReader``) —
+//!    reconstructs the current SourceRef register and citation
+//!    relations from the ledger event stream.
+//!
+//! Contract: ``docs/architecture/adr/ADR-027-r2-source-citation-hard-cut.md``.
+//!
+//! CitationRange kinds and required fields (must match Python,
+//! kind names are the canonical strings defined in ``core/sources.py``):
 //!
 //! - ``"lines"``     : at least one of ``start`` / ``end`` (int; 1-based)
 //! - ``"page"``      : at least one of ``page`` / ``page_end`` (int; 1-based)
@@ -27,6 +53,8 @@ use std::path::Path;
 use serde::Serialize;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
+use time::OffsetDateTime;
+use uuid::Uuid;
 
 /// A validated citation range. Mirrors the Python ``to_range_dict`` output.
 #[derive(Debug, Clone)]
@@ -543,6 +571,381 @@ pub fn validate_all(values: &[Value]) -> Result<Vec<ValidatedCitation>, String> 
         out.push(validate_citation(v)?);
     }
     Ok(out)
+}
+
+/// Write authority for Source / Citation trusted facts (R2, ADR-027).
+///
+/// Appends `source.registered` and `citation.marked` events to the
+/// run-event ledger via `LedgerWriter`. All trusted persistence is
+/// owned by Rust; Python is a facade that only performs extraction
+/// and candidate construction.
+use crate::ledger::{LedgerEvent, LedgerReader, LedgerWriter};
+use crate::ShadowReadError;
+
+/// Event type for source registration / revision.
+const EV_SOURCE_REGISTERED: &str = "source.registered";
+
+/// Event type for citation marking.
+const EV_CITATION_MARKED: &str = "citation.marked";
+
+/// Input for registering a source. Mirrors the Python capture payload.
+#[derive(Debug, Clone)]
+pub struct SourceRegisterInput {
+    pub origin: String,
+    pub location: String,
+    pub fingerprint: String,
+    pub captured_at: String,
+    pub mtime_ns: Option<u64>,
+    pub size_bytes: Option<u64>,
+    pub permissions: Value,
+}
+
+/// One reconstructed SourceRef from the ledger event stream.
+#[derive(Debug, Clone, Serialize)]
+pub struct SourceRecord {
+    pub id: String,
+    pub origin: String,
+    pub location: String,
+    pub fingerprint: String,
+    pub captured_at: String,
+    pub checked_at: Option<String>,
+    pub status: String,
+    pub mtime_ns: Option<u64>,
+    pub size_bytes: Option<u64>,
+    pub cited_ranges: Vec<Value>,
+    pub permissions: Value,
+}
+
+/// Read-only handle that replays source/citation events from the ledger
+/// to reconstruct the current SourceRef register.
+pub struct SourceCitationReader {
+    pub reader: LedgerReader,
+}
+
+impl SourceCitationReader {
+    /// Open the ledger DB in read-only mode.
+    pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Self, ShadowReadError> {
+        Ok(Self {
+            reader: LedgerReader::open(path)?,
+        })
+    }
+
+    /// Wrap an existing LedgerReader.
+    pub fn from_reader(reader: LedgerReader) -> Self {
+        Self { reader }
+    }
+
+    /// Reconstruct all SourceRefs for the workspace by replaying events.
+    pub fn list_sources(&self) -> Result<Vec<SourceRecord>, ShadowReadError> {
+        let events = self.reader.all_events()?;
+        self.replay_sources(&events)
+    }
+
+    /// Get a single source by ID.
+    pub fn get_source(&self, source_id: &str) -> Result<Option<SourceRecord>, ShadowReadError> {
+        let events = self.reader.all_events()?;
+        let sources = self.replay_sources(&events)?;
+        Ok(sources.into_iter().find(|s| s.id == source_id))
+    }
+
+    /// Find the latest source for a given location + origin.
+    pub fn latest_source(
+        &self,
+        location: &str,
+        origin: &str,
+    ) -> Result<Option<SourceRecord>, ShadowReadError> {
+        let events = self.reader.all_events()?;
+        let sources = self.replay_sources(&events)?;
+        let candidates: Vec<_> = sources
+            .into_iter()
+            .filter(|s| s.location == location && s.origin == origin)
+            .collect();
+        if candidates.is_empty() {
+            return Ok(None);
+        }
+        // Latest by captured_at (string ISO8601 is lexicographically sortable).
+        let latest = candidates
+            .into_iter()
+            .max_by_key(|s| s.captured_at.clone())
+            .unwrap();
+        Ok(Some(latest))
+    }
+
+    /// Get all citation.marked events for a source.
+    pub fn get_citations(&self, source_id: &str) -> Result<Vec<Value>, ShadowReadError> {
+        let events = self.reader.all_events()?;
+        let mut out = Vec::new();
+        for ev in events {
+            if ev.r#type == EV_CITATION_MARKED {
+                if let Some(sid) = ev.payload.get("source_id").and_then(Value::as_str) {
+                    if sid == source_id {
+                        out.push(ev.payload.clone());
+                    }
+                }
+            }
+        }
+        Ok(out)
+    }
+
+    fn replay_sources(&self, events: &[LedgerEvent]) -> Result<Vec<SourceRecord>, ShadowReadError> {
+        use std::collections::HashMap;
+        let mut sources: HashMap<String, SourceRecord> = HashMap::new();
+        // Collect citation.marked events to apply after building sources
+        let mut citation_events: Vec<&LedgerEvent> = Vec::new();
+
+        for ev in events {
+            match ev.r#type.as_str() {
+                EV_SOURCE_REGISTERED => {
+                    let payload = &ev.payload;
+                    let id = payload
+                        .get("id")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| {
+                            ShadowReadError::Parse("source.registered missing id".into())
+                        })?
+                        .to_string();
+
+                    let cited_ranges = payload
+                        .get("cited_ranges")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .unwrap_or_default();
+
+                    let record = SourceRecord {
+                        id,
+                        origin: payload
+                            .get("origin")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string(),
+                        location: payload
+                            .get("location")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string(),
+                        fingerprint: payload
+                            .get("fingerprint")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string(),
+                        captured_at: payload
+                            .get("captured_at")
+                            .and_then(Value::as_str)
+                            .unwrap_or("")
+                            .to_string(),
+                        checked_at: payload
+                            .get("checked_at")
+                            .and_then(Value::as_str)
+                            .map(String::from),
+                        status: payload
+                            .get("status")
+                            .and_then(Value::as_str)
+                            .unwrap_or("current")
+                            .to_string(),
+                        mtime_ns: payload.get("mtime_ns").and_then(Value::as_u64),
+                        size_bytes: payload.get("size_bytes").and_then(Value::as_u64),
+                        cited_ranges,
+                        permissions: payload
+                            .get("permissions")
+                            .cloned()
+                            .unwrap_or(Value::Object(serde_json::Map::new())),
+                    };
+                    sources.insert(record.id.clone(), record);
+                }
+                EV_CITATION_MARKED => {
+                    citation_events.push(ev);
+                }
+                _ => {}
+            }
+        }
+
+        // Apply citation.marked events to the corresponding sources
+        for ev in citation_events {
+            let payload = &ev.payload;
+            if let Some(source_id) = payload.get("source_id").and_then(Value::as_str) {
+                if let Some(ranges) = payload.get("ranges").and_then(Value::as_array) {
+                    if let Some(source) = sources.get_mut(source_id) {
+                        let run_id = payload.get("run_id").and_then(Value::as_str).unwrap_or("");
+                        source.cited_ranges.push(serde_json::json!({
+                            "run_id": run_id,
+                            "ranges": ranges,
+                        }));
+                    }
+                }
+            }
+        }
+
+        // Sort by captured_at ascending for stable list order.
+        let mut out: Vec<_> = sources.into_values().collect();
+        out.sort_by(|a, b| a.captured_at.cmp(&b.captured_at));
+        Ok(out)
+    }
+}
+
+/// Write authority for Source / Citation facts.
+pub struct SourceCitationWriter<'a> {
+    ledger: &'a LedgerWriter,
+}
+
+impl<'a> SourceCitationWriter<'a> {
+    pub fn new(ledger: &'a LedgerWriter) -> Self {
+        Self { ledger }
+    }
+
+    /// Register (or re-register) a source. Returns the resulting SourceRecord.
+    pub fn register_source(
+        &self,
+        input: SourceRegisterInput,
+        ts: f64,
+        workspace: &str,
+    ) -> Result<SourceRecord, ShadowReadError> {
+        // Replay existing sources to find matches for same location+origin.
+        let reader = self.ledger.reader()?;
+        let existing = reader.all_events()?;
+        let sources = SourceCitationReader { reader }.replay_sources(&existing)?;
+
+        let existing_same_location: Vec<&SourceRecord> = sources
+            .iter()
+            .filter(|s| s.origin == input.origin && s.location == input.location)
+            .collect();
+
+        let source_id = Uuid::new_v4().to_string();
+        let now = OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_else(|_| input.captured_at.clone());
+
+        // Check for identical fingerprint match (refresh case).
+        if let Some(found) = existing_same_location
+            .iter()
+            .find(|s| s.fingerprint == input.fingerprint)
+        {
+            // Same content: re-register the existing source_id with refreshed checked_at/mtime.
+            let refreshed_id = found.id.clone();
+            let record = SourceRecord {
+                id: refreshed_id.clone(),
+                origin: input.origin.clone(),
+                location: input.location.clone(),
+                fingerprint: input.fingerprint.clone(),
+                captured_at: found.captured_at.clone(),
+                checked_at: Some(now.clone()),
+                status: "current".to_string(),
+                mtime_ns: input.mtime_ns,
+                size_bytes: input.size_bytes,
+                cited_ranges: found.cited_ranges.clone(),
+                permissions: input.permissions.clone(),
+            };
+            self.append_source_registered(&record, ts, workspace)?;
+            return Ok(record);
+        }
+
+        // Different fingerprint (or no existing): mark all existing at same location as "changed".
+        for old in existing_same_location {
+            let changed_record = SourceRecord {
+                id: old.id.clone(),
+                origin: old.origin.clone(),
+                location: old.location.clone(),
+                fingerprint: old.fingerprint.clone(),
+                captured_at: old.captured_at.clone(),
+                checked_at: Some(now.clone()),
+                status: "changed".to_string(),
+                mtime_ns: old.mtime_ns,
+                size_bytes: old.size_bytes,
+                cited_ranges: old.cited_ranges.clone(),
+                permissions: old.permissions.clone(),
+            };
+            self.append_source_registered(&changed_record, ts, workspace)?;
+        }
+
+        // Register the new source.
+        let record = SourceRecord {
+            id: source_id,
+            origin: input.origin,
+            location: input.location,
+            fingerprint: input.fingerprint,
+            captured_at: input.captured_at,
+            checked_at: Some(now),
+            status: "current".to_string(),
+            mtime_ns: input.mtime_ns,
+            size_bytes: input.size_bytes,
+            cited_ranges: Vec::new(),
+            permissions: input.permissions,
+        };
+        self.append_source_registered(&record, ts, workspace)?;
+        Ok(record)
+    }
+
+    /// Mark a citation for a source. Validates ranges first.
+    pub fn mark_cited(
+        &self,
+        source_id: &str,
+        run_id: &str,
+        ranges: Vec<Value>,
+        ts: f64,
+        workspace: &str,
+    ) -> Result<bool, ShadowReadError> {
+        // Validate the source exists.
+        let reader = self.ledger.reader()?;
+        let existing = reader.all_events()?;
+        let sources = SourceCitationReader { reader }.replay_sources(&existing)?;
+        if !sources.iter().any(|s| s.id == source_id) {
+            return Ok(false);
+        }
+
+        // Canonicalize and validate ranges using the shared validator.
+        let validated = validate_all(&ranges).map_err(ShadowReadError::Parse)?;
+
+        let payload = serde_json::json!({
+            "source_id": source_id,
+            "run_id": run_id,
+            "ranges": validated.iter().map(|c| c.range.clone()).collect::<Vec<_>>(),
+            "marked_at": OffsetDateTime::now_utc()
+                .format(&time::format_description::well_known::Rfc3339)
+                .unwrap_or_default(),
+        });
+
+        self.ledger.append(
+            run_id,
+            EV_CITATION_MARKED,
+            "system",
+            ts,
+            &payload,
+            workspace,
+        )?;
+        Ok(true)
+    }
+
+    pub fn append_source_registered(
+        &self,
+        record: &SourceRecord,
+        ts: f64,
+        workspace: &str,
+    ) -> Result<(), ShadowReadError> {
+        let payload = serde_json::json!({
+            "id": record.id,
+            "origin": record.origin,
+            "location": record.location,
+            "fingerprint": record.fingerprint,
+            "captured_at": record.captured_at,
+            "checked_at": record.checked_at,
+            "status": record.status,
+            "mtime_ns": record.mtime_ns,
+            "size_bytes": record.size_bytes,
+            "cited_ranges": record.cited_ranges,
+            "permissions": record.permissions,
+        });
+        // Use "$source" run_id namespace for source events so they don't
+        // interfere with run lifecycle queries (open_runs, recover_stale).
+        const SOURCE_RUN_ID: &str = "$source";
+        self.ledger.append(
+            SOURCE_RUN_ID,
+            EV_SOURCE_REGISTERED,
+            "system",
+            ts,
+            &payload,
+            workspace,
+        )?;
+        Ok(())
+    }
 }
 
 #[cfg(test)]

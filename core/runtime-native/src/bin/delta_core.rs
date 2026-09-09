@@ -65,12 +65,14 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use delta_runtime_native::{
-    args_sha256, operation_id, run_validation, validate_all, validate_source_citation,
-    ArtifactInput, ArtifactRegistryWriter, IdempotencyWriter, LedgerWriter, SideEffectEntry,
-    SideEffectState, TaskStore,
+    args_sha256, operation_id, run_validation, validate_source_citation, ArtifactInput,
+    ArtifactRegistryWriter, CitationValidationResult, CitationValidity, IdempotencyWriter,
+    LedgerWriter, SideEffectEntry, SideEffectState, SourceCitationReader, SourceCitationWriter,
+    SourceRegisterInput, TaskStore,
 };
 use serde::Deserialize;
 use serde_json::Value;
+use time::OffsetDateTime;
 
 /// Delta Core wire-protocol version.
 ///
@@ -81,7 +83,7 @@ use serde_json::Value;
 /// immediately after subprocess startup; a mismatch raises
 /// :class:`DeltaCoreError` (fail-closed) so we never silently talk to
 /// an incompatible binary.
-const PROTOCOL_VERSION: u32 = 4;
+const PROTOCOL_VERSION: u32 = 5;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "cmd")]
@@ -258,19 +260,69 @@ enum Command {
         ts: Option<f64>,
         workspace: Option<String>,
     },
-    /// R2.1: evaluate a citation against a compatibility SourceRef snapshot.
+    /// R2.3: register (or re-register) a source. Returns the SourceRecord.
+    #[serde(rename = "source.register")]
+    SourceRegister {
+        db: String,
+        origin: String,
+        location: String,
+        fingerprint: String,
+        captured_at: String,
+        mtime_ns: Option<u64>,
+        size_bytes: Option<u64>,
+        permissions: Value,
+        #[allow(dead_code)]
+        run_id: String,
+        ts: Option<f64>,
+        workspace: Option<String>,
+    },
+    /// R2.3: get a source by ID.
+    #[serde(rename = "source.get")]
+    SourceGet { db: String, source_id: String },
+    /// R2.3: list all sources.
+    #[serde(rename = "source.list")]
+    SourceList {
+        db: String,
+        origin: Option<String>,
+        location: Option<String>,
+        status: Option<String>,
+    },
+    /// R2.3: get the latest source for a location+origin.
+    #[serde(rename = "source.latest")]
+    SourceLatest {
+        db: String,
+        location: String,
+        origin: String,
+    },
+    /// R2.3: batch refresh source status from Python observations.
+    #[serde(rename = "source.refresh")]
+    SourceRefresh {
+        db: String,
+        checks: Vec<Value>,
+        ts: f64,
+        workspace: String,
+    },
+    /// R2.3: mark a citation for a source.
+    #[serde(rename = "citation.mark")]
+    CitationMark {
+        db: String,
+        source_id: String,
+        run_id: String,
+        ranges: Vec<Value>,
+        ts: Option<f64>,
+        workspace: Option<String>,
+    },
+    /// R2.3: validate a citation against a source from the ledger.
     #[serde(rename = "citation.validate")]
     CitationValidate {
-        source: Option<Value>,
+        db: String,
+        source_id: String,
         range: Value,
         workspace: Option<String>,
     },
-    /// R2.1: canonicalize candidate ranges before persistence.
-    #[serde(rename = "citation.canonicalize")]
-    CitationCanonicalize {
-        #[serde(default)]
-        ranges: Vec<Value>,
-    },
+    /// R2.3: list all citations for a source.
+    #[serde(rename = "citation.list")]
+    CitationList { db: String, source_id: String },
     /// R2.2: evaluate the deterministic completion contract in Rust.
     #[serde(rename = "validation.run")]
     ValidationRun {
@@ -964,24 +1016,277 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
                 Err(e) => Err(e.to_string()),
             }
         }
+        Command::SourceRegister {
+            db,
+            origin,
+            location,
+            fingerprint,
+            captured_at,
+            mtime_ns,
+            size_bytes,
+            permissions,
+            run_id: _,
+            ts,
+            workspace,
+        } => {
+            let ledger = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let writer = SourceCitationWriter::new(ledger);
+            let input = SourceRegisterInput {
+                origin,
+                location,
+                fingerprint,
+                captured_at,
+                mtime_ns,
+                size_bytes,
+                permissions,
+            };
+            match writer.register_source(
+                input,
+                ts.unwrap_or(0.0),
+                workspace.as_deref().unwrap_or(""),
+            ) {
+                Ok(record) => Ok(serde_json::to_value(record).unwrap()),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::SourceGet { db, source_id } => {
+            let ledger = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let reader = match ledger.reader() {
+                Ok(r) => SourceCitationReader { reader: r },
+                Err(e) => return err(e.to_string()),
+            };
+            match reader.get_source(&source_id) {
+                Ok(Some(record)) => Ok(serde_json::to_value(record).unwrap()),
+                Ok(None) => Ok(Value::Null),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::SourceList {
+            db,
+            origin,
+            location,
+            status,
+        } => {
+            let ledger = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let reader = match ledger.reader() {
+                Ok(r) => SourceCitationReader { reader: r },
+                Err(e) => return err(e.to_string()),
+            };
+            match reader.list_sources() {
+                Ok(sources) => {
+                    let filtered: Vec<_> = sources
+                        .into_iter()
+                        .filter(|s| {
+                            (origin.as_ref().is_none() || s.origin == *origin.as_ref().unwrap())
+                                && (location.as_ref().is_none()
+                                    || s.location == *location.as_ref().unwrap())
+                                && (status.as_ref().is_none()
+                                    || s.status == *status.as_ref().unwrap())
+                        })
+                        .collect();
+                    Ok(Value::Array(
+                        filtered
+                            .into_iter()
+                            .map(serde_json::to_value)
+                            .collect::<Result<Vec<_>, _>>()
+                            .unwrap(),
+                    ))
+                }
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::SourceLatest {
+            db,
+            location,
+            origin,
+        } => {
+            let ledger = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let reader = match ledger.reader() {
+                Ok(r) => SourceCitationReader { reader: r },
+                Err(e) => return err(e.to_string()),
+            };
+            match reader.latest_source(&location, &origin) {
+                Ok(Some(record)) => Ok(serde_json::to_value(record).unwrap()),
+                Ok(None) => Ok(Value::Null),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::SourceRefresh {
+            db,
+            checks,
+            ts,
+            workspace,
+        } => {
+            let ledger = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let reader = match ledger.reader() {
+                Ok(r) => SourceCitationReader { reader: r },
+                Err(e) => return err(e.to_string()),
+            };
+            let existing = match reader.list_sources() {
+                Ok(v) => v,
+                Err(e) => return err(e.to_string()),
+            };
+            let mut source_map: std::collections::HashMap<_, _> =
+                existing.into_iter().map(|s| (s.id.clone(), s)).collect();
+
+            // Create writer once for persisting updates
+            let writer = SourceCitationWriter::new(ledger);
+
+            let mut drifted = Vec::new();
+            for check in checks {
+                let source_id = check.get("source_id").and_then(Value::as_str).unwrap_or("");
+                if let Some(source) = source_map.get_mut(source_id) {
+                    let current_fp = check.get("fingerprint").and_then(Value::as_str);
+                    let new_status = match current_fp {
+                        None => "missing",
+                        Some(fp) if fp != source.fingerprint => "changed",
+                        _ => "current",
+                    };
+                    if new_status != "current" {
+                        source.status = new_status.to_string();
+                        source.checked_at = Some(
+                            OffsetDateTime::now_utc()
+                                .format(&time::format_description::well_known::Rfc3339)
+                                .unwrap_or_default(),
+                        );
+                        if let Some(mtime) = check.get("mtime_ns").and_then(Value::as_u64) {
+                            source.mtime_ns = Some(mtime);
+                        }
+                        if let Some(size) = check.get("size_bytes").and_then(Value::as_u64) {
+                            source.size_bytes = Some(size);
+                        }
+                        drifted.push(source.clone());
+                    } else if check.get("mtime_ns").is_some() {
+                        // Status is current but we have updated mtime/size - persist the refresh
+                        source.checked_at = Some(
+                            OffsetDateTime::now_utc()
+                                .format(&time::format_description::well_known::Rfc3339)
+                                .unwrap_or_default(),
+                        );
+                        if let Some(mtime) = check.get("mtime_ns").and_then(Value::as_u64) {
+                            source.mtime_ns = Some(mtime);
+                        }
+                        if let Some(size) = check.get("size_bytes").and_then(Value::as_u64) {
+                            source.size_bytes = Some(size);
+                        }
+                        // Persist the refreshed source
+                        if let Err(e) = writer.append_source_registered(source, ts, &workspace) {
+                            return err(e.to_string());
+                        }
+                    }
+                }
+            }
+            // Persist all drifted sources
+            for record in &drifted {
+                if let Err(e) = writer.append_source_registered(record, ts, &workspace) {
+                    return err(e.to_string());
+                }
+            }
+            Ok(Value::Array(
+                drifted
+                    .into_iter()
+                    .map(serde_json::to_value)
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap(),
+            ))
+        }
+        Command::CitationMark {
+            db,
+            source_id,
+            run_id,
+            ranges,
+            ts,
+            workspace,
+        } => {
+            let ledger = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let writer = SourceCitationWriter::new(ledger);
+            match writer.mark_cited(
+                &source_id,
+                &run_id,
+                ranges,
+                ts.unwrap_or(0.0),
+                workspace.as_deref().unwrap_or(""),
+            ) {
+                Ok(marked) => Ok(serde_json::json!({ "marked": marked })),
+                Err(e) => Err(e.to_string()),
+            }
+        }
         Command::CitationValidate {
-            source,
+            db,
+            source_id,
             range,
             workspace,
-        } => serde_json::to_value(validate_source_citation(
-            source.as_ref(),
-            &range,
-            workspace.as_deref().map(std::path::Path::new),
-        ))
-        .map_err(|error| error.to_string()),
-        Command::CitationCanonicalize { ranges } => validate_all(&ranges).map(|validated| {
-            Value::Array(
-                validated
-                    .into_iter()
-                    .map(|citation| citation.range)
-                    .collect(),
-            )
-        }),
+        } => {
+            let ledger = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let reader = match ledger.reader() {
+                Ok(r) => SourceCitationReader { reader: r },
+                Err(e) => return err(e.to_string()),
+            };
+            let source = match reader.get_source(&source_id) {
+                Ok(Some(s)) => s,
+                Ok(None) => {
+                    let result = CitationValidationResult {
+                        validity: CitationValidity::SourceMissing,
+                        valid: false,
+                        status: "missing".to_string(),
+                        reason: "source_gone".to_string(),
+                        source_exists: false,
+                        source_unchanged: false,
+                        structure_valid: false,
+                        revision_matches: false,
+                        range_valid: None,
+                        current_fingerprint: None,
+                        current_sha256: None,
+                        current_line_count: None,
+                        detail: Some("source not found".to_string()),
+                    };
+                    return serde_json::json!({"ok": true, "result": serde_json::to_value(result).unwrap()});
+                }
+                Err(e) => return serde_json::json!({"ok": false, "error": e.to_string()}),
+            };
+            let source_value = serde_json::to_value(source).unwrap();
+            Ok(serde_json::to_value(validate_source_citation(
+                Some(&source_value),
+                &range,
+                workspace.as_deref().map(std::path::Path::new),
+            ))
+            .unwrap())
+        }
+        Command::CitationList { db, source_id } => {
+            let ledger = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let reader = match ledger.reader() {
+                Ok(r) => SourceCitationReader { reader: r },
+                Err(e) => return err(e.to_string()),
+            };
+            match reader.get_citations(&source_id) {
+                Ok(citations) => Ok(Value::Array(citations)),
+                Err(e) => Err(e.to_string()),
+            }
+        }
         Command::ValidationRun {
             criteria,
             artifacts,

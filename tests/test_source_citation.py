@@ -275,9 +275,15 @@ def test_mark_cited_unknown_ref_returns_false(tmp_path):
 
 def test_mark_cited_rejects_malformed_range_without_mutating(tmp_path):
     """A bad range must raise *before* the lock / save so a half-applied
-    citation can never land in the source ledger."""
+    citation can never land in the source ledger.
+
+    With the R2 hard-cut (ADR-027), validation happens in Rust and raises
+    DeltaCoreError (fail-closed) instead of Python ValueError.
+    """
+    from packages.delta_core_client import DeltaCoreError
+
     store, ref_id = _store_with_one_file(tmp_path)
-    with pytest.raises(ValueError, match="unknown citation kind"):
+    with pytest.raises(DeltaCoreError, match="unknown citation kind"):
         store.mark_cited(ref_id, "run-1", [{"kind": "scribble"}])
     # Persisted state is untouched.
     reloaded = _reload(tmp_path, ref_id)

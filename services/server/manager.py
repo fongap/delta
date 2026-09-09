@@ -280,9 +280,8 @@ class SessionManager(
         """P2 实用 — return the per-workspace :class:`core.sources.SourceStore`,
         creating + caching it on first use.
 
-        The store lives at ``<workspace>/.delta/sources.json`` (parallel to
-        ``run-events.db`` and ``side-effects.db``), so the run ledger and the
-        source ledger are restored together. Returns None when no workspace
+        The store uses the run-event ledger (``run-events.db``) for all trusted
+        Source/Citation facts (ADR-027). Returns None when no workspace
         is bound (chat sessions) — readers fall back to no-op citations.
 
         ``run_id`` is not used to key the store (sources are per-workspace,
@@ -301,7 +300,8 @@ class SessionManager(
         ws_path = Path(workspace).expanduser()
         base = ws_path / ".delta"
         base.mkdir(parents=True, exist_ok=True)
-        store = SourceStore(base / "sources.json", workspace=ws_path)
+        # Use the run ledger DB for Source/Citation facts (R2 hard-cut)
+        store = SourceStore(base / "run-events.db", workspace=ws_path)
         self._source_stores[workspace] = store
         return store
 

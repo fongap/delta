@@ -43,6 +43,7 @@
 | Checkpoint | Python | Rust |
 | Resume | Python | Rust |
 | Artifact Registry | Rust（ADR-026 hard-cut） | **Rust** |
+| Source/Citation | Rust（ADR-027 hard-cut） | **Rust** |
 | Validation | Python | Rust |
 | Idempotency | Rust（ADR-022 hard-cut） | **Rust** |
 | Tool lifecycle | Python | Rust |
@@ -66,6 +67,8 @@
 > **R1 Task Identity Hard-Cut（ADR-024，2026-09-08）**：Task Identity 域已完成 hard-cut。Rust `delta_core` 是唯一事实来源。Python `core/automation/store.py` 是薄门面。`core/automation/store_delegate.py` 和 `tests/test_taskstore_delegate.py` 已物理删除。`DELTA_RUST_AUTHORITY=task_identity` 选择逻辑已移除。不存在 Python fallback writer、delegate wrapper 或双 Authority 路径。回滚方式仅为 Git revert。
 >
 > **R2 Artifact Registry Hard-Cut（ADR-026，2026-09-09）**：Artifact Registry 域已完成 hard-cut。Rust `delta_core` 是唯一事实来源。Python `core/artifact.py` 只负责文件发现 / stat / sha256 / kind 分类，通过 `DeltaCoreClient` 发送 `artifact.register` 命令。`core/artifact_delegate.py` 和 `tests/test_artifact_delegate.py` 已物理删除。`DELTA_RUST_AUTHORITY=artifact` 选择逻辑已移除（`artifact` 不在 `RUST_WRITE_DOMAINS`）。不存在 Python fallback writer、delegate wrapper、feature flag 或双 Authority 路径。回滚方式仅为 Git revert。
+>
+> **R2 Source/Citation Hard-Cut（ADR-027，2026-09-10）**：Source/Citation 域已完成 hard-cut。Rust `delta_core` 是唯一事实来源。Python `core/sources.py` 只负责文件 I/O / sha256 / stat / candidate range 构造，通过 `DeltaCoreClient` 发送 `source.register` / `citation.mark` / `citation.validate` 等命令。`core/source_citation_delegate.py` 和 `tests/test_source_citation_delegate.py` 已物理删除。`DELTA_RUST_AUTHORITY=source_citation` 选择逻辑已移除（`source_citation` 不在 `RUST_WRITE_DOMAINS`）。不存在 Python fallback writer、delegate wrapper、feature flag 或双 Authority 路径。回滚方式仅为 Git revert。
 
 每次迁移必须更新实际 Authority Matrix。
 
