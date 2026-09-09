@@ -127,3 +127,17 @@ def test_approval_body_includes_tool_args():
 
     req2 = PermissionRequest("rm", {"path": "/x"}, None, "destructive")
     assert _approval_body(req2).startswith("destructive")  # reason leads when present
+
+
+async def test_inbox_wait_can_be_resolved_cross_thread():
+    """Waiter created in event loop, resolve() called from another thread — must wake reliably."""
+    store = InboxStore()
+    item = store.add_approval("s1", "test approval")
+
+    waiter = asyncio.create_task(store.wait(item.id))
+    await asyncio.sleep(0)  # let waiter enter wait()
+
+    ok = await asyncio.to_thread(store.resolve, item.id, "allow")
+
+    assert ok is True
+    assert await asyncio.wait_for(waiter, timeout=1) == "allow"

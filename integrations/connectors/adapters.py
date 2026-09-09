@@ -218,7 +218,7 @@ class SlackAdapter(BasePlatformAdapter):
             return False
 
         @self._app.event("message")
-        async def _on_message(event, _say):
+        async def _on_message(event):
             mapped = slack_event_to_event(event, self._bot_user_id)
             if mapped is not None:
                 # Slack message events carry only the user id; resolve a friendly name so recent
