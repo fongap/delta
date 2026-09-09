@@ -19,13 +19,17 @@ judge; it is a rule engine that looks at concrete, addressable facts:
 artifact count, file existence, sha256 match, min/max size, required
 substring in an artifact, header presence for CSV. Anything the model can
 "say" must be grounded in these facts first.
+
+After ADR-028 (Validation Hard-Cut):
+  - Rust `delta_core` is the **sole Validation authority** (rules,
+    verdicts, persistence).
+  - Python performs extraction / candidate construction only.
+  - No Python fallback, dual-write, shadow path, or migration delegate.
 """
 
 from __future__ import annotations
 
-import csv
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -147,7 +151,12 @@ def run_validation(
     the criteria declare `require_citations=True` and `min_valid_citations > 0`,
     the run fails if the count is below the floor. Pass None (the default) to
     skip the citation check entirely.
+
+    This is a thin facade over `DeltaCoreClient` — all rule evaluation and
+    persistence happens in Rust. Authority failures fail closed.
     """
+    from packages.delta_core_client import DeltaCoreClient, DeltaCoreError
+
     norm: list[dict[str, Any]] = []
     for a in artifacts:
         if isinstance(a, dict):
@@ -155,198 +164,20 @@ def run_validation(
         else:
             norm.append(a.to_dict())
 
-    from packages.storage_authority import is_rust_authority
-
-    if is_rust_authority("validation"):
-        from core.validation_delegate import run_validation_delegated
-
-        return ValidationResult.from_dict(
-            run_validation_delegated(
-                norm,
-                criteria.to_dict(),
-                workspace=workspace,
-                valid_citation_count=valid_citation_count,
-            )
+    try:
+        client = DeltaCoreClient()
+        result = client.command(
+            {
+                "cmd": "validation.run",
+                "artifacts": norm,
+                "criteria": criteria.to_dict(),
+                "workspace": workspace,
+                "valid_citation_count": valid_citation_count,
+            }
         )
-    by_path = {a["path"]: a for a in norm}
-
-    checks: list[ValidationCheck] = []
-    evidence: dict[str, Any] = {"artifact_count": len(norm)}
-
-    # Count gate
-    count_ok = criteria.min_artifacts <= len(norm) <= criteria.max_artifacts
-    checks.append(
-        ValidationCheck(
-            name="artifact_count",
-            ok=count_ok,
-            detail=f"{len(norm)} artifacts (min={criteria.min_artifacts}, max={criteria.max_artifacts})",
-        )
-    )
-    if not count_ok:
-        return ValidationResult(ok=False, checks=checks, evidence=evidence)
-
-    # Completeness gate
-    incomplete = [a["path"] for a in norm if a.get("incomplete")]
-    if criteria.require_complete and incomplete:
-        checks.append(
-            ValidationCheck(
-                name="all_artifacts_complete",
-                ok=False,
-                detail=f"incomplete writes: {incomplete}",
-            )
-        )
-        return ValidationResult(ok=False, checks=checks, evidence=evidence)
-    checks.append(ValidationCheck(name="all_artifacts_complete", ok=True))
-
-    # Required paths
-    missing = [p for p in criteria.required_paths if p not in by_path]
-    if missing:
-        checks.append(
-            ValidationCheck(
-                name="required_paths",
-                ok=False,
-                detail=f"missing: {missing}",
-            )
-        )
-        return ValidationResult(ok=False, checks=checks, evidence=evidence)
-    if criteria.required_paths:
-        checks.append(ValidationCheck(name="required_paths", ok=True))
-
-    # Size gates
-    for path, lo in criteria.min_size.items():
-        a = by_path.get(path)
-        if a is None or a.get("size", 0) < lo:
-            checks.append(
-                ValidationCheck(
-                    name=f"min_size:{path}",
-                    ok=False,
-                    detail=f"size={a.get('size') if a else None} < {lo}",
-                )
-            )
-            return ValidationResult(ok=False, checks=checks, evidence=evidence)
-    for path, hi in criteria.max_size.items():
-        a = by_path.get(path)
-        if a is not None and a.get("size", 0) > hi:
-            checks.append(
-                ValidationCheck(
-                    name=f"max_size:{path}",
-                    ok=False,
-                    detail=f"size={a['size']} > {hi}",
-                )
-            )
-            return ValidationResult(ok=False, checks=checks, evidence=evidence)
-    if criteria.min_size or criteria.max_size:
-        checks.append(ValidationCheck(name="size_gates", ok=True))
-
-    # Substring + CSV checks need a workspace to read from
-    if workspace and (criteria.required_substrings or criteria.csv_required_headers):
-        ws = Path(workspace)
-        for path, needles in criteria.required_substrings.items():
-            a = by_path.get(path)
-            if a is None or a.get("incomplete"):
-                continue  # already reported above
-            try:
-                text = (ws / path).read_text(encoding="utf-8", errors="replace")
-            except OSError as exc:
-                checks.append(
-                    ValidationCheck(
-                        name=f"read:{path}",
-                        ok=False,
-                        detail=f"read failed: {exc}",
-                    )
-                )
-                return ValidationResult(ok=False, checks=checks, evidence=evidence)
-            for needle in needles:
-                if needle not in text:
-                    checks.append(
-                        ValidationCheck(
-                            name=f"substring:{path}:{needle!r}",
-                            ok=False,
-                            detail="not found",
-                        )
-                    )
-                    return ValidationResult(
-                        ok=False, checks=checks, evidence=evidence
-                    )
-            checks.append(ValidationCheck(name=f"substrings:{path}", ok=True))
-
-        for path, headers in criteria.csv_required_headers.items():
-            a = by_path.get(path)
-            if a is None or a.get("incomplete"):
-                continue
-            try:
-                with (ws / path).open("r", encoding="utf-8", newline="") as f:
-                    reader = csv.reader(f)
-                    first = next(reader, None)
-            except (OSError, csv.Error) as exc:
-                checks.append(
-                    ValidationCheck(
-                        name=f"csv_read:{path}",
-                        ok=False,
-                        detail=f"read failed: {exc}",
-                    )
-                )
-                return ValidationResult(ok=False, checks=checks, evidence=evidence)
-            if first is None:
-                checks.append(
-                    ValidationCheck(
-                        name=f"csv_headers:{path}",
-                        ok=False,
-                        detail="empty CSV",
-                    )
-                )
-                return ValidationResult(ok=False, checks=checks, evidence=evidence)
-            missing_h = [h for h in headers if h not in first]
-            if missing_h:
-                checks.append(
-                    ValidationCheck(
-                        name=f"csv_headers:{path}",
-                        ok=False,
-                        detail=f"missing headers: {missing_h}",
-                    )
-                )
-                return ValidationResult(ok=False, checks=checks, evidence=evidence)
-            checks.append(ValidationCheck(name=f"csv_headers:{path}", ok=True))
-
-    # P1-D Citation Completion Contract: evidence-bearing tasks can demand
-    # a citation floor. The valid_citation_count comes from
-    # `analyzer.source_citation_hits` (the Source ledger knows which
-    # citations still resolve to the same file content).
-    if criteria.require_citations and valid_citation_count is None:
-        evidence["valid_citation_count"] = None
-        checks.append(
-            ValidationCheck(
-                name="min_valid_citations",
-                ok=False,
-                detail="valid citation count unavailable",
-            )
-        )
-        return ValidationResult(ok=False, checks=checks, evidence=evidence)
-    if criteria.require_citations and valid_citation_count is not None:
-        if valid_citation_count < criteria.min_valid_citations:
-            checks.append(
-                ValidationCheck(
-                    name="min_valid_citations",
-                    ok=False,
-                    detail=(
-                        f"{valid_citation_count} valid citation(s) < "
-                        f"min_valid_citations={criteria.min_valid_citations}"
-                    ),
-                )
-            )
-            return ValidationResult(
-                ok=False, checks=checks, evidence=evidence
-            )
-        checks.append(
-            ValidationCheck(
-                name="min_valid_citations",
-                ok=True,
-                detail=f"{valid_citation_count} valid citation(s)",
-            )
-        )
-        evidence["valid_citation_count"] = valid_citation_count
-
-    return ValidationResult(ok=all(c.ok for c in checks), checks=checks, evidence=evidence)
+        return ValidationResult.from_dict(result)
+    except DeltaCoreError as exc:
+        raise ValidationAuthorityError(f"Rust validation authority unavailable: {exc}") from exc
 
 
 def gate_status(
@@ -374,3 +205,149 @@ def gate_status(
     if not result.ok:
         return "validation_failed"
     return "ok"
+
+
+class ValidationAuthorityError(RuntimeError):
+    """Raised when the Rust validation authority is unavailable.
+
+    No fallback path exists — this is the hard-cut guarantee (ADR-028).
+    """
+    pass
+
+
+def register_validation(
+    run_id: str,
+    criteria: ValidationCriteria,
+    result: ValidationResult,
+    evaluated_at: str,
+    *,
+    db_path: str,
+    workspace: str,
+) -> dict[str, Any]:
+    """Persist a validation criteria + result via the Rust authority.
+
+    Thin facade over `DeltaCoreClient.command("validation.register", ...)`.
+    """
+    from packages.delta_core_client import DeltaCoreClient, DeltaCoreError
+
+    try:
+        client = DeltaCoreClient()
+        return client.command(
+            {
+                "cmd": "validation.register",
+                "db": db_path,
+                "run_id": run_id,
+                "criteria": criteria.to_dict(),
+                "evaluated_at": evaluated_at,
+                "result": result.to_dict(),
+                "workspace": workspace,
+            }
+        )
+    except DeltaCoreError as exc:
+        raise ValidationAuthorityError(f"Rust validation register failed: {exc}") from exc
+
+
+def get_validation(validation_id: str, *, db_path: str) -> dict[str, Any] | None:
+    """Get a validation record by ID."""
+    from packages.delta_core_client import DeltaCoreClient, DeltaCoreError
+
+    try:
+        client = DeltaCoreClient()
+        result = client.command(
+            {
+                "cmd": "validation.get",
+                "db": db_path,
+                "validation_id": validation_id,
+            }
+        )
+        return result if result else None
+    except DeltaCoreError as exc:
+        raise ValidationAuthorityError(f"Rust validation get failed: {exc}") from exc
+
+
+def list_validations(run_id: str | None = None, *, db_path: str) -> list[dict[str, Any]]:
+    """List all validation records, optionally filtered by run_id."""
+    from packages.delta_core_client import DeltaCoreClient, DeltaCoreError
+
+    try:
+        client = DeltaCoreClient()
+        payload = {"cmd": "validation.list", "db": db_path}
+        if run_id is not None:
+            payload["run_id"] = run_id
+        result = client.command(payload)
+        return result if isinstance(result, list) else []
+    except DeltaCoreError as exc:
+        raise ValidationAuthorityError(f"Rust validation list failed: {exc}") from exc
+
+
+def latest_validation(run_id: str, *, db_path: str) -> dict[str, Any] | None:
+    """Get the latest validation for a run_id."""
+    from packages.delta_core_client import DeltaCoreClient, DeltaCoreError
+
+    try:
+        client = DeltaCoreClient()
+        result = client.command(
+            {
+                "cmd": "validation.latest",
+                "db": db_path,
+                "run_id": run_id,
+            }
+        )
+        return result if result else None
+    except DeltaCoreError as exc:
+        raise ValidationAuthorityError(f"Rust validation latest failed: {exc}") from exc
+
+
+def evaluate_and_register(
+    run_id: str,
+    criteria: ValidationCriteria,
+    artifacts: list["Artifact"],
+    *,
+    db_path: str,
+    workspace: str,
+    valid_citation_count: int | None = None,
+) -> tuple[dict[str, Any], ValidationResult]:
+    """Evaluate criteria against artifacts and persist the result via Rust."""
+    from packages.delta_core_client import DeltaCoreClient, DeltaCoreError
+
+    norm: list[dict[str, Any]] = []
+    for a in artifacts:
+        if isinstance(a, dict):
+            norm.append(a)
+        else:
+            norm.append(a.to_dict())
+
+    try:
+        client = DeltaCoreClient()
+        result = client.command(
+            {
+                "cmd": "validation.eval",
+                "db": db_path,
+                "run_id": run_id,
+                "criteria": criteria.to_dict(),
+                "artifacts": norm,
+                "workspace": workspace,
+                "valid_citation_count": valid_citation_count,
+            }
+        )
+        record = result.get("record")
+        result_dict = result.get("result")
+        return record, ValidationResult.from_dict(result_dict)
+    except DeltaCoreError as exc:
+        raise ValidationAuthorityError(f"Rust validation eval failed: {exc}") from exc
+
+
+__all__ = [
+    "ValidationCriteria",
+    "ValidationCheck",
+    "ValidationResult",
+    "DEFAULT_CRITERIA",
+    "run_validation",
+    "gate_status",
+    "ValidationAuthorityError",
+    "register_validation",
+    "get_validation",
+    "list_validations",
+    "latest_validation",
+    "evaluate_and_register",
+]

@@ -68,7 +68,7 @@ use delta_runtime_native::{
     args_sha256, operation_id, run_validation, validate_source_citation, ArtifactInput,
     ArtifactRegistryWriter, CitationValidationResult, CitationValidity, IdempotencyWriter,
     LedgerWriter, SideEffectEntry, SideEffectState, SourceCitationReader, SourceCitationWriter,
-    SourceRegisterInput, TaskStore,
+    SourceRegisterInput, TaskStore, ValidationReader, ValidationRegisterInput, ValidationWriter,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -83,7 +83,7 @@ use time::OffsetDateTime;
 /// immediately after subprocess startup; a mismatch raises
 /// :class:`DeltaCoreError` (fail-closed) so we never silently talk to
 /// an incompatible binary.
-const PROTOCOL_VERSION: u32 = 5;
+const PROTOCOL_VERSION: u32 = 6;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "cmd")]
@@ -331,6 +331,38 @@ enum Command {
         artifacts: Vec<Value>,
         workspace: Option<String>,
         valid_citation_count: Option<usize>,
+    },
+    /// R2.4: register validation criteria + result. Appends `validation.registered` to ledger.
+    #[serde(rename = "validation.register")]
+    ValidationRegister {
+        db: String,
+        run_id: String,
+        criteria: Value,
+        evaluated_at: String,
+        result: Value,
+        ts: Option<f64>,
+        workspace: Option<String>,
+    },
+    /// R2.4: get a validation by ID.
+    #[serde(rename = "validation.get")]
+    ValidationGet { db: String, validation_id: String },
+    /// R2.4: list all validations.
+    #[serde(rename = "validation.list")]
+    ValidationList { db: String, run_id: Option<String> },
+    /// R2.4: get the latest validation for a run_id.
+    #[serde(rename = "validation.latest")]
+    ValidationLatest { db: String, run_id: String },
+    /// R2.4: evaluate criteria against artifacts and persist the result.
+    #[serde(rename = "validation.eval")]
+    ValidationEval {
+        db: String,
+        run_id: String,
+        criteria: Value,
+        #[serde(default)]
+        artifacts: Vec<Value>,
+        workspace: String,
+        valid_citation_count: Option<usize>,
+        ts: Option<f64>,
     },
 }
 
@@ -1299,6 +1331,119 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
             valid_citation_count,
         )
         .and_then(|result| serde_json::to_value(result).map_err(|error| error.to_string())),
+        Command::ValidationRegister {
+            db,
+            run_id,
+            criteria,
+            evaluated_at,
+            result,
+            ts,
+            workspace,
+        } => {
+            let ledger = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let writer = ValidationWriter::new(ledger);
+            let input = ValidationRegisterInput {
+                run_id,
+                criteria,
+                evaluated_at,
+                result,
+            };
+            match writer.register_validation(
+                input,
+                ts.unwrap_or(0.0),
+                workspace.as_deref().unwrap_or(""),
+            ) {
+                Ok(record) => Ok(serde_json::to_value(record).unwrap()),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::ValidationGet { db, validation_id } => {
+            let ledger = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let reader = match ledger.reader() {
+                Ok(r) => ValidationReader { reader: r },
+                Err(e) => return err(e.to_string()),
+            };
+            match reader.get_validation(&validation_id) {
+                Ok(Some(record)) => Ok(serde_json::to_value(record).unwrap()),
+                Ok(None) => Ok(Value::Null),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::ValidationList { db, run_id } => {
+            let ledger = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let reader = match ledger.reader() {
+                Ok(r) => ValidationReader { reader: r },
+                Err(e) => return err(e.to_string()),
+            };
+            let validations = match reader.list_validations() {
+                Ok(v) => v,
+                Err(e) => return err(e.to_string()),
+            };
+            let filtered: Vec<_> = validations
+                .into_iter()
+                .filter(|v| run_id.as_ref().is_none() || v.run_id == *run_id.as_ref().unwrap())
+                .collect();
+            Ok(Value::Array(
+                filtered
+                    .into_iter()
+                    .map(serde_json::to_value)
+                    .collect::<Result<Vec<_>, _>>()
+                    .unwrap(),
+            ))
+        }
+        Command::ValidationLatest { db, run_id } => {
+            let ledger = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let reader = match ledger.reader() {
+                Ok(r) => ValidationReader { reader: r },
+                Err(e) => return err(e.to_string()),
+            };
+            match reader.latest_validation(&run_id) {
+                Ok(Some(record)) => Ok(serde_json::to_value(record).unwrap()),
+                Ok(None) => Ok(Value::Null),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::ValidationEval {
+            db,
+            run_id,
+            criteria,
+            artifacts,
+            workspace,
+            valid_citation_count,
+            ts,
+        } => {
+            let ledger = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let writer = ValidationWriter::new(ledger);
+            match writer.evaluate_and_register(
+                &run_id,
+                &criteria,
+                &artifacts,
+                &workspace,
+                valid_citation_count,
+                ts.unwrap_or(0.0),
+            ) {
+                Ok((record, result)) => Ok(serde_json::json!({
+                    "record": serde_json::to_value(record).unwrap(),
+                    "result": serde_json::to_value(result).unwrap(),
+                })),
+                Err(e) => Err(e.to_string()),
+            }
+        }
     };
     match result {
         Ok(v) => serde_json::json!({"ok": true, "result": v}),
