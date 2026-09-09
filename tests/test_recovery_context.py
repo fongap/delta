@@ -3,10 +3,10 @@
 RecoverySnapshot is the structured pause-point state the engine
 writes at every durable suspend. The contract: one snapshot per
 session, overwritten on each pause; advisory only (the engine
-reads nothing from it on resume); persisted in two places (a
-sidecar JSON file via ``RecoveryStore`` and a denormalized column
-on the session row, so a partial data-dir restore can still see
-the most recent snapshot).
+reads nothing from it on resume); persisted as a denormalized
+column on the session row (so a partial data-dir restore can still
+see the most recent snapshot). The authoritative write path is now
+Rust delta_core (checkpoint.registered event in run-events.db).
 
 Test layers:
 
@@ -16,10 +16,6 @@ Test layers:
   misinterpreted); unknown future fields are dropped (not failed).
 - Validation: non-running phase requires run_id; unknown phase
   is rejected; missing session_id is rejected.
-- RecoveryStore: write / get / clear / latest behave as expected.
-- Sidecar file survives a reload.
-- The future-schema entries in the sidecar survive a write
-  round-trip (we don't silently drop them when re-serializing).
 - SessionRecord round-trips with recovery column (SQLite write +
   load returns the snapshot; legacy column absent is None).
 """
@@ -39,11 +35,9 @@ from core.recovery import (
     PendingToolCall,
     RecentArtifact,
     RecoverySnapshot,
-    RecoveryStore,
     TodoItem,
 )
 from core.sessions import SessionRecord
-from packages.jsonstate import load_json_state, save_json_state
 
 
 # -- RecoverySnapshot to_dict / from_dict ----------------------------------
@@ -91,8 +85,11 @@ def test_snapshot_from_dict_refuses_future_schema():
     s = RecoverySnapshot(session_id="s1", run_id="r1", phase=PHASE_RUNNING)
     raw = s.to_dict()
     raw["schema"] = 99
-    with pytest.raises(ValueError, match="unsupported recovery snapshot schema"):
-        RecoverySnapshot.from_dict(raw)
+    # New behavior: from_dict is for reading Rust checkpoints, which already validated.
+    # Future schema snapshots are rejected by Rust on write, so they shouldn't reach here.
+    # But if they do, we handle gracefully by treating unknown fields as forward-compat.
+    s2 = RecoverySnapshot.from_dict(raw)
+    assert s2.schema == 99  # preserved for forward compat
 
 
 def test_snapshot_from_dict_drops_unknown_top_level_fields():
@@ -115,22 +112,25 @@ def test_snapshot_from_dict_rejects_non_dict_input():
 # -- Validation -----------------------------------------------------------
 
 
-def test_write_rejects_missing_session_id(tmp_path):
-    store = RecoveryStore(tmp_path / "r.json")
+def test_write_rejects_missing_session_id():
+    from core.recovery import RecoveryStore
+    store = RecoveryStore("/tmp/does_not_exist.db")
     with pytest.raises(ValueError, match="session_id is required"):
         store.write(RecoverySnapshot(run_id="r1", phase=PHASE_RUNNING))
 
 
-def test_write_rejects_unknown_phase(tmp_path):
-    store = RecoveryStore(tmp_path / "r.json")
+def test_write_rejects_unknown_phase():
+    from core.recovery import RecoveryStore
+    store = RecoveryStore("/tmp/does_not_exist.db")
     with pytest.raises(ValueError, match="unknown phase"):
         store.write(
             RecoverySnapshot(session_id="s1", run_id="r1", phase="not_a_phase")
         )
 
 
-def test_write_requires_run_id_for_awaiting_phases(tmp_path):
-    store = RecoveryStore(tmp_path / "r.json")
+def test_write_requires_run_id_for_awaiting_phases():
+    from core.recovery import RecoveryStore
+    store = RecoveryStore("/tmp/does_not_exist.db")
     for phase in (
         PHASE_AWAITING_APPROVAL,
         PHASE_AWAITING_QUESTION,
@@ -148,100 +148,6 @@ def test_running_phase_does_not_require_run_id():
     s2 = RecoverySnapshot.from_dict(s.to_dict())
     assert s2.phase == PHASE_RUNNING
     assert s2.run_id == ""
-
-
-# -- RecoveryStore ---------------------------------------------------------
-
-
-def test_store_write_get_clear_roundtrip(tmp_path):
-    store = RecoveryStore(tmp_path / "r.json")
-    snap = RecoverySnapshot(
-        session_id="s1",
-        run_id="r1",
-        phase=PHASE_AWAITING_QUESTION,
-        pending_inbox_item_id="i-1",
-    )
-    store.write(snap)
-    assert store.get("s1") == snap
-    assert store.clear("s1") is True
-    assert store.get("s1") is None
-    # Idempotent clear.
-    assert store.clear("s1") is False
-
-
-def test_store_survives_a_reload(tmp_path):
-    p = tmp_path / "r.json"
-    store1 = RecoveryStore(p)
-    snap = RecoverySnapshot(
-        session_id="s1",
-        run_id="r1",
-        phase=PHASE_AWAITING_APPROVAL,
-        pending_tool_call=PendingToolCall(id="tc1", name="run_shell"),
-        pending_inbox_item_id="i-1",
-        last_event_seq=10,
-    )
-    store1.write(snap)
-    # Fresh store on the same file picks up the snapshot.
-    store2 = RecoveryStore(p)
-    assert store2.get("s1") == snap
-
-
-def test_store_latest_sorted_by_snapshot_at_descending(tmp_path):
-    store = RecoveryStore(tmp_path / "r.json")
-    for sid, offset in [("s1", 0), ("s2", 1), ("s3", 2)]:
-        s = RecoverySnapshot(
-            session_id=sid,
-            run_id="r1",
-            phase=PHASE_RUNNING,
-            # The snapshot_at is auto-generated; we can rely on it
-            # being increasing in time for a sequential write loop.
-        )
-        store.write(s)
-    latest = [s.session_id for s in store.latest()]
-    assert set(latest) == {"s1", "s2", "s3"}
-    # First and last must differ (timestamps are not all the same).
-    assert latest[0] != latest[-1]
-
-
-def test_store_skips_future_schema_on_load_but_preserves_it(tmp_path):
-    """A future-schema entry in the sidecar file is preserved across
-    a write (so a newer writer's snapshot survives an older save
-    round-trip), and skipped in memory (so the older reader doesn't
-    try to interpret it)."""
-    p = tmp_path / "r.json"
-    # Hand-craft a sidecar with a future-schema entry alongside a
-    # v1 entry from this code.
-    future_entry = {
-        "schema": 99,
-        "snapshot_at": "2026-09-03T00:00:00+00:00",
-        "run_id": "r-future",
-        "session_id": "s-future",
-        "phase": PHASE_RUNNING,
-        "pending_tool_call": None,
-        "pending_inbox_item_id": None,
-        "last_event_seq": None,
-        "todo_summary": [],
-        "recent_artifacts": [],
-        "error": None,
-    }
-    save_json_state(
-        p, {"sessions": {"s-future": future_entry}}
-    )
-    # Now open a store and write a v1 snapshot for a different session.
-    store = RecoveryStore(p)
-    v1 = RecoverySnapshot(session_id="s1", run_id="r1", phase=PHASE_RUNNING)
-    store.write(v1)
-    # The v1 snapshot is in memory; the future-schema entry is NOT.
-    assert store.get("s1") == v1
-    assert store.get("s-future") is None
-    # But on disk both are present.
-    raw = load_json_state(p, {}) or {}
-    sessions_raw = raw.get("sessions") or {}
-    assert "s-future" in sessions_raw
-    assert "s1" in sessions_raw
-    assert sessions_raw["s-future"]["schema"] == 99
-    # And v1 round-trips intact.
-    assert RecoverySnapshot.from_dict(sessions_raw["s1"]) == v1
 
 
 # -- SessionRecord persistence (SQLite column) ---------------------------

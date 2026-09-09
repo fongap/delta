@@ -82,8 +82,13 @@ READER_ENV_VAR: Final[str] = "DELTA_RUST_READERS"
 #:
 #: Note (ADR-027): ``source_citation`` was hard-cut to Rust and removed
 #: from this set — it is no longer a selectable authority.
+#:
+#: Note (ADR-028): ``validation`` was hard-cut to Rust.
+#:
+#: Note (ADR-029): ``checkpoint`` was hard-cut to Rust.
 RUST_WRITE_DOMAINS: Final[frozenset[str]] = frozenset({
     "validation",       # deterministic completion gate via delta_core
+    "checkpoint",       # recovery checkpoint authority via delta_core
 })
 
 #: Rust shadow-reader domains (R2, ADR-019). These have Rust *readers*
@@ -91,10 +96,8 @@ RUST_WRITE_DOMAINS: Final[frozenset[str]] = frozenset({
 #: NOT Rust write authorities yet. Policy and Approval are deliberately
 #: excluded — they are evaluation/decision surfaces, not data with a
 #: sha256 to verify.
-#
-RUST_READ_DOMAINS: Final[frozenset[str]] = frozenset({
-    "checkpoint",       # core/recovery.py — JSON snapshot schema
-})
+#:
+RUST_READ_DOMAINS: Final[frozenset[str]] = frozenset({})
 
 #: Domains derived from another Rust authority. They do not have
 #: independent Rust write authority; they are computed from a Rust
@@ -268,8 +271,7 @@ def is_rust_authority(domain: str) -> bool:
     :returns: ``True`` if Rust is the declared write authority.
     :raises InvalidAuthorityTargetError: if ``domain`` is derived
         (``run_state``), an R2
-        reader domain (``validation`` / ``checkpoint`` /
-        ``checkpoint``), or unknown.
+        reader domain (``validation``), or unknown.
     """
     if domain not in RUST_WRITE_DOMAINS:
         if domain in DERIVED_DOMAINS:

@@ -66,8 +66,9 @@ use std::sync::Mutex;
 
 use delta_runtime_native::{
     args_sha256, operation_id, run_validation, validate_source_citation, ArtifactInput,
-    ArtifactRegistryWriter, CitationValidationResult, CitationValidity, IdempotencyWriter,
-    LedgerWriter, SideEffectEntry, SideEffectState, SourceCitationReader, SourceCitationWriter,
+    ArtifactRegistryWriter, CheckpointReader, CheckpointRegisterInput, CheckpointWriter,
+    CitationValidationResult, CitationValidity, IdempotencyWriter, LedgerWriter,
+    SideEffectEntry, SideEffectState, SourceCitationReader, SourceCitationWriter,
     SourceRegisterInput, TaskStore, ValidationReader, ValidationRegisterInput, ValidationWriter,
 };
 use serde::Deserialize;
@@ -83,7 +84,7 @@ use time::OffsetDateTime;
 /// immediately after subprocess startup; a mismatch raises
 /// :class:`DeltaCoreError` (fail-closed) so we never silently talk to
 /// an incompatible binary.
-const PROTOCOL_VERSION: u32 = 6;
+const PROTOCOL_VERSION: u32 = 7;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "cmd")]
@@ -364,6 +365,49 @@ enum Command {
         valid_citation_count: Option<usize>,
         ts: Option<f64>,
     },
+    /// R2.5: register a checkpoint (recovery snapshot).
+    #[serde(rename = "checkpoint.register")]
+    CheckpointRegister {
+        db: String,
+        #[serde(default)]
+        checkpoint_id: Option<String>,
+        run_id: String,
+        session_id: String,
+        phase: String,
+        #[serde(default)]
+        pending_tool_call: Option<Value>,
+        #[serde(default)]
+        pending_inbox_item_id: Option<String>,
+        #[serde(default)]
+        last_event_seq: Option<i64>,
+        #[serde(default)]
+        todo_summary: Vec<Value>,
+        #[serde(default)]
+        recent_artifacts: Vec<Value>,
+        #[serde(default)]
+        error: Option<String>,
+        ts: Option<f64>,
+        workspace: Option<String>,
+    },
+    /// R2.5: get a checkpoint by ID.
+    #[serde(rename = "checkpoint.get")]
+    CheckpointGet { db: String, checkpoint_id: String },
+    /// R2.5: list checkpoints, optionally filtered by run_id / session_id.
+    #[serde(rename = "checkpoint.list")]
+    CheckpointList {
+        db: String,
+        run_id: Option<String>,
+        session_id: Option<String>,
+    },
+    /// R2.5: get the latest checkpoint for a run_id.
+    #[serde(rename = "checkpoint.latest")]
+    CheckpointLatest { db: String, run_id: String },
+    /// R2.5: validate a checkpoint by ID.
+    #[serde(rename = "checkpoint.validate")]
+    CheckpointValidate { db: String, checkpoint_id: String },
+    /// R2.5: close the checkpoint DB handle in the cache.
+    #[serde(rename = "checkpoint.close")]
+    CheckpointClose { db: String },
 }
 
 struct ConnCache {
@@ -1443,6 +1487,116 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
                 })),
                 Err(e) => Err(e.to_string()),
             }
+        }
+        Command::CheckpointRegister {
+            db,
+            checkpoint_id,
+            run_id,
+            session_id,
+            phase,
+            pending_tool_call,
+            pending_inbox_item_id,
+            last_event_seq,
+            todo_summary,
+            recent_artifacts,
+            error,
+            ts,
+            workspace,
+        } => {
+            let ledger = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let writer = CheckpointWriter::new(ledger);
+            let input = CheckpointRegisterInput {
+                checkpoint_id,
+                run_id,
+                session_id,
+                phase,
+                pending_tool_call,
+                pending_inbox_item_id,
+                last_event_seq,
+                todo_summary,
+                recent_artifacts,
+                error,
+            };
+            match writer.register(input, ts.unwrap_or(0.0), workspace.as_deref().unwrap_or("")) {
+                Ok(record) => Ok(serde_json::to_value(record).unwrap()),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::CheckpointGet { db, checkpoint_id } => {
+            let ledger = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let reader = match ledger.reader() {
+                Ok(r) => CheckpointReader::from_reader(r),
+                Err(e) => return err(e.to_string()),
+            };
+            match reader.get(&checkpoint_id) {
+                Ok(Some(record)) => Ok(serde_json::to_value(record).unwrap()),
+                Ok(None) => Ok(Value::Null),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::CheckpointList {
+            db,
+            run_id,
+            session_id,
+        } => {
+            let ledger = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let reader = match ledger.reader() {
+                Ok(r) => CheckpointReader::from_reader(r),
+                Err(e) => return err(e.to_string()),
+            };
+            match reader.list(run_id.as_deref(), session_id.as_deref()) {
+                Ok(records) => Ok(Value::Array(
+                    records
+                        .into_iter()
+                        .map(serde_json::to_value)
+                        .collect::<Result<Vec<_>, _>>()
+                        .unwrap(),
+                )),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::CheckpointLatest { db, run_id } => {
+            let ledger = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let reader = match ledger.reader() {
+                Ok(r) => CheckpointReader::from_reader(r),
+                Err(e) => return err(e.to_string()),
+            };
+            match reader.latest(&run_id) {
+                Ok(Some(record)) => Ok(serde_json::to_value(record).unwrap()),
+                Ok(None) => Ok(Value::Null),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::CheckpointValidate { db, checkpoint_id } => {
+            let ledger = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let reader = match ledger.reader() {
+                Ok(r) => CheckpointReader::from_reader(r),
+                Err(e) => return err(e.to_string()),
+            };
+            match reader.validate(&checkpoint_id) {
+                Ok(result) => Ok(serde_json::to_value(result).unwrap()),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::CheckpointClose { db } => {
+            let path = PathBuf::from(&db);
+            let closed = cache.ledgers.remove(&path).is_some();
+            Ok(serde_json::json!({ "closed": closed }))
         }
     };
     match result {

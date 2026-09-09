@@ -1,17 +1,14 @@
-//! Delta Core Rust runtime — state foundation (R1) + R2 shadow readers (ADR-019).
+//! Delta Core Rust runtime — state foundation (R1) + R2 Trusted Execution (ADR-029).
 //!
-//! This crate provides read-only shadow access to the Python Runtime's
-//! SQLite stores (run_events.db, side-effects.db, sources.db) and
-//! deterministic rule evaluators (validation, citation ranges, recovery
-//! checkpoint schema). It does NOT write. Authority remains with the
-//! Legacy Python Runtime until R1/R2 switches.
+//! This crate provides the authoritative Rust implementations for R1/R2 domains.
+//! Checkpoint authority (ADR-029) persists checkpoints as `checkpoint.registered`
+//! events in the run-event ledger (`run_events.db`).
 //!
 //! See:
 //!   - docs/architecture/adr/ADR-009-delta-core-architecture.md
-//!   - docs/architecture/adr/ADR-019-r2-pre-plumbing.md
+//!   - docs/architecture/adr/ADR-029-r2-checkpoint-hard-cut.md
 //!   - docs/architecture/runtime-public-contract.md
-//!   - docs/governance/rust-core-migration.md §5 (R1 — State Foundation)
-//!     and §5 (R2 — Trusted Execution, shadow-read phase)
+//!   - docs/governance/rust-core-migration.md
 
 pub mod artifact;
 pub mod checkpoint;
@@ -25,7 +22,10 @@ pub use artifact::{
     ArtifactInput, ArtifactMismatch, ArtifactReader, ArtifactRecord, ArtifactRegistrationResult,
     ArtifactRegistryWriter,
 };
-pub use checkpoint::{parse_snapshot, read_snapshot_file, ParsedSnapshot, SNAPSHOT_SCHEMA_VERSION};
+pub use checkpoint::{
+    CheckpointReader, CheckpointRegisterInput, CheckpointValidationResult, CheckpointWriter,
+    CHECKPOINT_SCHEMA_VERSION,
+};
 pub use idemlog::{
     args_sha256, operation_id, IdempotencyReader, IdempotencyWriter, SideEffectEntry,
     SideEffectState,

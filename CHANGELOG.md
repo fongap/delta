@@ -211,6 +211,29 @@ R2 Trusted Execution 第三域 Validation 完成 hard-cut。
 > 相关 ADR：ADR-028（新增），ADR-018（更新 Validation 状态），ADR-019（更新 validation 从 reader 提升为 writer）。
 
 
+### R2 — Checkpoint Hard-Cut（#154 / ADR-029）
+
+R2 Trusted Execution 第四域 Checkpoint 完成 hard-cut。
+
+**Authority**：
+
+- Before：Python Checkpoint（`RecoveryStore` 写 JSON sidecar），可选 Rust shadow-read（`inspect_checkpoint` / `is_rust_shadow_reader("checkpoint")`）。
+- After：Rust `delta_core` 是唯一 Checkpoint authority。Python 只做状态收集 / 快照构造，通过 `DeltaCoreClient` 发送 `checkpoint.register` / `checkpoint.get` / `checkpoint.validate` 等命令。
+
+**删除的旧路径**：
+
+- `core/recovery.py` JSON sidecar writer（`load_json_state` / `save_json_state` / `recovery-snapshots.json`）
+- `inspect_checkpoint` binary（仅诊断工具，非生产路径）
+- `checkpoint` from `RUST_READ_DOMAINS` / `is_rust_shadow_reader("checkpoint")`
+- production shadow / fallback path
+
+**失败行为**：`delta_core` 不可用 / 协议不匹配 / malformed response / integrity mismatch → `CheckpointAuthorityError`（fail-closed），禁止 Python fallback。回滚仅 Git revert。
+
+**Authority Matrix**：Checkpoint = **Rust（ADR-029 hard-cut）** Complete。下一域：Policy。
+
+> 相关 ADR：ADR-029（新增），ADR-018（更新 Checkpoint 状态），ADR-019（更新 checkpoint 从 reader 提升为 writer）。
+
+
 ### R1.6 — Legacy Cleanup（`cowork` → `delta` 全栈重命名）
 
 **Breaking Change**：本节列出的标识符、模块名、env var、事件前缀、bot handle 均已从 `cowork` / `@ocw` / `OpenWorker*` 重命名为 `delta` / `@delta` / `delta.*`。依赖旧标识符的下游脚本/集成需要同步更新。

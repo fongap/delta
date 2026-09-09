@@ -13,6 +13,8 @@
 > 2026-09-10 后续决策：ADR-027 完成 Source/Citation Hard-Cut。Source/Citation 域现在由 Rust `delta_core` 作为唯一 Authority（`core/source_citation_delegate.py` 已删除，`source_citation` 已从 `RUST_WRITE_DOMAINS` 移除，无 fallback / delegate / feature flag）。下一域为 Validation。
 
 > 2026-09-10 后续决策：ADR-028 完成 Validation Hard-Cut。Validation 域现在由 Rust `delta_core` 作为唯一 Authority（`core/validation_delegate.py` 已删除，`validation` 在 `RUST_WRITE_DOMAINS` 中，无 fallback / delegate / feature flag）。下一域为 Checkpoint。
+>
+> 2026-09-10 后续决策：ADR-029 完成 Checkpoint Hard-Cut。Checkpoint 域现在由 Rust `delta_core` 作为唯一 Authority（`core/recovery.py` 是薄门面，`inspect_checkpoint` 已删除，`checkpoint` 在 `RUST_WRITE_DOMAINS` 中，无 fallback / delegate / feature flag）。下一域为 Policy。
 
 ## 背景
 
@@ -30,7 +32,7 @@ R2 范围（`rust-core-migration.md` §5 R2）包含 6 个领域：
 1. **Artifact Registry** ✅ **Completed (ADR-026)** — `core/artifact.py`（`Artifact` dataclass + `register_artifact` helper + `register_run_artifacts` walker）；
 2. **Source/Citation** ✅ **Completed (ADR-027)** — `core/sources.py` + `core/citation.py` + `core/analyzer.py:source_citation_hits`；
 3. **Validation** ✅ **Completed (ADR-028)** — `core/validation.py`（`ValidationCriteria` / `ValidationCheck` / `ValidationResult`）；
-4. **Checkpoint** — `core/conversations.py` 的 checkpoint path + `core/recovery.py` 的快照；
+4. **Checkpoint** ✅ **Completed (ADR-029)** — `core/recovery.py` 的快照（Rust `checkpoint.registered` ledger event）；
 5. **Policy** — `core/gateway.py` Slice 2（`_evaluate_slice2_policy` + `_apply_session_standing_policy`）；
 6. **Approval** — `core/engine.py:ApprovalOutcome` + `core/audit.py` 审批行 + `core/gateway.py` L1-L4 分级。
 

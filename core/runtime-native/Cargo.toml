@@ -35,10 +35,6 @@ name = "inspect_artifact"
 path = "src/bin/inspect_artifact.rs"
 
 [[bin]]
-name = "inspect_checkpoint"
-path = "src/bin/inspect_checkpoint.rs"
-
-[[bin]]
 name = "inspect_citation"
 path = "src/bin/inspect_citation.rs"
 
