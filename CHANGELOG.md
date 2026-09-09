@@ -187,6 +187,30 @@ R2 Trusted Execution 第二域 Source/Citation 完成 hard-cut。
 > 相关 ADR：ADR-027（新增），ADR-021（标记 Superseded by ADR-027），ADR-018（更新 Source/Citation 状态）。
 
 
+### R2 — Validation Hard-Cut（#152 / ADR-028）
+
+R2 Trusted Execution 第三域 Validation 完成 hard-cut。
+
+**Authority**：
+
+- Before：Python Validation，可选 Rust shadow-read delegate（`DELTA_RUST_AUTHORITY=validation` + `core/validation_delegate.py` / `run_validation_delegated` / `maybe_wrap`）。
+- After：Rust `delta_core` 是唯一 Validation authority。Python 只做 artifact 收集 / criteria 构造，通过 `DeltaCoreClient` 发送 `validation.run` / `validation.register` / `validation.eval` 等命令。
+
+**删除的旧路径**：
+
+- `core/validation_delegate.py`
+- `run_validation_delegated` / `maybe_wrap` / `_is_delegate_active`
+- `validation` runtime authority selector（`is_rust_authority("validation")`）
+- Python Validation ledger writer
+- production shadow / fallback path
+
+**失败行为**：`delta_core` 不可用 / 协议不匹配 / malformed response → `ValidationAuthorityError`（fail-closed），禁止 Python fallback。回滚仅 Git revert。
+
+**Authority Matrix**：Validation = **Rust（ADR-028 hard-cut）** Complete。下一域：Checkpoint。
+
+> 相关 ADR：ADR-028（新增），ADR-018（更新 Validation 状态），ADR-019（更新 validation 从 reader 提升为 writer）。
+
+
 ### R1.6 — Legacy Cleanup（`cowork` → `delta` 全栈重命名）
 
 **Breaking Change**：本节列出的标识符、模块名、env var、事件前缀、bot handle 均已从 `cowork` / `@ocw` / `OpenWorker*` 重命名为 `delta` / `@delta` / `delta.*`。依赖旧标识符的下游脚本/集成需要同步更新。

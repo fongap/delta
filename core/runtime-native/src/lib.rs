@@ -37,7 +37,10 @@ pub use source_citation::{
     SourceRegisterInput, ValidatedCitation,
 };
 pub use taskstore::{ScheduledTaskEntry, TaskRunEntry, TaskStore};
-pub use validation::{run_validation, ValidationCheck, ValidationResult};
+pub use validation::{
+    run_validation, ValidationCheck, ValidationReader, ValidationRecord, ValidationRegisterInput,
+    ValidationResult, ValidationWriter,
+};
 
 pub use thiserror::Error;
 

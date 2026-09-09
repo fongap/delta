@@ -12,6 +12,8 @@
 
 > 2026-09-10 后续决策：ADR-027 完成 Source/Citation Hard-Cut。Source/Citation 域现在由 Rust `delta_core` 作为唯一 Authority（`core/source_citation_delegate.py` 已删除，`source_citation` 已从 `RUST_WRITE_DOMAINS` 移除，无 fallback / delegate / feature flag）。下一域为 Validation。
 
+> 2026-09-10 后续决策：ADR-028 完成 Validation Hard-Cut。Validation 域现在由 Rust `delta_core` 作为唯一 Authority（`core/validation_delegate.py` 已删除，`validation` 在 `RUST_WRITE_DOMAINS` 中，无 fallback / delegate / feature flag）。下一域为 Checkpoint。
+
 ## 背景
 
 R1 State Foundation（ADR-017）已在 2026-09-07 完成：5 个领域（Idempotency / Ledger / Task identity / Run state / Storage transaction boundary）的 Rust delegate wrapper + 统一 `delta_core` 进程入口 + CI gate 全部就位。Rust authority 能力可用（opt-in via `DELTA_RUST_AUTHORITY`），但生产默认权威仍是 Python（Pre-R2 Gate / R1.7 明确的三态澄清）。
@@ -27,7 +29,7 @@ R2 范围（`rust-core-migration.md` §5 R2）包含 6 个领域：
 
 1. **Artifact Registry** ✅ **Completed (ADR-026)** — `core/artifact.py`（`Artifact` dataclass + `register_artifact` helper + `register_run_artifacts` walker）；
 2. **Source/Citation** ✅ **Completed (ADR-027)** — `core/sources.py` + `core/citation.py` + `core/analyzer.py:source_citation_hits`；
-3. **Validation** — `core/validation.py`（`ValidationCriteria` / `ValidationCheck` / `ValidationResult`）；
+3. **Validation** ✅ **Completed (ADR-028)** — `core/validation.py`（`ValidationCriteria` / `ValidationCheck` / `ValidationResult`）；
 4. **Checkpoint** — `core/conversations.py` 的 checkpoint path + `core/recovery.py` 的快照；
 5. **Policy** — `core/gateway.py` Slice 2（`_evaluate_slice2_policy` + `_apply_session_standing_policy`）；
 6. **Approval** — `core/engine.py:ApprovalOutcome` + `core/audit.py` 审批行 + `core/gateway.py` L1-L4 分级。
@@ -93,21 +95,21 @@ R2 按以下顺序落地：
   - 原因：Python 只做文件 I/O / sha256 / stat / candidate range 构造；Rust 拥有 Source identity、revision、Citation identity、range validation、stale detection、所有持久化。
   - 风险：低。Python facade 保持 API 兼容；Rust 拥有所有 trusted facts。
 
-- **PR134 — Validation authority**（`core/validation.py` → Rust `ValidationEngine`）
+- **PR134 — Validation authority** ✅ **Completed (ADR-028)**（`core/validation.py` → Rust `ValidationWriter` / `ValidationReader`）
   - 原因：Validation 是纯函数式评估（输入：task + output，输出：ValidationResult），不依赖外部状态；最容易做 fail-closed 测试。
   - 风险：中。Validation 失败会导致 run 终止（`validation.failed` ledger event），需保证 Python ↔ Rust 评估规则 100% 一致。
 
-- **PR135 — Approval audit authority**（`core/audit.py` approval 字段写入 → Rust；交互决策保留 Python）
+- **PR135 — Checkpoint authority**（`core/conversations.py` checkpoint 路径 + `core/recovery.py` 快照 → Rust `CheckpointWriter`）
+  - 原因：Checkpoint 是全状态快照，包含 R1 + R2 全部领域状态。放在最后是因为它依赖前面 5 个域的 Rust 实现。
+  - 风险：高。Checkpoint 错误会导致 resume 失败；需 end-to-end test（Python session → checkpoint → Rust resume）。
+
+- **PR136 — Approval audit authority**（`core/audit.py` approval 字段写入 → Rust；交互决策保留 Python）
   - 原因：把 Approval 拆成"audit 写入"（可迁移）和"交互决策"（保留 Python，因为需要 LLM 上下文）。这是 §6 流程允许的"领域子集切换"。
   - 风险：中。audit 行是合规证据，必须 byte-equal 跨语言。
 
-- **PR136 — Policy evaluation authority**（`core/gateway.py` Slice 2 → Rust `PolicyEngine`）
+- **PR137 — Policy evaluation authority**（`core/gateway.py` Slice 2 → Rust `PolicyEngine`）
   - 原因：Policy 是 tool_call 前置评估，不修改任何表，但决定 tool_call 是否执行。Rust 化后可以避免"Python 端 policy 评估 + Rust 端实际执行"的语义鸿沟。
   - 风险：高。Policy bug 可能让危险 tool_call 漏过评估。必须 Python ↔ Rust 评估结果 100% 一致 + 独立 fuzz test。
-
-- **PR137 — Checkpoint authority**（`core/conversations.py` checkpoint 路径 + `core/recovery.py` 快照 → Rust `CheckpointWriter`）
-  - 原因：Checkpoint 是全状态快照，包含 R1 + R2 全部领域状态。放在最后是因为它依赖前面 5 个域的 Rust 实现。
-  - 风险：高。Checkpoint 错误会导致 resume 失败；需 end-to-end test（Python session → checkpoint → Rust resume）。
 
 每个 PR 必须满足 §7 双写规则 + §9 测试要求 + §10 CI guard + §11 PR 规则。
 

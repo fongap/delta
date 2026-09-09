@@ -31,6 +31,7 @@
 - `ADR-024-r1-task-identity-hard-cut.md` – R1 Task Identity 域权威硬切：Rust `delta_core` 是唯一事实来源。Python `core/automation/store.py` 是薄门面。`core/automation/store_delegate.py` 和 `tests/test_taskstore_delegate.py` 已物理删除。`DELTA_RUST_AUTHORITY=task_identity` 选择逻辑已移除。不存在 Python fallback writer、delegate wrapper 或双 Authority 路径。回滚方式仅为 Git revert。
 - `ADR-026-r2-artifact-hard-cut.md` – R2 Artifact Registry Hard-Cut：Rust `delta_core` 是唯一 Artifact authority。Python `core/artifact.py` 只做文件发现 / stat / sha256 / kind 分类，通过 `DeltaCoreClient` 发送 `artifact.register` 命令；`core/artifact_delegate.py` 已删除，`artifact` 已从 `RUST_WRITE_DOMAINS` 移除。无 fallback / delegate / feature flag，回滚仅 Git revert。
 - `ADR-027-r2-source-citation-hard-cut.md` – R2 Source/Citation Hard-Cut：Rust `delta_core` 是唯一 Source/Citation authority。Python `core/sources.py` 只做文件 I/O / sha256 / stat / candidate range 构造，通过 `DeltaCoreClient` 发送 `source.register` / `citation.mark` / `citation.validate` 等命令；`core/source_citation_delegate.py` 已删除，`source_citation` 已从 `RUST_WRITE_DOMAINS` 移除。无 fallback / delegate / feature flag，回滚仅 Git revert。
+- `ADR-028-r2-validation-hard-cut.md` – R2 Validation Hard-Cut：Rust `delta_core` 是唯一 Validation authority。Python `core/validation.py` 只做 artifact 收集 / criteria 构造，通过 `DeltaCoreClient` 发送 `validation.run` / `validation.register` / `validation.eval` 等命令；`core/validation_delegate.py` 已删除，`validation` 在 `RUST_WRITE_DOMAINS` 中。无 fallback / delegate / feature flag，回滚仅 Git revert。
 
 相关架构文档：
 - `hub-federation-boundary.md` – Delta Hub 联邦化边界设计，明确 OpenWorker 仅为可选适配器。

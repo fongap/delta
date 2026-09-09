@@ -256,7 +256,7 @@ pub fn run_validation(
             for needle in needles {
                 if !text.contains(needle.as_str()) {
                     checks.push(ValidationCheck {
-                        name: format!("substring:{path}:{needle:?}"),
+                        name: format!("substring:{path}:'{}'", needle.replace('\'', "\\'")),
                         ok: false,
                         detail: "not found".to_string(),
                     });
@@ -581,5 +581,224 @@ mod tests {
         let artifacts = vec![json!({"path": "data.csv", "size": 20, "incomplete": false})];
         let r = run_validation(&artifacts, &criteria, Some(ws), None).unwrap();
         assert!(!r.ok);
+    }
+}
+
+/// Write authority for Validation trusted facts (R2, ADR-028).
+///
+/// Appends `validation.registered` and `validation.evaluated` events to the
+/// run-event ledger via `LedgerWriter`. All trusted persistence is
+/// owned by Rust; Python is a facade that only performs extraction
+/// and candidate construction.
+use crate::ledger::{LedgerEvent, LedgerReader, LedgerWriter};
+use crate::ShadowReadError;
+
+/// Event type for validation criteria registration / evaluation.
+const EV_VALIDATION_REGISTERED: &str = "validation.registered";
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValidationRegisterInput {
+    pub run_id: String,
+    pub criteria: Value,
+    pub evaluated_at: String,
+    pub result: Value,
+}
+
+/// One reconstructed Validation record from the ledger event stream.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ValidationRecord {
+    pub id: String,
+    pub run_id: String,
+    pub criteria: Value,
+    pub evaluated_at: String,
+    pub result: Value,
+}
+
+/// Read-only handle that replays validation events from the ledger
+/// to reconstruct the current Validation register.
+pub struct ValidationReader {
+    pub reader: LedgerReader,
+}
+
+impl ValidationReader {
+    /// Open the ledger DB in read-only mode.
+    pub fn open<P: AsRef<std::path::Path>>(path: P) -> Result<Self, ShadowReadError> {
+        Ok(Self {
+            reader: LedgerReader::open(path)?,
+        })
+    }
+
+    /// Wrap an existing LedgerReader.
+    pub fn from_reader(reader: LedgerReader) -> Self {
+        Self { reader }
+    }
+
+    /// Reconstruct all Validation records for the workspace by replaying events.
+    pub fn list_validations(&self) -> Result<Vec<ValidationRecord>, ShadowReadError> {
+        let events = self.reader.all_events()?;
+        self.replay_validations(&events)
+    }
+
+    /// Get a single validation by ID.
+    pub fn get_validation(
+        &self,
+        validation_id: &str,
+    ) -> Result<Option<ValidationRecord>, ShadowReadError> {
+        let events = self.reader.all_events()?;
+        let validations = self.replay_validations(&events)?;
+        Ok(validations.into_iter().find(|v| v.id == validation_id))
+    }
+
+    /// Find the latest validation for a given run_id.
+    pub fn latest_validation(
+        &self,
+        run_id: &str,
+    ) -> Result<Option<ValidationRecord>, ShadowReadError> {
+        let events = self.reader.all_events()?;
+        let validations = self.replay_validations(&events)?;
+        let candidates: Vec<_> = validations
+            .into_iter()
+            .filter(|v| v.run_id == run_id)
+            .collect();
+        if candidates.is_empty() {
+            return Ok(None);
+        }
+        // Latest by evaluated_at (string ISO8601 is lexicographically sortable).
+        let latest = candidates
+            .into_iter()
+            .max_by_key(|v| v.evaluated_at.clone())
+            .unwrap();
+        Ok(Some(latest))
+    }
+
+    fn replay_validations(
+        &self,
+        events: &[LedgerEvent],
+    ) -> Result<Vec<ValidationRecord>, ShadowReadError> {
+        use std::collections::HashMap;
+        let mut validations: HashMap<String, ValidationRecord> = HashMap::new();
+
+        for ev in events {
+            if ev.r#type == EV_VALIDATION_REGISTERED {
+                let payload = &ev.payload;
+                let id = payload
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        ShadowReadError::Parse("validation.registered missing id".into())
+                    })?
+                    .to_string();
+
+                let record = ValidationRecord {
+                    id,
+                    run_id: payload
+                        .get("run_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                    criteria: payload.get("criteria").cloned().unwrap_or(Value::Null),
+                    evaluated_at: payload
+                        .get("evaluated_at")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string(),
+                    result: payload.get("result").cloned().unwrap_or(Value::Null),
+                };
+                validations.insert(record.id.clone(), record);
+            }
+        }
+
+        // Sort by evaluated_at ascending for stable list order.
+        let mut out: Vec<_> = validations.into_values().collect();
+        out.sort_by(|a, b| a.evaluated_at.cmp(&b.evaluated_at));
+        Ok(out)
+    }
+}
+
+/// Write authority for Validation facts.
+pub struct ValidationWriter<'a> {
+    ledger: &'a LedgerWriter,
+}
+
+impl<'a> ValidationWriter<'a> {
+    pub fn new(ledger: &'a LedgerWriter) -> Self {
+        Self { ledger }
+    }
+
+    /// Register (or re-register) a validation criteria and its result. Returns the resulting ValidationRecord.
+    pub fn register_validation(
+        &self,
+        input: ValidationRegisterInput,
+        ts: f64,
+        workspace: &str,
+    ) -> Result<ValidationRecord, ShadowReadError> {
+        let validation_id = uuid::Uuid::new_v4().to_string();
+        let record = ValidationRecord {
+            id: validation_id,
+            run_id: input.run_id,
+            criteria: input.criteria,
+            evaluated_at: input.evaluated_at,
+            result: input.result,
+        };
+        self.append_validation_registered(&record, ts, workspace)?;
+        Ok(record)
+    }
+
+    /// Evaluate validation criteria against artifacts and persist the result.
+    /// Returns the evaluation result.
+    pub fn evaluate_and_register(
+        &self,
+        run_id: &str,
+        criteria: &Value,
+        artifacts: &[Value],
+        workspace: &str,
+        valid_citation_count: Option<usize>,
+        ts: f64,
+    ) -> Result<(ValidationRecord, ValidationResult), ShadowReadError> {
+        // Run the validation
+        let result = run_validation(
+            artifacts,
+            criteria,
+            Some(std::path::Path::new(workspace)),
+            valid_citation_count,
+        )
+        .map_err(ShadowReadError::Parse)?;
+
+        let evaluated_at = time::OffsetDateTime::now_utc()
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap_or_else(|_| time::OffsetDateTime::now_utc().to_string());
+
+        let input = ValidationRegisterInput {
+            run_id: run_id.to_string(),
+            criteria: criteria.clone(),
+            evaluated_at: evaluated_at.clone(),
+            result: serde_json::to_value(&result).unwrap(),
+        };
+
+        let record = self.register_validation(input, ts, workspace)?;
+        Ok((record, result))
+    }
+
+    pub fn append_validation_registered(
+        &self,
+        record: &ValidationRecord,
+        ts: f64,
+        workspace: &str,
+    ) -> Result<(), ShadowReadError> {
+        let payload = serde_json::json!({
+            "id": record.id,
+            "run_id": record.run_id,
+            "criteria": record.criteria,
+            "evaluated_at": record.evaluated_at,
+            "result": record.result,
+        });
+        self.ledger.append(
+            record.run_id.as_str(),
+            EV_VALIDATION_REGISTERED,
+            "system",
+            ts,
+            &payload,
+            workspace,
+        )?;
+        Ok(())
     }
 }
