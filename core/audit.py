@@ -1,4 +1,10 @@
-"""Durable local audit log for connector/tool actions."""
+"""Durable local audit log for connector/tool actions.
+
+ADR-031: audit event *writes* are delegated to the Rust authority
+(``core.approval.record`` → ``delta_core approval.record``). The *read*
+path (``list``) stays in Python via its own SQLite connection to the same
+database file.
+"""
 
 from __future__ import annotations
 
@@ -13,6 +19,7 @@ from packages.sanitize import (
     BODY_KEYS,
     SECRET_KEY_MARKERS,
 )
+from packages.storage_authority import is_rust_authority  # noqa: F401 (ADR-031 structural guard)
 
 # Legacy names kept as aliases (the definitions now live in packages/sanitize.py,
 # the one shared SensitiveDataSanitizer).
@@ -55,31 +62,21 @@ class AuditStore:
         resource = _resource(
             tool, event.get("arguments") or {}, event.get("result") or {}
         )
+        payload = {
+            **event,
+            "tool": tool,
+            "connector": connector,
+            "arguments": args,
+            "result_preview": _truncate(str(event.get("result_preview") or "")),
+            "reason": _truncate(str(event.get("reason") or "")),
+            "resource": _truncate(str(resource or "")),
+            "level": str(event.get("level") or ""),
+            "isolation": str(event.get("isolation") or ""),
+        }
+        from core.approval import record
+
         with self._lock:
-            self._conn.execute(
-                """
-                INSERT INTO audit_events
-                    (session_id, agent, workspace, connector, tool, stage, status, approval, args, result_preview, reason, resource, level, isolation)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    event.get("session_id") or "",
-                    event.get("agent") or "",
-                    event.get("workspace") or "",
-                    connector,
-                    tool,
-                    event.get("stage") or "",
-                    event.get("status") or "",
-                    event.get("approval") or "",
-                    json.dumps(args, default=str),
-                    _truncate(str(event.get("result_preview") or "")),
-                    _truncate(str(event.get("reason") or "")),
-                    _truncate(str(resource or "")),
-                    str(event.get("level") or ""),
-                    str(event.get("isolation") or ""),
-                ),
-            )
-            self._conn.commit()
+            record(str(self.db_path), payload)
 
     def list(
         self,

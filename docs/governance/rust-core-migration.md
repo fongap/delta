@@ -38,9 +38,9 @@
 | Runtime | Python | Rust |
 | Scheduler | Python | Rust |
 | Policy | Python | Rust |
-| Approval | Python | Rust |
+| Approval | Rust（ADR-031 hard-cut） | **Rust** |
 | Ledger | Rust（ADR-023 hard-cut） | **Rust** |
-| Checkpoint | Python | Rust |
+| Checkpoint | Rust（ADR-029 hard-cut） | **Rust** |
 | Resume | Python | Rust |
 | Artifact Registry | Rust（ADR-026 hard-cut） | **Rust** |
 | Source/Citation | Rust（ADR-027 hard-cut） | **Rust** |
@@ -71,6 +71,10 @@
 > **R2 Source/Citation Hard-Cut（ADR-027，2026-09-10）**：Source/Citation 域已完成 hard-cut。Rust `delta_core` 是唯一事实来源。Python `core/sources.py` 只负责文件 I/O / sha256 / stat / candidate range 构造，通过 `DeltaCoreClient` 发送 `source.register` / `citation.mark` / `citation.validate` 等命令。`core/source_citation_delegate.py` 和 `tests/test_source_citation_delegate.py` 已物理删除。`DELTA_RUST_AUTHORITY=source_citation` 选择逻辑已移除（`source_citation` 不在 `RUST_WRITE_DOMAINS`）。不存在 Python fallback writer、delegate wrapper、feature flag 或双 Authority 路径。回滚方式仅为 Git revert。
 
 > **R2 Validation Hard-Cut（ADR-028，2026-09-10）**：Validation 域已完成 hard-cut。Rust `delta_core` 是唯一事实来源。Python `core/validation.py` 只负责 artifact 收集 / criteria 构造，通过 `DeltaCoreClient` 发送 `validation.run` / `validation.register` / `validation.eval` 等命令。`core/validation_delegate.py` 和 `tests/test_validation_delegate.py` 已物理删除。`validation` 在 `RUST_WRITE_DOMAINS` 中。不存在 Python fallback writer、delegate wrapper、feature flag 或双 Authority 路径。回滚方式仅为 Git revert。
+>
+> **R2 Checkpoint Hard-Cut（ADR-029，2026-09-10）**：Checkpoint 域已完成 hard-cut。Rust `delta_core` 是唯一事实来源。Python `core/recovery.py` 只负责状态收集 / 快照构造，通过 `DeltaCoreClient` 发送 `checkpoint.register` / `checkpoint.get` / `checkpoint.validate` 等命令。`inspect_checkpoint` 已删除，`checkpoint` 在 `RUST_WRITE_DOMAINS` 中，不在 `RUST_READ_DOMAINS`。不存在 Python fallback writer、delegate wrapper、feature flag 或双 Authority 路径。回滚方式仅为 Git revert。
+>
+> **R2 Policy Hard-Cut（ADR-030，2026-09-10）**：Policy 域已完成 hard-cut。Rust `delta_core` 是唯一事实来源。Python `core/gateway.py` 只负责状态收集 / 元数据构造，通过 `DeltaCoreClient` 发送 `policy.classify` / `policy.evaluate` 命令。`enforce_level` / `restrict_grants` / `enforce_scope` Python 实现已删除，`policy` 在 `RUST_WRITE_DOMAINS` 中。不存在 Python fallback writer、delegate wrapper、feature flag 或双 Authority 路径。回滚方式仅为 Git revert。
 
 每次迁移必须更新实际 Authority Matrix。
 

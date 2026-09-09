@@ -35,10 +35,6 @@ name = "inspect_artifact"
 path = "src/bin/inspect_artifact.rs"
 
 [[bin]]
-name = "inspect_checkpoint"
-path = "src/bin/inspect_checkpoint.rs"
-
-[[bin]]
 name = "inspect_citation"
 path = "src/bin/inspect_citation.rs"
 
@@ -52,6 +48,7 @@ path = "src/bin/delta_core.rs"
 
 [dependencies]
 csv = "1"
+regex = "1"
 rusqlite = { version = "0.32", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

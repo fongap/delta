@@ -65,10 +65,12 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use delta_runtime_native::{
-    args_sha256, operation_id, run_validation, validate_source_citation, ArtifactInput,
-    ArtifactRegistryWriter, CitationValidationResult, CitationValidity, IdempotencyWriter,
-    LedgerWriter, SideEffectEntry, SideEffectState, SourceCitationReader, SourceCitationWriter,
-    SourceRegisterInput, TaskStore, ValidationReader, ValidationRegisterInput, ValidationWriter,
+    args_sha256, classify, operation_id, run_validation, validate_source_citation,
+    ApprovalRecordInput, ApprovalWriter, ArtifactInput, ArtifactRegistryWriter, CheckpointReader,
+    CheckpointRegisterInput, CheckpointWriter, CitationValidationResult, CitationValidity,
+    IdempotencyWriter, LedgerWriter, PolicyEvaluateInput, SideEffectEntry, SideEffectState,
+    SourceCitationReader, SourceCitationWriter, SourceRegisterInput, TaskStore, ValidationReader,
+    ValidationRegisterInput, ValidationWriter,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -83,7 +85,7 @@ use time::OffsetDateTime;
 /// immediately after subprocess startup; a mismatch raises
 /// :class:`DeltaCoreError` (fail-closed) so we never silently talk to
 /// an incompatible binary.
-const PROTOCOL_VERSION: u32 = 6;
+const PROTOCOL_VERSION: u32 = 9;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "cmd")]
@@ -364,12 +366,99 @@ enum Command {
         valid_citation_count: Option<usize>,
         ts: Option<f64>,
     },
+    /// R2.5: register a checkpoint (recovery snapshot).
+    #[serde(rename = "checkpoint.register")]
+    CheckpointRegister {
+        db: String,
+        #[serde(default)]
+        checkpoint_id: Option<String>,
+        run_id: String,
+        session_id: String,
+        phase: String,
+        #[serde(default)]
+        pending_tool_call: Option<Value>,
+        #[serde(default)]
+        pending_inbox_item_id: Option<String>,
+        #[serde(default)]
+        last_event_seq: Option<i64>,
+        #[serde(default)]
+        todo_summary: Vec<Value>,
+        #[serde(default)]
+        recent_artifacts: Vec<Value>,
+        #[serde(default)]
+        error: Option<String>,
+        ts: Option<f64>,
+        workspace: Option<String>,
+    },
+    /// R2.5: get a checkpoint by ID.
+    #[serde(rename = "checkpoint.get")]
+    CheckpointGet { db: String, checkpoint_id: String },
+    /// R2.5: list checkpoints, optionally filtered by run_id / session_id.
+    #[serde(rename = "checkpoint.list")]
+    CheckpointList {
+        db: String,
+        run_id: Option<String>,
+        session_id: Option<String>,
+    },
+    /// R2.5: get the latest checkpoint for a run_id.
+    #[serde(rename = "checkpoint.latest")]
+    CheckpointLatest { db: String, run_id: String },
+    /// R2.5: validate a checkpoint by ID.
+    #[serde(rename = "checkpoint.validate")]
+    CheckpointValidate { db: String, checkpoint_id: String },
+    /// R2.5: close the checkpoint DB handle in the cache.
+    #[serde(rename = "checkpoint.close")]
+    CheckpointClose { db: String },
+    /// R2 / ADR-030: evaluate tool call policy (classify + enforce slices).
+    #[serde(rename = "policy.evaluate")]
+    PolicyEvaluate {
+        tool_name: String,
+        #[serde(default)]
+        arguments: Option<Value>,
+        #[serde(default)]
+        metadata: Option<Value>,
+        decision: Value,
+        level: i64,
+        workspace_root: String,
+        #[serde(default)]
+        roots: Vec<Value>,
+    },
+    /// R2 / ADR-030: classify a tool call into a risk level (L0–L4).
+    #[serde(rename = "policy.classify")]
+    PolicyClassify {
+        tool_name: String,
+        #[serde(default)]
+        arguments: Option<Value>,
+        #[serde(default)]
+        metadata: Option<Value>,
+    },
+    /// R2 / ADR-031: record an approval audit event.
+    #[serde(rename = "approval.record")]
+    ApprovalRecord {
+        db: String,
+        session_id: String,
+        agent: Option<String>,
+        workspace: Option<String>,
+        connector: Option<String>,
+        tool: String,
+        stage: String,
+        status: Option<String>,
+        approval: Option<String>,
+        arguments: Option<Value>,
+        result_preview: Option<String>,
+        reason: Option<String>,
+        resource: Option<String>,
+        level: Option<String>,
+        isolation: Option<String>,
+        ts: Option<f64>,
+    },
 }
 
 struct ConnCache {
     ledgers: HashMap<PathBuf, LedgerWriter>,
     idems: HashMap<PathBuf, IdempotencyWriter>,
     tasks: HashMap<PathBuf, TaskStore>,
+    approvals: HashMap<PathBuf, ApprovalWriter>,
 }
 
 impl ConnCache {
@@ -378,6 +467,7 @@ impl ConnCache {
             ledgers: HashMap::new(),
             idems: HashMap::new(),
             tasks: HashMap::new(),
+            approvals: HashMap::new(),
         }
     }
 
@@ -406,6 +496,15 @@ impl ConnCache {
             self.tasks.insert(path.clone(), w);
         }
         Ok(self.tasks.get_mut(&path).unwrap())
+    }
+
+    fn approval(&mut self, db: &str) -> Result<&mut ApprovalWriter, String> {
+        let path = PathBuf::from(db);
+        if !self.approvals.contains_key(&path) {
+            let w = ApprovalWriter::open(db).map_err(|e| e.to_string())?;
+            self.approvals.insert(path.clone(), w);
+        }
+        Ok(self.approvals.get_mut(&path).unwrap())
     }
 }
 
@@ -1441,6 +1540,206 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
                     "record": serde_json::to_value(record).unwrap(),
                     "result": serde_json::to_value(result).unwrap(),
                 })),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::CheckpointRegister {
+            db,
+            checkpoint_id,
+            run_id,
+            session_id,
+            phase,
+            pending_tool_call,
+            pending_inbox_item_id,
+            last_event_seq,
+            todo_summary,
+            recent_artifacts,
+            error,
+            ts,
+            workspace,
+        } => {
+            let ledger = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let writer = CheckpointWriter::new(ledger);
+            let input = CheckpointRegisterInput {
+                checkpoint_id,
+                run_id,
+                session_id,
+                phase,
+                pending_tool_call,
+                pending_inbox_item_id,
+                last_event_seq,
+                todo_summary,
+                recent_artifacts,
+                error,
+            };
+            match writer.register(input, ts.unwrap_or(0.0), workspace.as_deref().unwrap_or("")) {
+                Ok(record) => Ok(serde_json::to_value(record).unwrap()),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::CheckpointGet { db, checkpoint_id } => {
+            let ledger = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let reader = match ledger.reader() {
+                Ok(r) => CheckpointReader::from_reader(r),
+                Err(e) => return err(e.to_string()),
+            };
+            match reader.get(&checkpoint_id) {
+                Ok(Some(record)) => Ok(serde_json::to_value(record).unwrap()),
+                Ok(None) => Ok(Value::Null),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::CheckpointList {
+            db,
+            run_id,
+            session_id,
+        } => {
+            let ledger = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let reader = match ledger.reader() {
+                Ok(r) => CheckpointReader::from_reader(r),
+                Err(e) => return err(e.to_string()),
+            };
+            match reader.list(run_id.as_deref(), session_id.as_deref()) {
+                Ok(records) => Ok(Value::Array(
+                    records
+                        .into_iter()
+                        .map(serde_json::to_value)
+                        .collect::<Result<Vec<_>, _>>()
+                        .unwrap(),
+                )),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::CheckpointLatest { db, run_id } => {
+            let ledger = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let reader = match ledger.reader() {
+                Ok(r) => CheckpointReader::from_reader(r),
+                Err(e) => return err(e.to_string()),
+            };
+            match reader.latest(&run_id) {
+                Ok(Some(record)) => Ok(serde_json::to_value(record).unwrap()),
+                Ok(None) => Ok(Value::Null),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::CheckpointValidate { db, checkpoint_id } => {
+            let ledger = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let reader = match ledger.reader() {
+                Ok(r) => CheckpointReader::from_reader(r),
+                Err(e) => return err(e.to_string()),
+            };
+            match reader.validate(&checkpoint_id) {
+                Ok(result) => Ok(serde_json::to_value(result).unwrap()),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::CheckpointClose { db } => {
+            let path = PathBuf::from(&db);
+            let closed = cache.ledgers.remove(&path).is_some();
+            Ok(serde_json::json!({ "closed": closed }))
+        }
+        Command::PolicyEvaluate {
+            tool_name,
+            arguments,
+            metadata,
+            decision,
+            level,
+            workspace_root,
+            roots,
+        } => {
+            let md = metadata.and_then(|v| serde_json::from_value(v).ok());
+            let dec = match serde_json::from_value::<delta_runtime_native::Decision>(decision) {
+                Ok(d) => d,
+                Err(e) => return err(e.to_string()),
+            };
+            let root_entries: Vec<delta_runtime_native::RootEntry> = roots
+                .into_iter()
+                .map(|v| serde_json::from_value(v).unwrap_or_default())
+                .collect();
+            let input = PolicyEvaluateInput {
+                tool_name,
+                arguments,
+                metadata: md,
+                decision: dec,
+                level,
+                workspace_root,
+                roots: root_entries,
+            };
+            match delta_runtime_native::evaluate(input) {
+                Ok(output) => Ok(serde_json::to_value(output).unwrap()),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::PolicyClassify {
+            tool_name,
+            arguments,
+            metadata,
+        } => {
+            let md = metadata.and_then(|v| serde_json::from_value(v).ok());
+            let level = classify(&tool_name, arguments.as_ref(), md.as_ref());
+            Ok(serde_json::json!({"level": level as i64}))
+        }
+        Command::ApprovalRecord {
+            db,
+            session_id,
+            agent,
+            workspace,
+            connector,
+            tool,
+            stage,
+            status,
+            approval,
+            arguments,
+            result_preview,
+            reason,
+            resource,
+            level,
+            isolation,
+            ts,
+        } => {
+            let writer = match cache.approval(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let input = ApprovalRecordInput {
+                session_id,
+                agent,
+                workspace: workspace.clone(),
+                connector,
+                tool,
+                stage,
+                status,
+                approval,
+                arguments,
+                result_preview,
+                reason,
+                resource,
+                level,
+                isolation,
+                ts,
+            };
+            let ws = workspace.as_deref().unwrap_or("");
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs_f64())
+                .unwrap_or(0.0);
+            match writer.record(input, ts.unwrap_or(now), ws) {
+                Ok(output) => Ok(serde_json::to_value(output).unwrap()),
                 Err(e) => Err(e.to_string()),
             }
         }

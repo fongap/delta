@@ -122,14 +122,12 @@ class SessionManager(
         from core.idemlog import IdempotencyLog
 
         self.idem_log = IdempotencyLog(base / "side-effects.db")
-        # P0-B Recovery Production Wiring: the recovery snapshot store.
-        # One snapshot per session, written at each pause point, cleared
-        # on successful resume. Advisory — resume works from messages +
-        # Inbox + ledger alone; the snapshot lets callers inspect "where
-        # was this run" cheaply and surfaces paused sessions at cold start.
+        # ADR-029: Checkpoint Hard-Cut — Rust delta_core is the sole checkpoint authority.
+        # Checkpoints are persisted as checkpoint.registered events in the run-event ledger.
+        # The Python RecoveryStore is a thin facade over the Rust authority.
         from core.recovery import RecoveryStore
 
-        self.recovery_store = RecoveryStore(base / "recovery-snapshots.json")
+        self.recovery_store = RecoveryStore(base / "run-events.db")
         # ADR-005: collapse tool/approval facts into the run ledger. The audit sink
         # still writes to AuditStore for backward compatibility; the mirroring
         # helper additionally appends a ledger event when an ambient run scope

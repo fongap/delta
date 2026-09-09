@@ -520,7 +520,7 @@ fn escape_json_string(s: &str) -> String {
     buf
 }
 
-fn hex_encode_sha256(data: &[u8]) -> String {
+pub fn hex_encode_sha256(data: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data);
     let result = hasher.finalize();

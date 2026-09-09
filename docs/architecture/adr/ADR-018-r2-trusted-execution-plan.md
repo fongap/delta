@@ -13,6 +13,12 @@
 > 2026-09-10 后续决策：ADR-027 完成 Source/Citation Hard-Cut。Source/Citation 域现在由 Rust `delta_core` 作为唯一 Authority（`core/source_citation_delegate.py` 已删除，`source_citation` 已从 `RUST_WRITE_DOMAINS` 移除，无 fallback / delegate / feature flag）。下一域为 Validation。
 
 > 2026-09-10 后续决策：ADR-028 完成 Validation Hard-Cut。Validation 域现在由 Rust `delta_core` 作为唯一 Authority（`core/validation_delegate.py` 已删除，`validation` 在 `RUST_WRITE_DOMAINS` 中，无 fallback / delegate / feature flag）。下一域为 Checkpoint。
+>
+> 2026-09-10 后续决策：ADR-029 完成 Checkpoint Hard-Cut。Checkpoint 域现在由 Rust `delta_core` 作为唯一 Authority（`core/recovery.py` 是薄门面，`inspect_checkpoint` 已删除，`checkpoint` 在 `RUST_WRITE_DOMAINS` 中，无 fallback / delegate / feature flag）。下一域为 Policy。
+> >
+> > 2026-09-10 后续决策：ADR-030 完成 Policy Hard-Cut。Policy 域现在由 Rust `delta_core` 作为唯一 Authority（`core/gateway.py` 是薄门面，`enforce_level`/`restrict_grants`/`enforce_scope` Python 实现已删除，`policy` 在 `RUST_WRITE_DOMAINS` 中，无 fallback / delegate / feature flag）。下一域为 Approval。
+> >
+> > 2026-09-09 后续决策：ADR-031 完成 Approval Hard-Cut。Approval 审计写入域现在由 Rust `delta_core` 作为唯一 Authority（`core/approval.py` 是薄门面，`core/audit.py` 的 `append()` 委托给 Rust，交互式决策保留在 Python `engine.py`，`approval` 在 `RUST_WRITE_DOMAINS` 中，无 fallback / delegate / feature flag）。R2 全部 6 个域完成 hard-cut。
 
 ## 背景
 
@@ -30,9 +36,9 @@ R2 范围（`rust-core-migration.md` §5 R2）包含 6 个领域：
 1. **Artifact Registry** ✅ **Completed (ADR-026)** — `core/artifact.py`（`Artifact` dataclass + `register_artifact` helper + `register_run_artifacts` walker）；
 2. **Source/Citation** ✅ **Completed (ADR-027)** — `core/sources.py` + `core/citation.py` + `core/analyzer.py:source_citation_hits`；
 3. **Validation** ✅ **Completed (ADR-028)** — `core/validation.py`（`ValidationCriteria` / `ValidationCheck` / `ValidationResult`）；
-4. **Checkpoint** — `core/conversations.py` 的 checkpoint path + `core/recovery.py` 的快照；
-5. **Policy** — `core/gateway.py` Slice 2（`_evaluate_slice2_policy` + `_apply_session_standing_policy`）；
-6. **Approval** — `core/engine.py:ApprovalOutcome` + `core/audit.py` 审批行 + `core/gateway.py` L1-L4 分级。
+4. **Checkpoint** ✅ **Completed (ADR-029)** — `core/recovery.py` 的快照（Rust `checkpoint.registered` ledger event）；
+5. **Policy** ✅ **Completed (ADR-030)** — `core/gateway.py` 四切片（`classify` + `enforce_level` + `restrict_grants` + `enforce_scope`）统一由 Rust `policy.evaluate` 评估；
+6. **Approval** ✅ **Completed (ADR-031)** — `core/audit.py` 审计写入（`audit_events` INSERT）由 Rust `approval.record` 持久化；交互式决策（`ApprovalOutcome` / `PermissionRequest` / `Approver`）保留在 Python `engine.py`。
 
 **R2 不允许"全栈切换"**，必须按 `rust-core-migration.md` §6 单领域流程逐步推进。
 
@@ -107,7 +113,7 @@ R2 按以下顺序落地：
   - 原因：把 Approval 拆成"audit 写入"（可迁移）和"交互决策"（保留 Python，因为需要 LLM 上下文）。这是 §6 流程允许的"领域子集切换"。
   - 风险：中。audit 行是合规证据，必须 byte-equal 跨语言。
 
-- **PR137 — Policy evaluation authority**（`core/gateway.py` Slice 2 → Rust `PolicyEngine`）
+- **PR137 — Policy evaluation authority** ✅ **Completed (ADR-030)**（`core/gateway.py` Slice 2 → Rust `policy.evaluate`）
   - 原因：Policy 是 tool_call 前置评估，不修改任何表，但决定 tool_call 是否执行。Rust 化后可以避免"Python 端 policy 评估 + Rust 端实际执行"的语义鸿沟。
   - 风险：高。Policy bug 可能让危险 tool_call 漏过评估。必须 Python ↔ Rust 评估结果 100% 一致 + 独立 fuzz test。
 
