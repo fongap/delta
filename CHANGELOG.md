@@ -234,6 +234,55 @@ R2 Trusted Execution 第四域 Checkpoint 完成 hard-cut。
 > 相关 ADR：ADR-029（新增），ADR-018（更新 Checkpoint 状态），ADR-019（更新 checkpoint 从 reader 提升为 writer）。
 
 
+### R2 — Policy Hard-Cut（#155 / ADR-030）
+
+R2 Trusted Execution 第五域 Policy 完成 hard-cut。
+
+**Authority**：
+
+- Before：Python Policy（`core/gateway.py` 四切片实现 `classify` / `enforce_level` / `restrict_grants` / `enforce_scope`），无 Rust shadow-read（Policy 是评估/决策面，不是数据）。
+- After：Rust `delta_core` 是唯一 Policy authority。Python `core/gateway.py` 是薄门面，通过 `DeltaCoreClient` 发送 `policy.classify` / `policy.evaluate` 命令。
+
+**删除的旧路径**：
+
+- `core/gateway.py` 本地分类与强制逻辑（`_VALID_METADATA_RISK` / `_LOCAL_CATEGORIES` / `_REVERSIBLE_WRITE_CATEGORIES` / `_SENSITIVE_TOKENS` / `_band_level` / `declared_resources` / `declared_targets` / `touches_sensitive_resource` / `enforce_level` / `restrict_grants` / `enforce_scope`）
+- 无 `policy` shadow reader（Policy 不在 `RUST_READ_DOMAINS`）
+
+**失败行为**：`delta_core` 不可用 / 协议不匹配 / malformed response → `classify` 返回 L4，`evaluate_policy` 返回拒绝决策 + L4（fail-closed），禁止 Python fallback。回滚仅 Git revert。
+
+**Authority Matrix**：Policy = **Rust（ADR-030 hard-cut）** Complete。下一域：Approval。
+
+> 相关 ADR：ADR-030（新增），ADR-018（更新 Policy 状态）。
+
+
+### R2 — Approval Hard-Cut（#156 / ADR-031）
+
+R2 Trusted Execution 第六域 Approval 完成 hard-cut。R2 全部 6 个域完成。
+
+**Authority**：
+
+- Before：Python `core/audit.py` 的 `AuditStore.append()` 直接 SQLite INSERT 到 `audit_events` 表；交互式决策（`ApprovalOutcome` / `PermissionRequest` / `Approver`）在 `core/engine.py`。
+- After：Rust `delta_core` 是唯一 Approval 审计写入 authority。Python `core/approval.py` 是薄门面，通过 `DeltaCoreClient` 发送 `approval.record` 命令。交互式决策保留在 Python。
+
+**删除的旧路径**：
+
+- `AuditStore.append()` 的直接 SQLite INSERT（现在委托给 `core/approval.record()` → Rust）
+- 无 `approval` shadow reader（Approval 不在 `RUST_READ_DOMAINS`）
+
+**保留在 Python 的**：
+
+- `ApprovalOutcome` enum（`ONCE` / `ALWAYS_TOOL` / `ALWAYS_COMMAND` / `DENY`）
+- `PermissionRequest` dataclass + `Approver` callback
+- `AuditStore.list()` 读路径（通过 Python SQLite 连接读取同一数据库文件）
+- 审计数据清洗逻辑（`_sanitize_args` / `_resource` / `_truncate`）
+
+**失败行为**：`delta_core` 不可用 / 协议不匹配 / malformed response → 审计事件不写入（调用方 `engine.py._audit()` / `manager_sessions.py` / `manager_inbox.py` 已 swallow `Exception`），fail-closed，禁止 Python fallback。回滚仅 Git revert。
+
+**Authority Matrix**：Approval = **Rust（ADR-031 hard-cut）** Complete。R2 全部 6 域完成（Artifact / Source-Citation / Validation / Checkpoint / Policy / Approval）。
+
+> 相关 ADR：ADR-031（新增），ADR-018（更新 Approval 状态）。
+
+
 ### R1.6 — Legacy Cleanup（`cowork` → `delta` 全栈重命名）
 
 **Breaking Change**：本节列出的标识符、模块名、env var、事件前缀、bot handle 均已从 `cowork` / `@ocw` / `OpenWorker*` 重命名为 `delta` / `@delta` / `delta.*`。依赖旧标识符的下游脚本/集成需要同步更新。

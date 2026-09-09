@@ -45,9 +45,9 @@ def test_rust_write_domains_defined():
     """The R2 write domains that accept DELTA_RUST_AUTHORITY declarations.
     R1 domains (idempotency, ledger, task_identity) are hard-cut (ADR-022/023/024)
     and no longer selectable via env var. Artifact and Source/Citation are also
-    hard-cut (ADR-026/027). Only validation (ADR-028) and checkpoint (ADR-029)
-    are selectable write domains."""
-    assert RUST_WRITE_DOMAINS == frozenset({"validation", "checkpoint"})
+    hard-cut (ADR-026/027). Validation (ADR-028), Checkpoint (ADR-029),
+    Policy (ADR-030), and Approval (ADR-031) are selectable write domains."""
+    assert RUST_WRITE_DOMAINS == frozenset({"validation", "checkpoint", "policy", "approval"})
 
 
 def test_r1_write_rejects_derived_domains(monkeypatch):

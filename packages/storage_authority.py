@@ -86,9 +86,14 @@ READER_ENV_VAR: Final[str] = "DELTA_RUST_READERS"
 #: Note (ADR-028): ``validation`` was hard-cut to Rust.
 #:
 #: Note (ADR-029): ``checkpoint`` was hard-cut to Rust.
+#:
+#: Note (ADR-030): ``policy`` was hard-cut to Rust.
+#: Note (ADR-031): ``approval`` was hard-cut to Rust.
 RUST_WRITE_DOMAINS: Final[frozenset[str]] = frozenset({
     "validation",       # deterministic completion gate via delta_core
     "checkpoint",       # recovery checkpoint authority via delta_core
+    "policy",           # tool call policy evaluation via delta_core
+    "approval",         # approval audit event persistence via delta_core
 })
 
 #: Rust shadow-reader domains (R2, ADR-019). These have Rust *readers*

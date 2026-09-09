@@ -15,7 +15,7 @@ use sha2::{Digest, Sha256};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-use crate::ledger::{LedgerReader, LedgerWriter, hex_encode_sha256};
+use crate::ledger::{hex_encode_sha256, LedgerReader, LedgerWriter};
 use crate::ShadowReadError;
 
 /// Current checkpoint schema version.
@@ -141,8 +141,7 @@ impl CheckpointReader {
         let filtered: Vec<_> = checkpoints
             .into_iter()
             .filter(|c| {
-                run_id.is_none_or(|r| c.run_id == r)
-                    && session_id.is_none_or(|s| c.session_id == s)
+                run_id.is_none_or(|r| c.run_id == r) && session_id.is_none_or(|s| c.session_id == s)
             })
             .collect();
         Ok(filtered)

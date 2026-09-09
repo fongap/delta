@@ -1123,25 +1123,18 @@ class TurnEngine:
         decision = self.permissions.evaluate(
             tool_call.name, tool_call.arguments, metadata
         )
-        # Gateway slice 2: L4 (irreversible/sensitive) is never auto-allowed —
-        # any rule-based allow is downgraded to an explicit human decision.
+        # Gateway slices 2–4 (Rust-authoritative, ADR-030): enforce_level +
+        # restrict_grants + enforce_scope in a single Rust call.
         # Fail closed: an unclassified call id reads as L4 here.
         level = self._tool_levels.get(tool_call.id, gateway.RiskLevel.L4)
-        decision = gateway.enforce_level(level, decision)
-        # Gateway slice 4a: L3+ external effects are never released by a blanket
-        # mode grant ("full access") or an approval-card-minted session entry —
-        # explicit approval or user-authored standing policy only.
-        decision = gateway.restrict_grants(level, decision)
-        # Gateway slice 3: side-effectful calls with declared on-disk targets are
-        # re-checked for root confinement at the choke point, whatever rule
-        # allowed them. Read-only calls pass through untouched.
-        decision = gateway.enforce_scope(
+        decision, level = gateway.evaluate_policy(
             decision,
-            tool_call.arguments,
             level,
+            tool_call.name,
+            tool_call.arguments,
+            metadata,
             workspace_root=self.permissions.workspace_root,
             roots=self.permissions.resolved_roots(),
-            tool_name=tool_call.name,
         )
         allowed = decision.allowed
         reason = decision.reason

@@ -1,4 +1,4 @@
-"""Control-plane authority guard (ADR-012/015/020/022/023/024/026/027/028/029).
+"""Control-plane authority guard (ADR-012/015/020/022/023/024/026/027/028/029/030/031).
 
 Two-tier checks:
 
@@ -8,14 +8,14 @@ Two-tier checks:
 
    Idempotency (ADR-022), Ledger (ADR-023), Task Identity (ADR-024),
    Artifact Registry (ADR-026), Source/Citation (ADR-027), Validation (ADR-028),
-   and Checkpoint (ADR-029) are hard-cut: their delegates are deleted and the
-   Python facade is always the Rust authority.
+   Checkpoint (ADR-029), Policy (ADR-030), and Approval (ADR-031) are hard-cut:
+   their delegates are deleted and the Python facade is always the Rust authority.
 
 2. **Enforcement (opt-in)**: when ``DELTA_RUST_AUTHORITY=1`` AND this
    script is invoked with the ``--enforce-rust-authority`` flag, scans
-   for direct source-citation / validation / checkpoint register calls in
-   non-test code and verifies they go through the corresponding delegate
-   wrapper.
+   for direct source-citation / validation / checkpoint / policy / approval
+   register calls in non-test code and verifies they go through the
+   corresponding delegate wrapper.
 
 Run::
 
@@ -58,6 +58,8 @@ DOMAIN_TO_FILES: dict[str, tuple[str, ...]] = {
     "run_state": ("core/ledger.py",),
     "validation": ("core/validation.py",),
     "checkpoint": ("core/recovery.py",),
+    "policy": ("core/gateway.py",),
+    "approval": ("core/audit.py",),
 }
 
 # The delegate wrapper files are allowed to instantiate the underlying
@@ -134,11 +136,11 @@ def _scan_enforcement() -> list[tuple[Path, int, str, str]]:
                 continue
 
             # Idempotency, Ledger, Task Identity, Artifact Registry,
-            # Source/Citation, Validation, and Checkpoint are hard-cut
-            # (ADR-022 / ADR-023 / ADR-024 / ADR-026 / ADR-027 /
-            # ADR-028 / ADR-029): their delegates are deleted and the
-            # Python facade is always the Rust authority. No enforcement
-            # guard needed for these domains.
+            # Source/Citation, Validation, Checkpoint, Policy, and Approval
+            # are hard-cut (ADR-022 / ADR-023 / ADR-024 / ADR-026 / ADR-027 /
+            # ADR-028 / ADR-029 / ADR-030 / ADR-031): their delegates are
+            # deleted and the Python facade is always the Rust authority. No
+            # enforcement guard needed for these domains.
     return violations
 
 

@@ -65,11 +65,12 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use delta_runtime_native::{
-    args_sha256, operation_id, run_validation, validate_source_citation, ArtifactInput,
-    ArtifactRegistryWriter, CheckpointReader, CheckpointRegisterInput, CheckpointWriter,
-    CitationValidationResult, CitationValidity, IdempotencyWriter, LedgerWriter,
-    SideEffectEntry, SideEffectState, SourceCitationReader, SourceCitationWriter,
-    SourceRegisterInput, TaskStore, ValidationReader, ValidationRegisterInput, ValidationWriter,
+    args_sha256, classify, operation_id, run_validation, validate_source_citation,
+    ApprovalRecordInput, ApprovalWriter, ArtifactInput, ArtifactRegistryWriter, CheckpointReader,
+    CheckpointRegisterInput, CheckpointWriter, CitationValidationResult, CitationValidity,
+    IdempotencyWriter, LedgerWriter, PolicyEvaluateInput, SideEffectEntry, SideEffectState,
+    SourceCitationReader, SourceCitationWriter, SourceRegisterInput, TaskStore, ValidationReader,
+    ValidationRegisterInput, ValidationWriter,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -84,7 +85,7 @@ use time::OffsetDateTime;
 /// immediately after subprocess startup; a mismatch raises
 /// :class:`DeltaCoreError` (fail-closed) so we never silently talk to
 /// an incompatible binary.
-const PROTOCOL_VERSION: u32 = 7;
+const PROTOCOL_VERSION: u32 = 9;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "cmd")]
@@ -408,12 +409,56 @@ enum Command {
     /// R2.5: close the checkpoint DB handle in the cache.
     #[serde(rename = "checkpoint.close")]
     CheckpointClose { db: String },
+    /// R2 / ADR-030: evaluate tool call policy (classify + enforce slices).
+    #[serde(rename = "policy.evaluate")]
+    PolicyEvaluate {
+        tool_name: String,
+        #[serde(default)]
+        arguments: Option<Value>,
+        #[serde(default)]
+        metadata: Option<Value>,
+        decision: Value,
+        level: i64,
+        workspace_root: String,
+        #[serde(default)]
+        roots: Vec<Value>,
+    },
+    /// R2 / ADR-030: classify a tool call into a risk level (L0–L4).
+    #[serde(rename = "policy.classify")]
+    PolicyClassify {
+        tool_name: String,
+        #[serde(default)]
+        arguments: Option<Value>,
+        #[serde(default)]
+        metadata: Option<Value>,
+    },
+    /// R2 / ADR-031: record an approval audit event.
+    #[serde(rename = "approval.record")]
+    ApprovalRecord {
+        db: String,
+        session_id: String,
+        agent: Option<String>,
+        workspace: Option<String>,
+        connector: Option<String>,
+        tool: String,
+        stage: String,
+        status: Option<String>,
+        approval: Option<String>,
+        arguments: Option<Value>,
+        result_preview: Option<String>,
+        reason: Option<String>,
+        resource: Option<String>,
+        level: Option<String>,
+        isolation: Option<String>,
+        ts: Option<f64>,
+    },
 }
 
 struct ConnCache {
     ledgers: HashMap<PathBuf, LedgerWriter>,
     idems: HashMap<PathBuf, IdempotencyWriter>,
     tasks: HashMap<PathBuf, TaskStore>,
+    approvals: HashMap<PathBuf, ApprovalWriter>,
 }
 
 impl ConnCache {
@@ -422,6 +467,7 @@ impl ConnCache {
             ledgers: HashMap::new(),
             idems: HashMap::new(),
             tasks: HashMap::new(),
+            approvals: HashMap::new(),
         }
     }
 
@@ -450,6 +496,15 @@ impl ConnCache {
             self.tasks.insert(path.clone(), w);
         }
         Ok(self.tasks.get_mut(&path).unwrap())
+    }
+
+    fn approval(&mut self, db: &str) -> Result<&mut ApprovalWriter, String> {
+        let path = PathBuf::from(db);
+        if !self.approvals.contains_key(&path) {
+            let w = ApprovalWriter::open(db).map_err(|e| e.to_string())?;
+            self.approvals.insert(path.clone(), w);
+        }
+        Ok(self.approvals.get_mut(&path).unwrap())
     }
 }
 
@@ -1597,6 +1652,96 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
             let path = PathBuf::from(&db);
             let closed = cache.ledgers.remove(&path).is_some();
             Ok(serde_json::json!({ "closed": closed }))
+        }
+        Command::PolicyEvaluate {
+            tool_name,
+            arguments,
+            metadata,
+            decision,
+            level,
+            workspace_root,
+            roots,
+        } => {
+            let md = metadata.and_then(|v| serde_json::from_value(v).ok());
+            let dec = match serde_json::from_value::<delta_runtime_native::Decision>(decision) {
+                Ok(d) => d,
+                Err(e) => return err(e.to_string()),
+            };
+            let root_entries: Vec<delta_runtime_native::RootEntry> = roots
+                .into_iter()
+                .map(|v| serde_json::from_value(v).unwrap_or_default())
+                .collect();
+            let input = PolicyEvaluateInput {
+                tool_name,
+                arguments,
+                metadata: md,
+                decision: dec,
+                level,
+                workspace_root,
+                roots: root_entries,
+            };
+            match delta_runtime_native::evaluate(input) {
+                Ok(output) => Ok(serde_json::to_value(output).unwrap()),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::PolicyClassify {
+            tool_name,
+            arguments,
+            metadata,
+        } => {
+            let md = metadata.and_then(|v| serde_json::from_value(v).ok());
+            let level = classify(&tool_name, arguments.as_ref(), md.as_ref());
+            Ok(serde_json::json!({"level": level as i64}))
+        }
+        Command::ApprovalRecord {
+            db,
+            session_id,
+            agent,
+            workspace,
+            connector,
+            tool,
+            stage,
+            status,
+            approval,
+            arguments,
+            result_preview,
+            reason,
+            resource,
+            level,
+            isolation,
+            ts,
+        } => {
+            let writer = match cache.approval(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let input = ApprovalRecordInput {
+                session_id,
+                agent,
+                workspace: workspace.clone(),
+                connector,
+                tool,
+                stage,
+                status,
+                approval,
+                arguments,
+                result_preview,
+                reason,
+                resource,
+                level,
+                isolation,
+                ts,
+            };
+            let ws = workspace.as_deref().unwrap_or("");
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_secs_f64())
+                .unwrap_or(0.0);
+            match writer.record(input, ts.unwrap_or(now), ws) {
+                Ok(output) => Ok(serde_json::to_value(output).unwrap()),
+                Err(e) => Err(e.to_string()),
+            }
         }
     };
     match result {

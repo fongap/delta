@@ -1,29 +1,18 @@
-"""Execution Gateway — the single classification point for every side effect.
+"""Execution Gateway — Rust-authoritative policy evaluation (ADR-030).
 
-Slice 1 (observe): every authorized tool call is classified into the L0–L4 risk
-taxonomy (docs/architecture/adr/ADR-002-approval-taxonomy.md) BEFORE execution, and the level rides on
-the audit trail. Slice 2 (policy): L4 is never auto-allowed — an irreversible call
-downgrades any rule-based allow to an explicit human decision. Slice 3 (guard):
-declared on-disk targets of side-effectful calls must land inside the session's
-trusted roots, whatever rule allowed the call — the choke point re-checks
-confinement itself instead of trusting upstream classifiers to stay correct.
-Slice 4a (grants): L3 external effects are never released by a blanket mode grant
-or an approval-card-minted session entry — only explicit per-action approval or
-user-authored standing policy gets through.
-Slice 4b (resources): classification reads four declared inputs — the action's
-risk band, the target/resource the call carries, reversibility, and resource
-sensitivity. An external effect (L3) that touches a sensitive resource
-(payroll sheets, credential files, identity documents) escalates to L4: the
-disclosure itself is not compensatable. `send_file(临时图表)` stays L3;
-`send_file(工资表.xlsx)` is L4.
+Rust ``delta_core`` is the sole authority for tool call classification
+and policy enforcement (the four slices: classify, enforce_level,
+restrict_grants, enforce_scope). Python retains only:
 
-Fail-closed rule: a call that cannot be classified (no registry metadata, unknown
-risk_level value, or an explicit irreversible-list hit) is treated as L4. Nothing
-is ever "unclassified, so probably fine". The model can never classify downward:
-sensitivity signals live in fixed tables here; model-supplied argument text can
-only ever escalate a decision (by naming what is being shared), never relax one.
-URL-bearing tools (model-chosen outbound requests) also carry a by-name L3 floor:
-network egress is an external effect regardless of what their metadata declares.
+- The ``RiskLevel`` enum (for type annotations and audit)
+- ``write_paths`` (a path-extraction utility used by PermissionEngine)
+- ``isolation_status`` (a display helper for audit rows)
+- Thin facades that delegate to the Rust authority via DeltaCoreClient
+
+Fail-closed: if the Rust authority is unavailable, classification
+returns L4 (never auto-allowed) and evaluation denies with needs_user.
+
+Contract: ``docs/architecture/adr/ADR-030-r2-policy-hard-cut.md``
 """
 
 from __future__ import annotations
@@ -33,7 +22,7 @@ from enum import IntEnum
 from pathlib import Path
 from typing import Any
 
-from core.risk import EGRESS_TOOLS
+from packages.delta_core_client import DeltaCoreError, default_client
 
 
 class RiskLevel(IntEnum):
@@ -48,100 +37,19 @@ class RiskLevel(IntEnum):
         return self.name
 
 
-# Tools whose effect is irreversible regardless of metadata. Extend deliberately:
-# an entry here means "never auto-allowed, always an explicit human decision".
-IRREVERSIBLE_TOOLS: frozenset[str] = frozenset(
-    {
-        "send_email",
-    }
-)
+# -- Utility functions (not policy authority) -----------------------------------
 
-_VALID_METADATA_RISK = {"low", "medium", "high"}
-
-# Metadata categories whose medium-risk, approval-gated tools are LOCAL effects
-# (checkpointed file writes), not external ones — they sit at L2, not L3. An
-# unknown or missing category conservatively stays at L3 (fail closed → ask).
-_LOCAL_CATEGORIES = frozenset({"filesystem"})
-
-# Metadata categories whose low-risk, non-approval tools are REVERSIBLE local
-# writes (in-app undo exists), not read-only — they sit at L1, not L0. The
-# L0 definition is "no side effects"; declaring a write as L0 poisons every
-# audit/policy built on the taxonomy. The category alone is not the write
-# signal (a category holds read tools too) — the tool must also declare the
-# category's write capability.
-_REVERSIBLE_WRITE_CATEGORIES = {"memory": frozenset({"remember"})}
-
-# -- Slice 4b: resource sensitivity ---------------------------------------------
-
-# Argument names that carry the RESOURCE a side effect lands on. Sensitivity is
-# evaluated only over these structural fields — never over free-text fields the
-# model controls for other purposes (message bodies, selectors, commands).
-_RESOURCE_ARGS = (
-    "path",
-    "file_path",
-    "filepath",
-    "file",
-    "filename",
-    "attachment",
-    "attachments",
-    "document",
-    "resource",
-    "title",
-)
-
-# Deterministic sensitivity signals in a resource's name/path (lowercased
-# substring match against the FULL path — a folder can carry the signal even
-# when the filename does not). A hit means "this resource carries data whose
-# disclosure cannot be compensated". Extend deliberately: everything not listed
-# is NOT sensitive, and only these tables decide — the model cannot volunteer
-# new signals, and it cannot remove them either.
-_SENSITIVE_TOKENS: tuple[str, ...] = (
-    # payroll / HR
-    "工资",
-    "薪资",
-    "薪酬",
-    "绩效",
-    "payroll",
-    "salary",
-    "compensation",
-    # identity / government records
-    "身份证",
-    "护照",
-    "社保",
-    "passport",
-    "national_id",
-    "ssn",
-    # financial accounts
-    "银行卡",
-    "银行流水",
-    "bank_statement",
-    # credentials / keys / secrets
-    "id_rsa",
-    ".pem",
-    ".pfx",
-    ".p12",
-    ".keystore",
-    ".env",
-    "credential",
-    "password",
-    "secret",
-)
-
-
-# Path-shaped argument names a tool uses to declare its on-disk target, mirroring
-# the PermissionEngine's write-scope list (a renamed argument must not bypass
-# confinement by falling outside either check).
+# Path-shaped argument names a tool uses to declare its on-disk target.
 _PATH_ARGS = ("path", "file_path", "filepath", "file")
-
-# Patch/diff tools carry their targets inside the blob, not in a top-level argument.
-# apply_patch (Codex format) file headers — including the rename target — and the
-# `+++ b/<path>` headers of unified diffs.
-_APPLY_PATCH_FILE = re.compile(r"^\*\*\* (?:Add|Update|Delete) File: (.+)$", re.MULTILINE)
-_APPLY_PATCH_MOVE = re.compile(r"^\*\*\* Move to: (.+)$", re.MULTILINE)
-_UNIFIED_DIFF_FILE = re.compile(r"^\+\+\+ (?:b/)?(.+?)\s*$", re.MULTILINE)
 
 # The blob argument each patch-style write tool carries its targets in.
 _PATCH_BLOB_ARG = {"apply_patch": "patch", "apply_unified_diff": "diff"}
+
+# apply_patch (Codex format) file headers — including the rename target — and
+# the `+++ b/<path>` headers of unified diffs.
+_APPLY_PATCH_FILE = re.compile(r"^\*\*\* (?:Add|Update|Delete) File: (.+)$", re.MULTILINE)
+_APPLY_PATCH_MOVE = re.compile(r"^\*\*\* Move to: (.+)$", re.MULTILINE)
+_UNIFIED_DIFF_FILE = re.compile(r"^\+\+\+ (?:b/)?(.+?)\s*$", re.MULTILINE)
 
 
 def write_paths(tool_name: str, arguments: dict[str, Any] | None) -> tuple[list[str], bool]:
@@ -172,256 +80,6 @@ def write_paths(tool_name: str, arguments: dict[str, Any] | None) -> tuple[list[
     return [], False
 
 
-def declared_resources(arguments: dict[str, Any] | None) -> list[str]:
-    """The resource values this call declares (deduplicated, order-stable)."""
-    out: list[str] = []
-    for name in _RESOURCE_ARGS:
-        value = (arguments or {}).get(name)
-        if isinstance(value, str) and value.strip() and value not in out:
-            out.append(value)
-    return out
-
-
-def touches_sensitive_resource(arguments: dict[str, Any] | None) -> bool:
-    """True when any declared resource matches a sensitivity signal."""
-    for resource in declared_resources(arguments):
-        haystack = resource.lower()
-        if any(token in haystack for token in _SENSITIVE_TOKENS):
-            return True
-    return False
-
-
-def classify(
-    tool_name: str,
-    arguments: dict[str, Any] | None = None,
-    metadata: Any = None,
-) -> RiskLevel:
-    """Deterministic L0–L4 classification for one tool call. Never raises; an
-    unclassifiable call classifies as L4.
-
-    Slice 4b: the level is derived from four declared inputs — the action's risk
-    band (metadata), the target/resource the arguments carry, reversibility (the
-    irreversible table), and resource sensitivity (the sensitivity table). The
-    model cannot self-evaluate: no model-visible field can lower a level, and
-    sensitivity signals come only from the fixed tables below.
-    """
-    # Reversibility first: an explicitly irreversible tool is L4 whatever the
-    # metadata claims — even if a future refactor marks it "low".
-    if tool_name in IRREVERSIBLE_TOOLS:
-        return RiskLevel.L4
-
-    # Egress floor: a model-chosen outbound request is an external effect (L3) by
-    # name, whatever its metadata claims — a "low, no-approval" declaration on a
-    # URL-bearing tool is exactly the mislabel this floor exists to catch.
-    if tool_name in EGRESS_TOOLS:
-        return RiskLevel.L3
-
-    # Fail closed: no registry metadata or an unknown risk value is L4.
-    if metadata is None:
-        return RiskLevel.L4
-
-    risk = str(getattr(metadata, "risk_level", "") or "").lower()
-    requires_approval = bool(getattr(metadata, "requires_approval", False))
-    category = str(getattr(metadata, "category", "") or "").lower()
-
-    if risk not in _VALID_METADATA_RISK:
-        return RiskLevel.L4
-
-    base = _band_level(risk, requires_approval, category, metadata)
-
-    # Sensitivity: an external effect (L3) that touches a sensitive resource
-    # escalates to L4 — sharing payroll/credential/identity data off-machine is
-    # a disclosure that no compensation can undo. Local writes and reads are
-    # untouched: writing 工资表.xlsx into a checkpointed workspace stays
-    # reversible (L2); only the boundary crossing escalates.
-    if base is RiskLevel.L3 and touches_sensitive_resource(arguments):
-        return RiskLevel.L4
-
-    return base
-
-
-def _band_level(
-    risk: str, requires_approval: bool, category: str, metadata: Any
-) -> RiskLevel:
-    """The action's risk band from registry metadata alone (no argument inspection)."""
-    if risk == "high":
-        # Arbitrary local execution (shell): consequential and unsandboxed today,
-        # so it sits at L3 — allowed only with an explicit per-run grant path.
-        # It does NOT default to L4 because interactive use legitimately runs it.
-        return RiskLevel.L3
-
-    if risk == "medium":
-        if requires_approval:
-            # Approval-gated medium risk is L3 ONLY for external effects; local
-            # checkpointed writes stay consequential-but-local at L2 (ADR: L3 is
-            # "external effects", not "anything that asks").
-            return (
-                RiskLevel.L2
-                if category in _LOCAL_CATEGORIES
-                else RiskLevel.L3
-            )
-        return RiskLevel.L2
-
-    # risk == "low"
-    if requires_approval:
-        return RiskLevel.L2
-    write_caps = _REVERSIBLE_WRITE_CATEGORIES.get(category)
-    if write_caps and write_caps & set(getattr(metadata, "capabilities", None) or ()):
-        return RiskLevel.L1
-    return RiskLevel.L0
-
-
-def enforce_level(level: RiskLevel, decision: Any) -> Any:
-    """Slice 2 policy (mutates + returns `decision`):
-
-    **L4 is never auto-allowed.** Whatever PermissionEngine said — standing rule,
-    task grant, session allowlist — an irreversible/sensitive call is downgraded to
-    an explicit human decision. Interactive approvals remain the only path through,
-    every single time (there is no "always allow" for L4).
-
-    L3 and below pass through unchanged in this slice; their standing-rule story
-    stays with the existing §25 machinery.
-    """
-    if level >= RiskLevel.L4 and decision.allowed:
-        decision.allowed = False
-        decision.needs_user = True
-        decision.rule = ""
-        decision.reason = (
-            "irreversible action (L4) — explicit approval required"
-            + (f"; was: {decision.reason}" if decision.reason else "")
-        )
-    return decision
-
-
-# Path-shaped argument names a tool uses to declare its on-disk target, mirroring
-# the PermissionEngine's write-scope list (a renamed argument must not bypass
-# confinement by falling outside either check).
-_PATH_ARGS = ("path", "file_path", "filepath", "file")
-
-
-def declared_targets(
-    arguments: dict[str, Any] | None, tool_name: str | None = None
-) -> list[str]:
-    """The path-shaped target values this call actually carries — including paths buried
-    in a patch/diff blob, which confinement must scope just like a plain path argument.
-    Without a tool name, both known blob formats are scanned (conservative: extra
-    extracted paths only ever tighten confinement, never loosen it)."""
-    out: list[str] = []
-    for name in _PATH_ARGS:
-        value = (arguments or {}).get(name)
-        if isinstance(value, str) and value.strip() and value not in out:
-            out.append(value.strip())
-    blob_args: tuple[str, ...]
-    if tool_name in _PATCH_BLOB_ARG:
-        blob_args = (_PATCH_BLOB_ARG[tool_name],)
-    else:
-        blob_args = tuple(_PATCH_BLOB_ARG.values())
-    for blob_arg in blob_args:
-        blob = str((arguments or {}).get(blob_arg, "") or "")
-        if not blob:
-            continue
-        found = _APPLY_PATCH_FILE.findall(blob) + _APPLY_PATCH_MOVE.findall(blob)
-        found += [p for p in _UNIFIED_DIFF_FILE.findall(blob) if p and p != "/dev/null"]
-        for path in found:
-            path = path.strip()
-            if path and path not in out:
-                out.append(path)
-    return out
-
-
-def enforce_scope(
-    decision: Any,
-    arguments: dict[str, Any] | None,
-    level: RiskLevel,
-    *,
-    workspace_root: Path,
-    roots: list[tuple[Path, bool]],
-    tool_name: str | None = None,
-) -> Any:
-    """Slice 3 resource guard (mutates + returns `decision`):
-
-    A side-effectful call (L1+) that declares an on-disk target must land inside
-    the session's trusted roots — writable roots for real effect, read-only roots
-    downgraded to ask. This holds regardless of which rule allowed the call: mode
-    grants, session allowlists, standing rules and future grant paths all pass
-    through here, so classifier drift or a new grant path cannot silently move a
-    write outside the sandbox. Read-only calls (L0) are untouched — consulting
-    files outside the workspace is legitimate (that is what directory grants are
-    for); only side effects are confined.
-
-    A violation never hard-denies interactively: the decision becomes an explicit
-    human ask (which unattended runs resolve as deny+audit — fail closed).
-    """
-    if not getattr(decision, "allowed", False) or level < RiskLevel.L1:
-        return decision
-
-    targets = declared_targets(arguments, tool_name)
-    if not targets:
-        return decision
-
-    for target in targets:
-        p = Path(target).expanduser()
-        candidate = p.resolve() if p.is_absolute() else (workspace_root / p).resolve()
-        under_any = False
-        under_writable = False
-        for root, writable in roots:
-            try:
-                candidate.relative_to(root)
-                under_any = True
-                under_writable = under_writable or writable
-            except ValueError:
-                continue
-        if under_writable:
-            continue
-        detail = (
-            f"target is in a read-only directory: {target}"
-            if under_any
-            else f"target is outside the trusted directories: {target}"
-        )
-        decision.allowed = False
-        decision.needs_user = True
-        decision.rule = ""
-        decision.reason = (
-            f"{detail} — explicit approval required"
-            + (f"; was: {decision.reason}" if decision.reason else "")
-        )
-        return decision
-    return decision
-
-
-def restrict_grants(level: RiskLevel, decision: Any) -> Any:
-    """Slice 4a grant gate (mutates + returns `decision`):
-
-    **L3+ is never released by a blanket or approval-card grant.** Auto mode's "full
-    access" and session-scoped ALWAYS_TOOL/ALWAYS_COMMAND entries minted by earlier
-    approval cards are fine for local reversible work, but external effects (send
-    message/file, shell-grade execution) need either an explicit per-action human
-    decision or a user-authored policy artifact: a trusted-workspace command
-    allowlist, a task-scoped standing rule, or configured auto-allow tools
-    (decision.grant == "policy"). Unattended runs resolve the resulting ask through
-    the same ApprovalService as interactive runs — fail closed when no one answers.
-
-    L2 and below pass through unchanged; L4 was already forced to ask by slice 2.
-    """
-    if level < RiskLevel.L3 or not getattr(decision, "allowed", False):
-        return decision
-    if getattr(decision, "grant", "") == "policy":
-        return decision
-    decision.allowed = False
-    decision.needs_user = True
-    decision.rule = ""
-    decision.reason = (
-        "external effect (L3) requires explicit approval or standing policy"
-        + (
-            f"; was auto-allowed by {getattr(decision, 'grant', '')} grant"
-            if getattr(decision, "grant", "")
-            else ""
-        )
-        + (f"; was: {decision.reason}" if decision.reason else "")
-    )
-    return decision
-
-
 def isolation_status(level: Any) -> str:
     """Honest sandbox declaration for audit rows (ARCH-002: users are told the
     truth about consequences). Nothing executes in a container today; L1 writes
@@ -433,3 +91,108 @@ def isolation_status(level: Any) -> str:
     if level == RiskLevel.L1:
         return "checkpoint"
     return "none"
+
+
+# -- Rust-authoritative policy facade ------------------------------------------
+
+class PolicyAuthorityError(RuntimeError):
+    """Raised when the policy authority (Rust delta_core) fails."""
+
+
+def _metadata_to_dict(metadata: Any) -> dict[str, Any] | None:
+    if metadata is None:
+        return None
+    return {
+        "risk_level": str(getattr(metadata, "risk_level", "") or ""),
+        "requires_approval": bool(getattr(metadata, "requires_approval", False)),
+        "category": str(getattr(metadata, "category", "") or ""),
+        "capabilities": list(getattr(metadata, "capabilities", []) or []),
+    }
+
+
+def _decision_to_dict(decision: Any) -> dict[str, Any]:
+    return {
+        "allowed": bool(getattr(decision, "allowed", False)),
+        "reason": str(getattr(decision, "reason", "") or ""),
+        "needs_user": bool(getattr(decision, "needs_user", False)),
+        "rule": str(getattr(decision, "rule", "") or ""),
+        "grant": str(getattr(decision, "grant", "") or ""),
+    }
+
+
+def _dict_to_decision(d: dict[str, Any]) -> Any:
+    from core.permissions import Decision
+
+    return Decision(
+        allowed=bool(d.get("allowed", False)),
+        reason=str(d.get("reason", "") or ""),
+        needs_user=bool(d.get("needs_user", False)),
+        rule=str(d.get("rule", "") or ""),
+        grant=str(d.get("grant", "") or ""),
+    )
+
+
+def classify(
+    tool_name: str,
+    arguments: dict[str, Any] | None = None,
+    metadata: Any = None,
+) -> RiskLevel:
+    """Delegate to Rust ``policy.classify``. Fail-closed: L4 on any error."""
+    try:
+        client = default_client()
+        result = client.command(
+            {
+                "cmd": "policy.classify",
+                "tool_name": tool_name,
+                "arguments": arguments,
+                "metadata": _metadata_to_dict(metadata),
+            }
+        )
+        return RiskLevel(int(result.get("level", 4)))
+    except (DeltaCoreError, KeyError, TypeError, ValueError):
+        return RiskLevel.L4
+
+
+def evaluate_policy(
+    decision: Any,
+    level: int,
+    tool_name: str,
+    arguments: dict[str, Any] | None = None,
+    metadata: Any = None,
+    *,
+    workspace_root: Path,
+    roots: list[tuple[Path, bool]],
+) -> tuple[Any, RiskLevel]:
+    """Delegate to Rust ``policy.evaluate`` (all four slices in one call).
+
+    Returns ``(Decision, RiskLevel)``. Fail-closed: on error, returns a
+    denied decision with L4.
+    """
+    try:
+        client = default_client()
+        result = client.command(
+            {
+                "cmd": "policy.evaluate",
+                "tool_name": tool_name,
+                "arguments": arguments,
+                "metadata": _metadata_to_dict(metadata),
+                "decision": _decision_to_dict(decision),
+                "level": int(level),
+                "workspace_root": str(workspace_root),
+                "roots": [{"path": str(p), "writable": w} for p, w in roots],
+            }
+        )
+        out_decision = _dict_to_decision(result["decision"])
+        out_level = RiskLevel(int(result.get("level", 4)))
+        return out_decision, out_level
+    except (DeltaCoreError, KeyError, TypeError, ValueError):
+        from core.permissions import Decision
+
+        return (
+            Decision(
+                allowed=False,
+                reason="policy authority unavailable — explicit approval required",
+                needs_user=True,
+            ),
+            RiskLevel.L4,
+        )
