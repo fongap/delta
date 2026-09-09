@@ -104,7 +104,8 @@ class InboxStore:
         self.path = Path(path) if path else None
         self._lock = threading.Lock()
         self._items: dict[str, InboxItem] = {}
-        self._waiters: dict[str, asyncio.Event] = {}
+        # (event_loop, asyncio.Event) — event_loop is the loop where the waiter was created
+        self._waiters: dict[str, tuple[asyncio.AbstractEventLoop, asyncio.Event]] = {}
         self._load()
 
     # -- persistence ------------------------------------------------------------
@@ -366,9 +367,11 @@ class InboxStore:
             item.resolution = resolution
             item.resolved_at = _now()
             self._save()
-        waiter = self._waiters.pop(item_id, None)
+            waiter = self._waiters.pop(item_id, None)
         if waiter is not None:
-            waiter.set()
+            loop, event = waiter
+            if not loop.is_closed():
+                loop.call_soon_threadsafe(event.set)
         return True
 
     def resolve_session(
@@ -389,8 +392,19 @@ class InboxStore:
         item = self._items.get(item_id)
         if item is not None and item.state == STATE_RESOLVED:
             return item.resolution or ""
-        ev = self._waiters.setdefault(item_id, asyncio.Event())
-        await ev.wait()
+        loop = asyncio.get_running_loop()
+        event = asyncio.Event()
+        with self._lock:
+            # Double-check after acquiring lock in case resolve happened between check and lock
+            item = self._items.get(item_id)
+            if item is not None and item.state == STATE_RESOLVED:
+                return item.resolution or ""
+            waiter = self._waiters.get(item_id)
+            if waiter is None:
+                self._waiters[item_id] = (loop, event)
+            else:
+                loop, event = waiter
+        await event.wait()
         resolved = self._items.get(item_id)
         return (resolved.resolution if resolved else "") or ""
 

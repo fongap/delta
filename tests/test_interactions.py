@@ -75,7 +75,14 @@ def test_interaction_click_resolves_item(tmp_path):
 
     async def fake_wait(item_id):
         # stand in for the suspended agent: record what the item resolved to
-        ev = mgr.inbox._waiters.setdefault(item_id, asyncio.Event())
+        loop = asyncio.get_running_loop()
+        ev = asyncio.Event()
+        with mgr.inbox._lock:
+            if mgr.inbox.get(item_id) is None or mgr.inbox.get(item_id).state != "resolved":
+                mgr.inbox._waiters.setdefault(item_id, (loop, ev))
+            else:
+                resolved.append(mgr.inbox.get(item_id).resolution)
+                return
         await ev.wait()
         resolved.append(mgr.inbox.get(item_id).resolution)
 
