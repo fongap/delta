@@ -79,8 +79,10 @@ READER_ENV_VAR: Final[str] = "DELTA_RUST_READERS"
 #: Note (ADR-026): ``artifact`` was hard-cut to Rust and removed from
 #: this set — it is no longer a selectable authority (see
 #: :data:`RUST_WRITE_DOMAINS` pre-ADR-026 for the historical state).
+#:
+#: Note (ADR-027): ``source_citation`` was hard-cut to Rust and removed
+#: from this set — it is no longer a selectable authority.
 RUST_WRITE_DOMAINS: Final[frozenset[str]] = frozenset({
-    "source_citation",  # typed citation validity evaluation via delta_core
     "validation",       # deterministic completion gate via delta_core
 })
 

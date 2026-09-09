@@ -119,6 +119,22 @@ impl LedgerReader {
         Ok(out)
     }
 
+    /// List all events in the database regardless of run_id.
+    /// Used by source/citation replay to read all source.registered
+    /// and citation.marked events.
+    pub fn all_events(&self) -> Result<Vec<LedgerEvent>, ShadowReadError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT run_id, seq, type, ts, actor, payload, prev_hash, hash, workspace
+             FROM run_events ORDER BY rowid",
+        )?;
+        let rows = stmt.query_map([], Self::map_event_row)?;
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
     /// List events for a run filtered by workspace.
     ///
     /// Mirrors `core/ledger.py` `RunEventLedger.events_in_workspace()`.

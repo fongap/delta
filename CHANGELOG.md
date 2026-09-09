@@ -163,6 +163,30 @@ R2 Trusted Execution 第一域 Artifact Registry 完成 hard-cut。
 > 相关 ADR：ADR-026（新增），ADR-020（标记 Superseded by ADR-026），ADR-018（更新 Artifact 状态）。
 
 
+### R2 — Source/Citation Hard-Cut（#151 / ADR-027）
+
+R2 Trusted Execution 第二域 Source/Citation 完成 hard-cut。
+
+**Authority**：
+
+- Before：Python Source/Citation，可选 Rust final-verdict delegate（`DELTA_RUST_AUTHORITY=source_citation` + `core/source_citation_delegate.py` / `validate_citation_delegated` / `canonicalize_citations_delegated` / `maybe_wrap`）。
+- After：Rust `delta_core` 是唯一 Source/Citation authority。Python 只做文件 I/O / sha256 / stat / candidate range 构造，通过 `DeltaCoreClient` 发送 `source.register` / `citation.mark` / `citation.validate` 等命令。
+
+**删除的旧路径**：
+
+- `core/source_citation_delegate.py`
+- `validate_citation_delegated` / `canonicalize_citations_delegated` / `maybe_wrap` / `_is_delegate_active`
+- `source_citation` runtime authority selector（`is_rust_authority("source_citation")`）
+- Python Source/Citation ledger writer
+- production shadow / fallback path
+
+**失败行为**：`delta_core` 不可用 / 协议不匹配 / malformed response → `DeltaCoreError`（fail-closed），禁止 Python fallback。回滚仅 Git revert。
+
+**Authority Matrix**：Source/Citation = **Rust（ADR-027 hard-cut）** Complete。下一域：Validation。
+
+> 相关 ADR：ADR-027（新增），ADR-021（标记 Superseded by ADR-027），ADR-018（更新 Source/Citation 状态）。
+
+
 ### R1.6 — Legacy Cleanup（`cowork` → `delta` 全栈重命名）
 
 **Breaking Change**：本节列出的标识符、模块名、env var、事件前缀、bot handle 均已从 `cowork` / `@ocw` / `OpenWorker*` 重命名为 `delta` / `@delta` / `delta.*`。依赖旧标识符的下游脚本/集成需要同步更新。

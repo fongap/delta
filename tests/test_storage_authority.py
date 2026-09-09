@@ -50,8 +50,12 @@ def test_single_domain(monkeypatch):
 
 
 def test_two_domains(monkeypatch):
+    # source_citation is hard-cut (ADR-027) - no longer selectable.
+    # Test that using it raises an error.
     monkeypatch.setenv("DELTA_RUST_AUTHORITY", "source_citation,validation")
-    assert _parse_domains(os_env()) == frozenset({"source_citation", "validation"})
+    with pytest.raises(UnknownDomainError) as exc:
+        _parse_domains(os_env())
+    assert "unknown domain 'source_citation'" in str(exc.value)
 
 
 def test_all_keyword(monkeypatch):
@@ -60,13 +64,13 @@ def test_all_keyword(monkeypatch):
 
 
 def test_case_insensitive(monkeypatch):
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "Validation,Source_citation")
-    assert _parse_domains(os_env()) == frozenset({"validation", "source_citation"})
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "Validation")
+    assert _parse_domains(os_env()) == frozenset({"validation"})
 
 
 def test_whitespace_normalized(monkeypatch):
-    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "  validation , source_citation  ")
-    assert _parse_domains(os_env()) == frozenset({"validation", "source_citation"})
+    monkeypatch.setenv("DELTA_RUST_AUTHORITY", "  validation  ")
+    assert _parse_domains(os_env()) == frozenset({"validation"})
 
 
 def test_run_state_rejected(monkeypatch):
@@ -359,16 +363,20 @@ def test_r1_write_rejects_r2_read_domain(monkeypatch):
             is_rust_authority(r2)
 
 
-def test_source_citation_is_write_authority_domain(monkeypatch):
-    """R2.1 promotes final citation validity from shadow to authority."""
+def test_source_citation_is_hard_cut_not_selectable(monkeypatch):
+    """Source/Citation is hard-cut to Rust (ADR-027) - no longer selectable via DELTA_RUST_AUTHORITY."""
     from packages.storage_authority import (
-        RUST_READ_DOMAINS, RUST_WRITE_DOMAINS, is_rust_authority,
+        RUST_READ_DOMAINS, RUST_WRITE_DOMAINS,
     )
 
-    assert "source_citation" in RUST_WRITE_DOMAINS
+    # Not in write domains (hard-cut = always Rust, not selectable)
+    assert "source_citation" not in RUST_WRITE_DOMAINS
     assert "source_citation" not in RUST_READ_DOMAINS
+    # Using it in DELTA_RUST_AUTHORITY raises an error
     monkeypatch.setenv("DELTA_RUST_AUTHORITY", "source_citation")
-    assert is_rust_authority("source_citation") is True
+    with pytest.raises(UnknownDomainError) as exc:
+        _parse_domains(os_env())
+    assert "unknown domain 'source_citation'" in str(exc.value)
 
 
 def test_validation_is_write_authority_domain(monkeypatch):

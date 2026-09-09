@@ -33,7 +33,8 @@ pub use idemlog::{
 pub use ledger::{LedgerEvent, LedgerReader, LedgerWriter};
 pub use source_citation::{
     validate_all, validate_citation, validate_source_citation, CitationValidationResult,
-    CitationValidity, ValidatedCitation,
+    CitationValidity, SourceCitationReader, SourceCitationWriter, SourceRecord,
+    SourceRegisterInput, ValidatedCitation,
 };
 pub use taskstore::{ScheduledTaskEntry, TaskRunEntry, TaskStore};
 pub use validation::{run_validation, ValidationCheck, ValidationResult};

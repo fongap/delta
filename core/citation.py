@@ -10,9 +10,8 @@ contract on a successful read:
 
 This module is the single chokepoint — readers call :func:`cite` and get
 both side effects. The "best-effort" stance (never raise out of a tool call)
-lives here, not in every reader; a single transient I/O error must not
-break a successful file read just because the audit hook happened to
-choke.
+lives here for file-level errors; Authority failures (Rust unavailable,
+protocol mismatch, malformed response) propagate as DeltaCoreError.
 """
 
 from __future__ import annotations
@@ -40,7 +39,7 @@ def cite(
     workspace: str | Path | None = None,
 ) -> str | None:
     """Capture + cite one read in a single call. Returns the ref id, or None
-    on a no-op (no source_store / no run_id) or a swallowed error.
+    on a no-op (no source_store / no run_id).
 
     ``run_id`` resolution order:
 
@@ -55,6 +54,10 @@ def cite(
     workspace-relative when possible). `workspace` overrides the store's
     default workspace when the read happens outside it (e.g. a connector
     file mounted elsewhere).
+
+    File-level errors (missing path, stat OSError, hash OSError) return None
+    to not fail the tool call. Authority failures (delta_core unavailable,
+    protocol mismatch, malformed response) raise DeltaCoreError (fail-closed).
     """
     if source_store is None:
         return None
@@ -69,31 +72,21 @@ def cite(
         if scope is None:
             return None
         run_id = scope[0]
-    from packages.storage_authority import is_rust_authority
-
-    fail_closed = is_rust_authority("source_citation")
     try:
         ref = source_store.capture_file(target, workspace=workspace)
-    except OSError as exc:
+    except OSError:
         # A file that was readable a moment ago may have moved; the read
         # call already returned its result, so we just drop the audit
         # row rather than fail the tool.
-        if fail_closed:
-            raise CitationCaptureError(
-                f"source capture failed for {target!s}"
-            ) from exc
         return None
     try:
         source_store.add_citation(ref.id, run_id, range_obj)
-    except (ValueError, DeltaCoreError) as exc:
-        # The reader produced a malformed range; drop the citation rather
-        # than tear down the tool. The bug still gets caught by the
-        # CitationRange unit tests + the e2e citation regression.
-        if fail_closed:
-            raise CitationCaptureError(
-                f"citation record failed for source {ref.id}"
-            ) from exc
-        return None
+    except DeltaCoreError as exc:
+        # Authority failure (Rust unavailable, protocol mismatch, malformed
+        # response) — fail-closed, do not swallow.
+        raise CitationCaptureError(
+            f"citation record failed for source {ref.id}"
+        ) from exc
     return ref.id
 
 

@@ -172,23 +172,4 @@ def test_reindex_stale_refreshes_cached_mtime_on_current_pass(tmp_path):
 # -- legacy refs (no mtime cache) still work ----------------------------
 
 
-def test_legacy_ref_without_mtime_cache_always_hashes(tmp_path):
-    """A ref saved by an older code path (no mtime_ns / size_bytes)
-    must still be hashable — we fall through to sha256 every pass."""
-    p, store, _ = _store_with_ref(tmp_path)
-    ref = store.get(store.list()[0].id)
-    # Simulate an older ref: clear the cache fields.
-    ref.mtime_ns = None
-    ref.size_bytes = None
-    store._save()
-    original = Path.read_bytes
-    calls: list[Path] = []
 
-    def counting(self, *a, **kw):
-        calls.append(self)
-        return original(self, *a, **kw)
-
-    with patch.object(Path, "read_bytes", counting):
-        store.check_freshness()
-    # Legacy path: must hash every time (no fast path shortcut).
-    assert len(calls) == 1

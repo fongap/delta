@@ -10,6 +10,8 @@
 
 > 2026-09-09 后续决策：ADR-026 完成 Artifact Registry Hard-Cut。Artifact 域现在由 Rust `delta_core` 作为唯一 Authority（`core/artifact_delegate.py` 已删除，`artifact` 已从 `RUST_WRITE_DOMAINS` 移除，无 fallback / delegate / feature flag）。下一域为 Source/Citation。
 
+> 2026-09-10 后续决策：ADR-027 完成 Source/Citation Hard-Cut。Source/Citation 域现在由 Rust `delta_core` 作为唯一 Authority（`core/source_citation_delegate.py` 已删除，`source_citation` 已从 `RUST_WRITE_DOMAINS` 移除，无 fallback / delegate / feature flag）。下一域为 Validation。
+
 ## 背景
 
 R1 State Foundation（ADR-017）已在 2026-09-07 完成：5 个领域（Idempotency / Ledger / Task identity / Run state / Storage transaction boundary）的 Rust delegate wrapper + 统一 `delta_core` 进程入口 + CI gate 全部就位。Rust authority 能力可用（opt-in via `DELTA_RUST_AUTHORITY`），但生产默认权威仍是 Python（Pre-R2 Gate / R1.7 明确的三态澄清）。
@@ -23,12 +25,12 @@ R1.5 收口（PR #127）+ R1.6 Legacy Cleanup（PR #128）+ R1.7 Pre-R2 Gate（P
 
 R2 范围（`rust-core-migration.md` §5 R2）包含 6 个领域：
 
-1. **Artifact Registry** — `core/artifact.py`（`Artifact` dataclass + `register_artifact` helper + `register_run_artifacts` walker）；
-2. **Validation** — `core/validation.py`（`ValidationCriteria` / `ValidationCheck` / `ValidationResult`）；
-3. **Checkpoint** — `core/conversations.py` 的 checkpoint path + `core/recovery.py` 的快照；
-4. **Policy** — `core/gateway.py` Slice 2（`_evaluate_slice2_policy` + `_apply_session_standing_policy`）；
-5. **Approval** — `core/engine.py:ApprovalOutcome` + `core/audit.py` 审批行 + `core/gateway.py` L1-L4 分级；
-6. **Source/Citation** — `core/source_citation.py` + `core/analyzer.py:source_citation_hits`。
+1. **Artifact Registry** ✅ **Completed (ADR-026)** — `core/artifact.py`（`Artifact` dataclass + `register_artifact` helper + `register_run_artifacts` walker）；
+2. **Source/Citation** ✅ **Completed (ADR-027)** — `core/sources.py` + `core/citation.py` + `core/analyzer.py:source_citation_hits`；
+3. **Validation** — `core/validation.py`（`ValidationCriteria` / `ValidationCheck` / `ValidationResult`）；
+4. **Checkpoint** — `core/conversations.py` 的 checkpoint path + `core/recovery.py` 的快照；
+5. **Policy** — `core/gateway.py` Slice 2（`_evaluate_slice2_policy` + `_apply_session_standing_policy`）；
+6. **Approval** — `core/engine.py:ApprovalOutcome` + `core/audit.py` 审批行 + `core/gateway.py` L1-L4 分级。
 
 **R2 不允许"全栈切换"**，必须按 `rust-core-migration.md` §6 单领域流程逐步推进。
 
@@ -81,15 +83,15 @@ R2 按以下顺序落地：
 
 #### PR132+（**实际权威切换**，每个领域一个 PR）
 
-按 §6 流程，对 6 个领域分别切换。**建议顺序**（从风险最低、语义最明确开始）：
+按 §6 流程，对 6 个领域分别切换。**实际顺序**（从风险最低、语义最明确开始）：
 
-- **PR132 — Artifact Registry authority switch**（`core/artifact.py` → Rust `ArtifactWriter`）
+- **PR132 — Artifact Registry authority switch** ✅ **Completed (ADR-026)** （`core/artifact.py` → Rust `ArtifactRegistryWriter`）
   - 原因：Artifact 是最接近 R1 模式的领域（写 `artifact.registered` / `artifact.completed` ledger event + 写 `TaskRun.artifacts` list）；sha256 计算在 Rust 端更稳定；失败回退到 Python register 路径明确。
   - 风险：Artifact 是产物证据，错误会导致引用断裂。必须 cross-language 一致性测试（Python register → Rust verify sha256）。
 
-- **PR133 — Source/Citation read authority**（`core/source_citation.py` + `core/analyzer.py:source_citation_hits` → Rust `CitationReader`）
-  - 原因：只读领域，不存在"权威切换"语义，实质是"Rust 端重放 citation 计算并与 Python 结果 cross-check"。这是 R3 shadow-read 模式在 R2 域的预演。
-  - 风险：低。只读不影响写入路径；Python 端继续是 write-authority；Rust 端只做 read-shadow。
+- **PR133 — Source/Citation hard-cut** ✅ **Completed (ADR-027)** （`core/sources.py` + `core/citation.py` → Rust `SourceCitationWriter` / `SourceCitationReader`）
+  - 原因：Python 只做文件 I/O / sha256 / stat / candidate range 构造；Rust 拥有 Source identity、revision、Citation identity、range validation、stale detection、所有持久化。
+  - 风险：低。Python facade 保持 API 兼容；Rust 拥有所有 trusted facts。
 
 - **PR134 — Validation authority**（`core/validation.py` → Rust `ValidationEngine`）
   - 原因：Validation 是纯函数式评估（输入：task + output，输出：ValidationResult），不依赖外部状态；最容易做 fail-closed 测试。
