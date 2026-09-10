@@ -1,11 +1,11 @@
-title: "[Q&A] "
+title: "[问答] "
 body:
   - type: markdown
     attributes:
       value: |
-        欢迎来到 Delta Discussions。
+        欢迎来到 Delta 讨论区。
 
-        这里用于安装、配置、模型接入、使用和排障问题。若已经确认是可复现的产品缺陷，请改到 Issues 提交；安全漏洞请勿公开披露。
+        这里用于安装、配置、模型接入、使用和排障问题。若已经确认是可复现的产品缺陷，请到 Issues 提交；安全漏洞请勿公开披露。
 
   - type: textarea
     id: question
@@ -33,7 +33,7 @@ body:
     attributes:
       label: 提交前确认
       options:
-        - label: 我已搜索现有 Discussions 和 Issues，确认没有明显重复的问题。
+        - label: 我已搜索现有讨论和 Issues，确认没有明显重复的问题。
           required: true
         - label: 我没有提交 Token、Secret、个人数据或其他敏感信息。
           required: true
