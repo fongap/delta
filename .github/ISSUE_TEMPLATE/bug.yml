@@ -1,0 +1,97 @@
+name: 缺陷报告
+description: 报告可复现的产品缺陷
+title: "[缺陷] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢反馈。Issues 用于跟踪已经确认、可复现的问题。
+
+        安装、配置、模型接入、使用或排障问题，请前往 Discussions 的「问答（Q&A）」分类；
+        功能、交互、工作流或产品建议，请前往「建议（Ideas）」分类。
+
+  - type: input
+    id: version
+    attributes:
+      label: Delta 版本
+      description: 请输入正在使用的 Delta 版本，例如 v0.3.1。
+      placeholder: v0.3.1
+    validations:
+      required: true
+
+  - type: dropdown
+    id: installation
+    attributes:
+      label: 安装方式
+      description: 请选择当前使用方式。
+      options:
+        - Windows 便携版
+        - 开发环境
+        - 其他
+    validations:
+      required: true
+
+  - type: input
+    id: windows
+    attributes:
+      label: Windows 版本
+      description: 请输入 Windows 版本，例如 Windows 11 24H2。
+      placeholder: Windows 11 24H2
+    validations:
+      required: true
+
+  - type: textarea
+    id: happened
+    attributes:
+      label: 实际发生了什么
+      description: 请简要说明实际出现的问题。
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤
+      description: 请提供最小、稳定的复现步骤。
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为
+      description: 说明你预期的正确行为。
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志 / 截图
+      description: 可附上必要日志或截图。提交前请删除 Token、Secret、个人数据和其他敏感信息。
+
+  - type: dropdown
+    id: regression
+    attributes:
+      label: 是否为回归问题
+      description: 这个问题是否在旧版本中正常、升级后才出现？
+      options:
+        - 否
+        - 是
+        - 不确定
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 提交前确认
+      options:
+        - label: 我已搜索现有 Issues，确认没有明显重复的问题。
+          required: true
+        - label: 我已从日志、截图和描述中删除 Token、Secret、个人数据及其他敏感信息。
+          required: true
