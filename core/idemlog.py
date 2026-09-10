@@ -332,11 +332,16 @@ class IdempotencyLog:
         tool_call_id: str,
         tool_name: str,
         *,
+        reason: str = "user_stop",
         ledger: RunEventLedger | None = None,
         workspace: str | None = None,
     ) -> dict[str, Any]:
-        """Ask Rust for the lifecycle consequence of cancelling a tool call
-        (ADR-037).
+        """Ask Rust for the lifecycle consequence of interrupting a tool
+        call (ADR-037 / ADR-038).
+
+        ``reason`` is an audit label ("user_stop", "timeout") that does
+        not change the state-machine decision, only the recorded failure
+        message when the state was Planned.
 
         Returns the Rust-authoritative decision:
         - ``{"action": "uncertain", "operation_id": ...}`` — side effect was
@@ -352,6 +357,7 @@ class IdempotencyLog:
             run_id=run_id,
             tool_call_id=tool_call_id,
             tool_name=tool_name,
+            reason=reason,
         )
         if not isinstance(response, dict) or not isinstance(
             response.get("action"), str

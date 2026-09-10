@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import concurrent.futures
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, AsyncIterator, Awaitable, Callable
@@ -128,6 +129,8 @@ class ToolLifecycleContext:
     messages: list[dict[str, Any]]
     standing_notes: dict[str, str]
     tool_levels: dict[str, Any]
+    # Per-tool execution timeout in seconds (ADR-038). <=0 disables.
+    tool_timeout: float = 0.0
 
 
 class ToolLifecycleOrchestrator:
@@ -289,6 +292,12 @@ class ToolLifecycleOrchestrator:
         and its paired record_planned + mark_executing transitions are
         decided by Rust ``toollifecycle.plan``. Python only runs the tool
         (a capability, not authority) and reports the outcome.
+
+        ADR-038: when ``tool_timeout`` is configured, the registry call is
+        bounded by a deadline. On timeout, Python asks Rust for the lifecycle
+        consequence (Executing → Uncertain, Planned → Failed) and returns a
+        timeout result. The state-machine decision is Rust-authoritative;
+        the deadline mechanism is Python capability.
         """
         ctx = self.ctx
         idem_log = ctx.idem_log
@@ -325,8 +334,39 @@ class ToolLifecycleOrchestrator:
                     # action == "execute": Rust already recorded planned +
                     # marked executing; remember to report the outcome.
                     planned = run_id or ""
+        timeout = ctx.tool_timeout
         try:
-            result = ctx.registry.execute(tool_call.name, tool_call.arguments)
+            if timeout and timeout > 0:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                    future = pool.submit(
+                        ctx.registry.execute, tool_call.name, tool_call.arguments
+                    )
+                    result = future.result(timeout=timeout)
+            else:
+                result = ctx.registry.execute(tool_call.name, tool_call.arguments)
+        except concurrent.futures.TimeoutError:
+            if planned:
+                from core import runscope
+
+                scope = runscope.current()
+                if scope is not None:
+                    run_id, _session_id = scope
+                    if run_id:
+                        try:
+                            idem_log.cancel(  # type: ignore[union-attr]
+                                run_id,
+                                tool_call.id,
+                                tool_call.name,
+                                reason="timeout",
+                                ledger=ctx.ledger,
+                                workspace=ctx.audit_context.get("workspace"),
+                            )
+                        except Exception:
+                            pass
+            return (
+                {"error": f"tool timed out after {timeout:.0f}s", "error_type": "TimeoutError"},
+                "timeout",
+            )
         except Exception as exc:
             if planned:
                 from core import runscope
@@ -556,6 +596,21 @@ class ToolLifecycleOrchestrator:
         or Terminal (already settled). The event status reflects Rust's
         decision, never a Python-hardcoded "interrupted".
         """
+        return self._interrupt_tool(tool_call, reason="user_stop", audit_reason="user stop")
+
+    def _timed_out_tool(self, tool_call: ToolCall) -> Event:
+        """ADR-038: the timeout lifecycle decision is Rust-authoritative.
+
+        Same state-machine decision as cancellation (Executing → Uncertain,
+        Planned → Failed), but the audit reason is "timeout" so operators
+        can distinguish the two interruption causes.
+        """
+        return self._interrupt_tool(tool_call, reason="timeout", audit_reason="tool timeout")
+
+    def _interrupt_tool(
+        self, tool_call: ToolCall, *, reason: str, audit_reason: str
+    ) -> Event:
+        """Shared lifecycle-decision path for cancellation and timeout."""
         ctx = self.ctx
         idem_log = ctx.idem_log
         rust_status = "interrupted"
@@ -571,6 +626,7 @@ class ToolLifecycleOrchestrator:
                             run_id,
                             tool_call.id,
                             tool_call.name,
+                            reason=reason,
                             ledger=ctx.ledger,
                             workspace=ctx.audit_context.get("workspace"),
                         )
@@ -583,19 +639,21 @@ class ToolLifecycleOrchestrator:
                             rust_status = "terminal"
                     except Exception:
                         pass  # best-effort: a dead authority must not block the stop
-        ctx.messages.append(_tool_error_message(tool_call, "interrupted by user"))
+        ctx.messages.append(
+            _tool_error_message(tool_call, f"interrupted ({audit_reason})")
+        )
         self._audit(
             tool_call,
             stage="finished",
             status=rust_status,
-            reason="user stop",
+            reason=audit_reason,
         )
         return Event(
             EventType.TOOL_FINISHED,
             {
                 "name": tool_call.name,
                 "status": rust_status,
-                "reason": "stopped",
+                "reason": audit_reason,
             },
         )
 

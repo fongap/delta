@@ -262,7 +262,7 @@ def test_stop_skips_remaining_tool_calls(tmp_path):
     assert events[-1].type == EventType.INTERRUPTED
     results = _tool_results(engine)
     assert len(results) == 2  # both calls answered — no orphans
-    assert "interrupted by user" in results[1]["content"]
+    assert "interrupted" in results[1]["content"]
 
 
 def test_interrupt_hook_fires(tmp_path):

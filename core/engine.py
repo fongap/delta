@@ -95,6 +95,11 @@ class TurnEngine:
         # TTFT ceiling (seconds) for the first streamed token �?the pre-first-token wait
         # on free/shared gateways is the timeout killer. None/<=0 disables the guard.
         ttft_timeout: float | None = None,
+        # Per-tool execution timeout (seconds, ADR-038). When a tool call
+        # exceeds this ceiling, the orchestrator fires the timeout path:
+        # Rust decides Executing → Uncertain, Planned → Failed. <=0/None
+        # disables the guard.
+        tool_timeout: float | None = None,
         # Bounded retry for TRANSIENT provider failures (429/5xx/connection/stall) �?
         # Codex-style exponential backoff. Never retries stream truncation (finish_reason
         # guard) or context overflow (compaction's job). 0/None disables auto-retry.
@@ -189,6 +194,11 @@ class TurnEngine:
                 messages=self.messages,
                 standing_notes=self._standing_notes,
                 tool_levels=self._tool_levels,
+                tool_timeout=(
+                    float(tool_timeout)
+                    if tool_timeout is not None and tool_timeout > 0
+                    else 0.0
+                ),
             )
         )
         # Tool injection state (v0.3.0 P0): `_tool_expanded` is the one-way escape hatch

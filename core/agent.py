@@ -520,6 +520,7 @@ def build_engine(
         agent_family=agent.family,
         request_logger=_request_log.default_logger(),
         ttft_timeout=config.ttft_timeout,
+        tool_timeout=config.tool_timeout,
         max_retries=config.max_retries,
         idem_log=idem_log,
         ledger=ledger,
