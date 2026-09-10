@@ -14,8 +14,9 @@ The orchestrator owns:
   existing Rust ``idem.commit`` / ``idem.mark_failed`` authority.
 - **Resume orchestration**: reconstruct unanswered trailing tool calls and
   re-run them through the orchestrator.
-- **Cancellation integration**: accept a ``CancellationToken`` (Python
-  ``asyncio.Event`` wrapper for now; Rust will replace in a future ADR).
+- **Cancellation integration**: accept a ``CancellationToken`` (a Python
+  ``asyncio.Event`` wrapper — ADR-037 audited this as a runtime signal with
+  no persisted authority value, so it stays in Python).
 
 The ``TurnEngine`` remains the streaming-loop owner and becomes a thin wrapper
 over ``ToolLifecycleOrchestrator.authorize_and_execute()`` and ``resume()``.
@@ -69,8 +70,10 @@ async def _deny_all(_request: PermissionRequest) -> ApprovalOutcome:
 class CancellationToken:
     """Cooperative cancellation flag (ADR-034).
 
-    Wraps ``asyncio.Event`` for now; a future ADR will replace this with a
-    Rust-side token when cancellation is hard-cut.
+    Wraps ``asyncio.Event``. ADR-037 audited cancellation as a runtime
+    signal with no persisted authority value, so this stays a Python
+    ``asyncio`` flag — crash recovery is covered by the idempotency
+    state machine (ADR-022/035).
     """
 
     def __init__(self) -> None:
@@ -131,8 +134,11 @@ class ToolLifecycleOrchestrator:
     """Encapsulates the tool-call lifecycle: authorize → execute → record.
 
     Extracted from ``TurnEngine`` in ADR-034 so that the engine's async
-    streaming loop is separable from tool-call orchestration.  Future ADRs
-    (ADR-035+) will hard-cut this to Rust.
+    streaming loop is separable from tool-call orchestration. The execution
+    disposition is Rust-authoritative via ``toollifecycle.plan`` (ADR-035);
+    the rest (authorization, tool execution dispatch, resume reconstruction,
+    cancellation) stays in Python as capability / runtime-guard logic
+    (ADR-036/037).
     """
 
     def __init__(self, ctx: ToolLifecycleContext) -> None:
