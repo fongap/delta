@@ -320,6 +320,13 @@ R3 与 R2 不同——R2 是 authority switch，R3 是执行编排迁移。Side-
 > 相关 ADR：ADR-035（新增），ADR-022（Idempotency Hard-Cut），ADR-034（Engine Loop Restructuring）。
 
 
+### R3 — Resume Decision Audit（ADR-036）
+
+审计型 ADR，不涉及代码变更。Resume Decision 域的 authority 部分已被 ADR-029（checkpoint 持久化/验证）和 ADR-035（`toollifecycle.plan` 的 dedop/replay/uncertain 决策）拆解完毕。剩余的 `unanswered_trailing_tool_calls()` 是纯 Python 内存数据解析（从对话历史重建未回答的 ToolCall 列表），无持久化状态、无 authority 判断、无数据一致性语义——迁移它只会增加 subprocess 往返，零 integrity 增益。与 ADR-033 审计 Backoff/Worker Restart 的结论一致：无 authority 价值，不迁移。
+
+> 相关 ADR：ADR-036（新增），ADR-029（Checkpoint Hard-Cut），ADR-035（Tool Lifecycle Hard-Cut）。
+
+
 ### R1.6 — Legacy Cleanup（`cowork` → `delta` 全栈重命名）
 
 **Breaking Change**：本节列出的标识符、模块名、env var、事件前缀、bot handle 均已从 `cowork` / `@ocw` / `OpenWorker*` 重命名为 `delta` / `@delta` / `delta.*`。依赖旧标识符的下游脚本/集成需要同步更新。
