@@ -187,15 +187,17 @@ R0 完成前禁止大规模搬代码。
 
 > **R4 Phase 4 完成（ADR-045，2026-09-11）**：Resume orchestration 审计。Cold-start recovery（recover_stale/sweep_stale/checkpoint）、resume identity（run.resumed）、tool call disposition（toollifecycle.plan/cancel）均已在 Rust（ADR-025/029/035/037/038/042）。剩余 Python 仅为 orchestration glue 与纯解析（ADR-036 已审计）。无代码变更，仅审计收口。
 
+> **R4 Final Convergence（ADR-046，2026-09-11）**：R4 正式收口。所有运行时控制 authority 已 Rust-authoritative。记录最终 authority matrix、protocol 版本历史（最终 v14）、R4 完成标准达成。
+
 迁移：
 
-- Task execution；
-- Workflow lifecycle；
-- Scheduler；
-- Automation Runtime；
-- Resume orchestration。
+- Task execution；✅ ADR-042 (run lifecycle transitions)
+- Workflow lifecycle；✅ ADR-042/043 (run/automation completion)
+- Scheduler；✅ ADR-044 (audit: due query Rust, next-fire pure fn, tick mechanics)
+- Automation Runtime；✅ ADR-043 (task.complete_run atomic)
+- Resume orchestration；✅ ADR-045 (audit: all authority already Rust)
 
-R4 完成后，普通任务不得继续依赖 Legacy Python Runtime 作为主控。
+R4 完成后，普通任务不得继续依赖 Legacy Python Runtime 作为主控。**R4 完成（ADR-046，2026-09-11）**。
 
 ### R5 — Provider Core
 
