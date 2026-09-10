@@ -86,7 +86,7 @@ use time::OffsetDateTime;
 /// immediately after subprocess startup; a mismatch raises
 /// :class:`DeltaCoreError` (fail-closed) so we never silently talk to
 /// an incompatible binary.
-const PROTOCOL_VERSION: u32 = 12;
+const PROTOCOL_VERSION: u32 = 13;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "cmd")]
@@ -122,6 +122,17 @@ enum Command {
     LedgerRecoverStale { db: String },
     #[serde(rename = "ledger.close")]
     LedgerClose { db: String },
+    #[serde(rename = "run.transition")]
+    RunTransition {
+        db: String,
+        run_id: String,
+        #[serde(rename = "type")]
+        event_type: String,
+        actor: Option<String>,
+        ts: Option<f64>,
+        payload: Option<Value>,
+        workspace: Option<String>,
+    },
     #[serde(rename = "idem.identify")]
     IdemIdentify {
         run_id: String,
@@ -767,6 +778,33 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
             let path = PathBuf::from(&db);
             let closed = cache.ledgers.remove(&path).is_some();
             Ok(serde_json::json!({ "closed": closed }))
+        }
+        Command::RunTransition {
+            db,
+            run_id,
+            event_type,
+            actor,
+            ts,
+            payload,
+            workspace,
+        } => {
+            let writer = match cache.ledger(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let ts = ts.unwrap_or_else(|| {
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs_f64())
+                    .unwrap_or(0.0)
+            });
+            let actor = actor.unwrap_or_else(|| "system".to_string());
+            let payload = payload.unwrap_or(Value::Null);
+            let workspace = workspace.unwrap_or_default();
+            match writer.transition(&run_id, &event_type, &actor, ts, &payload, &workspace) {
+                Ok(v) => Ok(v),
+                Err(e) => Err(e.to_string()),
+            }
         }
         Command::IdemIdentify {
             run_id,

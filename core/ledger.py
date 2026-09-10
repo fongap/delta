@@ -131,6 +131,48 @@ class RunEventLedger:
             raise DeltaCoreError("invalid ledger.append response")
         return result
 
+    def transition(
+        self,
+        run_id: str,
+        type: str,
+        *,
+        actor: str = "system",
+        payload: dict[str, Any] | None = None,
+        ts: float | None = None,
+        workspace: str | None = None,
+    ) -> dict[str, Any]:
+        """Validate and append a run lifecycle transition (ADR-042).
+
+        Same interface as :meth:`append`, but delegates to the Rust
+        ``run.transition`` command which enforces the run state machine:
+
+          unknown → run.started → running
+          running → run.resumed → running (multi-turn)
+          running → run.completed / run.failed / run.interrupted / … → terminal
+          terminal → any → rejected
+
+        Production callers (``runtime.py:_track``) must use this method
+        for all ``run.*`` events.  Use :meth:`append` for non-``run.*``
+        events (``tool.*``, ``validation.*``, ``side_effect.*``, …) and
+        for raw/test writes.
+        """
+        ts = ts if ts is not None else time.time()
+        from packages.sanitize import sanitize_payload
+
+        stored_payload = sanitize_payload(payload)
+        result = self._invoke(
+            "run.transition",
+            run_id=run_id,
+            type=type,
+            actor=actor,
+            ts=ts,
+            payload=stored_payload,
+            workspace=workspace or "",
+        )
+        if not isinstance(result, dict):
+            raise DeltaCoreError("invalid run.transition response")
+        return result
+
     def events(self, run_id: str) -> list[dict[str, Any]]:
         """List all events for a run, ordered by seq."""
         result = self._invoke("ledger.events", run_id=run_id)

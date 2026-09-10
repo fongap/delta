@@ -228,9 +228,9 @@ class TurnEngineAdapter:
         self._run_id = run_id
         # Resume path: keep the same run_id across the suspension so the
         # idempotency log (keyed on run_id) sees a replay, not a fresh call.
-        # Set lazily on the first run, reused on every resume of the same
-        # session.
-        self._last_run_id: str | None = run_id
+        # Set lazily on the first _track call, reused on every resume of the
+        # same session.
+        self._last_run_id: str | None = None
 
     @property
     def engine(self) -> TurnEngine:
@@ -292,10 +292,20 @@ class TurnEngineAdapter:
         # instead of a brand-new call.
         if self._run_id:
             run_id = self._run_id
+            if kind == "resume":
+                # Explicit run_id + resume: check ledger to see if this run
+                # was previously started (running/resumed/interrupted).
+                # If unknown (no prior events) or terminal, we start fresh.
+                status = self._ledger.run_status(run_id)
+                is_resume = status in ("running", "resumed", "interrupted")
+            else:
+                is_resume = False
         elif kind == "resume" and self._last_run_id:
             run_id = self._last_run_id
+            is_resume = True
         else:
             run_id = uuid.uuid4().hex
+            is_resume = False
         self._last_run_id = run_id
         token = runscope.set_current(run_id, self._session_id or "")
         # ADR-007 §10.6 path: persist the audit-declared workspace on
@@ -304,9 +314,9 @@ class TurnEngineAdapter:
         # payload. Empty string → NULL on disk (handled in _as_dict).
         ws = self.workspace_path or None
         try:
-            self._ledger.append(
+            self._ledger.transition(
                 run_id,
-                "run.resumed" if kind == "resume" else "run.started",
+                "run.resumed" if is_resume else "run.started",
                 actor="user" if kind == "run" else "system",
                 payload={"kind": kind, **({"session_id": self._session_id} if self._session_id else {})},
                 workspace=ws,
@@ -315,14 +325,16 @@ class TurnEngineAdapter:
                 async for event in agen:
                     yield event
             except Exception as exc:
-                self._ledger.append(
+                self._ledger.transition(
                     run_id,
                     "run.failed",
                     actor="system",
                     payload={"reason": str(exc), "kind": kind},
                 )
+                self._run_id = None
                 raise
-            self._ledger.append(run_id, "run.completed", payload={"kind": kind})
+            self._ledger.transition(run_id, "run.completed", payload={"kind": kind})
+            self._run_id = None
         finally:
             runscope.reset(token)
 

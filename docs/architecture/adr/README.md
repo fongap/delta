@@ -46,6 +46,7 @@
 - `ADR-039-r3-retry-decision-authority.md` – R3 Retry Policy 决策 authority。`retry.classify` 命令接收 error_type + error_message + is_context_overflow，返回 error_class + retryable。Python `call_errors.py` 的 `classify_error()` 和 `is_retryable()` 委托 Rust；backoff_delay 纯数学和 retry 执行机制保留 Python。Protocol 11 → 12。
 - `ADR-040-r3-final-convergence.md` – R3 正式收口。所有执行生命周期决策 authority 已 Rust-authoritative。记录最终 authority matrix、protocol 版本历史、以及原 ADR-037 审计错误的纠正。
 - `ADR-041-r4-runtime-migration-plan.md` – R4 Runtime 迁移计划与边界：审计 5 域（Task execution / Workflow lifecycle / Scheduler / Automation Runtime / Resume orchestration），区分决策 authority（run lifecycle transitions、automation run completion）与纯函数/运行时力学（scheduler tick、next-fire math、turn loop、resume glue）。Phase 1→2 为 authority 迁移，Phase 3→4 为审计。
+- `ADR-042-run-lifecycle-transition-authority.md` – R4 Phase 1：Run lifecycle transition authority 迁移到 Rust。新增 `run.transition` 命令，强制执行 run 状态机（unknown→started→running/resumed→completed/failed/interrupted/…，terminal 后不可再转）。Python `_track` 切到 `run.transition`，protocol 12→13。
 
 相关架构文档：
 - `hub-federation-boundary.md` – Delta Hub 联邦化边界设计，明确 OpenWorker 仅为可选适配器。

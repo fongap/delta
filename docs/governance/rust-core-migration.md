@@ -179,6 +179,8 @@ R0 完成前禁止大规模搬代码。
 
 > **R4 Runtime Migration Plan（ADR-041，2026-09-11）**：审计 5 域。Run lifecycle transitions（`runtime.py:_track` 决策 `run.started/completed/failed`，Rust 仅存储无状态机校验）和 Automation run completion（`manager_automations.py` 决策 run status + max_runs exhaustion）有 authority 价值，分 Phase 1/2 迁移。Scheduler tick/next-fire 是纯函数/运行时力学（同 backoff_delay），Resume orchestration 已由 Rust 覆盖（ADR-029/035/037/038），Phase 3/4 审计不迁移。
 
+> **R4 Phase 1 完成（ADR-042，2026-09-11）**：Run lifecycle transition authority 迁移到 Rust。新增 `run.transition` 命令，强制执行 run 状态机。Python `_track` 切到 `run.transition`，protocol 12→13。不存在 fallback/dual-write。
+
 迁移：
 
 - Task execution；

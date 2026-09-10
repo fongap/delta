@@ -14,6 +14,38 @@ use sha2::{Digest, Sha256};
 
 use crate::ShadowReadError;
 
+/// Derive a run's lifecycle status from its last **terminal** event.
+///
+/// Scans events in reverse order for the first terminal event
+/// (run.completed / run.failed / run.interrupted / run.skipped /
+/// run.cancelled / validation.failed). Non-terminal events like
+/// tool.finished do not mask the terminal status.
+fn run_status_from_conn(conn: &Connection, run_id: &str) -> Result<String, ShadowReadError> {
+    if run_id.is_empty() {
+        return Ok("unknown".to_string());
+    }
+    let mut stmt = conn.prepare("SELECT type FROM run_events WHERE run_id = ? ORDER BY seq DESC")?;
+    let rows = stmt.query_map(params![run_id], |row| row.get::<_, String>(0))?;
+    for row in rows {
+        let event_type = row?;
+        match event_type.as_str() {
+            // Terminal events — return immediately
+            "run.completed" => return Ok("ok".to_string()),
+            "run.failed" => return Ok("error".to_string()),
+            "run.interrupted" => return Ok("interrupted".to_string()),
+            "run.skipped" => return Ok("skipped".to_string()),
+            "run.cancelled" => return Ok("cancelled".to_string()),
+            "validation.failed" => return Ok("validation_failed".to_string()),
+            // Non-terminal run lifecycle events — return running/resumed
+            "run.started" => return Ok("running".to_string()),
+            "run.resumed" => return Ok("resumed".to_string()),
+            // Other events (tool.*, process.*, etc.) — skip, keep scanning
+            _ => {}
+        }
+    }
+    Ok("unknown".to_string())
+}
+
 /// One row from the `run_events` table.
 #[derive(Debug, Clone)]
 pub struct LedgerEvent {
@@ -193,39 +225,7 @@ impl LedgerReader {
     /// run.cancelled / validation.failed). Non-terminal events like
     /// tool.finished do not mask the terminal status.
     pub fn run_status(&self, run_id: &str) -> Result<String, ShadowReadError> {
-        if run_id.is_empty() {
-            return Ok("unknown".to_string());
-        }
-        // Scan all events in reverse order, find the first terminal event.
-        let mut stmt = self
-            .conn
-            .prepare("SELECT type FROM run_events WHERE run_id = ? ORDER BY seq DESC")?;
-        let rows = stmt.query_map(params![run_id], |row| row.get::<_, String>(0))?;
-        let mut last_non_terminal = String::new();
-        for row in rows {
-            let event_type = row?;
-            match event_type.as_str() {
-                "run.completed" => return Ok("ok".to_string()),
-                "run.failed" => return Ok("error".to_string()),
-                "run.interrupted" => return Ok("interrupted".to_string()),
-                "run.skipped" => return Ok("skipped".to_string()),
-                "run.cancelled" => return Ok("cancelled".to_string()),
-                "validation.failed" => return Ok("validation_failed".to_string()),
-                // Non-terminal: remember the FIRST one found when scanning
-                // backwards (which is the LAST event chronologically).
-                _ => {
-                    if last_non_terminal.is_empty() {
-                        last_non_terminal = event_type;
-                    }
-                }
-            }
-        }
-        // No terminal events found. map last non-terminal to running/resumed.
-        match last_non_terminal.as_str() {
-            "run.started" => Ok("running".to_string()),
-            "run.resumed" => Ok("resumed".to_string()),
-            _ => Ok("unknown".to_string()),
-        }
+        run_status_from_conn(&self.conn, run_id)
     }
 
     /// Recompute the hash chain for one run; true iff every link matches.
@@ -388,6 +388,53 @@ impl LedgerWriter {
             "hash": digest,
             "workspace": workspace,
         }))
+    }
+
+    /// Validate and append a run lifecycle transition.
+    ///
+    /// Enforces the run state machine (ADR-042):
+    ///   unknown   → run.started      → running
+    ///   running   → run.resumed      → running (multi-turn)
+    ///   running   → run.completed    → completed (terminal)
+    ///   running   → run.failed       → failed (terminal)
+    ///   running   → run.interrupted  → interrupted (terminal)
+    ///   running   → run.skipped      → skipped (terminal)
+    ///   running   → run.cancelled   → cancelled (terminal)
+    ///   resumed   → (same as running)
+    ///   terminal  → any              → rejected
+    ///
+    /// ``r#type`` must be a ``run.*`` event (e.g. ``"run.started"``).
+    /// On success, delegates to [`append`](#method.append).
+    pub fn transition(
+        &self,
+        run_id: &str,
+        r#type: &str,
+        actor: &str,
+        ts: f64,
+        payload: &Value,
+        workspace: &str,
+    ) -> Result<Value, ShadowReadError> {
+        if !r#type.starts_with("run.") {
+            return Err(ShadowReadError::Parse(format!(
+                "run.transition requires a run.* event type, got '{}'",
+                r#type
+            )));
+        }
+        let suffix = &r#type[4..];
+        let current = run_status_from_conn(&self.conn, run_id)?;
+        let legal = match (current.as_str(), suffix) {
+            ("unknown", "started") => true,
+            ("running" | "resumed" | "interrupted", "resumed") => true,
+            ("running" | "resumed", "completed" | "failed" | "interrupted" | "skipped" | "cancelled") => true,
+            _ => false,
+        };
+        if !legal {
+            return Err(ShadowReadError::Parse(format!(
+                "illegal run transition: {} → run.{}",
+                current, suffix
+            )));
+        }
+        self.append(run_id, r#type, actor, ts, payload, workspace)
     }
 
     /// Return a `LedgerReader` backed by a read-only connection to the same DB.
@@ -682,5 +729,118 @@ mod tests {
         // Each run is its own chain, so both start with empty prev_hash.
         assert_eq!(r1["prev_hash"], "");
         assert_eq!(r2["prev_hash"], "");
+    }
+
+    #[test]
+    fn transition_started_from_unknown() {
+        let writer = LedgerWriter::open_in_memory().unwrap();
+        let row = writer
+            .transition("r1", "run.started", "user", 1000.0, &serde_json::json!({}), "")
+            .unwrap();
+        assert_eq!(row["type"], "run.started");
+        assert_eq!(row["seq"], 1);
+    }
+
+    #[test]
+    fn transition_completed_from_running() {
+        let writer = LedgerWriter::open_in_memory().unwrap();
+        writer
+            .transition("r1", "run.started", "user", 1000.0, &serde_json::json!({}), "")
+            .unwrap();
+        let row = writer
+            .transition("r1", "run.completed", "system", 1001.0, &serde_json::json!({}), "")
+            .unwrap();
+        assert_eq!(row["type"], "run.completed");
+        assert_eq!(row["seq"], 2);
+    }
+
+    #[test]
+    fn transition_resumed_from_running() {
+        let writer = LedgerWriter::open_in_memory().unwrap();
+        writer
+            .transition("r1", "run.started", "user", 1000.0, &serde_json::json!({}), "")
+            .unwrap();
+        let row = writer
+            .transition("r1", "run.resumed", "system", 1001.0, &serde_json::json!({}), "")
+            .unwrap();
+        assert_eq!(row["type"], "run.resumed");
+        assert_eq!(row["seq"], 2);
+    }
+
+    #[test]
+    fn transition_failed_from_resumed() {
+        let writer = LedgerWriter::open_in_memory().unwrap();
+        writer
+            .transition("r1", "run.started", "user", 1000.0, &serde_json::json!({}), "")
+            .unwrap();
+        writer
+            .transition("r1", "run.resumed", "system", 1001.0, &serde_json::json!({}), "")
+            .unwrap();
+        let row = writer
+            .transition("r1", "run.failed", "system", 1002.0, &serde_json::json!({"reason": "boom"}), "")
+            .unwrap();
+        assert_eq!(row["type"], "run.failed");
+        assert_eq!(row["seq"], 3);
+    }
+
+    #[test]
+    fn transition_resumed_from_interrupted() {
+        let writer = LedgerWriter::open_in_memory().unwrap();
+        writer
+            .transition("r1", "run.started", "user", 1000.0, &serde_json::json!({}), "")
+            .unwrap();
+        writer
+            .transition("r1", "run.interrupted", "system", 1001.0, &serde_json::json!({"reason": "crashed"}), "")
+            .unwrap();
+        let row = writer
+            .transition("r1", "run.resumed", "system", 1002.0, &serde_json::json!({}), "")
+            .unwrap();
+        assert_eq!(row["type"], "run.resumed");
+        assert_eq!(row["seq"], 3);
+    }
+
+    #[test]
+    fn transition_rejects_started_from_running() {
+        let writer = LedgerWriter::open_in_memory().unwrap();
+        writer
+            .transition("r1", "run.started", "user", 1000.0, &serde_json::json!({}), "")
+            .unwrap();
+        let err = writer
+            .transition("r1", "run.started", "user", 1001.0, &serde_json::json!({}), "")
+            .unwrap_err();
+        assert!(err.to_string().contains("illegal run transition"));
+    }
+
+    #[test]
+    fn transition_rejects_completed_from_terminal() {
+        let writer = LedgerWriter::open_in_memory().unwrap();
+        writer
+            .transition("r1", "run.started", "user", 1000.0, &serde_json::json!({}), "")
+            .unwrap();
+        writer
+            .transition("r1", "run.completed", "system", 1001.0, &serde_json::json!({}), "")
+            .unwrap();
+        let err = writer
+            .transition("r1", "run.completed", "system", 1002.0, &serde_json::json!({}), "")
+            .unwrap_err();
+        assert!(err.to_string().contains("illegal run transition"));
+    }
+
+    #[test]
+    fn transition_rejects_non_run_event() {
+        let writer = LedgerWriter::open_in_memory().unwrap();
+        let err = writer
+            .transition("r1", "tool.started", "user", 1000.0, &serde_json::json!({}), "")
+            .unwrap_err();
+        assert!(err.to_string().contains("run.* event type"));
+    }
+
+    #[test]
+    fn transition_rejects_resumed_from_unknown() {
+        let writer = LedgerWriter::open_in_memory().unwrap();
+        let err = writer
+            .transition("r1", "run.resumed", "system", 1000.0, &serde_json::json!({}), "")
+            .unwrap_err();
+        assert!(err.to_string().contains("illegal run transition"));
     }
 }
