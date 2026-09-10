@@ -327,6 +327,15 @@ R3 与 R2 不同——R2 是 authority switch，R3 是执行编排迁移。Side-
 > 相关 ADR：ADR-036（新增），ADR-029（Checkpoint Hard-Cut），ADR-035（Tool Lifecycle Hard-Cut）。
 
 
+### R3 — Cancellation / Timeout / Retry Final Audit（ADR-037）
+
+审计型 ADR，不涉及代码变更。Cancellation（`asyncio.Event` 协作信号）、Timeout（`asyncio` deadline 竞速）、Retry（纯数学 + 文本分类）三个域全部是纯运行时守卫或纯函数，无持久化状态、无 crash 恢复需求、无数据一致性判断。crash 恢复由 idempotency 状态机（ADR-022/035）覆盖。迁移它们只会增加热路径 subprocess 往返，零 integrity 增益。与 ADR-033 审计 Backoff/Worker Restart 的结论一致。
+
+**R3 Execution Lifecycle 正式收口。** R3 的 authority 表面已完整：唯一需要 Rust authority 的域——idempotency 状态机 disposition（`toollifecycle.plan`）和 checkpoint 持久化/验证——已 Rust-authoritative。其余全部是 Python 能力或运行时守卫。
+
+> 相关 ADR：ADR-037（新增），ADR-033（R3 Plan），ADR-035（Tool Lifecycle Hard-Cut），ADR-036（Resume Decision Audit）。
+
+
 ### R1.6 — Legacy Cleanup（`cowork` → `delta` 全栈重命名）
 
 **Breaking Change**：本节列出的标识符、模块名、env var、事件前缀、bot handle 均已从 `cowork` / `@ocw` / `OpenWorker*` 重命名为 `delta` / `@delta` / `delta.*`。依赖旧标识符的下游脚本/集成需要同步更新。
