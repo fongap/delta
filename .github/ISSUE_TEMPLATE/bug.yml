@@ -1,14 +1,14 @@
-name: Bug 报告
+name: 缺陷报告
 description: 报告可复现的产品缺陷
-title: "[Bug] "
+title: "[缺陷] "
 body:
   - type: markdown
     attributes:
       value: |
         感谢反馈。Issues 用于跟踪已经确认、可复现的问题。
 
-        如果是安装、配置、模型接入、使用或排障问题，请前往 Discussions / Q&A；
-        如果是功能、交互、工作流或产品建议，请前往 Discussions / Ideas。
+        安装、配置、模型接入、使用或排障问题，请前往 Discussions 的「问答（Q&A）」分类；
+        功能、交互、工作流或产品建议，请前往「建议（Ideas）」分类。
 
   - type: input
     id: version
@@ -25,8 +25,8 @@ body:
       label: 安装方式
       description: 请选择当前使用方式。
       options:
-        - Windows Portable
-        - Development build
+        - Windows 便携版
+        - 开发环境
         - 其他
     validations:
       required: true
