@@ -1,4 +1,4 @@
-﻿# GitHub 仓库设置
+# GitHub 仓库设置
 
 本文记录 Delta 推荐的 GitHub 仓库级配置。
 
@@ -85,23 +85,22 @@ chore/*
 
 ```text
 main
-upstream-openworker
+legacy/**
 ```
+
+`legacy/**` 用于保存冻结版本，应通过 Ruleset 禁止删除、更新和 force push。
 
 新增长期分支时，应先明确其长期职责。
 
-## `upstream-openworker`
+## OpenWorker 上游
 
-`upstream-openworker` 是 OpenWorker 上游镜像分支。
+Delta 已停止自动同步 OpenWorker 上游。
 
-该分支：
+原有 `upstream-sync.yml` 已删除，`upstream-openworker` 镜像分支不再维护。
 
-* 由自动化同步
-* 不包含 Delta 自有 Commit
-* 不直接作为产品发布分支
-* 不自动合入 `main`
+如需吸收上游实现，应先评估其与 Delta 当前架构、接口和治理边界的兼容性，再通过普通 Pull Request 选择性引入。
 
-上游吸收规则见：
+上游关系说明见：
 
 ```text
 UPSTREAM.md
@@ -147,7 +146,6 @@ permissions:
 
 ```text
 .github/workflows/release.yml
-.github/workflows/upstream-sync.yml
 ```
 
 不得为了简化配置而给所有 Workflow 全局写权限。
@@ -169,22 +167,6 @@ Release 规则见：
 ```text
 docs/governance/release-policy.md
 ```
-
-## Upstream Sync Workflow
-
-`upstream-sync.yml` 只负责维护：
-
-```text
-upstream-openworker
-```
-
-它不得直接修改：
-
-```text
-main
-```
-
-也不得自动把上游内容合入 Delta 产品分支。
 
 ## Dependabot
 
@@ -277,7 +259,6 @@ Secret 只允许存放于 GitHub Secrets 或受控 Environment 中。
 * Merge strategy 调整
 * Ruleset 调整
 * Release workflow 调整
-* Upstream sync 调整
 * Dependabot 策略调整
 * Actions permission 调整
 * 新增长期分支
