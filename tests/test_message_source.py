@@ -192,7 +192,7 @@ def test_tool_display_sidecar_is_agent_invisible(tmp_path):
         audit_sink=audits.append,
     )
     tc = ToolCall(id="t1", name="gmail_search_messages", arguments={"query": "q"})
-    engine._record_result(
+    engine._tool_lifecycle._record_result(
         tc,
         {
             "ok": True,
