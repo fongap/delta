@@ -309,6 +309,17 @@ R3 与 R2 不同——R2 是 authority switch，R3 是执行编排迁移。Side-
 将工具调用编排（authorize → execute → record → resume）从 `core/engine.py` 的 async streaming 循环中提取到 `core/tool_lifecycle.py` 的 `ToolLifecycleOrchestrator`。引擎保留流式循环和高级迭代，委托 orchestrator 处理工具生命周期。`CancellationToken` 替代 `asyncio.Event`，为未来 Rust 化做准备。不 hard-cut 任何域到 Rust。
 
 
+### R3 — Tool Lifecycle Orchestration Hard-Cut（ADR-035）
+
+将工具调用的执行处置（execute / replay / uncertain 决策）及其配对的 `record_planned` + `mark_executing` 状态机转移收敛到 Rust `delta_core` 的新命令 `toollifecycle.plan`。Python `_execute_sync` 变为薄调用方：先问 Rust 要处置，然后要么直接复用已提交结果（replay）、要么为不确定副作用生成用户裁决提示（uncertain）、要么执行工具并回报结果（execute，此时 Rust 已完成状态转移）。
+
+- **Rust**：新增 `core/runtime-native/src/tool_lifecycle.rs`（`ToolLifecyclePlanInput` / `PlanAction` / `ToolLifecyclePlanOutput`）+ `toollifecycle.plan` 命令，复用 `IdempotencyWriter`，无新表、无新持久化状态。
+- **Python**：`core/idemlog.py` 新增 `IdempotencyLog.plan()` 门面（execute 分支镜像 `side_effect.planned` ledger 事件）；`ToolLifecycleOrchestrator._execute_sync` 不再逐步调用 `lookup` / `record_planned` / `mark_executing`。
+- 工具执行本身（`registry.execute` → 任意 Python 工具 / MCP / connector）**仍是 Python 能力**，不是 authority；Rust 决定"是否执行"，Python 执行。
+
+> 相关 ADR：ADR-035（新增），ADR-022（Idempotency Hard-Cut），ADR-034（Engine Loop Restructuring）。
+
+
 ### R1.6 — Legacy Cleanup（`cowork` → `delta` 全栈重命名）
 
 **Breaking Change**：本节列出的标识符、模块名、env var、事件前缀、bot handle 均已从 `cowork` / `@ocw` / `OpenWorker*` 重命名为 `delta` / `@delta` / `delta.*`。依赖旧标识符的下游脚本/集成需要同步更新。

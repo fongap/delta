@@ -71,6 +71,7 @@ use delta_runtime_native::{
     IdempotencyWriter, LedgerWriter, PolicyEvaluateInput, SideEffectEntry, SideEffectState,
     SourceCitationReader, SourceCitationWriter, SourceRegisterInput, TaskStore, ValidationReader,
     ValidationRegisterInput, ValidationWriter,
+    ToolLifecyclePlanInput,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -431,6 +432,17 @@ enum Command {
         arguments: Option<Value>,
         #[serde(default)]
         metadata: Option<Value>,
+    },
+    /// R3 / ADR-035: decide a tool call's execution disposition and transition
+    /// the idempotency row (record_planned + mark_executing) for fresh calls.
+    #[serde(rename = "toollifecycle.plan")]
+    ToolLifecyclePlan {
+        db: String,
+        run_id: String,
+        tool_call_id: String,
+        tool_name: String,
+        #[serde(default)]
+        args: Value,
     },
     /// R2 / ADR-031: record an approval audit event.
     #[serde(rename = "approval.record")]
@@ -1693,6 +1705,29 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
             let md = metadata.and_then(|v| serde_json::from_value(v).ok());
             let level = classify(&tool_name, arguments.as_ref(), md.as_ref());
             Ok(serde_json::json!({"level": level as i64}))
+        }
+        Command::ToolLifecyclePlan {
+            db,
+            run_id,
+            tool_call_id,
+            tool_name,
+            args,
+        } => {
+            let writer = match cache.idem(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let input = ToolLifecyclePlanInput {
+                db,
+                run_id,
+                tool_call_id,
+                tool_name,
+                args,
+            };
+            match delta_runtime_native::plan_tool_lifecycle(writer, &input) {
+                Ok(output) => Ok(serde_json::to_value(output).unwrap()),
+                Err(e) => Err(e.to_string()),
+            }
         }
         Command::ApprovalRecord {
             db,

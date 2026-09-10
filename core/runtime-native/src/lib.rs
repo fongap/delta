@@ -22,6 +22,7 @@ pub mod ledger;
 pub mod policy;
 pub mod source_citation;
 pub mod taskstore;
+pub mod tool_lifecycle;
 pub mod validation;
 
 pub use approval::{
@@ -50,6 +51,7 @@ pub use source_citation::{
     SourceRegisterInput, ValidatedCitation,
 };
 pub use taskstore::{ScheduledTaskEntry, TaskRunEntry, TaskStore};
+pub use tool_lifecycle::{plan as plan_tool_lifecycle, PlanAction, ToolLifecyclePlanInput, ToolLifecyclePlanOutput};
 pub use validation::{
     run_validation, ValidationCheck, ValidationReader, ValidationRecord, ValidationRegisterInput,
     ValidationResult, ValidationWriter,

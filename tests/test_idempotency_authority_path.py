@@ -44,8 +44,23 @@ def test_idempotency_has_no_shadow_sqlite_writer():
             source = path.read_text(encoding="utf-8")
             if "sqlite3" in source and any(p in source for p in idem_db_patterns):
                 violations.append(path.relative_to(REPO).as_posix())
-    assert not violations, "direct sqlite3 for idempotency found in production: " + ", ".join(violations)
+    assert not violations, (
+        "direct sqlite3 for idempotency found in production: " + ", ".join(violations)
+    )
 
 
 def test_idemlog_delegate_test_file_deleted():
     assert not (REPO / "tests" / "test_idemlog_delegate.py").exists()
+
+
+def test_tool_lifecycle_plan_is_rust_disposition():
+    """ADR-035: the execution disposition (execute/replay/uncertain) and its
+    paired record_planned + mark_executing transitions live behind a single
+    Rust ``toollifecycle.plan`` call, not Python-side orchestration."""
+    source = (REPO / "core" / "tool_lifecycle.py").read_text(encoding="utf-8")
+    assert ".plan(" in source
+    # The pre-execution state machine is no longer driven step-by-step in Python;
+    # only description text may mention the transition names, never a call site.
+    assert ".record_planned(" not in source
+    assert ".mark_executing(" not in source
+    assert ".lookup(" not in source
