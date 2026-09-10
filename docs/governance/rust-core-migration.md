@@ -181,6 +181,10 @@ R0 完成前禁止大规模搬代码。
 
 > **R4 Phase 1 完成（ADR-042，2026-09-11）**：Run lifecycle transition authority 迁移到 Rust。新增 `run.transition` 命令，强制执行 run 状态机。Python `_track` 切到 `run.transition`，protocol 12→13。不存在 fallback/dual-write。
 
+> **R4 Phase 2 完成（ADR-043，2026-09-11）**：Automation run completion authority 迁移到 Rust。新增 `task.complete_run` 命令，原子性完成：存储 run 最终状态、run_count+1、last_run/last_status、max_runs exhaustion 检查禁用 task。Protocol 13→14。不存在 fallback/dual-write。
+
+> **R4 Phase 3 完成（ADR-044，2026-09-11）**：Scheduler 审计。Due query 已在 Rust（R1/R2）；`compute_next_run` 是纯函数（同 backoff_delay，留 Python）；tick/catch-up/overlap 是运行时力学（留 Python）；max_runs exhaustion 已在 Phase 2 迁移。无代码变更，仅审计收口。
+
 迁移：
 
 - Task execution；
