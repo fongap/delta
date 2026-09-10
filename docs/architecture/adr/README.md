@@ -47,6 +47,8 @@
 - `ADR-040-r3-final-convergence.md` – R3 正式收口。所有执行生命周期决策 authority 已 Rust-authoritative。记录最终 authority matrix、protocol 版本历史、以及原 ADR-037 审计错误的纠正。
 - `ADR-041-r4-runtime-migration-plan.md` – R4 Runtime 迁移计划与边界：审计 5 域（Task execution / Workflow lifecycle / Scheduler / Automation Runtime / Resume orchestration），区分决策 authority（run lifecycle transitions、automation run completion）与纯函数/运行时力学（scheduler tick、next-fire math、turn loop、resume glue）。Phase 1→2 为 authority 迁移，Phase 3→4 为审计。
 - `ADR-042-run-lifecycle-transition-authority.md` – R4 Phase 1：Run lifecycle transition authority 迁移到 Rust。新增 `run.transition` 命令，强制执行 run 状态机（unknown→started→running/resumed→completed/failed/interrupted/…，terminal 后不可再转）。Python `_track` 切到 `run.transition`，protocol 12→13。
+- `ADR-043-automation-run-completion-authority.md` – R4 Phase 2：Automation run completion authority 迁移到 Rust。新增 `task.complete_run` 命令，原子性完成：存储 run 最终状态、run_count+1、last_run/last_status、max_runs exhaustion 检查禁用 task。Protocol 13→14。
+- `ADR-044-r4-scheduler-audit.md` – R4 Phase 3：Scheduler 审计。Due query 已在 Rust（R1/R2）；`compute_next_run` 是纯函数（同 backoff_delay，留 Python）；tick/catch-up/overlap 是运行时力学（留 Python）；max_runs exhaustion 已在 Phase 2 迁移。无代码变更，仅审计收口。
 
 相关架构文档：
 - `hub-federation-boundary.md` – Delta Hub 联邦化边界设计，明确 OpenWorker 仅为可选适配器。
