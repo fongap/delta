@@ -108,7 +108,7 @@ def test_case1_successful_side_effect_produces_planned_and_committed_events(
     )
     token = set_current(RUN_ID, SESSION_ID)
     try:
-        result, status = engine._execute_sync(tc)
+        result, status = engine._tool_lifecycle._execute_sync(tc)
     finally:
         reset(token)
 
@@ -144,7 +144,7 @@ def test_case2_execution_failure_produces_planned_and_failed_events(
     tc = ToolCall(id=CALL_ID, name="boom", arguments={})
     token = set_current(RUN_ID, SESSION_ID)
     try:
-        result, status = engine._execute_sync(tc)
+        result, status = engine._tool_lifecycle._execute_sync(tc)
     finally:
         reset(token)
 
@@ -223,7 +223,7 @@ def test_case4_resume_replays_committed_side_effect_without_recalling_tool(
     )
     token = set_current(RUN_ID, SESSION_ID)
     try:
-        result, status = engine._execute_sync(tc)
+        result, status = engine._tool_lifecycle._execute_sync(tc)
     finally:
         reset(token)
 

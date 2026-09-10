@@ -286,7 +286,7 @@ def test_request_directory_emits_prompt_and_returns_grant():
             "writable": True,
         },
     )
-    events = asyncio.run(_collect(eng._handle_directory_request(tc)))
+    events = asyncio.run(_collect(eng._tool_lifecycle._handle_directory_request(tc)))
 
     kinds = [e.type for e in events]
     assert EventType.DIRECTORY_REQUESTED in kinds
@@ -307,7 +307,7 @@ def test_request_directory_denied_returns_denied_status():
 
     eng = _bare_engine(directory_requester=requester)
     tc = ToolCall(id="c1", name="request_directory", arguments={"reason": "x"})
-    events = asyncio.run(_collect(eng._handle_directory_request(tc)))
+    events = asyncio.run(_collect(eng._tool_lifecycle._handle_directory_request(tc)))
     assert (
         next(e for e in events if e.type == EventType.TOOL_FINISHED).data["status"]
         == "denied"
@@ -317,7 +317,7 @@ def test_request_directory_denied_returns_denied_status():
 def test_request_directory_without_requester_is_safe_noop():
     eng = _bare_engine()  # no requester (e.g. headless)
     tc = ToolCall(id="c1", name="request_directory", arguments={"reason": "x"})
-    events = asyncio.run(_collect(eng._handle_directory_request(tc)))
+    events = asyncio.run(_collect(eng._tool_lifecycle._handle_directory_request(tc)))
     # no prompt is emitted, and the tool reports it isn't available
     assert EventType.DIRECTORY_REQUESTED not in [e.type for e in events]
     assert (

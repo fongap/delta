@@ -36,7 +36,12 @@ from providers import ProviderClient, ProviderRouter
 from core.roots import RootDir, normalize_roots, render_context
 from packages.secrets import SecretStore, state_dir
 from core.selfwake import selfwake_tools
-from integrations.skills import SkillLoader, save_skill_tool, skill_catalog_text, skill_tools
+from integrations.skills import (
+    SkillLoader,
+    save_skill_tool,
+    skill_catalog_text,
+    skill_tools,
+)
 from core.subscriptions import subscription_tools
 from integrations.tools import ToolRegistry
 from integrations.tools.ask import ask_user_tool
@@ -422,7 +427,9 @@ def build_engine(
         mode=mode,
         # `[]` is an explicit deny-by-default override, not a request to fall back to config.
         allowed_commands=(
-            allowed_commands if allowed_commands is not None else config.allowed_commands
+            allowed_commands
+            if allowed_commands is not None
+            else config.allowed_commands
         ),
         auto_allow_tools=set(config.auto_allow),
         roots=root_list or None,
@@ -521,11 +528,11 @@ def build_engine(
     engine.todo = todo  # type: ignore[attr-defined]
     engine.agent_name = agent.name  # type: ignore[attr-defined]
     engine.roots = root_list  # type: ignore[attr-defined]  # shared list; Slice C mutates in place
-    engine.audit_context = {
-        "session_id": session_id or "",
-        "agent": agent.name,
-        "workspace": str(ws) if ws else "",
-    }
+    engine.audit_context.update(
+        session_id=session_id or "",
+        agent=agent.name,
+        workspace=str(ws) if ws else "",
+    )
     engine.skill_loader = skill_loader  # type: ignore[attr-defined]
     _engine_box.append(engine)  # late-bind for the countermand (see context_provider)
     return engine

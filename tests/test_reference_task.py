@@ -219,7 +219,7 @@ async def test_committed_side_effect_not_replayed_on_resume(tmp_path):
 
     token = runscope.set_current("run-replay", "sess-replay")
     try:
-        result, status = engine._execute_sync(tc)
+        result, status = engine._tool_lifecycle._execute_sync(tc)
     finally:
         runscope.reset(token)
 
