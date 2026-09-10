@@ -205,10 +205,7 @@ pub fn cancel(
         });
     };
 
-    let reason_label = input
-        .reason
-        .as_deref()
-        .unwrap_or("cancelled");
+    let reason_label = input.reason.as_deref().unwrap_or("cancelled");
 
     match entry.state {
         crate::idemlog::SideEffectState::Executing => {
@@ -222,11 +219,7 @@ pub fn cancel(
         crate::idemlog::SideEffectState::Planned => {
             // Nothing executed yet — safe to mark Failed.
             let msg = format!("{reason_label} before execution");
-            writer.mark_failed(
-                &input.run_id,
-                &input.tool_call_id,
-                &msg,
-            )?;
+            writer.mark_failed(&input.run_id, &input.tool_call_id, &msg)?;
             Ok(ToolLifecycleCancelOutput {
                 action: CancelAction::Failed,
                 operation_id: Some(entry.operation_id.clone()),
@@ -478,7 +471,12 @@ mod tests {
 
     // -- ADR-038: Timeout decision authority tests --
 
-    fn timeout_input(db: &str, run_id: &str, call_id: &str, name: &str) -> ToolLifecycleCancelInput {
+    fn timeout_input(
+        db: &str,
+        run_id: &str,
+        call_id: &str,
+        name: &str,
+    ) -> ToolLifecycleCancelInput {
         ToolLifecycleCancelInput {
             db: db.to_string(),
             run_id: run_id.to_string(),
