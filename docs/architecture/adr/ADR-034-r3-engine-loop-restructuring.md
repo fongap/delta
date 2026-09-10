@@ -104,10 +104,10 @@ Orchestrator uses existing `EventType` enum. No new event types.
 
 1. **ADR-034 (this)**: Python extraction — `core/tool_lifecycle.py` created, `engine.py` refactored.
 2. **ADR-035**: Tool Lifecycle Orchestration hard-cut to Rust — `delta_core` gains a `toollifecycle.plan` command that owns the execution disposition (execute / replay / uncertain) and its paired `record_planned` + `mark_executing` transitions; Python `_execute_sync` becomes a thin caller.
-3. **ADR-036**: Resume Decision hard-cut to Rust.
+3. **ADR-036**: Resume Decision audit — closed: authority already split between ADR-029 (checkpoint) and ADR-035 (toollifecycle.plan). No migration needed.
 4. **ADR-037**: Cancellation hard-cut to Rust (`CancellationToken` → Rust token).
 5. **ADR-038**: TTFT Timeout hard-cut to Rust.
-5. **ADR-039**: Retry hard-cut to Rust.
+6. **ADR-039**: Retry hard-cut to Rust.
 
 ## Rollback
 
