@@ -23,7 +23,7 @@ VSVersionInfo(
         StringTable(
           '040904B0',
           [
-            StringStruct('CompanyName', 'Delta'),
+            StringStruct('CompanyName', 'Fongap Studio'),
             StringStruct('FileDescription', 'Delta Server'),
             StringStruct('FileVersion', '0.4.0-dev.0'),
             StringStruct('InternalName', 'delta-server'),
