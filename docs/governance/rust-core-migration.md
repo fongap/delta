@@ -85,6 +85,8 @@
 > **R3 Tool Lifecycle Orchestration Hard-Cut（ADR-035，2026-09-10）**：工具调用的执行处置（execute / replay / uncertain）及其配对的 `record_planned` + `mark_executing` 状态机转移收敛到 Rust `delta_core` 的 `toollifecycle.plan` 命令。Python `ToolLifecycleOrchestrator._execute_sync` 变为薄调用方；工具执行本身（`registry.execute`）仍是 Python 能力。Rust 决定"是否执行"，Python 执行。无新表、无新持久化状态、复用 `IdempotencyWriter`。
 >
 > **R3 Resume Decision Audit（ADR-036，2026-09-10）**：审计型 ADR，无代码变更。Resume Decision 域的 authority 部分已由 ADR-029（checkpoint 持久化/验证）和 ADR-035（`toollifecycle.plan` 的 dedop/replay/uncertain）完成。剩余的 `unanswered_trailing_tool_calls()` 是纯 Python 内存解析，无 authority 价值，不迁移。
+>
+> **R3 Final Audit — Cancellation / Timeout / Retry（ADR-037，2026-09-10）**：审计型 ADR，无代码变更。Cancellation（`asyncio.Event` 协作信号）、Timeout（`asyncio` deadline 竞速）、Retry（纯数学 + 文本分类）三个域全部是纯运行时守卫或纯函数，无持久化、无 crash 恢复、无数据一致性。crash 恢复由 idempotency 状态机（ADR-022/035）覆盖。迁移只会增加热路径 subprocess 往返，零 integrity 增益。**R3 Execution Lifecycle 正式收口。**
 
 每次迁移必须更新实际 Authority Matrix。
 
