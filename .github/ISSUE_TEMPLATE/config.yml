@@ -2,9 +2,9 @@ blank_issues_enabled: false
 
 contact_links:
   - name: 使用问题
-    url: https://github.com/fongap/delta/discussions/categories/q-a
+    url: https://github.com/fongap/delta/discussions/categories/%E9%97%AE%E7%AD%94
     about: 安装、配置、模型接入、使用和排障问题请前往 Discussions 的「问答」分类。
 
   - name: 功能建议
-    url: https://github.com/fongap/delta/discussions/categories/ideas
+    url: https://github.com/fongap/delta/discussions/categories/%E5%BB%BA%E8%AE%AE
     about: 功能、交互、工作流和产品改进建议请前往 Discussions 的「建议」分类。
