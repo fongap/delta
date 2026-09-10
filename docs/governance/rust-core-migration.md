@@ -185,6 +185,8 @@ R0 完成前禁止大规模搬代码。
 
 > **R4 Phase 3 完成（ADR-044，2026-09-11）**：Scheduler 审计。Due query 已在 Rust（R1/R2）；`compute_next_run` 是纯函数（同 backoff_delay，留 Python）；tick/catch-up/overlap 是运行时力学（留 Python）；max_runs exhaustion 已在 Phase 2 迁移。无代码变更，仅审计收口。
 
+> **R4 Phase 4 完成（ADR-045，2026-09-11）**：Resume orchestration 审计。Cold-start recovery（recover_stale/sweep_stale/checkpoint）、resume identity（run.resumed）、tool call disposition（toollifecycle.plan/cancel）均已在 Rust（ADR-025/029/035/037/038/042）。剩余 Python 仅为 orchestration glue 与纯解析（ADR-036 已审计）。无代码变更，仅审计收口。
+
 迁移：
 
 - Task execution；
