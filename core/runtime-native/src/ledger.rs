@@ -24,7 +24,8 @@ fn run_status_from_conn(conn: &Connection, run_id: &str) -> Result<String, Shado
     if run_id.is_empty() {
         return Ok("unknown".to_string());
     }
-    let mut stmt = conn.prepare("SELECT type FROM run_events WHERE run_id = ? ORDER BY seq DESC")?;
+    let mut stmt =
+        conn.prepare("SELECT type FROM run_events WHERE run_id = ? ORDER BY seq DESC")?;
     let rows = stmt.query_map(params![run_id], |row| row.get::<_, String>(0))?;
     for row in rows {
         let event_type = row?;
@@ -422,12 +423,15 @@ impl LedgerWriter {
         }
         let suffix = &r#type[4..];
         let current = run_status_from_conn(&self.conn, run_id)?;
-        let legal = match (current.as_str(), suffix) {
-            ("unknown", "started") => true,
-            ("running" | "resumed" | "interrupted", "resumed") => true,
-            ("running" | "resumed", "completed" | "failed" | "interrupted" | "skipped" | "cancelled") => true,
-            _ => false,
-        };
+        let legal = matches!(
+            (current.as_str(), suffix),
+            ("unknown", "started")
+                | ("running" | "resumed" | "interrupted", "resumed")
+                | (
+                    "running" | "resumed",
+                    "completed" | "failed" | "interrupted" | "skipped" | "cancelled",
+                )
+        );
         if !legal {
             return Err(ShadowReadError::Parse(format!(
                 "illegal run transition: {} → run.{}",
@@ -735,7 +739,14 @@ mod tests {
     fn transition_started_from_unknown() {
         let writer = LedgerWriter::open_in_memory().unwrap();
         let row = writer
-            .transition("r1", "run.started", "user", 1000.0, &serde_json::json!({}), "")
+            .transition(
+                "r1",
+                "run.started",
+                "user",
+                1000.0,
+                &serde_json::json!({}),
+                "",
+            )
             .unwrap();
         assert_eq!(row["type"], "run.started");
         assert_eq!(row["seq"], 1);
@@ -745,10 +756,24 @@ mod tests {
     fn transition_completed_from_running() {
         let writer = LedgerWriter::open_in_memory().unwrap();
         writer
-            .transition("r1", "run.started", "user", 1000.0, &serde_json::json!({}), "")
+            .transition(
+                "r1",
+                "run.started",
+                "user",
+                1000.0,
+                &serde_json::json!({}),
+                "",
+            )
             .unwrap();
         let row = writer
-            .transition("r1", "run.completed", "system", 1001.0, &serde_json::json!({}), "")
+            .transition(
+                "r1",
+                "run.completed",
+                "system",
+                1001.0,
+                &serde_json::json!({}),
+                "",
+            )
             .unwrap();
         assert_eq!(row["type"], "run.completed");
         assert_eq!(row["seq"], 2);
@@ -758,10 +783,24 @@ mod tests {
     fn transition_resumed_from_running() {
         let writer = LedgerWriter::open_in_memory().unwrap();
         writer
-            .transition("r1", "run.started", "user", 1000.0, &serde_json::json!({}), "")
+            .transition(
+                "r1",
+                "run.started",
+                "user",
+                1000.0,
+                &serde_json::json!({}),
+                "",
+            )
             .unwrap();
         let row = writer
-            .transition("r1", "run.resumed", "system", 1001.0, &serde_json::json!({}), "")
+            .transition(
+                "r1",
+                "run.resumed",
+                "system",
+                1001.0,
+                &serde_json::json!({}),
+                "",
+            )
             .unwrap();
         assert_eq!(row["type"], "run.resumed");
         assert_eq!(row["seq"], 2);
@@ -771,13 +810,34 @@ mod tests {
     fn transition_failed_from_resumed() {
         let writer = LedgerWriter::open_in_memory().unwrap();
         writer
-            .transition("r1", "run.started", "user", 1000.0, &serde_json::json!({}), "")
+            .transition(
+                "r1",
+                "run.started",
+                "user",
+                1000.0,
+                &serde_json::json!({}),
+                "",
+            )
             .unwrap();
         writer
-            .transition("r1", "run.resumed", "system", 1001.0, &serde_json::json!({}), "")
+            .transition(
+                "r1",
+                "run.resumed",
+                "system",
+                1001.0,
+                &serde_json::json!({}),
+                "",
+            )
             .unwrap();
         let row = writer
-            .transition("r1", "run.failed", "system", 1002.0, &serde_json::json!({"reason": "boom"}), "")
+            .transition(
+                "r1",
+                "run.failed",
+                "system",
+                1002.0,
+                &serde_json::json!({"reason": "boom"}),
+                "",
+            )
             .unwrap();
         assert_eq!(row["type"], "run.failed");
         assert_eq!(row["seq"], 3);
@@ -787,13 +847,34 @@ mod tests {
     fn transition_resumed_from_interrupted() {
         let writer = LedgerWriter::open_in_memory().unwrap();
         writer
-            .transition("r1", "run.started", "user", 1000.0, &serde_json::json!({}), "")
+            .transition(
+                "r1",
+                "run.started",
+                "user",
+                1000.0,
+                &serde_json::json!({}),
+                "",
+            )
             .unwrap();
         writer
-            .transition("r1", "run.interrupted", "system", 1001.0, &serde_json::json!({"reason": "crashed"}), "")
+            .transition(
+                "r1",
+                "run.interrupted",
+                "system",
+                1001.0,
+                &serde_json::json!({"reason": "crashed"}),
+                "",
+            )
             .unwrap();
         let row = writer
-            .transition("r1", "run.resumed", "system", 1002.0, &serde_json::json!({}), "")
+            .transition(
+                "r1",
+                "run.resumed",
+                "system",
+                1002.0,
+                &serde_json::json!({}),
+                "",
+            )
             .unwrap();
         assert_eq!(row["type"], "run.resumed");
         assert_eq!(row["seq"], 3);
@@ -803,10 +884,24 @@ mod tests {
     fn transition_rejects_started_from_running() {
         let writer = LedgerWriter::open_in_memory().unwrap();
         writer
-            .transition("r1", "run.started", "user", 1000.0, &serde_json::json!({}), "")
+            .transition(
+                "r1",
+                "run.started",
+                "user",
+                1000.0,
+                &serde_json::json!({}),
+                "",
+            )
             .unwrap();
         let err = writer
-            .transition("r1", "run.started", "user", 1001.0, &serde_json::json!({}), "")
+            .transition(
+                "r1",
+                "run.started",
+                "user",
+                1001.0,
+                &serde_json::json!({}),
+                "",
+            )
             .unwrap_err();
         assert!(err.to_string().contains("illegal run transition"));
     }
@@ -815,13 +910,34 @@ mod tests {
     fn transition_rejects_completed_from_terminal() {
         let writer = LedgerWriter::open_in_memory().unwrap();
         writer
-            .transition("r1", "run.started", "user", 1000.0, &serde_json::json!({}), "")
+            .transition(
+                "r1",
+                "run.started",
+                "user",
+                1000.0,
+                &serde_json::json!({}),
+                "",
+            )
             .unwrap();
         writer
-            .transition("r1", "run.completed", "system", 1001.0, &serde_json::json!({}), "")
+            .transition(
+                "r1",
+                "run.completed",
+                "system",
+                1001.0,
+                &serde_json::json!({}),
+                "",
+            )
             .unwrap();
         let err = writer
-            .transition("r1", "run.completed", "system", 1002.0, &serde_json::json!({}), "")
+            .transition(
+                "r1",
+                "run.completed",
+                "system",
+                1002.0,
+                &serde_json::json!({}),
+                "",
+            )
             .unwrap_err();
         assert!(err.to_string().contains("illegal run transition"));
     }
@@ -830,7 +946,14 @@ mod tests {
     fn transition_rejects_non_run_event() {
         let writer = LedgerWriter::open_in_memory().unwrap();
         let err = writer
-            .transition("r1", "tool.started", "user", 1000.0, &serde_json::json!({}), "")
+            .transition(
+                "r1",
+                "tool.started",
+                "user",
+                1000.0,
+                &serde_json::json!({}),
+                "",
+            )
             .unwrap_err();
         assert!(err.to_string().contains("run.* event type"));
     }
@@ -839,7 +962,14 @@ mod tests {
     fn transition_rejects_resumed_from_unknown() {
         let writer = LedgerWriter::open_in_memory().unwrap();
         let err = writer
-            .transition("r1", "run.resumed", "system", 1000.0, &serde_json::json!({}), "")
+            .transition(
+                "r1",
+                "run.resumed",
+                "system",
+                1000.0,
+                &serde_json::json!({}),
+                "",
+            )
             .unwrap_err();
         assert!(err.to_string().contains("illegal run transition"));
     }
