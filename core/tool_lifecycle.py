@@ -70,10 +70,10 @@ async def _deny_all(_request: PermissionRequest) -> ApprovalOutcome:
 class CancellationToken:
     """Cooperative cancellation flag (ADR-034).
 
-    Wraps ``asyncio.Event``. ADR-037 audited cancellation as a runtime
-    signal with no persisted authority value, so this stays a Python
-    ``asyncio`` flag — crash recovery is covered by the idempotency
-    state machine (ADR-022/035).
+    Wraps ``asyncio.Event`` — the **signal transport**. The **lifecycle
+    decision** (Uncertain vs Failed) on cancel is Rust-authoritative via
+    ``toollifecycle.cancel`` (ADR-037 revised). This class sets the flag;
+    Rust decides the state-machine consequence.
     """
 
     def __init__(self) -> None:
@@ -549,14 +549,54 @@ class ToolLifecycleOrchestrator:
     # -- internal: helpers ------------------------------------------------
 
     def _interrupted_tool(self, tool_call: ToolCall) -> Event:
+        """ADR-037: the cancellation lifecycle decision is Rust-authoritative.
+
+        Python asks Rust what state the side effect should be in: Uncertain
+        (was Executing, result unknown), Failed (was Planned, never started),
+        or Terminal (already settled). The event status reflects Rust's
+        decision, never a Python-hardcoded "interrupted".
+        """
         ctx = self.ctx
+        idem_log = ctx.idem_log
+        rust_status = "interrupted"
+        if idem_log is not None:
+            from core import runscope
+
+            scope = runscope.current()
+            if scope is not None:
+                run_id, _session_id = scope
+                if run_id:
+                    try:
+                        decision = idem_log.cancel(
+                            run_id,
+                            tool_call.id,
+                            tool_call.name,
+                            ledger=ctx.ledger,
+                            workspace=ctx.audit_context.get("workspace"),
+                        )
+                        action = decision.get("action")
+                        if action == "uncertain":
+                            rust_status = "uncertain"
+                        elif action == "failed":
+                            rust_status = "denied"
+                        elif action == "terminal":
+                            rust_status = "terminal"
+                    except Exception:
+                        pass  # best-effort: a dead authority must not block the stop
         ctx.messages.append(_tool_error_message(tool_call, "interrupted by user"))
         self._audit(
-            tool_call, stage="finished", status="interrupted", reason="user stop"
+            tool_call,
+            stage="finished",
+            status=rust_status,
+            reason="user stop",
         )
         return Event(
             EventType.TOOL_FINISHED,
-            {"name": tool_call.name, "status": "interrupted", "reason": "stopped"},
+            {
+                "name": tool_call.name,
+                "status": rust_status,
+                "reason": "stopped",
+            },
         )
 
     def _parallel_safe(self, tool_call: ToolCall) -> bool:

@@ -326,6 +326,63 @@ class IdempotencyLog:
             )
         return response
 
+    def cancel(
+        self,
+        run_id: str,
+        tool_call_id: str,
+        tool_name: str,
+        *,
+        ledger: RunEventLedger | None = None,
+        workspace: str | None = None,
+    ) -> dict[str, Any]:
+        """Ask Rust for the lifecycle consequence of cancelling a tool call
+        (ADR-037).
+
+        Returns the Rust-authoritative decision:
+        - ``{"action": "uncertain", "operation_id": ...}`` — side effect was
+          Executing, result unknown. Rust marked it Uncertain. Python must
+          surface it for user resolution. Never Failed.
+        - ``{"action": "failed", ...}`` — side effect was Planned (never
+          started). Rust marked it Failed. Safe.
+        - ``{"action": "terminal", ...}`` — already terminal. No transition.
+        - ``{"action": "none"}`` — no row / no run identity. Python decides.
+        """
+        response = self._invoke(
+            "toollifecycle.cancel",
+            run_id=run_id,
+            tool_call_id=tool_call_id,
+            tool_name=tool_name,
+        )
+        if not isinstance(response, dict) or not isinstance(
+            response.get("action"), str
+        ):
+            raise DeltaCoreError("invalid toollifecycle.cancel response")
+        action = response.get("action")
+        if action == "uncertain":
+            self._append_ledger(
+                ledger,
+                run_id,
+                "side_effect.uncertain",
+                {
+                    "tool_call_id": tool_call_id,
+                    "tool": tool_name,
+                    "operation_id": response.get("operation_id", ""),
+                },
+                workspace,
+            )
+        elif action == "failed":
+            self._append_ledger(
+                ledger,
+                run_id,
+                "side_effect.failed",
+                {
+                    "tool_call_id": tool_call_id,
+                    "error": "cancelled before execution",
+                },
+                workspace,
+            )
+        return response
+
     def _row(self, run_id: str, tool_call_id: str) -> dict[str, Any] | None:
         response = self._invoke("idem.get", run_id=run_id, tool_call_id=tool_call_id)
         if response is None:

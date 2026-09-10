@@ -86,7 +86,7 @@
 >
 > **R3 Resume Decision Audit（ADR-036，2026-09-10）**：审计型 ADR，无代码变更。Resume Decision 域的 authority 部分已由 ADR-029（checkpoint 持久化/验证）和 ADR-035（`toollifecycle.plan` 的 dedop/replay/uncertain）完成。剩余的 `unanswered_trailing_tool_calls()` 是纯 Python 内存解析，无 authority 价值，不迁移。
 >
-> **R3 Final Audit — Cancellation / Timeout / Retry（ADR-037，2026-09-10）**：审计型 ADR，无代码变更。Cancellation（`asyncio.Event` 协作信号）、Timeout（`asyncio` deadline 竞速）、Retry（纯数学 + 文本分类）三个域全部是纯运行时守卫或纯函数，无持久化、无 crash 恢复、无数据一致性。crash 恢复由 idempotency 状态机（ADR-022/035）覆盖。迁移只会增加热路径 subprocess 往返，零 integrity 增益。**R3 Execution Lifecycle 正式收口。**
+> **R3 Final Audit — Cancellation / Timeout / Retry（ADR-037，2026-09-10）**：~~审计型 ADR，无代码变更。Cancellation / Timeout / Retry 三个域全部是纯运行时守卫或纯函数，无持久化、无 crash 恢复、无数据一致性。~~ **修正**：Cancellation 的 lifecycle-state 决策（Uncertain vs Failed）是持久化状态机转移，有 authority 价值。ADR-037 revised 将 Cancellation 决策 authority 迁到 Rust `toollifecycle.cancel` 命令。Timeout / Retry 的审计仍待修订（ADR-038/039）。
 
 每次迁移必须更新实际 Authority Matrix。
 
