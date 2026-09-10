@@ -4,23 +4,21 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/github/v/release/fongap/delta?style=flat-square&color=blue&label=Version)](https://github.com/fongap/delta/releases)
-![Update](https://img.shields.io/github/last-commit/fongap/delta?style=flat-square&color=orange&label=Update)
-![License](https://img.shields.io/github/license/fongap/delta?style=flat-square&color=green&label=License)
+[![CI](https://github.com/fongap/delta/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/fongap/delta/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/fongap/delta/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/fongap/delta/actions/workflows/codeql.yml)
+[![Version](https://img.shields.io/github/v/release/fongap/delta?label=Version)](https://github.com/fongap/delta/releases)
+[![Windows Portable](https://img.shields.io/badge/Windows-Portable-0078D6?logo=windows&logoColor=white)](https://github.com/fongap/delta/releases/latest)
+[![License](https://img.shields.io/github/license/fongap/delta?label=License)](LICENSE)
 
 </div>
 
 # Delta
 
-Delta 是一个面向个人工作的本地优先 AI 助手。模型由用户自主配置，不绑定任何特定服务商，所有数据保存在本地或用户控制的便携目录中。
+Delta 是一个面向个人工作的本地优先 AI 助手，帮助用户理解任务、组织步骤、调度本地资源并完成实际操作。模型由用户自主配置，不绑定任何特定服务商，所有数据保存在本地或用户控制的便携目录中。
 
 <p align="center">
   <img src="resources/screenshots/Delta-2026082401.webp" width="95%" alt="Delta">
 </p>
-
-## 项目简介
-
-Delta 帮助用户理解任务、组织步骤、调度本地资源并完成实际操作。模型由用户自主配置，不绑定任何特定服务商。
 
 ## 主要能力
 
