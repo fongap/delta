@@ -1,16 +1,19 @@
-name: Bug report
+name: Bug 报告
 description: 报告可复现的产品缺陷
 title: "[Bug] "
 body:
   - type: markdown
     attributes:
       value: |
-        感谢反馈。请只在这里提交可复现的产品缺陷；使用问题请前往 Discussions / Q&A，功能建议请前往 Discussions / Ideas。
+        感谢反馈。Issues 用于跟踪已经确认、可复现的问题。
+
+        如果是安装、配置、模型接入、使用或排障问题，请前往 Discussions / Q&A；
+        如果是功能、交互、工作流或产品建议，请前往 Discussions / Ideas。
 
   - type: input
     id: version
     attributes:
-      label: Delta version
+      label: Delta 版本
       description: 请输入正在使用的 Delta 版本，例如 v0.3.1。
       placeholder: v0.3.1
     validations:
@@ -19,19 +22,19 @@ body:
   - type: dropdown
     id: installation
     attributes:
-      label: Installation
-      description: 请选择安装方式。
+      label: 安装方式
+      description: 请选择当前使用方式。
       options:
         - Windows Portable
         - Development build
-        - Other
+        - 其他
     validations:
       required: true
 
   - type: input
     id: windows
     attributes:
-      label: Windows version
+      label: Windows 版本
       description: 请输入 Windows 版本，例如 Windows 11 24H2。
       placeholder: Windows 11 24H2
     validations:
@@ -40,15 +43,15 @@ body:
   - type: textarea
     id: happened
     attributes:
-      label: What happened
-      description: 请简要说明实际发生了什么。
+      label: 实际发生了什么
+      description: 请简要说明实际出现的问题。
     validations:
       required: true
 
   - type: textarea
     id: reproduce
     attributes:
-      label: Steps to reproduce
+      label: 复现步骤
       description: 请提供最小、稳定的复现步骤。
       placeholder: |
         1. ...
@@ -60,7 +63,7 @@ body:
   - type: textarea
     id: expected
     attributes:
-      label: Expected behavior
+      label: 预期行为
       description: 说明你预期的正确行为。
     validations:
       required: true
@@ -68,25 +71,25 @@ body:
   - type: textarea
     id: logs
     attributes:
-      label: Logs / screenshots
+      label: 日志 / 截图
       description: 可附上必要日志或截图。提交前请删除 Token、Secret、个人数据和其他敏感信息。
 
   - type: dropdown
     id: regression
     attributes:
-      label: Regression?
+      label: 是否为回归问题
       description: 这个问题是否在旧版本中正常、升级后才出现？
       options:
-        - "No"
-        - "Yes"
-        - Unknown
+        - 否
+        - 是
+        - 不确定
     validations:
       required: true
 
   - type: checkboxes
     id: checklist
     attributes:
-      label: Checklist
+      label: 提交前确认
       options:
         - label: 我已搜索现有 Issues，确认没有明显重复的问题。
           required: true
