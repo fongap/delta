@@ -158,16 +158,18 @@ R0 完成前禁止大规模搬代码。
 
 ### R3 — Execution Lifecycle
 
+> **R3 Execution Lifecycle 完成（ADR-037，2026-09-10）**：R3 已正式收口。工具执行处置决策（`toollifecycle.plan`）和 checkpoint 持久化/验证是唯一需要 Rust authority 的域，已 Rust-authoritative。Tool lifecycle 编排其余部分（授权、工具执行调度、resume 重建、cancellation）是 Python 能力或运行时守卫，经 ADR-036/037 审计为无 authority 价值，不迁移。Backoff / Retry / Timeout / Worker restart 同 ADR-033 审计结论。
+
 迁移：
 
-- Tool lifecycle；
-- Retry；
-- Backoff；
-- Timeout；
-- Cancellation；
-- Worker restart；
-- Resume decision；
-- side-effect safety。
+- Tool lifecycle；✅ ADR-035 hard-cut（disposition 决策）
+- Retry；✅ ADR-037 审计（无 authority 价值）
+- Backoff；✅ ADR-033 审计（无 authority 价值）
+- Timeout；✅ ADR-037 审计（无 authority 价值）
+- Cancellation；✅ ADR-037 审计（无 authority 价值）
+- Worker restart；✅ ADR-033 审计（无 authority 价值）
+- Resume decision；✅ ADR-036 审计（已由 ADR-029+035 覆盖）
+- side-effect safety。✅ ADR-022（R1 已 hard-cut）
 
 ### R4 — Runtime
 
