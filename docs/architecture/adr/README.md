@@ -38,6 +38,7 @@
 - `ADR-032-r2-final-convergence.md` – R2 Final Convergence：R2 Trusted Execution 正式收口。全部 6 个 R2 域（Artifact / Source-Citation / Validation / Checkpoint / Policy / Approval）已完成 hard-cut，Rust `delta_core` 为唯一 Authority。Shadow-reader 基础设施（`RUST_READ_DOMAINS` / `DELTA_RUST_READERS` / `is_rust_shadow_reader` / `tests/test_r2_shadow_read.py`）已删除。`RUST_WRITE_DOMAINS` 保留为唯一权威声明表面。无 Python fallback、无 delegate、无 feature flag、无双 Authority 路径。回滚仅 Git revert。下一阶段为 R3 Execution Lifecycle。
 - `ADR-033-r3-execution-lifecycle-plan.md` – R3 Execution Lifecycle 计划与边界：与 R2 的"authority switch"不同，R3 是**执行编排**迁移。侧效应安全（IdempotencyLog）和 Checkpoint 已完成 hard-cut。剩余域按风险分阶段：Phase 1（Backoff/Worker Restart，无引擎重构）→ Phase 2（引擎重构前置）→ Phase 3（Tool Lifecycle/Resume/Cancellation/Timeout/Retry）。
 - `ADR-034-r3-engine-loop-restructuring.md` – R3 Phase 1：将工具调用编排（authorize → execute → record → resume）从 `core/engine.py` 的 async streaming 循环中提取到 `core/tool_lifecycle.py` 的 `ToolLifecycleOrchestrator`。引擎保留流式循环和高级迭代，委托 orchestrator 处理工具生命周期。`CancellationToken` 替代 `asyncio.Event`，为未来 Rust 化做准备。不 hard-cut 任何域到 Rust。
+- `ADR-035-r3-tool-lifecycle-hard-cut.md` – R3 Phase 2：将工具调用的执行处置（execute / replay / uncertain 决策）及其配对的 `record_planned` + `mark_executing` 状态机转移收敛到 Rust `delta_core` 的 `toollifecycle.plan` 命令。Python `_execute_sync` 变为薄调用方；工具执行本身仍是 Python 能力，不是 authority。
 
 相关架构文档：
 - `hub-federation-boundary.md` – Delta Hub 联邦化边界设计，明确 OpenWorker 仅为可选适配器。

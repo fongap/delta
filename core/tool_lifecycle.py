@@ -7,8 +7,11 @@ from the tool-call authorization / execution / resume flow.
 The orchestrator owns:
 - **Authorization phase**: gateway classify → permission engine → gateway
   evaluate_policy → approval/plan/directory/ask_user interactive paths.
-- **Execution phase**: idempotency state machine (lookup → record_planned →
-  mark_executing → commit/mark_failed) + tool execution + artifact registration.
+- **Execution phase**: the execution disposition (execute vs replay vs
+  uncertain) is decided by Rust ``toollifecycle.plan`` (ADR-035), which also
+  performs the record_planned + mark_executing state-machine transitions.
+  Python runs the tool (a capability) and reports the outcome via the
+  existing Rust ``idem.commit`` / ``idem.mark_failed`` authority.
 - **Resume orchestration**: reconstruct unanswered trailing tool calls and
   re-run them through the orchestrator.
 - **Cancellation integration**: accept a ``CancellationToken`` (Python
@@ -150,10 +153,9 @@ class ToolLifecycleOrchestrator:
             if ctx.cancel_token.is_cancelled():
                 yield self._interrupted_tool(tool_call)
                 continue
-            if (
-                isinstance(tool_call.arguments, dict)
-                and set(tool_call.arguments.keys()) == {"_raw"}
-            ):
+            if isinstance(tool_call.arguments, dict) and set(
+                tool_call.arguments.keys()
+            ) == {"_raw"}:
                 raw_marker = tool_call.arguments.get("_raw")
                 detail = (
                     f"tool {tool_call.name!r} returned malformed arguments "
@@ -228,9 +230,7 @@ class ToolLifecycleOrchestrator:
             result, status = await asyncio.to_thread(self._execute_sync, tool_call)
             yield self._record_result(tool_call, result, status)
 
-    async def resume(
-        self, pending_calls: list[ToolCall]
-    ) -> AsyncIterator[Event]:
+    async def resume(self, pending_calls: list[ToolCall]) -> AsyncIterator[Event]:
         """Re-process pending tool calls from a suspended turn (durable resume).
 
         The idempotency log handles dedup: already-committed calls are skipped
@@ -278,44 +278,51 @@ class ToolLifecycleOrchestrator:
         Uncertain row is NEVER auto-replayed; the orchestrator surfaces it as
         an "uncertain" status so the run can enter the Inbox for user
         resolution.
+
+        ADR-035: the execution disposition (execute vs replay vs uncertain)
+        and its paired record_planned + mark_executing transitions are
+        decided by Rust ``toollifecycle.plan``. Python only runs the tool
+        (a capability, not authority) and reports the outcome.
         """
         ctx = self.ctx
-        if ctx.idem_log is not None:
+        idem_log = ctx.idem_log
+        planned = False
+        if idem_log is not None:
             from core import runscope
 
             scope = runscope.current()
             if scope is not None:
                 run_id, _session_id = scope
                 if run_id:
-                    hit = ctx.idem_log.lookup(
-                        run_id, tool_call.id, tool_call.arguments
-                    )
-                    if hit is not None:
-                        if hit.get("state") == "uncertain":
-                            return (
-                                {
-                                    "error": "side effect is uncertain — "
-                                    "the previous run may or may not have "
-                                    "executed it. User resolution required.",
-                                    "operation_id": hit.get("operation_id", ""),
-                                },
-                                "uncertain",
-                            )
-                        return hit["result"], "replayed"
-                    ctx.idem_log.record_planned(
+                    disposition = idem_log.plan(
                         run_id,
                         tool_call.id,
                         tool_call.name,
                         tool_call.arguments,
                         ledger=ctx.ledger,
+                        workspace=ctx.audit_context.get("workspace"),
                     )
-                    ctx.idem_log.mark_executing(
-                        run_id, tool_call.id, ledger=ctx.ledger
-                    )
+                    action = disposition.get("action")
+                    if action == "replay":
+                        return disposition.get("result"), "replayed"
+                    if action == "uncertain":
+                        return (
+                            disposition.get("result")
+                            or {
+                                "error": "side effect is uncertain — "
+                                "the previous run may or may not have "
+                                "executed it. User resolution required.",
+                                "operation_id": disposition.get("operation_id", ""),
+                            },
+                            "uncertain",
+                        )
+                    # action == "execute": Rust already recorded planned +
+                    # marked executing; remember to report the outcome.
+                    planned = run_id or ""
         try:
             result = ctx.registry.execute(tool_call.name, tool_call.arguments)
         except Exception as exc:
-            if ctx.idem_log is not None:
+            if planned:
                 from core import runscope
 
                 scope = runscope.current()
@@ -323,7 +330,7 @@ class ToolLifecycleOrchestrator:
                     run_id, _session_id = scope
                     if run_id:
                         try:
-                            ctx.idem_log.mark_failed(
+                            idem_log.mark_failed(  # type: ignore[union-attr]
                                 run_id,
                                 tool_call.id,
                                 str(exc),
@@ -332,7 +339,7 @@ class ToolLifecycleOrchestrator:
                         except Exception:
                             pass
             return {"error": str(exc), "error_type": type(exc).__name__}, "error"
-        if ctx.idem_log is not None and result is not None:
+        if planned and result is not None:
             from core import runscope
 
             scope = runscope.current()
@@ -340,7 +347,7 @@ class ToolLifecycleOrchestrator:
                 run_id, _session_id = scope
                 if run_id:
                     try:
-                        ctx.idem_log.commit(
+                        idem_log.commit(  # type: ignore[union-attr]
                             run_id,
                             tool_call.id,
                             tool_call.name,
@@ -562,9 +569,7 @@ class ToolLifecycleOrchestrator:
             "tool": tool_call.name,
             "arguments": tool_call.arguments,
             "level": getattr(ctx.tool_levels.get(tool_call.id), "name", ""),
-            "isolation": gateway.isolation_status(
-                ctx.tool_levels.get(tool_call.id)
-            ),
+            "isolation": gateway.isolation_status(ctx.tool_levels.get(tool_call.id)),
             **event,
         }
         try:

@@ -81,6 +81,8 @@
 > **R2 Final Convergence（ADR-032，2026-09-10）**：R2 Trusted Execution 正式收口。全部 6 个 R2 域（Artifact / Source-Citation / Validation / Checkpoint / Policy / Approval）已完成 hard-cut，Rust `delta_core` 为唯一 Authority。Shadow-reader 基础设施（`RUST_READ_DOMAINS` / `DELTA_RUST_READERS` / `is_rust_shadow_reader` / `tests/test_r2_shadow_read.py`）已删除。`RUST_WRITE_DOMAINS` 保留为唯一权威声明表面。无 Python fallback、无 delegate、无 feature flag、无双 Authority 路径。回滚仅 Git revert。
 
 > **R3 Execution Lifecycle Plan（ADR-033，2026-09-10）**：R3 与 R2 结构不同——R2 是 authority switch，R3 是执行编排迁移。Side-Effect Safety（IdempotencyLog）和 Checkpoint 已完成 hard-cut。剩余域按风险分阶段：Phase 1（Backoff/Worker Restart，无引擎重构）→ Phase 2（引擎重构前置）→ Phase 3（Tool Lifecycle/Resume/Cancellation/Timeout/Retry）。详见 ADR-033。
+>
+> **R3 Tool Lifecycle Orchestration Hard-Cut（ADR-035，2026-09-10）**：工具调用的执行处置（execute / replay / uncertain）及其配对的 `record_planned` + `mark_executing` 状态机转移收敛到 Rust `delta_core` 的 `toollifecycle.plan` 命令。Python `ToolLifecycleOrchestrator._execute_sync` 变为薄调用方；工具执行本身（`registry.execute`）仍是 Python 能力。Rust 决定"是否执行"，Python 执行。无新表、无新持久化状态、复用 `IdempotencyWriter`。
 
 每次迁移必须更新实际 Authority Matrix。
 

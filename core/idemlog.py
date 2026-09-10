@@ -17,14 +17,20 @@ import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from packages.delta_core_client import DeltaCoreError, close_default_client, default_client
+from packages.delta_core_client import (
+    DeltaCoreError,
+    close_default_client,
+    default_client,
+)
 
 if TYPE_CHECKING:
     from core.ledger import RunEventLedger
 
 
 def _canonical(arguments: Any) -> str:
-    return json.dumps(arguments or {}, sort_keys=True, separators=(",", ":"), default=str)
+    return json.dumps(
+        arguments or {}, sort_keys=True, separators=(",", ":"), default=str
+    )
 
 
 def _normalized(arguments: Any) -> Any:
@@ -41,7 +47,9 @@ def args_sha256(arguments: Any) -> str:
             "args": _normalized(arguments),
         }
     )
-    if not isinstance(response, dict) or not isinstance(response.get("args_sha256"), str):
+    if not isinstance(response, dict) or not isinstance(
+        response.get("args_sha256"), str
+    ):
         raise DeltaCoreError("invalid idem.identify response")
     return response["args_sha256"]
 
@@ -56,7 +64,9 @@ def operation_id(run_id: str, tool_call_id: str) -> str:
             "args": {},
         }
     )
-    if not isinstance(response, dict) or not isinstance(response.get("operation_id"), str):
+    if not isinstance(response, dict) or not isinstance(
+        response.get("operation_id"), str
+    ):
         raise DeltaCoreError("invalid idem.identify response")
     return response["operation_id"]
 
@@ -133,7 +143,9 @@ class IdempotencyLog:
             tool_name=tool_name,
             args=normalized_arguments,
         )
-        if not isinstance(response, dict) or not isinstance(response.get("operation_id"), str):
+        if not isinstance(response, dict) or not isinstance(
+            response.get("operation_id"), str
+        ):
             raise DeltaCoreError("invalid idem.record_planned response")
         op_id = response["operation_id"]
         self._append_ledger(
@@ -160,7 +172,9 @@ class IdempotencyLog:
     ) -> None:
         del ledger, workspace
         if run_id and tool_call_id:
-            self._invoke("idem.mark_executing", run_id=run_id, tool_call_id=tool_call_id)
+            self._invoke(
+                "idem.mark_executing", run_id=run_id, tool_call_id=tool_call_id
+            )
 
     def commit(
         self,
@@ -266,6 +280,52 @@ class IdempotencyLog:
             raise DeltaCoreError("invalid idem.lookup response")
         return response
 
+    def plan(
+        self,
+        run_id: str,
+        tool_call_id: str,
+        tool_name: str,
+        arguments: Any,
+        *,
+        ledger: RunEventLedger | None = None,
+        workspace: str | None = None,
+    ) -> dict[str, Any]:
+        """Ask Rust for the execution disposition of a tool call (ADR-035).
+
+        Returns the Rust-authoritative decision: ``{"action": "execute"}``,
+        ``{"action": "replay", "result": ...}``, or ``{"action": "uncertain",
+        "result": ..., "operation_id": ...}``. For ``execute``, Rust has
+        already performed ``record_planned`` + ``mark_executing``; we mirror
+        the ``side_effect.planned`` ledger event the prior Python path emitted
+        (cross-domain notification; the state-machine decision is Rust).
+        """
+        normalized_arguments = _normalized(arguments)
+        response = self._invoke(
+            "toollifecycle.plan",
+            run_id=run_id,
+            tool_call_id=tool_call_id,
+            tool_name=tool_name,
+            args=normalized_arguments,
+        )
+        if not isinstance(response, dict) or not isinstance(
+            response.get("action"), str
+        ):
+            raise DeltaCoreError("invalid toollifecycle.plan response")
+        if response.get("action") == "execute":
+            self._append_ledger(
+                ledger,
+                run_id,
+                "side_effect.planned",
+                {
+                    "tool_call_id": tool_call_id,
+                    "tool": tool_name,
+                    "args_sha256": args_sha256(normalized_arguments),
+                    "operation_id": operation_id(run_id, tool_call_id),
+                },
+                workspace,
+            )
+        return response
+
     def _row(self, run_id: str, tool_call_id: str) -> dict[str, Any] | None:
         response = self._invoke("idem.get", run_id=run_id, tool_call_id=tool_call_id)
         if response is None:
@@ -278,7 +338,9 @@ class IdempotencyLog:
         if not run_id:
             return []
         response = self._invoke("idem.list", run_id=run_id, view=view)
-        if not isinstance(response, list) or not all(isinstance(item, dict) for item in response):
+        if not isinstance(response, list) or not all(
+            isinstance(item, dict) for item in response
+        ):
             raise DeltaCoreError(f"invalid idem.list response for {view}")
         return response
 
@@ -302,7 +364,9 @@ class IdempotencyLog:
             "idem.sweep_stale",
             interrupted_run_ids=interrupted_run_ids,
         )
-        if not isinstance(response, list) or not all(isinstance(item, dict) for item in response):
+        if not isinstance(response, list) or not all(
+            isinstance(item, dict) for item in response
+        ):
             raise DeltaCoreError("invalid idem.sweep_stale response")
         for entry in response:
             self._append_ledger(
