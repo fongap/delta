@@ -158,11 +158,12 @@ def test_cold_start_surfaces_paused_sessions(tmp_path):
 
 
 def test_run_resumed_ledger_event_emitted(tmp_path):
-    """The adapter should emit run.resumed (not run.started) when
-    kind == 'resume'."""
+    """A durable resume on a fresh run emits run.started (not run.resumed),
+    because run.resumed is only legal after run.started (state machine)."""
     from core.engine import TurnEngine
     from core.ledger import RunEventLedger
     from core.runtime import TurnEngineAdapter
+    from unittest.mock import MagicMock
 
     ledger = RunEventLedger(tmp_path / "run-events.db")
 
@@ -181,9 +182,43 @@ def test_run_resumed_ledger_event_emitted(tmp_path):
 
     events = ledger.events("r1")
     types = [e["type"] for e in events]
-    assert "run.resumed" in types
-    assert "run.started" not in types
+    # Fresh run with no prior events: resume emits run.started, not run.resumed
+    assert "run.started" in types
+    assert "run.resumed" not in types
     assert "run.completed" in types
+    ledger.close()
+
+
+def test_run_resumed_after_interrupted_emits_resumed(tmp_path):
+    """A resume after a run was interrupted emits run.resumed."""
+    from core.engine import TurnEngine
+    from core.ledger import RunEventLedger
+    from core.runtime import TurnEngineAdapter
+    from unittest.mock import MagicMock
+
+    ledger = RunEventLedger(tmp_path / "run-events.db")
+
+    # Manually create an interrupted run: started + interrupted (not completed)
+    ledger.append("r1", "run.started", actor="user")
+    ledger.append("r1", "run.interrupted", actor="system", payload={"reason": "crashed"})
+
+    # Now resume the same run
+    engine = MagicMock(spec=TurnEngine)
+    engine.resume = MagicMock(return_value=_empty_async_gen())
+    engine.messages = []
+    engine.audit_context = {}
+    engine.agent_name = "test"
+    engine.model = "test"
+
+    adapter = TurnEngineAdapter(
+        engine, ledger=ledger, session_id="s1", run_id="r1"
+    )
+    asyncio.run(_drain(adapter.resume()))
+
+    events = ledger.events("r1")
+    types = [e["type"] for e in events]
+    # Should have: run.started + run.interrupted + run.resumed + run.completed
+    assert types == ["run.started", "run.interrupted", "run.resumed", "run.completed"]
     ledger.close()
 
 
