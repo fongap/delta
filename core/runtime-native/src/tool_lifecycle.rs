@@ -63,7 +63,10 @@ pub struct ToolLifecyclePlanOutput {
 /// Pure re-use of `IdempotencyWriter`: no new table, no new persisted state.
 /// One `record_planned` + one `mark_executing` per fresh execution, identical
 /// to the previous Python path.
-pub fn plan(writer: &IdempotencyWriter, input: &ToolLifecyclePlanInput) -> Result<ToolLifecyclePlanOutput, ShadowReadError> {
+pub fn plan(
+    writer: &IdempotencyWriter,
+    input: &ToolLifecyclePlanInput,
+) -> Result<ToolLifecyclePlanOutput, ShadowReadError> {
     if input.run_id.is_empty() || input.tool_call_id.is_empty() {
         // Without a run identity there is no idempotency authority; Python
         // falls back to direct execution (no state machine) exactly as before.
@@ -125,7 +128,13 @@ mod tests {
     use crate::idemlog::args_sha256;
     use tempfile::tempdir;
 
-    fn input(db: &str, run_id: &str, call_id: &str, name: &str, args: Value) -> ToolLifecyclePlanInput {
+    fn input(
+        db: &str,
+        run_id: &str,
+        call_id: &str,
+        name: &str,
+        args: Value,
+    ) -> ToolLifecyclePlanInput {
         ToolLifecyclePlanInput {
             db: db.to_string(),
             run_id: run_id.to_string(),
@@ -142,7 +151,11 @@ mod tests {
         let writer = IdempotencyWriter::open(&db).unwrap();
 
         let args = serde_json::json!({"path": "a.txt"});
-        let out = plan(&writer, &input(db.to_str().unwrap(), "r1", "c1", "write_file", args)).unwrap();
+        let out = plan(
+            &writer,
+            &input(db.to_str().unwrap(), "r1", "c1", "write_file", args),
+        )
+        .unwrap();
         assert!(matches!(out.action, PlanAction::Execute));
 
         // The row is now Executing (transitioned ahead of Python execution).
@@ -157,12 +170,20 @@ mod tests {
         let writer = IdempotencyWriter::open(&db).unwrap();
 
         let args = serde_json::json!({"path": "a.txt"});
-        writer.record_planned("r1", "c1", "write_file", &args).unwrap();
+        writer
+            .record_planned("r1", "c1", "write_file", &args)
+            .unwrap();
         writer.mark_executing("r1", "c1").unwrap();
         let result = serde_json::json!({"ok": true});
-        writer.commit("r1", "c1", "write_file", &args, &result).unwrap();
+        writer
+            .commit("r1", "c1", "write_file", &args, &result)
+            .unwrap();
 
-        let out = plan(&writer, &input(db.to_str().unwrap(), "r1", "c1", "write_file", args)).unwrap();
+        let out = plan(
+            &writer,
+            &input(db.to_str().unwrap(), "r1", "c1", "write_file", args),
+        )
+        .unwrap();
         assert!(matches!(out.action, PlanAction::Replay));
         assert_eq!(out.result, Some(result));
     }
@@ -174,11 +195,17 @@ mod tests {
         let writer = IdempotencyWriter::open(&db).unwrap();
 
         let args = serde_json::json!({"to": "bob"});
-        writer.record_planned("r2", "c2", "send_message", &args).unwrap();
+        writer
+            .record_planned("r2", "c2", "send_message", &args)
+            .unwrap();
         writer.mark_executing("r2", "c2").unwrap();
         writer.mark_uncertain("r2", "c2").unwrap();
 
-        let out = plan(&writer, &input(db.to_str().unwrap(), "r2", "c2", "send_message", args)).unwrap();
+        let out = plan(
+            &writer,
+            &input(db.to_str().unwrap(), "r2", "c2", "send_message", args),
+        )
+        .unwrap();
         assert!(matches!(out.action, PlanAction::Uncertain));
         assert!(out.operation_id.is_some());
     }
@@ -190,13 +217,27 @@ mod tests {
         let writer = IdempotencyWriter::open(&db).unwrap();
 
         let committed = serde_json::json!({"path": "a.txt"});
-        writer.record_planned("r3", "c3", "write_file", &committed).unwrap();
+        writer
+            .record_planned("r3", "c3", "write_file", &committed)
+            .unwrap();
         writer.mark_executing("r3", "c3").unwrap();
-        writer.commit("r3", "c3", "write_file", &committed, &serde_json::json!({"ok": true})).unwrap();
+        writer
+            .commit(
+                "r3",
+                "c3",
+                "write_file",
+                &committed,
+                &serde_json::json!({"ok": true}),
+            )
+            .unwrap();
 
         // Different args → different sha → not a replay; treated as execute.
         let different = serde_json::json!({"path": "b.txt"});
-        let out = plan(&writer, &input(db.to_str().unwrap(), "r3", "c3", "write_file", different)).unwrap();
+        let out = plan(
+            &writer,
+            &input(db.to_str().unwrap(), "r3", "c3", "write_file", different),
+        )
+        .unwrap();
         assert!(matches!(out.action, PlanAction::Execute));
     }
 
