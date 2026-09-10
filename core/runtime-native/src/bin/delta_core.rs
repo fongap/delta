@@ -1178,7 +1178,14 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
                 Ok(w) => w,
                 Err(e) => return err(e),
             };
-            match store.complete_run(&run_id, &task_id, started_at, &run_data, &workspace, finished_at) {
+            match store.complete_run(
+                &run_id,
+                &task_id,
+                started_at,
+                &run_data,
+                &workspace,
+                finished_at,
+            ) {
                 Ok(updated_task) => Ok(updated_task),
                 Err(e) => Err(e.to_string()),
             }

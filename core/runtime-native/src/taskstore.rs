@@ -21,7 +21,8 @@ fn run_data_json_get_status(data: &str) -> String {
         Ok(v) => v,
         Err(_) => return "error".to_string(),
     };
-    value.get("status")
+    value
+        .get("status")
         .and_then(|v| v.as_str())
         .map(|s| s.to_string())
         .unwrap_or_else(|| "error".to_string())
@@ -341,9 +342,7 @@ impl TaskStore {
 
         // 2. Load task data
         let task_data: Option<String> = {
-            let mut stmt = tx.prepare(
-                "SELECT data FROM scheduled_tasks WHERE id = ?",
-            )?;
+            let mut stmt = tx.prepare("SELECT data FROM scheduled_tasks WHERE id = ?")?;
             stmt.query_row(params![task_id], |row| row.get(0)).ok()
         };
 
@@ -354,12 +353,22 @@ impl TaskStore {
         };
 
         if task_json.is_null() {
-            return Err(ShadowReadError::Parse(format!("task {} not found", task_id)));
+            return Err(ShadowReadError::Parse(format!(
+                "task {} not found",
+                task_id
+            )));
         }
 
         // 3. Update task stats
-        let run_count = task_json.get("run_count").and_then(|v| v.as_u64()).unwrap_or(0) + 1;
-        let max_runs = task_json.get("max_runs").and_then(|v| v.as_u64()).unwrap_or(0);
+        let run_count = task_json
+            .get("run_count")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0)
+            + 1;
+        let max_runs = task_json
+            .get("max_runs")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
         let last_status = run_data_json_get_status(run_data);
 
         task_json["run_count"] = Value::from(run_count as i64);
