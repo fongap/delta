@@ -74,21 +74,17 @@ ENV_VAR: Final[str] = "DELTA_RUST_AUTHORITY"
 #:
 #: Note (ADR-030): ``policy`` was hard-cut to Rust.
 #: Note (ADR-031): ``approval`` was hard-cut to Rust.
-RUST_WRITE_DOMAINS: Final[frozenset[str]] = frozenset({
-    "validation",       # deterministic completion gate via delta_core
-    "checkpoint",       # recovery checkpoint authority via delta_core
-    "policy",           # tool call policy evaluation via delta_core
-    "approval",         # approval audit event persistence via delta_core
-})
+RUST_WRITE_DOMAINS: Final[frozenset[str]] = frozenset(
+    {
+        "validation",  # deterministic completion gate via delta_core
+        "checkpoint",  # recovery checkpoint authority via delta_core
+        "policy",  # tool call policy evaluation via delta_core
+        "approval",  # approval audit event persistence via delta_core
+    }
+)
 
 #: Note (ADR-032): RUST_READ_DOMAINS and the shadow-reader surface were
 #: deleted in R2 Final Convergence.
-RUST_WRITE_DOMAINS: Final[frozenset[str]] = frozenset({
-    "validation",       # deterministic completion gate via delta_core
-    "checkpoint",       # recovery checkpoint authority via delta_core
-    "policy",           # tool call policy evaluation via delta_core
-    "approval",         # approval audit event persistence via delta_core
-})
 
 #: Domains derived from another Rust authority. They do not have
 #: independent Rust write authority; they are computed from a Rust
@@ -110,9 +106,7 @@ COORDINATION_DOMAINS: Final[frozenset[str]] = frozenset()
 #: All domain names recognized by the selector. Derived and coordination
 #: domains are NOT valid targets for is_rust_authority().
 ALL_DOMAINS: Final[frozenset[str]] = (
-    RUST_WRITE_DOMAINS
-    | frozenset(DERIVED_DOMAINS)
-    | COORDINATION_DOMAINS
+    RUST_WRITE_DOMAINS | frozenset(DERIVED_DOMAINS) | COORDINATION_DOMAINS
 )
 
 #: Legacy spelling of ``"all"``. Kept for backward compatibility: maps
