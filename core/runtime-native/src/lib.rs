@@ -20,6 +20,7 @@ pub mod checkpoint;
 pub mod idemlog;
 pub mod ledger;
 pub mod policy;
+pub mod retry;
 pub mod source_citation;
 pub mod taskstore;
 pub mod tool_lifecycle;
@@ -44,6 +45,9 @@ pub use ledger::{LedgerEvent, LedgerReader, LedgerWriter};
 pub use policy::{
     classify, enforce_level, enforce_scope, evaluate, restrict_grants, Decision,
     PolicyEvaluateInput, PolicyEvaluateOutput, RiskLevel, RootEntry, POLICY_SCHEMA_VERSION,
+};
+pub use retry::{
+    classify_error, ErrorClass as RetryErrorClass, RetryClassifyInput, RetryClassifyOutput,
 };
 pub use source_citation::{
     validate_all, validate_citation, validate_source_citation, CitationValidationResult,

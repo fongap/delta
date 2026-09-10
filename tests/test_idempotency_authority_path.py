@@ -87,3 +87,16 @@ def test_tool_lifecycle_cancel_accepts_reason():
     source = (REPO / "core" / "idemlog.py").read_text(encoding="utf-8")
     assert "reason" in source
     assert "timeout" in source
+
+
+def test_retry_classify_is_rust_authority():
+    """ADR-039: the retry policy decision (error classification +
+    retryability) lives behind a single Rust ``retry.classify`` call.
+    Python's ``call_errors.py`` must delegate, not classify locally."""
+    source = (REPO / "core" / "call_errors.py").read_text(encoding="utf-8")
+    assert "retry.classify" in source
+    assert "default_client().command" in source
+    # No local text-matching logic should remain.
+    assert "_PROTOCOL_MARKERS" not in source
+    # The backoff math stays Python (pure capability, not authority).
+    assert "backoff_delay" in source
