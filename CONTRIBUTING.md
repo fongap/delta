@@ -16,9 +16,9 @@ docs/architecture/repository-layout.md
 
 ## Issues 与 Discussions
 
-Issues 只用于已经可以复现、执行和跟踪的问题；公开 Issue 默认通过 `Bug report` 表单提交。
+Issues 只用于已经可以复现、执行和跟踪的问题；公开 Issue 默认通过「缺陷报告」表单提交。
 
-安装、配置、模型接入、使用和排障问题请放到 Discussions / Q&A；功能、交互、工作流和产品建议请放到 Discussions / Ideas。讨论形成明确结论并确认实施后，再转为 Issue 跟踪执行。
+安装、配置、模型接入、使用和排障问题请放到 Discussions 的「问答」分类；功能、交互、工作流和产品建议请放到「建议」分类。讨论形成明确结论并确认实施后，再转为 Issue 跟踪执行。
 
 安全漏洞不得公开披露，按 [`SECURITY.md`](./SECURITY.md) 的方式报告。
 
