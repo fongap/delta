@@ -1,6 +1,6 @@
 # ADR-037: R3 Final Audit — Cancellation / Timeout / Retry Closure
 
-- Status: **Superseded** (Cancellation portion superseded by ADR-037-r3-cancellation-decision-authority; Timeout portion superseded by ADR-038-r3-timeout-decision-authority)
+- Status: **Superseded** (Cancellation portion superseded by ADR-037-r3-cancellation-decision-authority; Timeout portion superseded by ADR-038-r3-timeout-decision-authority; Retry portion superseded by ADR-039-r3-retry-decision-authority)
 - Date: 2026-09-10
 - Scope: R3 Execution Lifecycle — final audit of the three remaining domains (Cancellation, Timeout, Retry)
 - Decision Type: Audit / No-migration decision / Phase closure
@@ -12,7 +12,9 @@
 > transition. See ADR-037-r3-cancellation-decision-authority.md for the
 > corrected decision and implementation. The Timeout portion was also
 > superseded by ADR-038 (timeout shares the same state-machine decision
-> as cancellation). The Retry portion remains under review for ADR-039.
+> as cancellation). The Retry portion was superseded by ADR-039 (retry
+> policy classification and retryability decision moved to Rust
+> `retry.classify`).
 
 ## Background
 

@@ -1,5 +1,10 @@
 """Model-call error classification (v0.3.0 P1, P1-A Async Retry).
 
+ADR-039: the retry policy **decision** — error classification and
+retryability — is Rust-authoritative via ``retry.classify``. Python
+retains the retry execution mechanism: backoff delay math, async sleep,
+Retry-After header extraction, retry loop, and budget tracking.
+
 The request log used to carry only the exception class name as `error_type` — which
 couldn't tell a "gateway killed the stream before completion" from a "this server
 doesn't speak the dialect we assumed". This module classifies a provider failure into
@@ -24,6 +29,8 @@ from __future__ import annotations
 import random
 import time
 from enum import Enum
+
+from packages.delta_core_client import default_client
 
 # -- error taxonomy -----------------------------------------------------------
 
@@ -68,81 +75,43 @@ class ProtocolIncompatibleError(RuntimeError):
 
 # -- classification -----------------------------------------------------------
 
-# Protocol-incompatible markers in the error body — a server that says any of these
-# about a param we sent speaks a dialect we mis-assumed (NOT a transport blip).
-_PROTOCOL_MARKERS = (
-    "is not supported",
-    "not supported",
-    "unknown parameter",
-    "unexpected parameter",
-    "unexpected field",
-    "does not support",
-    "invalid parameter",
-    "unsupported parameter",
-    "not recognized",
-    "'stream_options'",
-    "'max_tokens'",
-    "'parallel_tool_calls'",
-    "'reasoning_effort'",
-)
+
+def _rust_classify(exc: BaseException) -> dict[str, object]:
+    """Delegate classification to Rust ``retry.classify`` (ADR-039)."""
+    from core import compaction as _compaction
+
+    is_overflow = _compaction.is_context_overflow(exc)
+    response = default_client().command(
+        {
+            "cmd": "retry.classify",
+            "error_type": type(exc).__name__,
+            "error_message": str(exc),
+            "is_context_overflow": is_overflow,
+        }
+    )
+    if not isinstance(response, dict) or not isinstance(
+        response.get("error_class"), str
+    ):
+        return {"error_class": "other", "retryable": False}
+    return response
 
 
 def classify_error(exc: BaseException) -> ErrorClass:
     """The failure bucket for a provider exception, used for the request log and the
-    retry policy. Order matters: specific markers beat the generic fallbacks."""
-    if isinstance(exc, StreamTruncatedError):
-        return ErrorClass.STREAM_TRUNCATED
-    if isinstance(exc, TTFTTimeoutError):
-        return ErrorClass.TTFT_TIMEOUT
-    if isinstance(exc, ProtocolIncompatibleError):
-        return ErrorClass.PROTOCOL_INCOMPATIBLE
-    from core import compaction as _compaction
-
-    if _compaction.is_context_overflow(exc):
-        return ErrorClass.CONTEXT_TOO_LARGE
-    text = str(exc).lower()
-    # Auth markers (401/403) — never retried.
-    if any(m in text for m in ("401", "403", "unauthorized", "forbidden", "invalid api key", "authentication")):
-        if "429" not in text:
-            return ErrorClass.AUTH
-    # Rate-limit markers — retried, respects Retry-After.
-    if any(m in text for m in ("429", "rate limit", "too many requests", "rate_limit")):
-        return ErrorClass.RATE_LIMIT
-    if any(marker in text for marker in _PROTOCOL_MARKERS):
-        return ErrorClass.PROTOCOL_INCOMPATIBLE
-    if "finish_reason" in text and ("truncat" in text or "上游流式响应被截断" in text):
-        return ErrorClass.STREAM_TRUNCATED
-    # Transient: 5xx / connection / timeout / service unavailable.
-    if any(
-        marker in text
-        for marker in (
-            "timeout",
-            "timed out",
-            "connection",
-            "connection refused",
-            "connection reset",
-            "temporarily unavailable",
-            "service unavailable",
-            "internal server error",
-            "502",
-            "503",
-            "504",
-        )
-    ):
-        return ErrorClass.TRANSIENT
-    return ErrorClass.OTHER
+    retry policy. Rust-authoritative via ``retry.classify`` (ADR-039)."""
+    result = _rust_classify(exc)
+    raw = result.get("error_class", "other")
+    try:
+        return ErrorClass(raw)
+    except ValueError:
+        return ErrorClass.OTHER
 
 
 def is_retryable(exc: BaseException) -> bool:
-    """Whether a failure earns the bounded exponential backoff. Rate-limit,
-    TTFT-timeout, and transient failures are retryable; stream_truncated,
-    context_too_large, protocol_incompatible, and auth are NOT."""
-    cls = classify_error(exc)
-    return cls in (
-        ErrorClass.RATE_LIMIT,
-        ErrorClass.TTFT_TIMEOUT,
-        ErrorClass.TRANSIENT,
-    )
+    """Whether a failure earns the bounded exponential backoff. Rust-authoritative
+    via ``retry.classify`` (ADR-039)."""
+    result = _rust_classify(exc)
+    return bool(result.get("retryable", False))
 
 
 # -- bounded exponential backoff (Codex-absorbed) -----------------------------

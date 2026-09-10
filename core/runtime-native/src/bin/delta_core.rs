@@ -68,8 +68,8 @@ use delta_runtime_native::{
     args_sha256, classify, operation_id, run_validation, validate_source_citation,
     ApprovalRecordInput, ApprovalWriter, ArtifactInput, ArtifactRegistryWriter, CheckpointReader,
     CheckpointRegisterInput, CheckpointWriter, CitationValidationResult, CitationValidity,
-    IdempotencyWriter, LedgerWriter, PolicyEvaluateInput, SideEffectEntry, SideEffectState,
-    SourceCitationReader, SourceCitationWriter, SourceRegisterInput, TaskStore,
+    IdempotencyWriter, LedgerWriter, PolicyEvaluateInput, RetryClassifyInput, SideEffectEntry,
+    SideEffectState, SourceCitationReader, SourceCitationWriter, SourceRegisterInput, TaskStore,
     ToolLifecycleCancelInput, ToolLifecyclePlanInput, ValidationReader, ValidationRegisterInput,
     ValidationWriter,
 };
@@ -86,7 +86,7 @@ use time::OffsetDateTime;
 /// immediately after subprocess startup; a mismatch raises
 /// :class:`DeltaCoreError` (fail-closed) so we never silently talk to
 /// an incompatible binary.
-const PROTOCOL_VERSION: u32 = 11;
+const PROTOCOL_VERSION: u32 = 12;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "cmd")]
@@ -457,6 +457,15 @@ enum Command {
         tool_name: String,
         #[serde(default)]
         reason: Option<String>,
+    },
+    /// R3 / ADR-039: classify a provider failure for retry policy.
+    /// Returns error_class + retryable. Pure computation, no DB access.
+    #[serde(rename = "retry.classify")]
+    RetryClassify {
+        error_type: String,
+        error_message: String,
+        #[serde(default)]
+        is_context_overflow: bool,
     },
     /// R2 / ADR-031: record an approval audit event.
     #[serde(rename = "approval.record")]
@@ -1765,6 +1774,18 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
                 Ok(output) => Ok(serde_json::to_value(output).unwrap()),
                 Err(e) => Err(e.to_string()),
             }
+        }
+        Command::RetryClassify {
+            error_type,
+            error_message,
+            is_context_overflow,
+        } => {
+            let input = RetryClassifyInput {
+                error_type,
+                error_message,
+                is_context_overflow,
+            };
+            Ok(serde_json::to_value(delta_runtime_native::classify_error(&input)).unwrap())
         }
         Command::ApprovalRecord {
             db,

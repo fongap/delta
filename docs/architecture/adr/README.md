@@ -43,6 +43,7 @@
 - `ADR-037-r3-cancellation-timeout-retry-audit.md` – **Superseded** (Cancellation portion). 原审计错误地将 Cancellation 判为"无 authority 价值"。Cancellation 的 lifecycle-state 决策（Uncertain vs Failed）是持久化状态机转移，有 authority 价值。
 - `ADR-037-r3-cancellation-decision-authority.md` – R3 Cancellation 决策 authority 迁移到 Rust `toollifecycle.cancel` 命令。Executing → Uncertain（never Failed）；Planned → Failed；terminal → no-op。Python `_interrupted_tool` 不再硬编码 "interrupted" 状态，委托 Rust 决策。asyncio.Event 信号传输层保留 Python。
 - `ADR-038-r3-timeout-decision-authority.md` – R3 Timeout 决策 authority。`toollifecycle.cancel` 扩展 `reason` 参数，让 timeout 和 cancellation 共享同一 Rust 状态机决策（Executing → Uncertain, Planned → Failed）同时区分审计原因。Python 新增 `tool_timeout` 配置（默认 300s）和 `ThreadPoolExecutor` deadline 机制。Protocol 10 → 11。
+- `ADR-039-r3-retry-decision-authority.md` – R3 Retry Policy 决策 authority。`retry.classify` 命令接收 error_type + error_message + is_context_overflow，返回 error_class + retryable。Python `call_errors.py` 的 `classify_error()` 和 `is_retryable()` 委托 Rust；backoff_delay 纯数学和 retry 执行机制保留 Python。Protocol 11 → 12。
 
 相关架构文档：
 - `hub-federation-boundary.md` – Delta Hub 联邦化边界设计，明确 OpenWorker 仅为可选适配器。
