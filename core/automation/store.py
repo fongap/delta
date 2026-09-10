@@ -171,6 +171,35 @@ class TaskStore:
         )
         return run
 
+    def complete_run(
+        self,
+        run: TaskRun,
+        finished_at: float,
+    ) -> dict[str, Any]:
+        """Atomically complete a run and update task stats (ADR-043).
+
+        Delegates to Rust `task.complete_run` which atomically:
+        1. Stores the run with final status
+        2. Increments task.run_count, sets last_run/last_status
+        3. Checks max_runs exhaustion, disables task if exhausted
+        4. Returns updated task data for cache sync
+
+        Returns the updated task data dict for local cache sync.
+        """
+        run_data = json.dumps(run.to_dict())
+        result = self._invoke(
+            "task.complete_run",
+            run_id=run.run_id,
+            task_id=run.task_id,
+            started_at=run.started_at,
+            run_data=run_data,
+            workspace=run.workspace or "",
+            finished_at=finished_at,
+        )
+        if not isinstance(result, dict):
+            raise DeltaCoreError("invalid task.complete_run response")
+        return result
+
     def find_run(self, run_id: str) -> TaskRun | None:
         result = self._invoke("task.find_run", run_id=run_id)
         if result is None:

@@ -15,6 +15,18 @@ use serde_json::Value;
 
 use crate::ShadowReadError;
 
+/// Extract run status from a run's JSON data.
+fn run_data_json_get_status(data: &str) -> String {
+    let value: Value = match serde_json::from_str(data) {
+        Ok(v) => v,
+        Err(_) => return "error".to_string(),
+    };
+    value.get("status")
+        .and_then(|v| v.as_str())
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "error".to_string())
+}
+
 /// One row from the `scheduled_tasks` table. The `data` column holds
 /// the full `ScheduledTask.to_dict()` JSON blob.
 #[derive(Debug, Clone)]
@@ -294,6 +306,82 @@ impl TaskStore {
             out.push(row?);
         }
         Ok(out)
+    }
+
+    /// Atomically complete a run and update task stats.
+    ///
+    /// Performs in a single transaction:
+    /// 1. Insert/replace the run in `task_runs`
+    /// 2. Load task data, increment run_count, set last_run/last_status
+    /// 3. Recompute next_run (via Python's compute_next_run logic would be ideal,
+    ///    but here we just clear it if exhausted; next_run recomputation stays in Python)
+    /// 4. Check max_runs exhaustion: if run_count >= max_runs, set enabled=false, next_run=NULL
+    /// 5. Update task in `scheduled_tasks`
+    ///
+    /// The `data` JSON must contain the full `ScheduledTask` dict including
+    /// `max_runs`, `run_count`, `validation_criteria`, `schedule`, etc.
+    ///
+    /// Returns the updated task data JSON (for Python to update its cache).
+    pub fn complete_run(
+        &mut self,
+        run_id: &str,
+        task_id: &str,
+        started_at: f64,
+        run_data: &str,
+        workspace: &str,
+        finished_at: f64,
+    ) -> Result<Value, ShadowReadError> {
+        let tx = self.conn.transaction()?;
+
+        // 1. Insert/replace the run
+        tx.execute(
+            "INSERT OR REPLACE INTO task_runs (run_id, task_id, started_at, data, workspace) VALUES (?, ?, ?, ?, ?)",
+            params![run_id, task_id, started_at, run_data, workspace],
+        )?;
+
+        // 2. Load task data
+        let task_data: Option<String> = {
+            let mut stmt = tx.prepare(
+                "SELECT data FROM scheduled_tasks WHERE id = ?",
+            )?;
+            stmt.query_row(params![task_id], |row| row.get(0)).ok()
+        };
+
+        let mut task_json: Value = if let Some(d) = task_data {
+            serde_json::from_str(&d).unwrap_or(Value::Null)
+        } else {
+            Value::Null
+        };
+
+        if task_json.is_null() {
+            return Err(ShadowReadError::Parse(format!("task {} not found", task_id)));
+        }
+
+        // 3. Update task stats
+        let run_count = task_json.get("run_count").and_then(|v| v.as_u64()).unwrap_or(0) + 1;
+        let max_runs = task_json.get("max_runs").and_then(|v| v.as_u64()).unwrap_or(0);
+        let last_status = run_data_json_get_status(run_data);
+
+        task_json["run_count"] = Value::from(run_count as i64);
+        task_json["last_run"] = Value::from(finished_at);
+        task_json["last_status"] = Value::String(last_status.to_string());
+
+        // 4. Check max_runs exhaustion
+        let exhausted = max_runs > 0 && run_count >= max_runs;
+        if exhausted {
+            task_json["enabled"] = Value::Bool(false);
+            task_json["next_run"] = Value::Null;
+        }
+
+        // 5. Update task
+        let updated_data = task_json.to_string();
+        tx.execute(
+            "UPDATE scheduled_tasks SET data = ? WHERE id = ?",
+            params![&updated_data, task_id],
+        )?;
+
+        tx.commit()?;
+        Ok(task_json)
     }
 
     /// Close the connection. Idempotent.
