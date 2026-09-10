@@ -4,9 +4,11 @@
 
 <div align="center">
 
-[![Version](https://img.shields.io/github/v/release/fongap/delta?style=flat-square&color=blue&label=Version)](https://github.com/fongap/delta/releases)
-![Update](https://img.shields.io/github/last-commit/fongap/delta?style=flat-square&color=orange&label=Update)
-![License](https://img.shields.io/github/license/fongap/delta?style=flat-square&color=green&label=License)
+[![CI](https://github.com/fongap/delta/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/fongap/delta/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/fongap/delta/actions/workflows/codeql.yml/badge.svg?branch=main)](https://github.com/fongap/delta/actions/workflows/codeql.yml)
+[![Version](https://img.shields.io/github/v/release/fongap/delta?label=Version)](https://github.com/fongap/delta/releases)
+[![Windows Portable](https://img.shields.io/badge/Windows-Portable-0078D6?logo=windows&logoColor=white)](https://github.com/fongap/delta/releases/latest)
+[![License](https://img.shields.io/github/license/fongap/delta?label=License)](LICENSE)
 
 </div>
 
