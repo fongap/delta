@@ -1,4 +1,4 @@
-//! Tool Lifecycle Execution Disposition (R3, ADR-035).
+//! Tool Lifecycle Execution Disposition (R3, ADR-035 + ADR-037).
 //!
 //! The idempotency state machine is already Rust-authoritative (ADR-022);
 //! this module owns the **disposition decision** that Python formerly made in
@@ -8,7 +8,13 @@
 //! `record_planned` + `mark_executing` transitions that must atomically precede
 //! the actual (Python-side) tool execution.
 //!
+//! ADR-037 extends this with **cancellation decision authority**: when a tool
+//! call is cancelled after execution started (side effect may or may not have
+//! occurred), Rust decides the lifecycle state — Uncertain, never Failed,
+//! unless the side effect provably did not start.
+//!
 //! Contract: docs/architecture/adr/ADR-035-r3-tool-lifecycle-hard-cut.md
+//! and docs/architecture/adr/ADR-037-r3-cancellation-decision-authority.md
 //! and core/tool_lifecycle.py (Python facade mirrors this).
 
 use serde::{Deserialize, Serialize};
@@ -119,6 +125,102 @@ pub fn plan(
             error: None,
             operation_id: None,
         })
+    }
+}
+
+/// Input for a cancellation decision (ADR-037).
+#[derive(Debug, Clone, Deserialize)]
+pub struct ToolLifecycleCancelInput {
+    pub db: String,
+    pub run_id: String,
+    pub tool_call_id: String,
+    pub tool_name: String,
+}
+
+/// The lifecycle decision Rust returns when a tool call is cancelled.
+#[derive(Debug, Clone, Serialize)]
+pub enum CancelAction {
+    /// The side effect was Executing — result unknown. Rust marked it
+    /// Uncertain. Python must surface it for user resolution.
+    #[serde(rename = "uncertain")]
+    Uncertain,
+    /// The side effect was Planned but never started executing — safe to
+    /// mark Failed (nothing happened).
+    #[serde(rename = "failed")]
+    Failed,
+    /// The side effect was already terminal (Committed/Failed/Uncertain).
+    /// No transition needed; Python reuses the existing state.
+    #[serde(rename = "terminal")]
+    Terminal,
+    /// No side-effect row exists for this call (no run identity or no
+    /// idempotency log). Python decides locally.
+    #[serde(rename = "none")]
+    None,
+}
+
+/// Output of a `toollifecycle.cancel` decision.
+#[derive(Debug, Clone, Serialize)]
+pub struct ToolLifecycleCancelOutput {
+    pub action: CancelAction,
+    /// For `uncertain`: the stable operation id for user resolution.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub operation_id: Option<String>,
+}
+
+/// Decide the lifecycle consequence of cancelling a tool call (ADR-037).
+///
+/// Authority rule:
+/// - **Executing** → mark Uncertain (side effect may or may not have
+///   occurred). Never Failed. Python surfaces this for user resolution.
+/// - **Planned** → mark Failed (nothing executed, safe to fail).
+/// - **Committed / Failed / Uncertain** → terminal, no transition.
+/// - **No row** → no idempotency authority; Python decides locally.
+pub fn cancel(
+    writer: &IdempotencyWriter,
+    input: &ToolLifecycleCancelInput,
+) -> Result<ToolLifecycleCancelOutput, ShadowReadError> {
+    if input.run_id.is_empty() || input.tool_call_id.is_empty() {
+        return Ok(ToolLifecycleCancelOutput {
+            action: CancelAction::None,
+            operation_id: None,
+        });
+    }
+
+    let Some(entry) = writer.get(&input.run_id, &input.tool_call_id)? else {
+        return Ok(ToolLifecycleCancelOutput {
+            action: CancelAction::None,
+            operation_id: None,
+        });
+    };
+
+    match entry.state {
+        crate::idemlog::SideEffectState::Executing => {
+            // Side effect started but result unknown — MUST be Uncertain.
+            writer.mark_uncertain(&input.run_id, &input.tool_call_id)?;
+            Ok(ToolLifecycleCancelOutput {
+                action: CancelAction::Uncertain,
+                operation_id: Some(entry.operation_id.clone()),
+            })
+        }
+        crate::idemlog::SideEffectState::Planned => {
+            // Nothing executed yet — safe to mark Failed.
+            writer.mark_failed(
+                &input.run_id,
+                &input.tool_call_id,
+                "cancelled before execution",
+            )?;
+            Ok(ToolLifecycleCancelOutput {
+                action: CancelAction::Failed,
+                operation_id: Some(entry.operation_id.clone()),
+            })
+        }
+        // Already terminal — no transition needed.
+        crate::idemlog::SideEffectState::Committed
+        | crate::idemlog::SideEffectState::Failed
+        | crate::idemlog::SideEffectState::Uncertain => Ok(ToolLifecycleCancelOutput {
+            action: CancelAction::Terminal,
+            operation_id: Some(entry.operation_id.clone()),
+        }),
     }
 }
 
@@ -246,5 +348,112 @@ mod tests {
         let a = args_sha256(&serde_json::json!({"b": 1, "a": 2}));
         let b = args_sha256(&serde_json::json!({"a": 2, "b": 1}));
         assert_eq!(a, b);
+    }
+
+    // -- ADR-037: Cancellation decision authority tests --
+
+    fn cancel_input(db: &str, run_id: &str, call_id: &str, name: &str) -> ToolLifecycleCancelInput {
+        ToolLifecycleCancelInput {
+            db: db.to_string(),
+            run_id: run_id.to_string(),
+            tool_call_id: call_id.to_string(),
+            tool_name: name.to_string(),
+        }
+    }
+
+    #[test]
+    fn cancel_executing_marks_uncertain() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("side_effects.db");
+        let writer = IdempotencyWriter::open(&db).unwrap();
+
+        let args = serde_json::json!({"path": "a.txt"});
+        writer
+            .record_planned("r1", "c1", "write_file", &args)
+            .unwrap();
+        writer.mark_executing("r1", "c1").unwrap();
+
+        // Cancel while executing — must be Uncertain, never Failed.
+        let out = cancel(
+            &writer,
+            &cancel_input(db.to_str().unwrap(), "r1", "c1", "write_file"),
+        )
+        .unwrap();
+        assert!(matches!(out.action, CancelAction::Uncertain));
+        assert!(out.operation_id.is_some());
+
+        // Verify the row is now Uncertain.
+        let entry = writer.get("r1", "c1").unwrap().unwrap();
+        assert_eq!(entry.state, crate::idemlog::SideEffectState::Uncertain);
+    }
+
+    #[test]
+    fn cancel_planned_marks_failed() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("side_effects.db");
+        let writer = IdempotencyWriter::open(&db).unwrap();
+
+        let args = serde_json::json!({"path": "a.txt"});
+        writer
+            .record_planned("r2", "c2", "write_file", &args)
+            .unwrap();
+        // Note: NOT mark_executing — still Planned.
+
+        let out = cancel(
+            &writer,
+            &cancel_input(db.to_str().unwrap(), "r2", "c2", "write_file"),
+        )
+        .unwrap();
+        assert!(matches!(out.action, CancelAction::Failed));
+
+        let entry = writer.get("r2", "c2").unwrap().unwrap();
+        assert_eq!(entry.state, crate::idemlog::SideEffectState::Failed);
+    }
+
+    #[test]
+    fn cancel_committed_is_terminal() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("side_effects.db");
+        let writer = IdempotencyWriter::open(&db).unwrap();
+
+        let args = serde_json::json!({"path": "a.txt"});
+        writer
+            .record_planned("r3", "c3", "write_file", &args)
+            .unwrap();
+        writer.mark_executing("r3", "c3").unwrap();
+        writer
+            .commit(
+                "r3",
+                "c3",
+                "write_file",
+                &args,
+                &serde_json::json!({"ok": true}),
+            )
+            .unwrap();
+
+        let out = cancel(
+            &writer,
+            &cancel_input(db.to_str().unwrap(), "r3", "c3", "write_file"),
+        )
+        .unwrap();
+        assert!(matches!(out.action, CancelAction::Terminal));
+
+        // State unchanged.
+        let entry = writer.get("r3", "c3").unwrap().unwrap();
+        assert_eq!(entry.state, crate::idemlog::SideEffectState::Committed);
+    }
+
+    #[test]
+    fn cancel_nonexistent_row_is_none() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("side_effects.db");
+        let writer = IdempotencyWriter::open(&db).unwrap();
+
+        let out = cancel(
+            &writer,
+            &cancel_input(db.to_str().unwrap(), "r4", "c4", "write_file"),
+        )
+        .unwrap();
+        assert!(matches!(out.action, CancelAction::None));
     }
 }

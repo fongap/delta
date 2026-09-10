@@ -52,7 +52,9 @@ pub use source_citation::{
 };
 pub use taskstore::{ScheduledTaskEntry, TaskRunEntry, TaskStore};
 pub use tool_lifecycle::{
-    plan as plan_tool_lifecycle, PlanAction, ToolLifecyclePlanInput, ToolLifecyclePlanOutput,
+    cancel as cancel_tool_lifecycle, plan as plan_tool_lifecycle, CancelAction, PlanAction,
+    ToolLifecycleCancelInput, ToolLifecycleCancelOutput, ToolLifecyclePlanInput,
+    ToolLifecyclePlanOutput,
 };
 pub use validation::{
     run_validation, ValidationCheck, ValidationReader, ValidationRecord, ValidationRegisterInput,

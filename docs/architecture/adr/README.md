@@ -40,7 +40,8 @@
 - `ADR-034-r3-engine-loop-restructuring.md` – R3 Phase 1：将工具调用编排（authorize → execute → record → resume）从 `core/engine.py` 的 async streaming 循环中提取到 `core/tool_lifecycle.py` 的 `ToolLifecycleOrchestrator`。引擎保留流式循环和高级迭代，委托 orchestrator 处理工具生命周期。`CancellationToken` 替代 `asyncio.Event`，为未来 Rust 化做准备。不 hard-cut 任何域到 Rust。
 - `ADR-035-r3-tool-lifecycle-hard-cut.md` – R3 Phase 2：将工具调用的执行处置（execute / replay / uncertain 决策）及其配对的 `record_planned` + `mark_executing` 状态机转移收敛到 Rust `delta_core` 的 `toollifecycle.plan` 命令。Python `_execute_sync` 变为薄调用方；工具执行本身仍是 Python 能力，不是 authority。
 - `ADR-036-r3-resume-decision-audit.md` – R3 Phase 2 审计型 ADR：Resume Decision 的 authority 部分已由 ADR-029（checkpoint 持久化/验证）和 ADR-035（toollifecycle.plan dedop/replay/uncertain）完成。剩余的 `unanswered_trailing_tool_calls()` 是纯 Python 内存解析，无 authority 价值，不迁移。
-- `ADR-037-r3-cancellation-timeout-retry-audit.md` – R3 收尾审计型 ADR：Cancellation / Timeout / Retry 三个域全部是纯运行时守卫/纯函数，无持久化、无 crash 恢复、无数据一致性，无 authority 价值，不迁移。R3 Execution Lifecycle 正式收口。
+- `ADR-037-r3-cancellation-timeout-retry-audit.md` – **Superseded** (Cancellation portion). 原审计错误地将 Cancellation 判为"无 authority 价值"。Cancellation 的 lifecycle-state 决策（Uncertain vs Failed）是持久化状态机转移，有 authority 价值。
+- `ADR-037-r3-cancellation-decision-authority.md` – R3 Cancellation 决策 authority 迁移到 Rust `toollifecycle.cancel` 命令。Executing → Uncertain（never Failed）；Planned → Failed；terminal → no-op。Python `_interrupted_tool` 不再硬编码 "interrupted" 状态，委托 Rust 决策。asyncio.Event 信号传输层保留 Python。
 
 相关架构文档：
 - `hub-federation-boundary.md` – Delta Hub 联邦化边界设计，明确 OpenWorker 仅为可选适配器。

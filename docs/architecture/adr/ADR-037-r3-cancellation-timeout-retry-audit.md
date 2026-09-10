@@ -1,10 +1,17 @@
 # ADR-037: R3 Final Audit — Cancellation / Timeout / Retry Closure
 
-- Status: Accepted
+- Status: **Superseded** (Cancellation portion superseded by ADR-037-r3-cancellation-decision-authority)
 - Date: 2026-09-10
 - Scope: R3 Execution Lifecycle — final audit of the three remaining domains (Cancellation, Timeout, Retry)
 - Decision Type: Audit / No-migration decision / Phase closure
 - Related: ADR-033 (R3 Plan), ADR-035 (Tool Lifecycle Hard-Cut), ADR-036 (Resume Decision Audit)
+
+> **Correction (2026-09-10)**: The Cancellation portion of this audit was
+> wrong. Cancellation **does** have authority value — the lifecycle-state
+> decision (Uncertain vs Failed) after a cancel is a persisted state-machine
+> transition. See ADR-037-r3-cancellation-decision-authority.md for the
+> corrected decision and implementation. The Timeout and Retry portions
+> remain under review for future ADRs (038/039).
 
 ## Background
 

@@ -70,7 +70,8 @@ use delta_runtime_native::{
     CheckpointRegisterInput, CheckpointWriter, CitationValidationResult, CitationValidity,
     IdempotencyWriter, LedgerWriter, PolicyEvaluateInput, SideEffectEntry, SideEffectState,
     SourceCitationReader, SourceCitationWriter, SourceRegisterInput, TaskStore,
-    ToolLifecyclePlanInput, ValidationReader, ValidationRegisterInput, ValidationWriter,
+    ToolLifecycleCancelInput, ToolLifecyclePlanInput, ValidationReader, ValidationRegisterInput,
+    ValidationWriter,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -85,7 +86,7 @@ use time::OffsetDateTime;
 /// immediately after subprocess startup; a mismatch raises
 /// :class:`DeltaCoreError` (fail-closed) so we never silently talk to
 /// an incompatible binary.
-const PROTOCOL_VERSION: u32 = 9;
+const PROTOCOL_VERSION: u32 = 10;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "cmd")]
@@ -442,6 +443,15 @@ enum Command {
         tool_name: String,
         #[serde(default)]
         args: Value,
+    },
+    /// R3 / ADR-037: decide the lifecycle consequence of cancelling a tool
+    /// call. Executing → Uncertain; Planned → Failed; terminal → no-op.
+    #[serde(rename = "toollifecycle.cancel")]
+    ToolLifecycleCancel {
+        db: String,
+        run_id: String,
+        tool_call_id: String,
+        tool_name: String,
     },
     /// R2 / ADR-031: record an approval audit event.
     #[serde(rename = "approval.record")]
@@ -1724,6 +1734,27 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
                 args,
             };
             match delta_runtime_native::plan_tool_lifecycle(writer, &input) {
+                Ok(output) => Ok(serde_json::to_value(output).unwrap()),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::ToolLifecycleCancel {
+            db,
+            run_id,
+            tool_call_id,
+            tool_name,
+        } => {
+            let writer = match cache.idem(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            let input = ToolLifecycleCancelInput {
+                db,
+                run_id,
+                tool_call_id,
+                tool_name,
+            };
+            match delta_runtime_native::cancel_tool_lifecycle(writer, &input) {
                 Ok(output) => Ok(serde_json::to_value(output).unwrap()),
                 Err(e) => Err(e.to_string()),
             }

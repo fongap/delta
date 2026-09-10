@@ -336,6 +336,13 @@ R3 与 R2 不同——R2 是 authority switch，R3 是执行编排迁移。Side-
 > 相关 ADR：ADR-037（新增），ADR-033（R3 Plan），ADR-035（Tool Lifecycle Hard-Cut），ADR-036（Resume Decision Audit）。
 
 
+### R3 — Cancellation Decision Authority（ADR-037 revised）
+
+修正之前 ADR-037 的错误审计结论。Cancellation 的 lifecycle-state 决策（Uncertain vs Failed）是持久化状态机转移，有 authority 价值。新增 Rust `toollifecycle.cancel` 命令：Executing → Uncertain（never Failed）；Planned → Failed；terminal → no-op。Python `_interrupted_tool` 不再硬编码 "interrupted" 状态，委托 Rust 决策。asyncio.Event 信号传输层保留 Python（是协作信号，不是 authority）。Protocol version bumped 9 → 10。
+
+> 相关 ADR：ADR-037（修正），ADR-022（Idempotency Hard-Cut），ADR-035（Tool Lifecycle Hard-Cut）。
+
+
 ### R1.6 — Legacy Cleanup（`cowork` → `delta` 全栈重命名）
 
 **Breaking Change**：本节列出的标识符、模块名、env var、事件前缀、bot handle 均已从 `cowork` / `@ocw` / `OpenWorker*` 重命名为 `delta` / `@delta` / `delta.*`。依赖旧标识符的下游脚本/集成需要同步更新。
