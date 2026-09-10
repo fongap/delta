@@ -50,13 +50,17 @@ def test_gateway_is_thin_facade():
 
 def test_no_python_policy_implementation_in_production():
     """Production code must delegate to Rust via gateway facades."""
-    # engine.py should use evaluate_policy, not enforce_level/enforce_scope/restrict_grants
+    # ADR-034: policy evaluation lives in the tool lifecycle orchestrator
+    # (core/tool_lifecycle.py), not directly in engine.py.
     engine_source = (REPO / "core" / "engine.py").read_text(encoding="utf-8")
-    assert "gateway.evaluate_policy" in engine_source
-    # Old slice calls removed
-    assert "gateway.enforce_level" not in engine_source
-    assert "gateway.restrict_grants" not in engine_source
-    assert "gateway.enforce_scope" not in engine_source
+    lifecycle_source = (REPO / "core" / "tool_lifecycle.py").read_text(encoding="utf-8")
+    # Old slice calls removed from both production modules
+    for source in (engine_source, lifecycle_source):
+        assert "gateway.enforce_level" not in source
+        assert "gateway.restrict_grants" not in source
+        assert "gateway.enforce_scope" not in source
+    # evaluate_policy (the Rust facade) is used by the orchestrator
+    assert "gateway.evaluate_policy" in lifecycle_source
 
 
 def test_policy_in_rust_write_domains():
@@ -65,12 +69,6 @@ def test_policy_in_rust_write_domains():
 
     assert "policy" in RUST_WRITE_DOMAINS
 
-
-def test_policy_not_in_rust_read_domains():
-    """policy must not be in RUST_READ_DOMAINS — it's a hard-cut write authority."""
-    from packages.storage_authority import RUST_READ_DOMAINS
-
-    assert "policy" not in RUST_READ_DOMAINS
 
 
 # -- integration tests (require delta_core) ---------------------------------

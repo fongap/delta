@@ -20,6 +20,8 @@
 > >
 > > 2026-09-09 后续决策：ADR-031 完成 Approval Hard-Cut。Approval 审计写入域现在由 Rust `delta_core` 作为唯一 Authority（`core/approval.py` 是薄门面，`core/audit.py` 的 `append()` 委托给 Rust，交互式决策保留在 Python `engine.py`，`approval` 在 `RUST_WRITE_DOMAINS` 中，无 fallback / delegate / feature flag）。R2 全部 6 个域完成 hard-cut。
 
+> 2026-09-10 后续决策：ADR-032 完成 R2 Final Convergence。R2 Trusted Execution 正式收口。全部 6 个 R2 域（Artifact / Source-Citation / Validation / Checkpoint / Policy / Approval）已完成 hard-cut，Rust `delta_core` 为唯一 Authority。Shadow-reader 基础设施（`RUST_READ_DOMAINS` / `DELTA_RUST_READERS` / `is_rust_shadow_reader` / `tests/test_r2_shadow_read.py`）已删除。`RUST_WRITE_DOMAINS` 保留为唯一权威声明表面。无 Python fallback、无 delegate、无 feature flag、无双 Authority 路径。回滚仅 Git revert。下一阶段为 R3 Execution Lifecycle。
+
 ## 背景
 
 R1 State Foundation（ADR-017）已在 2026-09-07 完成：5 个领域（Idempotency / Ledger / Task identity / Run state / Storage transaction boundary）的 Rust delegate wrapper + 统一 `delta_core` 进程入口 + CI gate 全部就位。Rust authority 能力可用（opt-in via `DELTA_RUST_AUTHORITY`），但生产默认权威仍是 Python（Pre-R2 Gate / R1.7 明确的三态澄清）。

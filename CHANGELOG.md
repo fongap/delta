@@ -283,6 +283,32 @@ R2 Trusted Execution 第六域 Approval 完成 hard-cut。R2 全部 6 个域完�
 > 相关 ADR：ADR-031（新增），ADR-018（更新 Approval 状态）。
 
 
+### R2 — Final Convergence（#157 / ADR-032）
+
+R2 Trusted Execution 正式收口。全部 6 个 R2 域（Artifact / Source-Citation / Validation / Checkpoint / Policy / Approval）已完成 hard-cut，Rust `delta_core` 为唯一 Authority。Shadow-reader 基础设施（`RUST_READ_DOMAINS` / `DELTA_RUST_READERS` / `is_rust_shadow_reader` / `tests/test_r2_shadow_read.py`）已删除。`RUST_WRITE_DOMAINS` 保留为唯一权威声明表面。
+
+**Authority Matrix**：R2 全部 6 域 = **Rust（ADR-026/027/028/029/030/031 hard-cut）** Complete。
+
+> 相关 ADR：ADR-032（新增），ADR-018（更新 R2 状态）。
+
+
+### R3 — Execution Lifecycle Plan（#158 / ADR-033）
+
+R3 与 R2 不同——R2 是 authority switch，R3 是执行编排迁移。Side-Effect Safety（IdempotencyLog）和 Checkpoint 已完成 hard-cut。审计发现 Backoff（纯数学，无 authority 价值）和 Worker Restart（Python 侧 delta_core 宿主客户端，无 authority 价值）不是有效迁移目标。真正的 R3 工作是引擎执行循环重构。
+
+**真正的 R3 工作分阶段：**
+
+- **Phase 1（ADR-034）**：引擎执行循环重构 — 将工具调用编排（tool-call lifecycle）从 `engine.py` 的 async streaming 循环中分离，建立 Tool Lifecycle Orchestrator
+- **Phase 2**：以 orchestrator 为基础，依次迁移 Tool Lifecycle / Resume Decision / Cancellation / Timeout / Retry
+
+> 相关 ADR：ADR-033（新增），ADR-032（R2 收口）。
+
+
+### R3 — Engine Loop Restructuring（#159 / ADR-034）
+
+将工具调用编排（authorize → execute → record → resume）从 `core/engine.py` 的 async streaming 循环中提取到 `core/tool_lifecycle.py` 的 `ToolLifecycleOrchestrator`。引擎保留流式循环和高级迭代，委托 orchestrator 处理工具生命周期。`CancellationToken` 替代 `asyncio.Event`，为未来 Rust 化做准备。不 hard-cut 任何域到 Rust。
+
+
 ### R1.6 — Legacy Cleanup（`cowork` → `delta` 全栈重命名）
 
 **Breaking Change**：本节列出的标识符、模块名、env var、事件前缀、bot handle 均已从 `cowork` / `@ocw` / `OpenWorker*` 重命名为 `delta` / `@delta` / `delta.*`。依赖旧标识符的下游脚本/集成需要同步更新。

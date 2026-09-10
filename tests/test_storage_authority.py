@@ -2,11 +2,14 @@
 
 Covers:
 - R1 write domains (Idempotency, Ledger, Task Identity — hard-cut via ADR-022/023/024)
-- R2 shadow-reader domains (ADR-019) — for domains with Rust readers but not yet write authority
-- R2 write domains (Artifact ADR-026, Source/Citation ADR-027, Validation ADR-028, Checkpoint ADR-029)
+- R2 write domains (Artifact ADR-026, Source/Citation ADR-027, Validation ADR-028,
+  Checkpoint ADR-029, Policy ADR-030, Approval ADR-031)
 - Derived and coordination domains
 - Env var parsing rules (fail-fast, no silent ignore)
-- Disjointness of R1 write vs R2 reader surfaces
+
+After R2 Final Convergence (ADR-032), the shadow-reader surface
+(``RUST_READ_DOMAINS`` / ``DELTA_RUST_READERS`` / ``is_rust_shadow_reader``)
+was deleted — all 6 R2 domains are hard-cut write authorities.
 """
 
 from __future__ import annotations
@@ -20,17 +23,11 @@ from packages.storage_authority import (
     DERIVED_DOMAINS,
     ENV_VAR,
     InvalidAuthorityTargetError,
-    READER_ENV_VAR,
-    RUST_READ_DOMAINS,
     RUST_WRITE_DOMAINS,
     UnknownDomainError,
     _parse_domains,
-    _parse_reader_domains,
     is_rust_authority,
-    is_rust_shadow_reader,
 )
-
-
 
 
 def os_env() -> str | None:
@@ -55,12 +52,6 @@ def test_r1_write_rejects_derived_domains(monkeypatch):
     monkeypatch.setenv(ENV_VAR, "run_state")
     with pytest.raises(InvalidAuthorityTargetError):
         is_rust_authority("run_state")
-
-
-def test_r1_write_rejects_coordination_domains(monkeypatch):
-    """is_rust_authority must reject coordination domains."""
-    # Currently none, but the guard is in place
-    pass
 
 
 def test_r1_write_rejects_unknown_domain(monkeypatch):
@@ -104,104 +95,25 @@ def test_r1_write_env_var_unset_returns_false(monkeypatch):
         assert is_rust_authority(d) is False
 
 
-# -- R2 shadow-reader API (ADR-019) ------------------------------------------
-# Note: After ADR-029, checkpoint is a WRITE authority, not a reader domain.
-# These tests verify the new behavior and that the old reader tests
-# are no longer applicable.
-
-
-def test_r2_read_domains_empty_after_checkpoint_hardcut():
-    """After ADR-029, checkpoint is promoted to RUST_WRITE_DOMAINS.
-    RUST_READ_DOMAINS should be empty (no remaining R2 reader-only domains)."""
-    assert RUST_READ_DOMAINS == frozenset()
-
-
-def test_checkpoint_is_write_authority_domain():
-    """Checkpoint is now a write authority (ADR-029)."""
-    assert "checkpoint" in RUST_WRITE_DOMAINS
-    assert "checkpoint" not in RUST_READ_DOMAINS
-
-
-def test_checkpoint_rejected_from_r2_reader():
-    """is_rust_shadow_reader must reject checkpoint (it is neither a
-    write domain nor a shadow-reader domain after ADR-029)."""
-    with pytest.raises(InvalidAuthorityTargetError):
-        is_rust_shadow_reader("checkpoint")
-
-
-def test_r2_read_env_var_rejects_checkpoint(monkeypatch):
-    """DELTA_RUST_READERS=checkpoint must raise (checkpoint is hard-cut)."""
-    monkeypatch.setenv(READER_ENV_VAR, "checkpoint")
-    with pytest.raises(InvalidAuthorityTargetError):
-        is_rust_shadow_reader("checkpoint")
-
-
-def test_r2_read_rejects_r1_write_domain(monkeypatch):
-    """is_rust_shadow_reader must reject R1 write domains — those
-    have write authority, not just a reader. Use is_rust_authority."""
-    monkeypatch.setenv(READER_ENV_VAR, "validation")
-    for r1 in ("idempotency", "ledger", "task_identity", "validation", "checkpoint"):
-        with pytest.raises(InvalidAuthorityTargetError):
-            is_rust_shadow_reader(r1)
-
-
-def test_r2_read_rejects_derived_and_unknown(monkeypatch):
-    for bad in ("run_state", "storage_transaction"):
-        monkeypatch.setenv(READER_ENV_VAR, bad)
-        with pytest.raises(InvalidAuthorityTargetError):
-            is_rust_shadow_reader(bad)
-
-
-def test_r2_read_rejects_policy_and_approval(monkeypatch):
-    """Policy and Approval are evaluation/decision surfaces, not data
-    readers. They are NOT in RUST_READ_DOMAINS; their shadow-check
-    will be a different hook in their per-domain ADR."""
-    monkeypatch.setenv(READER_ENV_VAR, "validation")
-    with pytest.raises(InvalidAuthorityTargetError):
-        is_rust_shadow_reader("policy")
-    with pytest.raises(InvalidAuthorityTargetError):
-        is_rust_shadow_reader("approval")
-
-
-def test_r2_read_unknown_domain(monkeypatch):
-    monkeypatch.setenv(READER_ENV_VAR, "validation")
-    with pytest.raises(InvalidAuthorityTargetError):
-        is_rust_shadow_reader("unknown_domain")
-
-
 # -- R2 write authority domains (hard-cut) -----------------------------------
 
 
 def test_artifact_is_not_a_selectable_write_domain():
     """ADR-026: artifact is hard-cut to Rust and is no longer a
-    selectable authority. It is not in RUST_WRITE_DOMAINS and not in
-    RUST_READ_DOMAINS."""
+    selectable authority."""
     assert "artifact" not in RUST_WRITE_DOMAINS
-    assert "artifact" not in RUST_READ_DOMAINS
 
 
 def test_artifact_authority_env_var_is_rejected(monkeypatch):
     """DELTA_RUST_AUTHORITY=artifact must raise (artifact is hard-cut)."""
     monkeypatch.setenv(ENV_VAR, "artifact")
-    with pytest.raises(InvalidAuthorityTargetError):
-        is_rust_authority("artifact")
     with pytest.raises(UnknownDomainError):
         _parse_domains(os_env())
-
-
-def test_artifact_rejected_from_r2_reader(monkeypatch):
-    """is_rust_shadow_reader must reject artifact (it is neither a
-    write domain nor a shadow-reader domain after ADR-026)."""
-    monkeypatch.setenv(READER_ENV_VAR, "validation")
-    with pytest.raises(InvalidAuthorityTargetError):
-        is_rust_shadow_reader("artifact")
 
 
 def test_source_citation_is_hard_cut_not_selectable(monkeypatch):
     """Source/Citation is hard-cut to Rust (ADR-027) - no longer selectable via DELTA_RUST_AUTHORITY."""
     assert "source_citation" not in RUST_WRITE_DOMAINS
-    assert "source_citation" not in RUST_READ_DOMAINS
-    # Using it in DELTA_RUST_AUTHORITY raises an error
     monkeypatch.setenv(ENV_VAR, "source_citation")
     with pytest.raises(UnknownDomainError):
         _parse_domains(os_env())
@@ -209,48 +121,32 @@ def test_source_citation_is_hard_cut_not_selectable(monkeypatch):
 
 def test_validation_is_write_authority_domain(monkeypatch):
     assert "validation" in RUST_WRITE_DOMAINS
-    assert "validation" not in RUST_READ_DOMAINS
     monkeypatch.setenv(ENV_VAR, "validation")
     assert is_rust_authority("validation") is True
 
 
-# -- Domain disjointness and surface separation ------------------------------
+def test_checkpoint_is_write_authority_domain():
+    """Checkpoint is now a write authority (ADR-029)."""
+    assert "checkpoint" in RUST_WRITE_DOMAINS
+
+
+def test_policy_is_write_authority_domain():
+    """Policy is now a write authority (ADR-030)."""
+    assert "policy" in RUST_WRITE_DOMAINS
+
+
+def test_approval_is_write_authority_domain():
+    """Approval is now a write authority (ADR-031)."""
+    assert "approval" in RUST_WRITE_DOMAINS
+
+
+# -- Domain surface separation -----------------------------------------------
 
 
 def test_all_domains_is_union():
-    """ALL_DOMAINS must be the exact union of write + read + derived + coordination."""
-    expected = RUST_WRITE_DOMAINS | RUST_READ_DOMAINS | frozenset(DERIVED_DOMAINS) | COORDINATION_DOMAINS
+    """ALL_DOMAINS must be the exact union of write + derived + coordination."""
+    expected = RUST_WRITE_DOMAINS | frozenset(DERIVED_DOMAINS) | COORDINATION_DOMAINS
     assert ALL_DOMAINS == expected
-
-
-def test_r2_read_env_var_name_distinct():
-    """R2 reader env var is distinct from R1 write env var."""
-    assert READER_ENV_VAR != ENV_VAR
-
-
-def test_r2_read_env_var_rejects_r1_write_domain(monkeypatch):
-    """is_rust_shadow_reader must reject R1 write domains — those
-    have write authority, not just a reader. Use is_rust_authority."""
-    monkeypatch.setenv(READER_ENV_VAR, "validation")
-    for r1 in ("idempotency", "ledger", "task_identity", "validation", "checkpoint"):
-        with pytest.raises(InvalidAuthorityTargetError):
-            is_rust_shadow_reader(r1)
-
-
-def test_r2_read_env_var_rejects_r2_write_domain(monkeypatch):
-    """is_rust_shadow_reader must reject R2 write domains (artifact, source_citation, validation, checkpoint)."""
-    monkeypatch.setenv(READER_ENV_VAR, "validation")
-    for r2 in ("artifact", "source_citation", "validation", "checkpoint"):
-        with pytest.raises(InvalidAuthorityTargetError):
-            is_rust_shadow_reader(r2)
-
-
-def test_r1_write_rejects_r2_read_domain(monkeypatch):
-    """is_rust_authority must reject R2 reader domains —
-    those have a Rust reader but no Rust write authority yet."""
-    # After ADR-029, there are no R2 reader domains left
-    # but the guard should still work if any are added
-    pass
 
 
 # -- Env var parsing rules (fail-fast, no silent ignore) ---------------------
@@ -298,63 +194,6 @@ def test_parse_domains_whitespace_only_empty():
     assert _parse_domains(",,") == frozenset()
 
 
-# -- Reader env var parsing --------------------------------------------------
-
-
-def test_parse_reader_domains_empty_returns_empty():
-    assert _parse_reader_domains(None) == frozenset()
-    assert _parse_reader_domains("") == frozenset()
-    assert _parse_reader_domains("   ") == frozenset()
-
-
-def test_parse_reader_domains_legacy_all_keyword():
-    assert _parse_reader_domains("all") == RUST_READ_DOMAINS
-    assert _parse_reader_domains("ALL") == RUST_READ_DOMAINS
-
-
-def test_parse_reader_domains_legacy_truthy():
-    for val in ("1", "true", "yes", "on"):
-        assert _parse_reader_domains(val) == RUST_READ_DOMAINS
-
-
-def test_parse_reader_domains_rejects_r1_write_domain():
-    # R1 write domains are not in RUST_READ_DOMAINS (empty), so they raise UnknownDomainError
-    with pytest.raises(UnknownDomainError):
-        _parse_reader_domains("idempotency")
-
-
-def test_parse_reader_domains_rejects_r2_write_domain():
-    # R2 write domains are not in RUST_READ_DOMAINS (empty), so they raise UnknownDomainError
-    with pytest.raises(UnknownDomainError):
-        _parse_reader_domains("artifact")
-    with pytest.raises(UnknownDomainError):
-        _parse_reader_domains("source_citation")
-    with pytest.raises(UnknownDomainError):
-        _parse_reader_domains("validation")
-    with pytest.raises(UnknownDomainError):
-        _parse_reader_domains("checkpoint")
-
-
-def test_parse_reader_domains_rejects_derived():
-    # Derived domains are added to errors, but implementation raises UnknownDomainError for all errors
-    with pytest.raises(UnknownDomainError):
-        _parse_reader_domains("run_state")
-
-
-def test_parse_reader_domains_rejects_policy_approval():
-    # Policy/approval not in RUST_READ_DOMAINS (empty), raise UnknownDomainError
-    with pytest.raises(UnknownDomainError):
-        _parse_reader_domains("policy")
-    with pytest.raises(UnknownDomainError):
-        _parse_reader_domains("approval")
-
-
-def test_parse_reader_domains_unknown():
-    # Unknown domains not in RUST_READ_DOMAINS (empty), raise UnknownDomainError
-    with pytest.raises(UnknownDomainError):
-        _parse_reader_domains("unknown_domain")
-
-
 # -- Hard-cut invariants (ADR-022/023/024/026/027/028/029) -------------------
 
 
@@ -362,12 +201,6 @@ def test_hard_cut_domains_not_in_write_domains():
     """Artifact and Source/Citation are hard-cut — not selectable via env var."""
     assert "artifact" not in RUST_WRITE_DOMAINS
     assert "source_citation" not in RUST_WRITE_DOMAINS
-
-
-def test_hard_cut_domains_not_in_read_domains():
-    """Artifact and Source/Citation are hard-cut — not in reader domains."""
-    assert "artifact" not in RUST_READ_DOMAINS
-    assert "source_citation" not in RUST_READ_DOMAINS
 
 
 def test_validation_in_write_domains():
@@ -394,8 +227,3 @@ def test_coordination_domains_empty():
 def test_derived_domains_rejected_from_write():
     with pytest.raises(InvalidAuthorityTargetError):
         is_rust_authority("run_state")
-
-
-def test_derived_domains_rejected_from_read():
-    with pytest.raises(InvalidAuthorityTargetError):
-        is_rust_shadow_reader("run_state")

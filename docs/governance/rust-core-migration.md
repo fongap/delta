@@ -75,6 +75,12 @@
 > **R2 Checkpoint Hard-Cut（ADR-029，2026-09-10）**：Checkpoint 域已完成 hard-cut。Rust `delta_core` 是唯一事实来源。Python `core/recovery.py` 只负责状态收集 / 快照构造，通过 `DeltaCoreClient` 发送 `checkpoint.register` / `checkpoint.get` / `checkpoint.validate` 等命令。`inspect_checkpoint` 已删除，`checkpoint` 在 `RUST_WRITE_DOMAINS` 中，不在 `RUST_READ_DOMAINS`。不存在 Python fallback writer、delegate wrapper、feature flag 或双 Authority 路径。回滚方式仅为 Git revert。
 >
 > **R2 Policy Hard-Cut（ADR-030，2026-09-10）**：Policy 域已完成 hard-cut。Rust `delta_core` 是唯一事实来源。Python `core/gateway.py` 只负责状态收集 / 元数据构造，通过 `DeltaCoreClient` 发送 `policy.classify` / `policy.evaluate` 命令。`enforce_level` / `restrict_grants` / `enforce_scope` Python 实现已删除，`policy` 在 `RUST_WRITE_DOMAINS` 中。不存在 Python fallback writer、delegate wrapper、feature flag 或双 Authority 路径。回滚方式仅为 Git revert。
+>
+> **R2 Approval Hard-Cut（ADR-031，2026-09-10）**：Approval 审计写入域已完成 hard-cut。Rust `delta_core` 是唯一事实来源。Python `core/approval.py` 是薄门面，通过 `DeltaCoreClient` 发送 `approval.record` 命令。`core/audit.py` 的 `append()` 委托给 Rust，交互式决策（`ApprovalOutcome` / `PermissionRequest` / `Approver`）保留在 Python `engine.py`，`approval` 在 `RUST_WRITE_DOMAINS` 中。不存在 Python fallback writer、delegate wrapper、feature flag 或双 Authority 路径。回滚方式仅为 Git revert。
+>
+> **R2 Final Convergence（ADR-032，2026-09-10）**：R2 Trusted Execution 正式收口。全部 6 个 R2 域（Artifact / Source-Citation / Validation / Checkpoint / Policy / Approval）已完成 hard-cut，Rust `delta_core` 为唯一 Authority。Shadow-reader 基础设施（`RUST_READ_DOMAINS` / `DELTA_RUST_READERS` / `is_rust_shadow_reader` / `tests/test_r2_shadow_read.py`）已删除。`RUST_WRITE_DOMAINS` 保留为唯一权威声明表面。无 Python fallback、无 delegate、无 feature flag、无双 Authority 路径。回滚仅 Git revert。
+
+> **R3 Execution Lifecycle Plan（ADR-033，2026-09-10）**：R3 与 R2 结构不同——R2 是 authority switch，R3 是执行编排迁移。Side-Effect Safety（IdempotencyLog）和 Checkpoint 已完成 hard-cut。剩余域按风险分阶段：Phase 1（Backoff/Worker Restart，无引擎重构）→ Phase 2（引擎重构前置）→ Phase 3（Tool Lifecycle/Resume/Cancellation/Timeout/Retry）。详见 ADR-033。
 
 每次迁移必须更新实际 Authority Matrix。
 

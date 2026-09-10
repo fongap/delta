@@ -80,11 +80,6 @@ def test_no_production_file_imports_deleted_recovery_delegate():
     assert not violations, "deleted delegate imported by: " + ", ".join(violations)
 
 
-def test_checkpoint_not_in_rust_read_domains():
-    """checkpoint must not be in RUST_READ_DOMAINS — it's a hard-cut write authority."""
-    from packages.storage_authority import RUST_READ_DOMAINS
-    assert "checkpoint" not in RUST_READ_DOMAINS
-
 
 def test_checkpoint_in_rust_write_domains():
     """checkpoint must be in RUST_WRITE_DOMAINS after ADR-029."""
