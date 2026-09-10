@@ -54,9 +54,9 @@ def test_approval_schema_version_constant():
 # -- Protocol version guard -----------------------------------------------------
 
 
-def test_protocol_version_is_10():
-    """Python and Rust must agree on PROTOCOL_VERSION = 10."""
-    assert PROTOCOL_VERSION == 10
+def test_protocol_version_is_11():
+    """Python and Rust must agree on PROTOCOL_VERSION = 11."""
+    assert PROTOCOL_VERSION == 11
 
 
 # -- Storage authority guard ----------------------------------------------------

@@ -86,7 +86,7 @@ use time::OffsetDateTime;
 /// immediately after subprocess startup; a mismatch raises
 /// :class:`DeltaCoreError` (fail-closed) so we never silently talk to
 /// an incompatible binary.
-const PROTOCOL_VERSION: u32 = 10;
+const PROTOCOL_VERSION: u32 = 11;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "cmd")]
@@ -444,14 +444,19 @@ enum Command {
         #[serde(default)]
         args: Value,
     },
-    /// R3 / ADR-037: decide the lifecycle consequence of cancelling a tool
-    /// call. Executing → Uncertain; Planned → Failed; terminal → no-op.
+    /// R3 / ADR-037 / ADR-038: decide the lifecycle consequence of
+    /// interrupting a tool call (user stop or timeout).
+    /// Executing → Uncertain; Planned → Failed; terminal → no-op.
+    /// `reason` ("user_stop", "timeout") is an audit label that does
+    /// not change the state-machine decision.
     #[serde(rename = "toollifecycle.cancel")]
     ToolLifecycleCancel {
         db: String,
         run_id: String,
         tool_call_id: String,
         tool_name: String,
+        #[serde(default)]
+        reason: Option<String>,
     },
     /// R2 / ADR-031: record an approval audit event.
     #[serde(rename = "approval.record")]
@@ -1743,6 +1748,7 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
             run_id,
             tool_call_id,
             tool_name,
+            reason,
         } => {
             let writer = match cache.idem(&db) {
                 Ok(w) => w,
@@ -1753,6 +1759,7 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
                 run_id,
                 tool_call_id,
                 tool_name,
+                reason,
             };
             match delta_runtime_native::cancel_tool_lifecycle(writer, &input) {
                 Ok(output) => Ok(serde_json::to_value(output).unwrap()),

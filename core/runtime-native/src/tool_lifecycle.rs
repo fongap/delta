@@ -128,13 +128,20 @@ pub fn plan(
     }
 }
 
-/// Input for a cancellation decision (ADR-037).
+/// Input for an interruption lifecycle decision (ADR-037 / ADR-038).
+///
+/// `reason` is an optional audit label that distinguishes the interruption
+/// cause ("user_stop", "timeout", etc.) without affecting the state-machine
+/// decision itself. The lifecycle transition is identical regardless of
+/// reason: Executing → Uncertain, Planned → Failed, terminal → no-op.
 #[derive(Debug, Clone, Deserialize)]
 pub struct ToolLifecycleCancelInput {
     pub db: String,
     pub run_id: String,
     pub tool_call_id: String,
     pub tool_name: String,
+    #[serde(default)]
+    pub reason: Option<String>,
 }
 
 /// The lifecycle decision Rust returns when a tool call is cancelled.
@@ -167,7 +174,8 @@ pub struct ToolLifecycleCancelOutput {
     pub operation_id: Option<String>,
 }
 
-/// Decide the lifecycle consequence of cancelling a tool call (ADR-037).
+/// Decide the lifecycle consequence of interrupting a tool call
+/// (ADR-037 / ADR-038).
 ///
 /// Authority rule:
 /// - **Executing** → mark Uncertain (side effect may or may not have
@@ -175,6 +183,10 @@ pub struct ToolLifecycleCancelOutput {
 /// - **Planned** → mark Failed (nothing executed, safe to fail).
 /// - **Committed / Failed / Uncertain** → terminal, no transition.
 /// - **No row** → no idempotency authority; Python decides locally.
+///
+/// `reason` (e.g. "user_stop", "timeout") is an audit label; it does
+/// not change the state-machine decision, only the recorded failure
+/// message when the state was Planned.
 pub fn cancel(
     writer: &IdempotencyWriter,
     input: &ToolLifecycleCancelInput,
@@ -193,6 +205,11 @@ pub fn cancel(
         });
     };
 
+    let reason_label = input
+        .reason
+        .as_deref()
+        .unwrap_or("cancelled");
+
     match entry.state {
         crate::idemlog::SideEffectState::Executing => {
             // Side effect started but result unknown — MUST be Uncertain.
@@ -204,10 +221,11 @@ pub fn cancel(
         }
         crate::idemlog::SideEffectState::Planned => {
             // Nothing executed yet — safe to mark Failed.
+            let msg = format!("{reason_label} before execution");
             writer.mark_failed(
                 &input.run_id,
                 &input.tool_call_id,
-                "cancelled before execution",
+                &msg,
             )?;
             Ok(ToolLifecycleCancelOutput {
                 action: CancelAction::Failed,
@@ -358,6 +376,7 @@ mod tests {
             run_id: run_id.to_string(),
             tool_call_id: call_id.to_string(),
             tool_name: name.to_string(),
+            reason: None,
         }
     }
 
@@ -455,5 +474,64 @@ mod tests {
         )
         .unwrap();
         assert!(matches!(out.action, CancelAction::None));
+    }
+
+    // -- ADR-038: Timeout decision authority tests --
+
+    fn timeout_input(db: &str, run_id: &str, call_id: &str, name: &str) -> ToolLifecycleCancelInput {
+        ToolLifecycleCancelInput {
+            db: db.to_string(),
+            run_id: run_id.to_string(),
+            tool_call_id: call_id.to_string(),
+            tool_name: name.to_string(),
+            reason: Some("timeout".to_string()),
+        }
+    }
+
+    #[test]
+    fn timeout_executing_marks_uncertain() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("side_effects.db");
+        let writer = IdempotencyWriter::open(&db).unwrap();
+
+        let args = serde_json::json!({"path": "a.txt"});
+        writer
+            .record_planned("r1", "c1", "write_file", &args)
+            .unwrap();
+        writer.mark_executing("r1", "c1").unwrap();
+
+        // Timeout while executing — must be Uncertain, never Failed.
+        let out = cancel(
+            &writer,
+            &timeout_input(db.to_str().unwrap(), "r1", "c1", "write_file"),
+        )
+        .unwrap();
+        assert!(matches!(out.action, CancelAction::Uncertain));
+
+        let entry = writer.get("r1", "c1").unwrap().unwrap();
+        assert_eq!(entry.state, crate::idemlog::SideEffectState::Uncertain);
+    }
+
+    #[test]
+    fn timeout_planned_marks_failed_with_timeout_reason() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("side_effects.db");
+        let writer = IdempotencyWriter::open(&db).unwrap();
+
+        let args = serde_json::json!({"path": "a.txt"});
+        writer
+            .record_planned("r2", "c2", "write_file", &args)
+            .unwrap();
+
+        let out = cancel(
+            &writer,
+            &timeout_input(db.to_str().unwrap(), "r2", "c2", "write_file"),
+        )
+        .unwrap();
+        assert!(matches!(out.action, CancelAction::Failed));
+
+        let entry = writer.get("r2", "c2").unwrap().unwrap();
+        assert_eq!(entry.state, crate::idemlog::SideEffectState::Failed);
+        assert_eq!(entry.result["error"], "timeout before execution");
     }
 }

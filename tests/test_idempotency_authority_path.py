@@ -64,3 +64,26 @@ def test_tool_lifecycle_plan_is_rust_disposition():
     assert ".record_planned(" not in source
     assert ".mark_executing(" not in source
     assert ".lookup(" not in source
+
+
+def test_tool_lifecycle_cancel_is_rust_authority():
+    """ADR-037/038: the interruption lifecycle decision (Executing →
+    Uncertain, Planned → Failed) lives behind a single Rust
+    ``toollifecycle.cancel`` call. Python's ``_interrupted_tool`` and
+    ``_timed_out_tool`` must delegate to ``idem_log.cancel()``, never
+    hardcode a terminal state."""
+    source = (REPO / "core" / "tool_lifecycle.py").read_text(encoding="utf-8")
+    assert "_timed_out_tool" in source
+    assert "reason=" in source
+    assert ".cancel(" in source
+    # No hardcoded "failed" status for interrupted/timed-out tools.
+    assert 'rust_status = "failed"' not in source
+
+
+def test_tool_lifecycle_cancel_accepts_reason():
+    """ADR-038: ``IdempotencyLog.cancel()`` must accept a ``reason``
+    parameter so the timeout path can distinguish itself from the
+    user-stop path in the audit trail."""
+    source = (REPO / "core" / "idemlog.py").read_text(encoding="utf-8")
+    assert "reason" in source
+    assert "timeout" in source

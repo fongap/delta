@@ -87,6 +87,8 @@
 > **R3 Resume Decision Audit（ADR-036，2026-09-10）**：审计型 ADR，无代码变更。Resume Decision 域的 authority 部分已由 ADR-029（checkpoint 持久化/验证）和 ADR-035（`toollifecycle.plan` 的 dedop/replay/uncertain）完成。剩余的 `unanswered_trailing_tool_calls()` 是纯 Python 内存解析，无 authority 价值，不迁移。
 >
 > **R3 Final Audit — Cancellation / Timeout / Retry（ADR-037，2026-09-10）**：~~审计型 ADR，无代码变更。Cancellation / Timeout / Retry 三个域全部是纯运行时守卫或纯函数，无持久化、无 crash 恢复、无数据一致性。~~ **修正**：Cancellation 的 lifecycle-state 决策（Uncertain vs Failed）是持久化状态机转移，有 authority 价值。ADR-037 revised 将 Cancellation 决策 authority 迁到 Rust `toollifecycle.cancel` 命令。Timeout / Retry 的审计仍待修订（ADR-038/039）。
+>
+> **R3 Timeout Decision Authority（ADR-038，2026-09-10）**：`toollifecycle.cancel` 命令扩展 `reason` 参数（"user_stop" / "timeout"），让 timeout 和 cancellation 共享同一 Rust 状态机决策（Executing → Uncertain, Planned → Failed）同时区分审计原因。Python 侧新增 `tool_timeout` 配置（默认 300s）和 `ThreadPoolExecutor` deadline 机制；超时时 Python 调用 `idem_log.cancel(reason="timeout")` 委托 Rust 决策。Protocol 10 → 11。
 
 每次迁移必须更新实际 Authority Matrix。
 
@@ -158,15 +160,15 @@ R0 完成前禁止大规模搬代码。
 
 ### R3 — Execution Lifecycle
 
-> **R3 Execution Lifecycle 完成（ADR-037，2026-09-10）**：R3 已正式收口。工具执行处置决策（`toollifecycle.plan`）和 checkpoint 持久化/验证是唯一需要 Rust authority 的域，已 Rust-authoritative。Tool lifecycle 编排其余部分（授权、工具执行调度、resume 重建、cancellation）是 Python 能力或运行时守卫，经 ADR-036/037 审计为无 authority 价值，不迁移。Backoff / Retry / Timeout / Worker restart 同 ADR-033 审计结论。
+> **R3 Execution Lifecycle（进行中）**：工具执行处置决策（`toollifecycle.plan`）、cancellation 决策（`toollifecycle.cancel`）、timeout 决策（`toollifecycle.cancel` with `reason`）已 Rust-authoritative。Retry 决策 authority 待迁移（ADR-039）。
 
 迁移：
 
 - Tool lifecycle；✅ ADR-035 hard-cut（disposition 决策）
-- Retry；✅ ADR-037 审计（无 authority 价值）
-- Backoff；✅ ADR-033 审计（无 authority 价值）
-- Timeout；✅ ADR-037 审计（无 authority 价值）
-- Cancellation；✅ ADR-037 审计（无 authority 价值）
+- Retry；⏳ ADR-039 待迁移（retry policy 决策 authority）
+- Backoff；✅ ADR-033 审计（纯函数，无 authority 价值）
+- Timeout；✅ ADR-038（lifecycle-state 决策 authority via `toollifecycle.cancel`）
+- Cancellation；✅ ADR-037 revised（lifecycle-state 决策 authority）
 - Worker restart；✅ ADR-033 审计（无 authority 价值）
 - Resume decision；✅ ADR-036 审计（已由 ADR-029+035 覆盖）
 - side-effect safety。✅ ADR-022（R1 已 hard-cut）

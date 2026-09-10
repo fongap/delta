@@ -47,6 +47,11 @@ class Config:
     # pre-first-token wait on free/shared gateways is the timeout killer; >0 enables
     # the guard, <=0 disables it.
     ttft_timeout: float = 90.0
+    # Per-tool execution timeout (seconds, ADR-038). When a tool call
+    # exceeds this ceiling, the orchestrator fires the timeout path:
+    # Rust decides the lifecycle consequence (Executing → Uncertain,
+    # Planned → Failed). <=0 disables the guard.
+    tool_timeout: float = 300.0
     # Bounded retries for TRANSIENT model-call failures (429/5xx/connection/TTFT stall),
     # Codex-style exponential backoff (v0.3.0 P1). Never retries stream truncation
     # (finish_reason guard) or context overflow. 0 disables auto-retry.
@@ -70,6 +75,7 @@ _FIELDS = {
     "auto_allow",
     "tool_selection",
     "ttft_timeout",
+    "tool_timeout",
     "max_retries",
     "compaction_prefill_weight",
     "host",

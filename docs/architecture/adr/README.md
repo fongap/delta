@@ -42,6 +42,7 @@
 - `ADR-036-r3-resume-decision-audit.md` – R3 Phase 2 审计型 ADR：Resume Decision 的 authority 部分已由 ADR-029（checkpoint 持久化/验证）和 ADR-035（toollifecycle.plan dedop/replay/uncertain）完成。剩余的 `unanswered_trailing_tool_calls()` 是纯 Python 内存解析，无 authority 价值，不迁移。
 - `ADR-037-r3-cancellation-timeout-retry-audit.md` – **Superseded** (Cancellation portion). 原审计错误地将 Cancellation 判为"无 authority 价值"。Cancellation 的 lifecycle-state 决策（Uncertain vs Failed）是持久化状态机转移，有 authority 价值。
 - `ADR-037-r3-cancellation-decision-authority.md` – R3 Cancellation 决策 authority 迁移到 Rust `toollifecycle.cancel` 命令。Executing → Uncertain（never Failed）；Planned → Failed；terminal → no-op。Python `_interrupted_tool` 不再硬编码 "interrupted" 状态，委托 Rust 决策。asyncio.Event 信号传输层保留 Python。
+- `ADR-038-r3-timeout-decision-authority.md` – R3 Timeout 决策 authority。`toollifecycle.cancel` 扩展 `reason` 参数，让 timeout 和 cancellation 共享同一 Rust 状态机决策（Executing → Uncertain, Planned → Failed）同时区分审计原因。Python 新增 `tool_timeout` 配置（默认 300s）和 `ThreadPoolExecutor` deadline 机制。Protocol 10 → 11。
 
 相关架构文档：
 - `hub-federation-boundary.md` – Delta Hub 联邦化边界设计，明确 OpenWorker 仅为可选适配器。
