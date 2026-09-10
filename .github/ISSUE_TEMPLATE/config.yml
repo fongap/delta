@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+
+contact_links:
+  - name: Ask a question
+    url: https://github.com/fongap/delta/discussions
+    about: 安装、配置、模型接入、使用和排障问题请前往 Discussions / Q&A。
+
+  - name: Suggest an idea
+    url: https://github.com/fongap/delta/discussions
+    about: 功能、交互、工作流和产品改进建议请前往 Discussions / Ideas。
+
+  - name: Security vulnerability
+    url: https://github.com/fongap/delta/security/policy
+    about: 安全漏洞请勿公开提交 Issue；请先阅读安全报告说明。
