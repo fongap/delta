@@ -162,7 +162,7 @@ R0 完成前禁止大规模搬代码。
 
 ### R3 — Execution Lifecycle
 
-> **R3 Execution Lifecycle（进行中）**：工具执行处置决策（`toollifecycle.plan`）、cancellation 决策（`toollifecycle.cancel`）、timeout 决策（`toollifecycle.cancel` with `reason`）、retry policy 决策（`retry.classify`）已 Rust-authoritative。R3 Final Convergence 待 ADR-040。
+> **R3 Execution Lifecycle 完成（ADR-040，2026-09-10）**：所有执行生命周期决策 authority 已 Rust-authoritative。Tool lifecycle disposition（`toollifecycle.plan`）、cancellation/timeout lifecycle state（`toollifecycle.cancel`）、retry policy decision（`retry.classify`）均在 Rust。Python 保留能力面：工具执行、信号传输、deadline 机制、backoff 数学、消息历史解析。
 
 迁移：
 
