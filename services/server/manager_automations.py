@@ -186,7 +186,16 @@ class AutomationsMixin(ManagerHostState):
                 self._runtimes[run.session_id] = runtime
             except Exception:
                 pass
-            self.task_store.add_run(run)
+            # ADR-043: atomically complete run + update task stats (run_count,
+            # last_run, last_status, max_runs exhaustion) via Rust.
+            updated_task = self.task_store.complete_run(run, run.finished_at)
+            # Sync local task cache with updated data from Rust.
+            task.run_count = updated_task.get("run_count", task.run_count)
+            task.last_run = updated_task.get("last_run", task.last_run)
+            task.last_status = updated_task.get("last_status", task.last_status)
+            task.enabled = updated_task.get("enabled", task.enabled)
+            task.next_run = updated_task.get("next_run", task.next_run)
+
             # §7.2 Inbox 收敛: a run that did NOT succeed (error /
             # validation_failed / skipped) surfaces as an issue in the
             # unified Inbox queue — not silent. The user can acknowledge

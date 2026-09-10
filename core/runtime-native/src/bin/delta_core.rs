@@ -86,7 +86,7 @@ use time::OffsetDateTime;
 /// immediately after subprocess startup; a mismatch raises
 /// :class:`DeltaCoreError` (fail-closed) so we never silently talk to
 /// an incompatible binary.
-const PROTOCOL_VERSION: u32 = 13;
+const PROTOCOL_VERSION: u32 = 14;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "cmd")]
@@ -249,6 +249,16 @@ enum Command {
         started_at: f64,
         data: String,
         workspace: String,
+    },
+    #[serde(rename = "task.complete_run")]
+    TaskCompleteRun {
+        db: String,
+        run_id: String,
+        task_id: String,
+        started_at: f64,
+        run_data: String,
+        workspace: String,
+        finished_at: f64,
     },
     #[serde(rename = "task.close")]
     TaskClose { db: String },
@@ -1152,6 +1162,31 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
             };
             match store.add_run(&run_id, &task_id, started_at, &data, &workspace) {
                 Ok(_) => Ok(serde_json::json!({"added": true})),
+                Err(e) => Err(e.to_string()),
+            }
+        }
+        Command::TaskCompleteRun {
+            db,
+            run_id,
+            task_id,
+            started_at,
+            run_data,
+            workspace,
+            finished_at,
+        } => {
+            let store = match cache.task(&db) {
+                Ok(w) => w,
+                Err(e) => return err(e),
+            };
+            match store.complete_run(
+                &run_id,
+                &task_id,
+                started_at,
+                &run_data,
+                &workspace,
+                finished_at,
+            ) {
+                Ok(updated_task) => Ok(updated_task),
                 Err(e) => Err(e.to_string()),
             }
         }
