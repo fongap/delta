@@ -19,6 +19,20 @@
 //! {"ok": false, "error": "..."}  // failure
 //! ```
 //!
+//! R5 / ADR-047 streaming: commands marked streaming (e.g.
+//! ``stream.echo``) write a sequence of frames instead of a single
+//! response: a ``start`` frame, zero or more ``delta`` frames, and a
+//! terminal ``done`` frame. Each frame carries a ``stream_id``:
+//!
+//! ```json
+//! {"ok": true, "stream": "start", "stream_id": "<uuid>"}
+//! {"ok": true, "stream": "delta", "stream_id": "<uuid>", "data": {...}}
+//! {"ok": true, "stream": "done",  "stream_id": "<uuid>", "result": {...}}
+//! ```
+//!
+//! A non-streaming control command (``stream.cancel``) returns a
+//! single response like any other command.
+//!
 //! Startup handshake: the Python client sends a ``hello`` command
 //! immediately after spawning the subprocess. The server replies
 //! with its protocol version; a mismatch raises an error and the
@@ -86,7 +100,7 @@ use time::OffsetDateTime;
 /// immediately after subprocess startup; a mismatch raises
 /// :class:`DeltaCoreError` (fail-closed) so we never silently talk to
 /// an incompatible binary.
-const PROTOCOL_VERSION: u32 = 14;
+const PROTOCOL_VERSION: u32 = 15;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "cmd")]
@@ -508,6 +522,13 @@ enum Command {
         isolation: Option<String>,
         ts: Option<f64>,
     },
+    /// R5 / ADR-047: test command that exercises the streaming ABI.
+    /// Sends N delta frames with optional delay, then a done frame.
+    #[serde(rename = "stream.echo")]
+    StreamEcho { chunks: u32, delay_ms: Option<u64> },
+    /// R5 / ADR-047: cancel an in-flight stream by stream_id.
+    #[serde(rename = "stream.cancel")]
+    StreamCancel { stream_id: String },
 }
 
 struct ConnCache {
@@ -647,6 +668,66 @@ fn listed_entry_json(entry: SideEffectEntry, view: &str) -> Value {
         }),
         _ => Value::Null,
     }
+}
+
+impl Command {
+    fn is_streaming(&self) -> bool {
+        matches!(self, Command::StreamEcho { .. })
+    }
+}
+
+fn handle_stream(cmd: Command, _cache: &Mutex<ConnCache>, out: &mut impl Write) {
+    use uuid::Uuid;
+    let stream_id = Uuid::new_v4().to_string();
+
+    // Write start frame
+    let start = serde_json::json!({
+        "ok": true,
+        "stream": "start",
+        "stream_id": stream_id
+    });
+    writeln!(out, "{start}").ok();
+    out.flush().ok();
+
+    match cmd {
+        Command::StreamEcho { chunks, delay_ms } => {
+            for i in 0..chunks {
+                let delta = serde_json::json!({
+                    "ok": true,
+                    "stream": "delta",
+                    "stream_id": stream_id,
+                    "data": {"chunk": i, "total": chunks}
+                });
+                writeln!(out, "{delta}").ok();
+                out.flush().ok();
+                if let Some(ms) = delay_ms {
+                    std::thread::sleep(std::time::Duration::from_millis(ms));
+                }
+            }
+            let done = serde_json::json!({
+                "ok": true,
+                "stream": "done",
+                "stream_id": stream_id,
+                "result": {"chunks_sent": chunks}
+            });
+            writeln!(out, "{done}").ok();
+        }
+        Command::StreamCancel {
+            stream_id: target_id,
+        } => {
+            // Phase 0: placeholder cancel (no active streams to cancel yet).
+            // Phase 1 will wire this to actual provider stream cancellation.
+            let done = serde_json::json!({
+                "ok": true,
+                "stream": "done",
+                "stream_id": stream_id,
+                "result": {"cancelled": target_id}
+            });
+            writeln!(out, "{done}").ok();
+        }
+        _ => unreachable!(),
+    }
+    out.flush().ok();
 }
 
 fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
@@ -1909,6 +1990,8 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
                 Err(e) => Err(e.to_string()),
             }
         }
+        Command::StreamEcho { .. } => Err("streaming commands handled in handle_stream".into()),
+        Command::StreamCancel { stream_id } => Ok(serde_json::json!({"cancelled": stream_id})),
     };
     match result {
         Ok(v) => serde_json::json!({"ok": true, "result": v}),
@@ -1940,9 +2023,13 @@ fn main() -> std::process::ExitCode {
                 continue;
             }
         };
-        let resp = handle(cmd, &cache);
-        writeln!(out, "{resp}").ok();
-        out.flush().ok();
+        if cmd.is_streaming() {
+            handle_stream(cmd, &cache, &mut out);
+        } else {
+            let resp = handle(cmd, &cache);
+            writeln!(out, "{resp}").ok();
+            out.flush().ok();
+        }
     }
     std::process::ExitCode::SUCCESS
 }

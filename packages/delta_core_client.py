@@ -30,7 +30,7 @@ import subprocess
 import sys
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, Generator
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CRATE_DIR = REPO_ROOT / "core" / "runtime-native"
@@ -47,7 +47,7 @@ DEFAULT_COMMAND_TIMEOUT_SECONDS: float = 30.0
 # ``core/runtime-native/src/bin/delta_core.rs``. The Python client
 # sends this in a ``hello`` command immediately after subprocess
 # startup; a mismatch raises :class:`DeltaCoreError` (fail-closed).
-PROTOCOL_VERSION: int = 14
+PROTOCOL_VERSION: int = 15
 
 
 def _find_delta_core_binary() -> Path | None:
@@ -377,6 +377,98 @@ class DeltaCoreClient:
                     f"delta_core {payload.get('cmd')}: {response.get('error')}"
                 )
             return response.get("result")
+
+    def stream(
+        self, payload: dict[str, Any]
+    ) -> "Generator[dict[str, Any], None, Any]":
+        """Send a streaming command, yielding delta frames.
+
+        Yields each ``data`` payload from ``delta`` frames as they
+        arrive. Returns the ``result`` from the terminal ``done``
+        frame. Raises :class:`DeltaCoreError` on error frames or
+        protocol violations.
+
+        The lock is held for the entire stream duration so no other
+        command can interleave on the stdio pipe. The caller can
+        cancel by calling :meth:`stream_cancel` from another thread
+        (which will block until the stream finishes or is closed).
+        """
+        self._lock.acquire()
+        try:
+            self._ensure_started()
+            proc = self._proc
+            if proc is None or proc.stdin is None or proc.stdout is None:
+                self.close()
+                raise DeltaCoreError("delta_core process pipes unavailable")
+            line = json.dumps(payload)
+            try:
+                proc.stdin.write(line + "\n")
+                proc.stdin.flush()
+            except (BrokenPipeError, OSError, ValueError) as exc:
+                self.close()
+                raise DeltaCoreError(f"delta_core stdin write failed: {exc}") from exc
+        except BaseException:
+            self._lock.release()
+            raise
+        return self._read_stream_frames(proc)
+
+    def stream_cancel(self, stream_id: str) -> Any:
+        """Cancel an in-flight stream by ``stream_id``.
+
+        Note: blocks until the active stream finishes (the stream
+        holds the client lock). Phase 0 placeholder.
+        """
+        return self.command({"cmd": "stream.cancel", "stream_id": stream_id})
+
+    def _read_stream_frames(
+        self, proc: "subprocess.Popen[str]"
+    ) -> "Generator[dict[str, Any], None, Any]":
+        """Read framed stream lines from stdout, yielding deltas.
+
+        Releases the client lock when the generator is exhausted or
+        closed.
+        """
+        try:
+            while True:
+                try:
+                    line = self._readline_with_timeout(
+                        proc.stdout, self._command_timeout
+                    )
+                except DeltaCoreError:
+                    self.close()
+                    raise
+                if not line:
+                    self.close()
+                    raise DeltaCoreError("delta_core closed stdout during stream")
+                try:
+                    frame = json.loads(line)
+                except json.JSONDecodeError as exc:
+                    self.close()
+                    raise DeltaCoreError(
+                        f"delta_core stream returned non-JSON: {line!r}"
+                    ) from exc
+                if not frame.get("ok"):
+                    raise DeltaCoreError(
+                        f"delta_core stream error: {frame.get('error')}"
+                    )
+                stream_kind = frame.get("stream")
+                if stream_kind == "start":
+                    continue
+                if stream_kind == "delta":
+                    yield frame.get("data")
+                    continue
+                if stream_kind == "done":
+                    return frame.get("result")
+                if stream_kind == "error":
+                    raise DeltaCoreError(
+                        f"delta_core stream error: {frame.get('error')}"
+                    )
+                self.close()
+                raise DeltaCoreError(
+                    f"delta_core stream: unknown frame type {stream_kind!r}"
+                )
+        finally:
+            self._lock.release()
 
 
 _default_client: DeltaCoreClient | None = None
