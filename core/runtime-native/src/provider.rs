@@ -566,14 +566,259 @@ pub fn stream_anthropic(
     }))
 }
 
+// -- OpenAI Responses (non-streaming) ---------------------------------------
+
+fn build_openai_responses_body(req: &ProviderRequest, stream: bool) -> Value {
+    let mut body = json!({
+        "model": req.model,
+        "input": req.messages,
+        "store": false,
+        "include": ["reasoning.encrypted_content"],
+        "reasoning": {"summary": "auto"},
+    });
+    if stream {
+        body["stream"] = json!(true);
+    }
+    if let Some(tools) = &req.tools {
+        body["tools"] = tools.clone();
+    }
+    if let Some(settings) = &req.settings {
+        if let Some(obj) = settings.as_object() {
+            if let Some(body_obj) = body.as_object_mut() {
+                for (k, v) in obj {
+                    body_obj.insert(k.clone(), v.clone());
+                }
+            }
+        }
+    }
+    body
+}
+
+pub fn complete_openai_responses(req: &ProviderRequest) -> Result<Value, String> {
+    let url = format!("{}/v1/responses", req.base_url.trim_end_matches('/'));
+    let body = build_openai_responses_body(req, false);
+    let resp = agent()
+        .post(&url)
+        .set("Authorization", &format!("Bearer {}", req.api_key))
+        .set("Content-Type", "application/json")
+        .send_json(body)
+        .map_err(|e| format!("HTTP error: {e}"))?;
+    let resp_json: Value = resp.into_json().map_err(|e| format!("JSON parse: {e}"))?;
+    parse_openai_responses_response(&resp_json)
+}
+
+fn parse_openai_responses_response(resp: &Value) -> Result<Value, String> {
+    let items = resp
+        .get("output")
+        .and_then(|o| o.as_array())
+        .cloned()
+        .unwrap_or_default();
+    let mut texts: Vec<String> = Vec::new();
+    let mut summaries: Vec<String> = Vec::new();
+    let mut tool_calls: Vec<Value> = Vec::new();
+    for item in &items {
+        let kind = item.get("type").and_then(|t| t.as_str());
+        match kind {
+            Some("message") => {
+                if let Some(content) = item.get("content") {
+                    if let Some(s) = content.as_str() {
+                        texts.push(s.to_string());
+                    } else if let Some(parts) = content.as_array() {
+                        for part in parts {
+                            if part.get("type").and_then(|t| t.as_str()) == Some("output_text") {
+                                if let Some(t) = part.get("text").and_then(|t| t.as_str()) {
+                                    texts.push(t.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            Some("reasoning") => {
+                if let Some(summary) = item.get("summary") {
+                    if let Some(parts) = summary.as_array() {
+                        for part in parts {
+                            let text = if let Some(s) = part.as_str() {
+                                s.to_string()
+                            } else if let Some(t) = part.get("text").and_then(|t| t.as_str()) {
+                                t.to_string()
+                            } else {
+                                continue;
+                            };
+                            if !text.is_empty() {
+                                summaries.push(text);
+                            }
+                        }
+                    }
+                }
+            }
+            Some("function_call") => {
+                let id = item
+                    .get("call_id")
+                    .or_else(|| item.get("id"))
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let name = item
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let arguments = item.get("arguments").cloned().unwrap_or(json!({}));
+                tool_calls.push(json!({"id": id, "name": name, "arguments": arguments}));
+            }
+            _ => {}
+        }
+    }
+    let incomplete = resp.get("incomplete_details").cloned().unwrap_or(json!({}));
+    let finish_reason = if !tool_calls.is_empty() {
+        "tool_calls".to_string()
+    } else if incomplete.get("reason").and_then(|r| r.as_str()) == Some("max_output_tokens") {
+        "length".to_string()
+    } else {
+        "stop".to_string()
+    };
+    let usage = resp.get("usage").map(usage_from_openai_responses);
+    let text = if texts.is_empty() {
+        Value::Null
+    } else {
+        Value::String(texts.join(""))
+    };
+    let reasoning = if summaries.is_empty() {
+        Value::Null
+    } else {
+        Value::String(summaries.join(""))
+    };
+    Ok(json!({
+        "text": text,
+        "tool_calls": tool_calls,
+        "finish_reason": finish_reason,
+        "reasoning": reasoning,
+        "usage": usage,
+        "extras": {},
+    }))
+}
+
+fn usage_from_openai_responses(u: &Value) -> Value {
+    let input = u.get("input_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+    let output = u.get("output_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+    json!({
+        "input": input,
+        "output": output,
+        "cache_read": 0,
+        "cache_write": 0,
+    })
+}
+
+// -- OpenAI Responses (streaming SSE) ---------------------------------------
+
+pub fn stream_openai_responses(
+    req: &ProviderRequest,
+    out: &mut impl Write,
+    stream_id: &str,
+) -> Result<Value, String> {
+    let url = format!("{}/v1/responses", req.base_url.trim_end_matches('/'));
+    let body = build_openai_responses_body(req, true);
+    let resp = agent()
+        .post(&url)
+        .set("Authorization", &format!("Bearer {}", req.api_key))
+        .set("Content-Type", "application/json")
+        .send_json(body)
+        .map_err(|e| format!("HTTP error: {e}"))?;
+    let reader = resp.into_reader();
+    let buf = BufReader::new(reader);
+    let mut text_parts: Vec<String> = Vec::new();
+    let mut reasoning_parts: Vec<String> = Vec::new();
+    let mut final_response: Option<Value> = None;
+    let mut event_type: Option<String> = None;
+    for line_res in buf.lines() {
+        let line = line_res.map_err(|e| format!("SSE read error: {e}"))?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix("event: ") {
+            event_type = Some(rest.trim().to_string());
+            continue;
+        }
+        if !trimmed.starts_with("data: ") {
+            continue;
+        }
+        let payload = &trimmed[6..];
+        let chunk: Value = match serde_json::from_str(payload) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let kind = event_type.clone().unwrap_or_else(|| {
+            chunk
+                .get("type")
+                .and_then(|t| t.as_str())
+                .unwrap_or("")
+                .to_string()
+        });
+        match kind.as_str() {
+            "response.output_text.delta" => {
+                if let Some(t) = chunk.get("delta").and_then(|d| d.as_str()) {
+                    if !t.is_empty() {
+                        text_parts.push(t.to_string());
+                        let frame = json!({"ok": true, "stream": "delta", "stream_id": stream_id, "data": {"text_delta": t}});
+                        writeln!(out, "{frame}").ok();
+                        out.flush().ok();
+                    }
+                }
+            }
+            "response.reasoning_summary_text.delta" => {
+                if let Some(t) = chunk.get("delta").and_then(|d| d.as_str()) {
+                    if !t.is_empty() {
+                        reasoning_parts.push(t.to_string());
+                        let frame = json!({"ok": true, "stream": "delta", "stream_id": stream_id, "data": {"reasoning_delta": t}});
+                        writeln!(out, "{frame}").ok();
+                        out.flush().ok();
+                    }
+                }
+            }
+            "response.completed" | "response.incomplete" | "response.failed" => {
+                if let Some(r) = chunk.get("response") {
+                    final_response = Some(r.clone());
+                }
+            }
+            _ => {}
+        }
+    }
+    let result = if let Some(final_resp) = final_response {
+        parse_openai_responses_response(&final_resp)?
+    } else {
+        let text = if text_parts.is_empty() {
+            Value::Null
+        } else {
+            Value::String(text_parts.join(""))
+        };
+        let reasoning = if reasoning_parts.is_empty() {
+            Value::Null
+        } else {
+            Value::String(reasoning_parts.join(""))
+        };
+        json!({
+            "text": text,
+            "tool_calls": [],
+            "finish_reason": Value::Null,
+            "reasoning": reasoning,
+            "usage": Value::Null,
+            "extras": {},
+        })
+    };
+    Ok(result)
+}
+
 // -- Dispatch ---------------------------------------------------------------
 
 pub fn complete(req: &ProviderRequest) -> Result<Value, String> {
     match req.protocol.as_str() {
         "openai_chat" => complete_openai_chat(req),
         "anthropic" => complete_anthropic(req),
+        "openai_responses" => complete_openai_responses(req),
         _ => Err(format!(
-            "unknown protocol: {} (supports openai_chat, anthropic)",
+            "unknown protocol: {} (supports openai_chat, anthropic, openai_responses)",
             req.protocol
         )),
     }
@@ -587,8 +832,9 @@ pub fn stream(
     match req.protocol.as_str() {
         "openai_chat" => stream_openai_chat(req, out, stream_id),
         "anthropic" => stream_anthropic(req, out, stream_id),
+        "openai_responses" => stream_openai_responses(req, out, stream_id),
         _ => Err(format!(
-            "unknown protocol: {} (supports openai_chat, anthropic)",
+            "unknown protocol: {} (supports openai_chat, anthropic, openai_responses)",
             req.protocol
         )),
     }
