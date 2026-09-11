@@ -16,7 +16,9 @@ Delta 是一个本地优先的个人工作 AI Agent，产品主线固定为三�
 
 其中，Delta 对“数据分析”的定义不是简单问数、汇总或画图，而是完整的数据统计分析、研究解释与报告交付。
 
-PDF、Office 文件处理、Search、Citation、Validation、脚本、自动化、Connector、MCP 等属于支撑上述三类工作的能力，不作为独立产品方向横向扩张。
+一级产品方向只有这三项。当前有效的产品与开发文档不得再把“知识工作”“研究”“资料处理”“文档处理”“PDF / Office”“自媒体”“脚本”“自动化”“Connector”“MCP”等写成与三项核心能力并列的新产品方向。
+
+这些词仍可用于具体工作描述：研究可以出现在数据分析的研究解释 / 报告环节，也可以出现在内容创作的资料研究环节；文档、表格、PDF、Search、Citation、Validation、Scripting、Automation、Connector、MCP 等属于具体工作能力或跨场景支撑能力。
 
 任何新增能力进入产品主线前，都必须明确回答：
 
@@ -599,13 +601,15 @@ Automation、Persona、Skill、Subagent、Resume 和 Scripting 必须复用统�
 
 维护规则：
 
+- 当前有效的产品、开发和治理文档，一级产品方向统一使用“日常办公 / 数据分析 / 内容创作”；
+- 不把研究、文档处理、资料处理、PDF / Office、自媒体、Scripting、Automation、Connector、MCP 等重新提升为并列产品方向；
 - 具体开发任务进入 Issue / Milestone；
 - 当前代码结构变化更新 `docs/architecture/`；
 - 稳定治理规则进入 `docs/governance/`；
 - 运维和部署说明进入 `docs/operations/`；
 - 外部项目只作为普通第三方参考，不单独建立“上游同步”产品治理；
 - 实现状态只记录已经完成的事实，不提前宣布进行中的迁移完成；
-- 历史 ADR 和 CHANGELOG 保留当时真实决策，不为当前品牌清理重写历史。
+- 历史 ADR 和 CHANGELOG 保留当时真实决策和术语，不为当前定位治理重写历史。
 
 ---
 
