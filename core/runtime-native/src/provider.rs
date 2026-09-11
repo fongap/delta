@@ -866,6 +866,7 @@ pub fn stream(
 
 // -- Capabilities (matrix + heuristics) ------------------------------------
 
+#[allow(dead_code)]
 struct MatrixEntry {
     id: &'static str,
     tools: bool,
