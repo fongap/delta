@@ -22,7 +22,9 @@ def _github_base() -> str:
     return os.environ.get("GITHUB_API_URL", "https://api.github.com").rstrip("/")
 
 
-def _github_auth(secrets: SecretStore) -> tuple[dict[str, str], dict[str, str] | None]:
+def _github_auth(
+    secrets: SecretStore, install: str = "", *, force: bool = False
+) -> tuple[dict[str, str], dict[str, str] | None]:
     """Return PAT-backed headers or a connector error."""
     profile = secrets.get("github:default") or {}
     if profile.get("token"):
@@ -76,7 +78,7 @@ def _github_call(
     secrets: SecretStore, method: str, path: str, *, install: str = "", **kw: Any
 ) -> dict[str, Any]:
     """Call the GitHub REST API with the configured PAT."""
-    headers, err = _github_auth(secrets)
+    headers, err = _github_auth(secrets, install)
     if err:
         return err
     return _request(method, _github_base() + path, headers=headers, **kw)
