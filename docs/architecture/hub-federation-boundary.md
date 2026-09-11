@@ -1,8 +1,6 @@
 # Delta 联邦化边界设计
 
-本文档描述 Delta 的联邦化（Federation）边界：Delta 是独立、本地优先的运行时；
-Federation 是一条开放、供应商无关的可选边界；任何外部系统（包括 OpenWorker Cloud）
-都只是潜在的 Federation 适配对象之一。
+本文档描述 Delta 的联邦化（Federation）边界：Delta 是独立、本地优先的运行时；Federation 是一条开放、供应商无关的可选边界；任何外部系统都只是潜在的 Federation 适配对象之一。
 
 ## 核心原则
 
@@ -22,26 +20,22 @@ Federation 是一条开放、供应商无关的可选边界；任何外部系统
 
 ## 架构边界
 
-```
+```text
 Delta (Core)
     │
     │ optional, provider-neutral
     ▼
 Federation Boundary
-    ├── OpenWorker Adapter        (potential external)
-    ├── Delta-operated Adapter    (potential self-hosted)
     ├── Self-hosted Adapter       (potential self-hosted)
     ├── Third-party Adapter       (potential external)
     └── Custom Adapter            (potential user-defined)
 ```
 
-Federation 是开放、供应商无关的能力边界。任何实现 Federation 能力协议的适配器
-（Delta 自营的、第三方、用户自建）都可以接入。任何单一适配器（包括 OpenWorker）
-都不是 Federation 的核心，只是若干候选之一。
+Federation 是开放、供应商无关的能力边界。任何实现 Federation 能力协议的适配器（第三方、用户自建或未来自托管实现）都可以接入。任何单一适配器都不是 Federation 的核心。
 
 ### 依赖方向（正确）
 
-```
+```text
 Any Federation Provider
         ↓ optional
 Delta Core
@@ -49,13 +43,13 @@ Delta Core
 
 ### 依赖方向（禁止）
 
-```
+```text
 Delta Core
         ↓
-OpenWorker Cloud (or any single provider)
+Single Federation Provider
 ```
 
-Delta Core 不依赖任何特定 Federation 提供方；Federation 协议不绑定 OpenWorker。
+Delta Core 不依赖任何特定 Federation 提供方；Federation 协议不绑定具体项目、厂商或托管平台。
 
 ## 核心 Capability Ports
 
@@ -68,16 +62,12 @@ Federation 边界通过 `integrations/managed/` 中定义的 Capability Port 协
 | GitHub App Broker | `GitHubAppBroker` | `NullGitHubAppBroker` | Installation Token Mint |
 | External Identity | `ExternalIdentityProvider` | `NullIdentityProvider` | 身份联邦 / Device Token 验证 |
 
-**默认 = Null***：未配置任何 Federation 适配器时，所有 managed 能力返回 "unavailable"，
-manual/local 路径完全不受影响。
+**默认 = Null***：未配置任何 Federation 适配器时，所有 managed 能力返回 "unavailable"，manual/local 路径完全不受影响。
 
 > **Federation 适配器位置（未来）**：
-> 若一个具体 Federation 适配器（如 OpenWorker）被实现，它将位于
-> `integrations/managed/adapters/<provider>.py`，与 Capability Port 并列；
-> Core 不感知、不依赖任何具体实现。
+> 若具体 Federation 适配器被实现，它应位于 `integrations/managed/adapters/<provider>.py`，与 Capability Port 并列；Core 不感知、不依赖任何具体实现。
 >
-> 截至当前（2026-09），所有 Capability Port 的实现都是 `Null*`；
-> 没有真实的 Federation 适配器被实现。Capability Port 保留用于未来扩展。
+> 截至当前（2026-09），所有 Capability Port 的实现都是 `Null*`；没有真实的 Federation 适配器被实现。Capability Port 保留用于未来扩展。
 
 ## Native Device Token：架构基座
 
@@ -108,15 +98,15 @@ Delta Hub（未来实现）若存在，仅负责：
 
 ## 模型请求永久绕过 Hub
 
-```
+```text
 Delta
       ↓
-OpenAI / Anthropic / AI Gateway (直接连接)
+OpenAI-compatible / Anthropic-compatible endpoint
 ```
 
 **永远禁止**：
 
-```
+```text
 Delta
   ↓
 Delta Hub
@@ -124,7 +114,7 @@ Delta Hub
 Model
 ```
 
-Delta Hub 与 AI Gateway 是两个独立系统；Delta 直接与模型提供方通信。
+Delta Hub 与 AI Gateway 是两个独立系统；Delta 直接与用户配置的模型 Endpoint 通信。
 
 ## Hub 数据边界
 
@@ -144,8 +134,7 @@ Delta Hub 与 AI Gateway 是两个独立系统；Delta 直接与模型提供方�
 - Delta session history
 - 长期模型 API Key
 
-Connector token 长期存储策略应单独设计安全模型，不因任何具体 Federation
-实现而直接继承。
+Connector token 长期存储策略应单独设计安全模型，不因任何具体 Federation 实现而直接继承。
 
 ## 验收标准
 
