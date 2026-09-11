@@ -32,6 +32,8 @@ from providers.endpoint import (
 )
 from providers.health import record_call as _record_health
 
+DEFAULT_OPENAI_URL = "https://api.openai.com/v1"
+
 
 def resolve_api_key(secrets: Any = None) -> str | None:
     """Resolve the OpenAI API key: env `OPENAI_API_KEY` first, else the SecretStore
@@ -146,6 +148,29 @@ def _param_fix_retry(kwargs: dict[str, Any], exc: Exception) -> dict[str, Any]:
     raise exc
 
 
+def _param_fix_retry_from_dict(settings: dict[str, Any], msg: str) -> dict[str, Any]:
+    """Settings for the one retry an unsupported-parameter error earns (or raise).
+
+    Like ``_param_fix_retry`` but for the R5 Rust-transport path, where the
+    error is a lowercased message string rather than a Python exception.
+    """
+    if _EFFORT_ERROR in msg and settings.get("reasoning_effort") != "none":
+        return {**settings, "reasoning_effort": "none"}
+    if _MAX_TOKENS_ERROR in msg and "max_tokens" in settings:
+        fixed = dict(settings)
+        fixed["max_completion_tokens"] = fixed.pop("max_tokens")
+        return fixed
+    if "stream_options" in msg and "stream_options" in settings:
+        fixed = dict(settings)
+        fixed.pop("stream_options")
+        return fixed
+    if _PARALLEL_TOOL_CALLS_ERROR in msg and "parallel_tool_calls" in settings:
+        fixed = dict(settings)
+        fixed.pop("parallel_tool_calls")
+        return fixed
+    raise RuntimeError(msg)
+
+
 def _usage_from(usage: Any) -> TokenUsage | None:
     """chat.completions usage → normalized counts. `prompt_tokens` INCLUDES cached
     tokens, so the cached share is subtracted into `cache_read`; no write-side split
@@ -174,6 +199,7 @@ class OpenAIProvider(ProviderClient):
         endpoint_caps: EndpointCaps | None = None,
         endpoint_key: str | None = None,
         allow_credential_fallback: bool = True,
+        core: Any = None,
     ):
         # The SDK client is built lazily on first use, NOT at construction. This lets an engine
         # be assembled before any key exists — the desktop app lets you enter the key in Settings
@@ -184,7 +210,12 @@ class OpenAIProvider(ProviderClient):
         # `base_url` points the same OpenAI SDK at any OpenAI-compatible endpoint — used by the
         # provider router for local or remote OpenAI-shaped backends. When None, behavior
         # is identical to stock OpenAI.
+        #
+        # R5 / ADR-047: `core` is an optional DeltaCoreClient. When provided, the wire
+        # transport for `complete()` delegates to Rust (`provider.complete`). Decision
+        # logic (endpoint caps, param-fix retry, health, salvage) stays in Python.
         self._client = client
+        self._core = core
         self._api_key = api_key
         self._base_url = base_url
         self._secrets = secrets
@@ -200,6 +231,106 @@ class OpenAIProvider(ProviderClient):
 
     def _effective_caps(self) -> EndpointCaps:
         return _merge_endpoint_caps(learned_caps(self._endpoint_key), self._endpoint_caps)
+
+    def _resolved_key(self) -> str:
+        key = self._api_key
+        if not key and self._allow_credential_fallback:
+            key = resolve_api_key(self._secrets)
+        if not key:
+            raise RuntimeError(
+                "No model API key configured. Set OPENAI_API_KEY in the environment, "
+                "or add your key in Manage → Settings."
+            )
+        return key
+
+    def _rust_complete(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        settings: dict[str, Any],
+    ) -> AssistantTurn:
+        """Delegate one non-streaming completion to Rust (`provider.complete`).
+
+        R5 / ADR-047 Phase 1d. The wire transport is Rust; the decision surface
+        (endpoint caps, param-fix retry, health, salvage) stays Python.
+        """
+        import time as _time
+
+        base_url = (self._base_url or DEFAULT_OPENAI_URL).strip()
+        key = self._resolved_key()
+        req: dict[str, Any] = {
+            "cmd": "provider.complete",
+            "protocol": "openai_chat",
+            "model": model,
+            "messages": messages,
+            "api_key": key,
+            "base_url": base_url,
+        }
+        if tools:
+            req["tools"] = tools
+        if settings:
+            req["settings"] = dict(settings)
+
+        _t0 = _time.perf_counter()
+        try:
+            for _ in range(2):
+                try:
+                    result = self._core.command(req)
+                    break
+                except Exception as exc:
+                    msg = str(exc).lower()
+                    fixed = _param_fix_retry_from_dict(req.get("settings") or {}, msg)
+                    req["settings"] = fixed
+                    if "stream_options" in msg and "stream_options" in req["settings"]:
+                        record_rejection(self._endpoint_key, "stream_options")
+                    if "parallel_tool_calls" in msg and "parallel_tool_calls" in req["settings"]:
+                        record_rejection(self._endpoint_key, "parallel_tool_calls")
+            _record_health(
+                self._endpoint_key,
+                model,
+                ok=True,
+                duration_ms=(_time.perf_counter() - _t0) * 1000,
+            )
+        except Exception as exc:
+            _record_health(
+                self._endpoint_key,
+                model,
+                ok=False,
+                duration_ms=(_time.perf_counter() - _t0) * 1000,
+                error_class=type(exc).__name__,
+            )
+            raise
+
+        text = result.get("text")
+        tool_calls = [
+            ToolCall(
+                id=tc.get("id", ""),
+                name=tc.get("name", ""),
+                arguments=tc.get("arguments") or {},
+            )
+            for tc in result.get("tool_calls", [])
+        ]
+        text, tool_calls = _maybe_salvage_tool_calls(text, tool_calls, tools=tools)
+        usage_raw = result.get("usage")
+        usage = (
+            TokenUsage(
+                input=usage_raw.get("input") or 0,
+                output=usage_raw.get("output") or 0,
+                cache_read=usage_raw.get("cache_read") or 0,
+                cache_write=usage_raw.get("cache_write") or 0,
+            )
+            if usage_raw
+            else None
+        )
+        return AssistantTurn(
+            text=text,
+            tool_calls=tool_calls,
+            finish_reason=result.get("finish_reason"),
+            reasoning=result.get("reasoning"),
+            usage=usage,
+        )
 
     def _ensure_client(self) -> Any:
         if self._client is None:
@@ -241,6 +372,18 @@ class OpenAIProvider(ProviderClient):
             kwargs["tools"] = tools
         _apply_endpoint_caps(kwargs, caps, has_tools=bool(tools))
         _pin_reasoning_effort(kwargs)
+
+        # R5 / ADR-047 Phase 1d: when a DeltaCoreClient is provided, the wire
+        # transport delegates to Rust (`provider.complete`). The decision surface
+        # (caps, param-fix retry, health, salvage) stays Python.
+        if self._core is not None:
+            settings_payload = {k: v for k, v in kwargs.items() if k not in ("model", "messages", "tools")}
+            return self._rust_complete(
+                model=model,
+                messages=kwargs["messages"],
+                tools=tools,
+                settings=settings_payload,
+            )
 
         client = self._ensure_client()
         import time as _time
