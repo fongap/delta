@@ -1272,3 +1272,14 @@ pub fn health_all(path: &str) -> Value {
     };
     store
 }
+
+// -- Routing (provider name resolution) -------------------------------------
+
+pub fn route(model: &str, providers: &[String], default: &str) -> Value {
+    if let Some((prefix, rest)) = model.split_once(':') {
+        if providers.iter().any(|p| p == prefix) {
+            return json!({"provider": prefix, "bare": rest});
+        }
+    }
+    json!({"provider": default, "bare": model})
+}

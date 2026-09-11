@@ -355,7 +355,7 @@ def test_compat_models_route_and_get_tool_capabilities():
     ):
         prefix = model.split(":", 1)[0]
         assert router._provider_name(model) == prefix
-        assert ProviderRouter._bare(model) == model.split(":", 1)[1]
+        assert router._bare(model) == model.split(":", 1)[1]
         caps = capabilities_for(model)
         assert caps.tools and caps.streaming
 

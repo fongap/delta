@@ -592,6 +592,13 @@ enum Command {
     /// R5 / ADR-047 Phase 2c: read all health profiles.
     #[serde(rename = "health.all")]
     HealthAll { path: String },
+    /// R5 / ADR-047 Phase 2d: resolve a model string to (provider, bare).
+    #[serde(rename = "provider.routes")]
+    ProviderRoutes {
+        model: String,
+        providers: Vec<String>,
+        default: String,
+    },
 }
 
 struct ConnCache {
@@ -2151,6 +2158,13 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
             &path, &endpoint, &model,
         )),
         Command::HealthAll { path } => Ok(delta_runtime_native::provider::health_all(&path)),
+        Command::ProviderRoutes {
+            model,
+            providers,
+            default,
+        } => Ok(delta_runtime_native::provider::route(
+            &model, &providers, &default,
+        )),
     };
     match result {
         Ok(v) => serde_json::json!({"ok": true, "result": v}),

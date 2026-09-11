@@ -590,3 +590,27 @@ def test_provider_capabilities_anthropic_prefix(client):
     result = client.command({"cmd": "provider.capabilities", "model": "anthropic:claude-future"})
     assert result["vision"] is True
     assert result["pdf"] is True
+
+
+def test_provider_routes(client):
+    """provider.routes resolves provider + bare model."""
+    result = client.command({
+        "cmd": "provider.routes",
+        "model": "deepseek:deepseek-v4-flash",
+        "providers": ["openai", "anthropic", "deepseek"],
+        "default": "openai",
+    })
+    assert result["provider"] == "deepseek"
+    assert result["bare"] == "deepseek-v4-flash"
+
+
+def test_provider_routes_unknown_prefix(client):
+    """provider.routes: an unknown prefix falls through to default, bare unchanged."""
+    result = client.command({
+        "cmd": "provider.routes",
+        "model": "qwen2.5-coder:32b",
+        "providers": ["openai", "anthropic"],
+        "default": "openai",
+    })
+    assert result["provider"] == "openai"
+    assert result["bare"] == "qwen2.5-coder:32b"

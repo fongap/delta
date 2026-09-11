@@ -16,7 +16,7 @@ import threading
 from typing import Any
 
 from providers.base import ProviderClient
-from providers.capabilities import capabilities_for
+from providers.capabilities import capabilities_for as _py_capabilities_for
 from providers.registry import build_provider_client, get_descriptor, provider_profile_key
 
 
@@ -40,6 +40,28 @@ class ProviderRouter(ProviderClient):
         # Settings pane's "Last used" line. Best-effort: its failures never break a model call.
         self._on_use = on_use
 
+    def _known_providers(self) -> list[str]:
+        """The provider names routing considers known — static presets + custom."""
+        from providers.registry import provider_names
+
+        return provider_names()
+
+    def _route_rpc(self, model: str) -> dict[str, str]:
+        """Resolve (provider, bare) via Rust when a core client is present, else Python."""
+        core = getattr(self, "_core", None)
+        default = getattr(self, "_default", "openai")
+        if core is not None:
+            try:
+                return core.command({
+                    "cmd": "provider.routes",
+                    "model": model,
+                    "providers": self._known_providers(),
+                    "default": default,
+                })
+            except Exception:
+                pass  # fall back to Python routing
+        return {"provider": self._py_provider_name(model), "bare": self._py_bare(model)}
+
     def _note_use(self, model: str) -> None:
         if self._on_use is None:
             return
@@ -53,11 +75,14 @@ class ProviderRouter(ProviderClient):
         """The provider for a model: the `prefix` of `prefix:rest` if it's a known provider,
         else the default. (A colon that isn't a known provider — unlikely — falls through.)
         """
+        return self._route_rpc(model)["provider"]
+
+    def _py_provider_name(self, model: str) -> str:
         if ":" in model:
             prefix = model.split(":", 1)[0]
             if get_descriptor(prefix) is not None:
                 return prefix
-        return self._default
+        return getattr(self, "_default", "openai")
 
     def _client_for(self, model: str) -> ProviderClient:
         name = self._provider_name(model)
@@ -71,17 +96,19 @@ class ProviderRouter(ProviderClient):
                 self._clients[name] = client
             return client
 
-    @staticmethod
-    def _bare(model: str) -> str:
-        """Strip a KNOWN provider prefix; the underlying SDK wants the bare model name. A model
-        whose first segment isn't a provider (e.g. `qwen2.5-coder:32b` — a version tag, not a
-        prefix) is returned unchanged, so the colon isn't mistaken for a provider separator.
-        """
+    def _py_bare(self, model: str) -> str:
         if ":" in model:
             prefix, rest = model.split(":", 1)
             if get_descriptor(prefix) is not None:
                 return rest
         return model
+
+    def _bare(self, model: str) -> str:
+        """Strip a KNOWN provider prefix; the underlying SDK wants the bare model name. A model
+        whose first segment isn't a provider (e.g. `qwen2.5-coder:32b` — a version tag, not a
+        prefix) is returned unchanged, so the colon isn't mistaken for a provider separator.
+        """
+        return self._route_rpc(model)["bare"]
 
     def invalidate(self, name: str | None = None) -> None:
         """Drop cached client(s) so the next call rebuilds with fresh config."""
@@ -119,4 +146,18 @@ class ProviderRouter(ProviderClient):
         )
 
     def capabilities(self, model: str):
-        return capabilities_for(model)
+        if self._core is not None:
+            try:
+                result = self._core.command({"cmd": "provider.capabilities", "model": model})
+                from providers.base import ModelCapabilities
+
+                return ModelCapabilities(
+                    tools=bool(result.get("tools")),
+                    vision=bool(result.get("vision")),
+                    pdf=bool(result.get("pdf")),
+                    parallel_tool_calls=bool(result.get("parallel_tool_calls")),
+                    streaming=bool(result.get("streaming")),
+                )
+            except Exception:
+                pass  # fall back to Python heuristics
+        return _py_capabilities_for(model)
