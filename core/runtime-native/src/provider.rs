@@ -863,3 +863,251 @@ pub fn stream(
         )),
     }
 }
+
+// -- Capabilities (matrix + heuristics) ------------------------------------
+
+struct MatrixEntry {
+    id: &'static str,
+    tools: bool,
+    vision: bool,
+    pdf: bool,
+    parallel_tool_calls: bool,
+    streaming: bool,
+    context_window: Option<i64>,
+}
+
+const AGENTIC: MatrixEntry = MatrixEntry {
+    id: "",
+    tools: true,
+    vision: false,
+    pdf: false,
+    parallel_tool_calls: true,
+    streaming: true,
+    context_window: None,
+};
+const AGENTIC_VISION: MatrixEntry = MatrixEntry {
+    id: "",
+    tools: true,
+    vision: true,
+    pdf: true,
+    parallel_tool_calls: true,
+    streaming: true,
+    context_window: None,
+};
+
+const MATRIX: &[MatrixEntry] = &[
+    MatrixEntry {
+        id: "gpt-5.6-sol",
+        context_window: Some(400_000),
+        ..AGENTIC_VISION
+    },
+    MatrixEntry {
+        id: "gpt-5.6-terra",
+        context_window: Some(400_000),
+        ..AGENTIC_VISION
+    },
+    MatrixEntry {
+        id: "gpt-5.6-luna",
+        context_window: Some(400_000),
+        ..AGENTIC_VISION
+    },
+    MatrixEntry {
+        id: "gpt-5.5",
+        context_window: Some(400_000),
+        ..AGENTIC_VISION
+    },
+    MatrixEntry {
+        id: "anthropic:claude-fable-5",
+        context_window: Some(1_000_000),
+        ..AGENTIC_VISION
+    },
+    MatrixEntry {
+        id: "anthropic:claude-opus-4-8",
+        context_window: Some(200_000),
+        ..AGENTIC_VISION
+    },
+    MatrixEntry {
+        id: "anthropic:claude-sonnet-4-6",
+        context_window: Some(200_000),
+        ..AGENTIC_VISION
+    },
+    MatrixEntry {
+        id: "anthropic:claude-haiku-4-5",
+        context_window: Some(200_000),
+        ..AGENTIC_VISION
+    },
+    MatrixEntry {
+        id: "meta:muse-spark-1.1",
+        tools: true,
+        vision: true,
+        pdf: false,
+        parallel_tool_calls: true,
+        streaming: true,
+        context_window: None,
+    },
+    MatrixEntry {
+        id: "zai:glm-5.2",
+        context_window: Some(128_000),
+        ..AGENTIC
+    },
+    MatrixEntry {
+        id: "deepseek:deepseek-v4-flash",
+        context_window: Some(128_000),
+        ..AGENTIC
+    },
+    MatrixEntry {
+        id: "deepseek:deepseek-v4-pro",
+        context_window: Some(128_000),
+        ..AGENTIC
+    },
+    MatrixEntry {
+        id: "kimi:kimi-k2.6",
+        context_window: Some(256_000),
+        ..AGENTIC
+    },
+    MatrixEntry {
+        id: "minimax:MiniMax-M2.5",
+        ..AGENTIC
+    },
+    MatrixEntry {
+        id: "qwen:qwen3-max",
+        context_window: Some(256_000),
+        ..AGENTIC
+    },
+    MatrixEntry {
+        id: "xai:grok-4.3",
+        context_window: Some(256_000),
+        ..AGENTIC
+    },
+    MatrixEntry {
+        id: "mistral:mistral-large-latest",
+        context_window: Some(128_000),
+        ..AGENTIC
+    },
+    MatrixEntry {
+        id: "together:thinkingmachines/Inkling",
+        ..AGENTIC
+    },
+    MatrixEntry {
+        id: "together:zai-org/GLM-5.2",
+        context_window: Some(128_000),
+        ..AGENTIC
+    },
+    MatrixEntry {
+        id: "together:moonshotai/Kimi-K3",
+        tools: true,
+        vision: true,
+        pdf: false,
+        parallel_tool_calls: true,
+        streaming: true,
+        context_window: Some(1_000_000),
+    },
+    MatrixEntry {
+        id: "together:moonshotai/Kimi-K2.7-Code",
+        context_window: Some(256_000),
+        ..AGENTIC
+    },
+    MatrixEntry {
+        id: "together:moonshotai/Kimi-K2.6",
+        context_window: Some(256_000),
+        ..AGENTIC
+    },
+    MatrixEntry {
+        id: "together:deepseek-ai/DeepSeek-V4-Pro",
+        context_window: Some(128_000),
+        ..AGENTIC
+    },
+    MatrixEntry {
+        id: "together:meta-llama/Llama-4-Maverick-17B-128E-Instruct-FP8",
+        context_window: Some(1_000_000),
+        ..AGENTIC
+    },
+    MatrixEntry {
+        id: "fireworks:accounts/fireworks/models/glm-5p2",
+        context_window: Some(128_000),
+        ..AGENTIC
+    },
+    MatrixEntry {
+        id: "fireworks:accounts/fireworks/models/kimi-k2p6",
+        context_window: Some(256_000),
+        ..AGENTIC
+    },
+    MatrixEntry {
+        id: "fireworks:accounts/fireworks/models/deepseek-v4-pro",
+        context_window: Some(128_000),
+        ..AGENTIC
+    },
+    MatrixEntry {
+        id: "fireworks:accounts/fireworks/models/llama4-maverick-instruct-basic",
+        context_window: Some(1_000_000),
+        ..AGENTIC
+    },
+    MatrixEntry {
+        id: "openrouter:z-ai/glm-5.2",
+        context_window: Some(128_000),
+        ..AGENTIC
+    },
+    MatrixEntry {
+        id: "openrouter:moonshotai/kimi-k2.6",
+        context_window: Some(256_000),
+        ..AGENTIC
+    },
+    MatrixEntry {
+        id: "openrouter:deepseek/deepseek-v4-pro",
+        context_window: Some(128_000),
+        ..AGENTIC
+    },
+    MatrixEntry {
+        id: "openrouter:meta-llama/llama-4-maverick",
+        context_window: Some(1_000_000),
+        ..AGENTIC
+    },
+];
+
+fn caps_json(tools: bool, vision: bool, pdf: bool, parallel: bool, streaming: bool) -> Value {
+    json!({
+        "tools": tools,
+        "vision": vision,
+        "pdf": pdf,
+        "parallel_tool_calls": parallel,
+        "streaming": streaming,
+    })
+}
+
+pub fn capabilities_for(model: &str) -> Value {
+    if let Some(entry) = MATRIX.iter().find(|e| e.id == model) {
+        return caps_json(
+            entry.tools,
+            entry.vision,
+            entry.pdf,
+            entry.parallel_tool_calls,
+            entry.streaming,
+        );
+    }
+    let (provider, name) = if let Some((p, n)) = model.split_once(':') {
+        (p.to_lowercase(), n.to_lowercase())
+    } else {
+        (String::new(), model.to_lowercase())
+    };
+    if provider == "anthropic" {
+        return caps_json(true, true, true, true, true);
+    }
+    if name.starts_with("gpt-5") || name.starts_with("gpt-4") {
+        return caps_json(true, true, true, true, true);
+    }
+    if name.starts_with("o1") || name.starts_with("o3") || name.starts_with("o4") {
+        return caps_json(true, false, false, false, true);
+    }
+    if name.starts_with("deepseek")
+        || name.starts_with("glm")
+        || name.starts_with("kimi")
+        || name.starts_with("minimax")
+        || name.starts_with("qwen")
+        || name.starts_with("grok")
+        || name.starts_with("mistral")
+        || name.starts_with("magistral")
+    {
+        return caps_json(true, false, false, true, true);
+    }
+    caps_json(true, false, false, false, true)
+}

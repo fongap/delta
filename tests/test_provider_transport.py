@@ -561,3 +561,32 @@ def test_openai_responses_provider_stream_delegates_to_rust(client, mock_respons
     assert turn_chunk.turn.finish_reason == "tool_calls"
     assert turn_chunk.turn.usage is not None
     assert turn_chunk.turn.usage.output == 10
+
+
+# -- R5 Phase 2: capabilities -------------------------------------------------
+
+
+def test_provider_capabilities_matrix(client):
+    """provider.capabilities returns matrix-matched caps for known models."""
+    result = client.command({"cmd": "provider.capabilities", "model": "gpt-5.6-sol"})
+    assert result["tools"] is True
+    assert result["vision"] is True
+    assert result["pdf"] is True
+    assert result["parallel_tool_calls"] is True
+    assert result["streaming"] is True
+
+
+def test_provider_capabilities_heuristic(client):
+    """provider.capabilities falls back to heuristics for unknown models."""
+    result = client.command({"cmd": "provider.capabilities", "model": "unknown-model"})
+    assert result["tools"] is True
+    assert result["vision"] is False
+    assert result["parallel_tool_calls"] is False
+    assert result["streaming"] is True
+
+
+def test_provider_capabilities_anthropic_prefix(client):
+    """provider.capabilities heuristics: anthropic prefix → vision+pdf."""
+    result = client.command({"cmd": "provider.capabilities", "model": "anthropic:claude-future"})
+    assert result["vision"] is True
+    assert result["pdf"] is True

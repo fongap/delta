@@ -555,6 +555,9 @@ enum Command {
         api_key: String,
         base_url: String,
     },
+    /// R5 / ADR-047 Phase 2: model capabilities (matrix + heuristics).
+    #[serde(rename = "provider.capabilities")]
+    ProviderCapabilities { model: String },
 }
 
 struct ConnCache {
@@ -2074,6 +2077,9 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
             }
         }
         Command::ProviderStream { .. } => Err("streaming commands handled in handle_stream".into()),
+        Command::ProviderCapabilities { model } => {
+            Ok(delta_runtime_native::provider::capabilities_for(&model))
+        }
     };
     match result {
         Ok(v) => serde_json::json!({"ok": true, "result": v}),
