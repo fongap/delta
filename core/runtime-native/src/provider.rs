@@ -1283,3 +1283,45 @@ pub fn route(model: &str, providers: &[String], default: &str) -> Value {
     }
     json!({"provider": default, "bare": model})
 }
+
+// -- Friendly model error (access/quota translation) -----------------------
+
+pub fn friendly_model_error(model: &str, message: &str) -> Value {
+    let text = message.to_lowercase();
+    let no_access = format!(
+        "Your account doesn't have access to {} - new models can roll out gradually or require a plan upgrade. Pick a different model, or check the provider's console for availability.",
+        model
+    );
+    let no_quota = format!(
+        "Your account is out of quota for {} - add credits or raise the limit in the provider's billing console, or pick a different model.",
+        model
+    );
+    let no_quota_markers = [
+        "insufficient_quota",
+        "exceeded your current quota",
+        "credit balance is too low",
+        "billing hard limit",
+    ];
+    for m in no_quota_markers {
+        if text.contains(m) {
+            return json!({"message": no_quota});
+        }
+    }
+    let no_access_markers = [
+        "model_not_found",
+        "does not exist or you do not have access",
+        "does not have access to model",
+        "permission_error",
+        "permission denied",
+    ];
+    for m in no_access_markers {
+        if text.contains(m) {
+            return json!({"message": no_access});
+        }
+    }
+    let bare_model = model.rsplit(':').next().unwrap_or(model).to_lowercase();
+    if text.contains("not_found_error") && text.contains(&format!("model: {}", bare_model)) {
+        return json!({"message": no_access});
+    }
+    json!({"message": Value::Null})
+}
