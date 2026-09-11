@@ -568,6 +568,30 @@ enum Command {
         endpoint_key: String,
         field: String,
     },
+    /// R5 / ADR-047 Phase 2c: record a model call health outcome.
+    #[serde(rename = "health.record")]
+    HealthRecord {
+        path: String,
+        endpoint: String,
+        model: String,
+        ok: bool,
+        #[serde(default)]
+        ttft_ms: Option<f64>,
+        #[serde(default)]
+        duration_ms: Option<f64>,
+        #[serde(default)]
+        error_class: Option<String>,
+    },
+    /// R5 / ADR-047 Phase 2c: read one (endpoint, model) health profile.
+    #[serde(rename = "health.profile")]
+    HealthProfile {
+        path: String,
+        endpoint: String,
+        model: String,
+    },
+    /// R5 / ADR-047 Phase 2c: read all health profiles.
+    #[serde(rename = "health.all")]
+    HealthAll { path: String },
 }
 
 struct ConnCache {
@@ -2102,6 +2126,31 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
             &endpoint_key,
             &field,
         )),
+        Command::HealthRecord {
+            path,
+            endpoint,
+            model,
+            ok,
+            ttft_ms,
+            duration_ms,
+            error_class,
+        } => Ok(delta_runtime_native::provider::health_record(
+            &path,
+            &endpoint,
+            &model,
+            ok,
+            ttft_ms,
+            duration_ms,
+            error_class.as_deref(),
+        )),
+        Command::HealthProfile {
+            path,
+            endpoint,
+            model,
+        } => Ok(delta_runtime_native::provider::health_profile(
+            &path, &endpoint, &model,
+        )),
+        Command::HealthAll { path } => Ok(delta_runtime_native::provider::health_all(&path)),
     };
     match result {
         Ok(v) => serde_json::json!({"ok": true, "result": v}),

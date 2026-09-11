@@ -25,6 +25,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from packages.delta_core_client import maybe_core_client
+
 # Rolling window: keep at most this many observations per (endpoint, model) key, and
 # drop entries older than this many seconds — a window is "recent behaviour", not
 # lifetime average.
@@ -117,6 +119,23 @@ def record_call(
     (or provider name when no endpoint applies); None keys are ignored."""
     if not endpoint or not model:
         return
+    # R5 / ADR-047 Phase 2c: delegate to Rust when delta_core is available.
+    core = maybe_core_client()
+    if core is not None:
+        try:
+            core.command({
+                "cmd": "health.record",
+                "path": str(_store_path()),
+                "endpoint": endpoint,
+                "model": model,
+                "ok": ok,
+                "ttft_ms": ttft_ms,
+                "duration_ms": duration_ms,
+                "error_class": error_class,
+            })
+            return
+        except Exception:
+            pass  # fall back to Python write
     with _lock:
         store = _read_store()
         bucket = store.setdefault(endpoint, {})
@@ -158,6 +177,28 @@ def profile(endpoint: str | None, model: str) -> HealthProfile:
     """The aggregated health profile for (endpoint, model), or an empty one."""
     if not endpoint or not model:
         return HealthProfile(endpoint=endpoint or "", model=model)
+    # R5 / ADR-047 Phase 2c: delegate the read to Rust when available.
+    core = maybe_core_client()
+    if core is not None:
+        try:
+            row = core.command({
+                "cmd": "health.profile",
+                "path": str(_store_path()),
+                "endpoint": endpoint,
+                "model": model,
+            }) or {}
+            return HealthProfile(
+                endpoint=endpoint,
+                model=model,
+                samples=int(row.get("samples", 0)),
+                errors=int(row.get("errors", 0)),
+                ttft_ms=[float(x) for x in (row.get("ttft_ms") or [])],
+                duration_ms=[float(x) for x in (row.get("duration_ms") or [])],
+                last_error_class=row.get("last_error_class"),
+                last_ts=float(row.get("last_ts", 0.0)),
+            )
+        except Exception:
+            pass  # fall back to Python read
     with _lock:
         store = _read_store()
         row = (store.get(endpoint) or {}).get(model) or {}
@@ -175,7 +216,30 @@ def profile(endpoint: str | None, model: str) -> HealthProfile:
 
 def all_profiles() -> list[HealthProfile]:
     """Every (endpoint, model) profile — for Settings / diagnostics."""
-    out: list[HealthProfile] = []
+    core = maybe_core_client()
+    if core is not None:
+        try:
+            store = core.command({"cmd": "health.all", "path": str(_store_path())}) or {}
+        except Exception:
+            store = None
+        if store is not None:
+            out: list[HealthProfile] = []
+            for endpoint, bucket in store.items():
+                for model, row in (bucket or {}).items():
+                    out.append(
+                        HealthProfile(
+                            endpoint=endpoint,
+                            model=model,
+                            samples=int(row.get("samples", 0)),
+                            errors=int(row.get("errors", 0)),
+                            ttft_ms=[float(x) for x in (row.get("ttft_ms") or [])],
+                            duration_ms=[float(x) for x in (row.get("duration_ms") or [])],
+                            last_error_class=row.get("last_error_class"),
+                            last_ts=float(row.get("last_ts", 0.0)),
+                        )
+                    )
+            return out
+    out = []
     with _lock:
         store = _read_store()
     for endpoint, bucket in store.items():

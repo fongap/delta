@@ -1152,3 +1152,123 @@ pub fn endpoint_reject(path: &str, endpoint_key: &str, field: &str) -> Value {
     let _ = std::fs::write(&p, serde_json::to_string_pretty(&store).unwrap_or_default());
     json!({"ok": true})
 }
+
+// -- Health (stateful: provider_health.json) -------------------------------
+
+const HEALTH_MAX_SAMPLES: usize = 200;
+const HEALTH_MAX_AGE_SECS: f64 = 86400.0;
+
+pub fn health_record(
+    path: &str,
+    endpoint: &str,
+    model: &str,
+    ok: bool,
+    ttft_ms: Option<f64>,
+    duration_ms: Option<f64>,
+    error_class: Option<&str>,
+) -> Value {
+    let p = std::path::PathBuf::from(path);
+    let mut store: Value = match std::fs::read_to_string(&p) {
+        Ok(s) => serde_json::from_str(&s).unwrap_or(json!({})),
+        Err(_) => json!({}),
+    };
+    if !store.is_object() {
+        store = json!({});
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0);
+    let store_obj = store.as_object_mut().unwrap();
+    let bucket = store_obj.entry(endpoint.to_string()).or_insert(json!({}));
+    if !bucket.is_object() {
+        *bucket = json!({});
+    }
+    let bucket_obj = bucket.as_object_mut().unwrap();
+    let row = bucket_obj
+        .entry(model.to_string())
+        .or_insert(json!({"samples": 0, "errors": 0, "ttft_ms": [], "duration_ms": [], "last_error_class": null, "last_ts": 0.0}));
+    if !row.is_object() {
+        *row = json!({"samples": 0, "errors": 0, "ttft_ms": [], "duration_ms": [], "last_error_class": null, "last_ts": 0.0});
+    }
+    let row_obj = row.as_object_mut().unwrap();
+    let samples = row_obj.get("samples").and_then(|v| v.as_i64()).unwrap_or(0) + 1;
+    row_obj.insert("samples".to_string(), json!(samples));
+    if !ok {
+        let errors = row_obj.get("errors").and_then(|v| v.as_i64()).unwrap_or(0) + 1;
+        row_obj.insert("errors".to_string(), json!(errors));
+        row_obj.insert("last_error_class".to_string(), json!(error_class));
+    }
+    // Cap rolling buffers.
+    if let Some(ttft) = ttft_ms {
+        let mut arr = row_obj
+            .get("ttft_ms")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        arr.push(json!(ttft));
+        if arr.len() > HEALTH_MAX_SAMPLES {
+            arr = arr[arr.len() - HEALTH_MAX_SAMPLES..].to_vec();
+        }
+        row_obj.insert("ttft_ms".to_string(), Value::Array(arr));
+    }
+    if let Some(dur) = duration_ms {
+        let mut arr = row_obj
+            .get("duration_ms")
+            .and_then(|v| v.as_array())
+            .cloned()
+            .unwrap_or_default();
+        arr.push(json!(dur));
+        if arr.len() > HEALTH_MAX_SAMPLES {
+            arr = arr[arr.len() - HEALTH_MAX_SAMPLES..].to_vec();
+        }
+        row_obj.insert("duration_ms".to_string(), Value::Array(arr));
+    }
+    row_obj.insert("last_ts".to_string(), json!(now));
+    // Drop stale entries for this endpoint.
+    let to_drop: Vec<String> = bucket_obj
+        .iter()
+        .filter_map(|(m, other)| {
+            if m == model {
+                return None;
+            }
+            let ts = other.get("last_ts").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            if now - ts > HEALTH_MAX_AGE_SECS {
+                Some(m.clone())
+            } else {
+                None
+            }
+        })
+        .collect();
+    for m in to_drop {
+        bucket_obj.remove(&m);
+    }
+    if let Some(parent) = p.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&p, serde_json::to_string_pretty(&store).unwrap_or_default());
+    json!({"ok": true})
+}
+
+pub fn health_profile(path: &str, endpoint: &str, model: &str) -> Value {
+    let p = std::path::PathBuf::from(path);
+    let store: Value = match std::fs::read_to_string(&p) {
+        Ok(s) => serde_json::from_str(&s).unwrap_or(json!({})),
+        Err(_) => json!({}),
+    };
+    let row = store
+        .get(endpoint)
+        .and_then(|b| b.get(model))
+        .cloned()
+        .unwrap_or(json!({}));
+    row
+}
+
+pub fn health_all(path: &str) -> Value {
+    let p = std::path::PathBuf::from(path);
+    let store: Value = match std::fs::read_to_string(&p) {
+        Ok(s) => serde_json::from_str(&s).unwrap_or(json!({})),
+        Err(_) => json!({}),
+    };
+    store
+}
