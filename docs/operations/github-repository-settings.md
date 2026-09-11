@@ -92,19 +92,13 @@ legacy/**
 
 新增长期分支时，应先明确其长期职责。
 
-## OpenWorker 上游
+## 外部代码吸收
 
-Delta 已停止自动同步 OpenWorker 上游。
+Delta 不维护任何单一上游镜像或自动同步分支。
 
-原有 `upstream-sync.yml` 已删除，`upstream-openworker` 镜像分支不再维护。
+外部项目只作为第三方参考。需要吸收设计或实现时，应先评估其与 Delta 当前产品边界、Runtime Authority、接口、许可证和治理规则的兼容性，再通过普通 Pull Request 选择性引入。
 
-如需吸收上游实现，应先评估其与 Delta 当前架构、接口和治理边界的兼容性，再通过普通 Pull Request 选择性引入。
-
-上游关系说明见：
-
-```text
-UPSTREAM.md
-```
+不得为跟随外部项目而恢复已经淘汰的目录、产品形态、协议或 Compatibility Layer。
 
 ## Release Tag
 
