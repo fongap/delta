@@ -334,6 +334,122 @@ class OpenAIProvider(ProviderClient):
             usage=usage,
         )
 
+    def _rust_stream(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        settings: dict[str, Any],
+    ):
+        """Delegate one streaming completion to Rust (`provider.stream`).
+
+        R5 / ADR-047 Phase 1e. The wire transport is Rust; the decision surface
+        (param-fix retry before any delta, health, truncation, salvage) stays
+        Python. Yields StreamChunk (text/reasoning deltas then a final turn).
+        """
+        import time as _time
+
+        base_url = (self._base_url or DEFAULT_OPENAI_URL).strip()
+        key = self._resolved_key()
+        req: dict[str, Any] = {
+            "cmd": "provider.stream",
+            "protocol": "openai_chat",
+            "model": model,
+            "messages": messages,
+            "api_key": key,
+            "base_url": base_url,
+        }
+        if tools:
+            req["tools"] = tools
+        if settings:
+            req["settings"] = dict(settings)
+
+        _t0 = _time.perf_counter()
+        _ttft = None
+        _yielded = False
+        final: dict[str, Any] | None = None
+        for _ in range(2):
+            gen = self._core.stream(req)
+            text_parts: list[str] = []
+            reasoning_parts: list[str] = []
+            try:
+                while True:
+                    data = next(gen)
+                    if not _yielded:
+                        _ttft = _time.perf_counter()
+                        _yielded = True
+                    if "text_delta" in data:
+                        text_parts.append(data["text_delta"])
+                        yield StreamChunk(text_delta=data["text_delta"])
+                    elif "reasoning_delta" in data:
+                        reasoning_parts.append(data["reasoning_delta"])
+                        yield StreamChunk(reasoning_delta=data["reasoning_delta"])
+            except StopIteration as exc:
+                final = exc.value
+                break
+            except Exception as exc:
+                # A retry is only safe before any delta was yielded (matches SDK).
+                if _ not in (0,) or _yielded:
+                    _record_health(
+                        self._endpoint_key,
+                        model,
+                        ok=False,
+                        ttft_ms=((_ttft - _t0) * 1000) if _ttft else None,
+                        duration_ms=(_time.perf_counter() - _t0) * 1000,
+                        error_class=type(exc).__name__,
+                    )
+                    raise
+                msg = str(exc).lower()
+                fixed = _param_fix_retry_from_dict(req.get("settings") or {}, msg)
+                req["settings"] = fixed
+
+        _record_health(
+            self._endpoint_key,
+            model,
+            ok=True,
+            ttft_ms=((_ttft - _t0) * 1000) if _ttft else None,
+            duration_ms=(_time.perf_counter() - _t0) * 1000,
+        )
+
+        final = final or {}
+        finish = final.get("finish_reason")
+        if not finish:
+            raise StreamTruncatedError(
+                "上游流式响应被截断（未收到完成标记）— the upstream closed the stream "
+                "before completion; please retry."
+            )
+        text = final.get("text")
+        tool_calls = [
+            ToolCall(
+                id=tc.get("id", ""),
+                name=tc.get("name", ""),
+                arguments=tc.get("arguments") or {},
+            )
+            for tc in final.get("tool_calls", [])
+        ]
+        text, tool_calls = _maybe_salvage_tool_calls(text, tool_calls, tools=tools)
+        usage_raw = final.get("usage")
+        usage = (
+            TokenUsage(
+                input=usage_raw.get("input") or 0,
+                output=usage_raw.get("output") or 0,
+                cache_read=usage_raw.get("cache_read") or 0,
+                cache_write=usage_raw.get("cache_write") or 0,
+            )
+            if usage_raw
+            else None
+        )
+        yield StreamChunk(
+            turn=AssistantTurn(
+                text=text,
+                tool_calls=tool_calls,
+                finish_reason=finish,
+                reasoning=final.get("reasoning"),
+                usage=usage,
+            )
+        )
+
     def _ensure_client(self) -> Any:
         if self._client is None:
             # Lazy import so the SDK is only required when actually talking to OpenAI.
@@ -460,6 +576,20 @@ class OpenAIProvider(ProviderClient):
             kwargs["tools"] = tools
         _apply_endpoint_caps(kwargs, caps, has_tools=bool(tools))
         _pin_reasoning_effort(kwargs)
+
+        # R5 / ADR-047 Phase 1e: when a DeltaCoreClient is provided, the streaming
+        # wire transport delegates to Rust (`provider.stream`). Decision logic
+        # (caps, health, truncation, salvage) stays Python.
+        if self._core is not None:
+            settings_payload = {k: v for k, v in kwargs.items() if k not in ("model", "messages", "tools")}
+            yield from self._rust_stream(
+                model=model,
+                messages=kwargs["messages"],
+                tools=tools,
+                settings=settings_payload,
+            )
+            return
+
         client = self._ensure_client()
 
         text_parts: list[str] = []
