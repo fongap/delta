@@ -1,33 +1,31 @@
-# 上游管理
+# 外部项目与历史归属
 
-Delta 基于 OpenWorker 演进，但作为独立项目维护自身的产品定位、架构和发布节奏。
+Delta 是独立项目，不维护任何单一上游、镜像分支或自动同步流程。
 
-## 当前状态
+## 当前原则
 
-**不再自动同步 OpenWorker 上游。**
+- 外部项目仅作为第三方参考，不自动影响 Delta 的产品、架构或发布节奏。
+- 外部实现进入 `main` 前必须按照 Delta 当前产品边界、Runtime Authority、许可证、测试和 Pull Request 流程独立评估。
+- 不为跟随外部项目恢复已经淘汰的目录、协议、产品形态或 Compatibility Layer。
+- 历史来源、迁移记录和当时的设计决策保留在 Git 历史、CHANGELOG 与历史 ADR 中，不作为当前产品身份的一部分。
+- 第三方版权和许可证义务以 `LICENSE` 及实际保留的第三方代码为准。
 
-原有的 `upstream-sync.yml` 已删除。`upstream-openworker` 镜像分支不再维护。
+## 参考项目
 
-## 原则
+Delta 可以研究任何公开项目在 Runtime、UI、安全、办公能力、数据分析、Agent 交互等方面的优秀做法。
 
-Delta 现在是一个完全独立的项目。OpenWorker 的历史贡献通过 MIT 许可证保留，但：
+参考的对象不构成“上游”。吸收原则是：
 
-- **不再有自动同步机制**：不再通过 GitHub Actions 自动镜像 `andrewyng/openworker:main`
-- **不再有上游吸收流程**：任何外部代码进入 `main` 前必须经过 Delta 自身的完整评估和 PR 流程
-- **OpenWorker 仅为参考**：OpenWorker 现在仅作为第三方参考项目，其变更不自动影响 Delta
+```text
+研究语义
+  ↓
+评估是否符合 Delta 产品边界
+  ↓
+定义 Delta 自己的 Contract / Authority
+  ↓
+独立实现或合规引入
+  ↓
+测试与验证
+```
 
-## 历史说明
-
-Delta 起源于 OpenWorker 项目（MIT 许可证）。感谢 OpenWorker 的所有贡献者。Delta 保留对 OpenWorker 项目及其贡献者的来源说明，并遵守相应开源许可证要求。
-
-## 未来联邦化边界
-
-Federation 是一条开放、供应商无关的可选能力边界。OpenWorker、第三方、自建等
-都是潜在的 Federation 适配对象之一。
-
-- OpenWorker 仅为若干潜在 Federation 适配对象之一，**绝非** Delta 的核心
-- Delta Core 不依赖、不感知任何特定 Federation 适配器
-- `integrations/managed/` 中定义 Capability Port 协议；具体适配器若实现，
-  将位于 `integrations/managed/adapters/<provider>.py`
-
-详见 `docs/architecture/hub-federation-boundary.md`。
+任何参考都必须服从 Delta 自身的长期定位：本地优先的知识工作 Agent，重点面向办公、数据分析、研究、文档处理和内容生产；模型协议仅维护 OpenAI-compatible 与 Anthropic-compatible 两类；脚本是执行能力，不扩张为 Coding Agent 产品线。
