@@ -201,6 +201,8 @@ R4 完成后，普通任务不得继续依赖 Legacy Python Runtime 作为主控
 
 ### R5 — Provider Core
 
+> **R5 Final Convergence（ADR-048，2026-09-11）**：所有 provider transport authority（complete/stream for openai_chat/anthropic/openai_responses）、decision authority（capabilities/endpoint_caps/health/routing/friendly_error）已 Rust-authoritative。Protocol 14→15（streaming ABI）。生产 wiring 通过 `maybe_core_client()` 自动检测二进制存在启用 Rust transport，不存在时回退 SDK。Tool-call salvage regex 和 convert_messages 纯解析 deferred（ADR-047 Phase 3 "or deferred"）。
+
 Rust-first：
 
 - OpenAI-compatible；
