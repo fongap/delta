@@ -20,6 +20,7 @@ pub mod checkpoint;
 pub mod idemlog;
 pub mod ledger;
 pub mod policy;
+pub mod provider;
 pub mod retry;
 pub mod source_citation;
 pub mod taskstore;
@@ -46,6 +47,7 @@ pub use policy::{
     classify, enforce_level, enforce_scope, evaluate, restrict_grants, Decision,
     PolicyEvaluateInput, PolicyEvaluateOutput, RiskLevel, RootEntry, POLICY_SCHEMA_VERSION,
 };
+pub use provider::ProviderRequest;
 pub use retry::{
     classify_error, ErrorClass as RetryErrorClass, RetryClassifyInput, RetryClassifyOutput,
 };

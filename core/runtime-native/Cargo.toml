@@ -56,6 +56,7 @@ sha2 = "0.10"
 thiserror = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 time = { version = "0.3", features = ["formatting", "macros", "serde"] }
+ureq = { version = "2", features = ["json"] }
 
 [dev-dependencies]
 tempfile = "3"
