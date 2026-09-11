@@ -4,12 +4,10 @@ Verifies that the delta_core streaming protocol framing works:
 stream.echo yields N delta frames then a done frame.
 """
 
-import os
 import pytest
 
 from packages.delta_core_client import (
     DeltaCoreClient,
-    DeltaCoreError,
     _find_delta_core_binary,
 )
 

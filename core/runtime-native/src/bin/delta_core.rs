@@ -683,7 +683,7 @@ impl Command {
 
 fn handle_stream(
     cmd: Command,
-    cache: &Mutex<ConnCache>,
+    _cache: &Mutex<ConnCache>,
     out: &mut impl Write,
 ) {
     use uuid::Uuid;
