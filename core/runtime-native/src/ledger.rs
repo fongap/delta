@@ -198,24 +198,46 @@ impl LedgerReader {
         Ok(out)
     }
 
-    /// List run_ids that have at least one event but no terminal event.
+    /// List run_ids that are currently open (no terminal event as their
+    /// latest lifecycle state).
     ///
-    /// Mirrors `core/ledger.py` `RunEventLedger.open_runs()`.
+    /// AF-03 fix: a run that went `started → interrupted → resumed` is
+    /// open again because `resumed` is the latest lifecycle event, not
+    /// `interrupted`. The old query excluded any run that EVER had an
+    /// `interrupted` event — now we exclude only runs whose LATEST
+    /// terminal event is truly terminal.
+    ///
+    /// Terminal events: completed, failed, skipped, cancelled,
+    /// validation.failed.
+    /// Recoverable interruption: `interrupted` is NOT terminal —
+    /// `resumed` after it means the run is open again.
     pub fn open_runs(&self) -> Result<Vec<String>, ShadowReadError> {
+        // Get all run_ids that have at least one event.
         let mut stmt = self.conn.prepare(
-            "SELECT DISTINCT run_id FROM run_events \
-             WHERE run_id NOT IN ( \
-                 SELECT run_id FROM run_events WHERE type IN \
-                 ('run.completed', 'run.failed', 'run.interrupted', \
-                  'run.skipped', 'run.cancelled') \
-             )",
+            "SELECT DISTINCT run_id FROM run_events",
         )?;
-        let rows = stmt.query_map([], |row| row.get(0))?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(row?);
+        let all_ids: Vec<String> = stmt
+            .query_map([], |row| row.get(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+        drop(stmt);
+
+        // For each run, check if the latest lifecycle event is terminal.
+        let mut open = Vec::new();
+        for run_id in &all_ids {
+            let status = run_status_from_conn(&self.conn, run_id)?;
+            // Terminal statuses: ok, error, skipped, cancelled, validation_failed.
+            // Non-terminal: running, resumed, interrupted, unknown.
+            // `interrupted` is recoverable — the run is open for recovery.
+            let is_terminal = matches!(
+                status.as_str(),
+                "ok" | "error" | "skipped" | "cancelled" | "validation_failed"
+            );
+            if !is_terminal {
+                open.push(run_id.clone());
+            }
         }
-        Ok(out)
+        Ok(open)
     }
 
     /// Derive a run's lifecycle status from its last **terminal** event.

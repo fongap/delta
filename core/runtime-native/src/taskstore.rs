@@ -314,13 +314,16 @@ impl TaskStore {
     /// Performs in a single transaction:
     /// 1. Insert/replace the run in `task_runs`
     /// 2. Load task data, increment run_count, set last_run/last_status
-    /// 3. Recompute next_run (via Python's compute_next_run logic would be ideal,
-    ///    but here we just clear it if exhausted; next_run recomputation stays in Python)
-    /// 4. Check max_runs exhaustion: if run_count >= max_runs, set enabled=false, next_run=NULL
-    /// 5. Update task in `scheduled_tasks`
+    /// 3. Check max_runs exhaustion: if run_count >= max_runs, set enabled=false, next_run=NULL
+    /// 4. Apply Python-supplied next_run (when not exhausted) to both JSON and SQL columns
+    /// 5. Update task in `scheduled_tasks` — JSON blob AND indexed columns together
     ///
-    /// The `data` JSON must contain the full `ScheduledTask` dict including
-    /// `max_runs`, `run_count`, `validation_criteria`, `schedule`, etc.
+    /// AF-02 fix: the SQL indexed columns (`enabled`, `next_run`) are updated
+    /// in the same transaction as the JSON blob, so `due_tasks()` queries
+    /// always see the same state as the JSON.
+    ///
+    /// `next_run` is computed by Python's `compute_next_run()` (ADR-044: pure
+    /// function stays in Python) and passed in. Rust is the sole persistor.
     ///
     /// Returns the updated task data JSON (for Python to update its cache).
     pub fn complete_run(
@@ -331,6 +334,7 @@ impl TaskStore {
         run_data: &str,
         workspace: &str,
         finished_at: f64,
+        next_run: Option<f64>,
     ) -> Result<Value, ShadowReadError> {
         let tx = self.conn.transaction()?;
 
@@ -375,18 +379,36 @@ impl TaskStore {
         task_json["last_run"] = Value::from(finished_at);
         task_json["last_status"] = Value::String(last_status.to_string());
 
-        // 4. Check max_runs exhaustion
+        // 4. Check max_runs exhaustion — Rust is the single authority for this.
+        //    If exhausted, override next_run to None and enabled to false.
         let exhausted = max_runs > 0 && run_count >= max_runs;
+        let final_enabled: bool;
+        let final_next_run: Option<f64>;
         if exhausted {
             task_json["enabled"] = Value::Bool(false);
             task_json["next_run"] = Value::Null;
+            final_enabled = false;
+            final_next_run = None;
+        } else {
+            task_json["enabled"] = Value::Bool(true);
+            match next_run {
+                Some(nr) => {
+                    task_json["next_run"] = Value::from(nr);
+                    final_next_run = Some(nr);
+                }
+                None => {
+                    task_json["next_run"] = Value::Null;
+                    final_next_run = None;
+                }
+            }
+            final_enabled = true;
         }
 
-        // 5. Update task
+        // 5. Update task — JSON blob AND SQL indexed columns in ONE statement.
         let updated_data = task_json.to_string();
         tx.execute(
-            "UPDATE scheduled_tasks SET data = ? WHERE id = ?",
-            params![&updated_data, task_id],
+            "UPDATE scheduled_tasks SET data = ?, enabled = ?, next_run = ? WHERE id = ?",
+            params![&updated_data, final_enabled as i64, final_next_run, task_id],
         )?;
 
         tx.commit()?;
@@ -600,6 +622,72 @@ mod tests {
     fn close_is_idempotent() {
         let store = TaskStore::open_in_memory().unwrap();
         store.close(); // Should not panic
+    }
+
+    #[test]
+    fn complete_run_syncs_sql_indexed_columns() {
+        // AF-02: complete_run must update SQL enabled/next_run in the same
+        // transaction as the JSON blob so due_tasks() never reads stale columns.
+        let mut store = TaskStore::open_in_memory().unwrap();
+        let task_json = r#"{"id":"task_1","title":"t","run_count":0,"max_runs":1}"#;
+        store
+            .save_task("task_1", true, Some(1000.0), task_json)
+            .unwrap();
+
+        store
+            .complete_run(
+                "run_1",
+                "task_1",
+                2000.0,
+                r#"{"run_id":"run_1","status":"ok"}"#,
+                "ws",
+                2100.0,
+                None, // Python would pass None because max_runs=1 is exhausted
+            )
+            .unwrap();
+
+        // SQL enabled column must be 0 (disabled) — NOT left stale at 1.
+        let task = store.get_task("task_1").unwrap().unwrap();
+        assert!(!task.enabled, "exhausted task must have SQL enabled=0");
+        assert!(task.next_run.is_none(), "exhausted task must have SQL next_run=NULL");
+
+        // due_tasks() reads SQL columns; an exhausted task must not be due.
+        let due = store.due_tasks(f64::MAX).unwrap();
+        assert!(due.is_empty(), "exhausted task must not be due");
+
+        // JSON blob must also be disabled (consistent with SQL).
+        let blob = &task.data;
+        assert_eq!(blob["enabled"], false);
+        assert_eq!(blob["run_count"], 1);
+    }
+
+    #[test]
+    fn complete_run_non_exhausted_uses_python_next_run() {
+        // AF-02: when not exhausted, the Python-computed next_run is persisted
+        // to BOTH JSON and SQL columns.
+        let mut store = TaskStore::open_in_memory().unwrap();
+        let task_json = r#"{"id":"task_1","title":"t","run_count":0,"max_runs":0}"#;
+        store
+            .save_task("task_1", true, Some(1000.0), task_json)
+            .unwrap();
+
+        store
+            .complete_run(
+                "run_1",
+                "task_1",
+                2000.0,
+                r#"{"run_id":"run_1","status":"ok"}"#,
+                "ws",
+                2100.0,
+                Some(5000.0), // Python computed next_run
+            )
+            .unwrap();
+
+        let task = store.get_task("task_1").unwrap().unwrap();
+        assert!(task.enabled);
+        assert_eq!(task.next_run, Some(5000.0), "SQL next_run must match Python value");
+        assert_eq!(task.data["next_run"], 5000.0_f64, "JSON next_run must match SQL");
+        assert_eq!(task.data["run_count"], 1);
     }
 
     #[test]

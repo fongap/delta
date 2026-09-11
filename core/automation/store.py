@@ -175,14 +175,21 @@ class TaskStore:
         self,
         run: TaskRun,
         finished_at: float,
+        *,
+        next_run: float | None = None,
     ) -> dict[str, Any]:
-        """Atomically complete a run and update task stats (ADR-043).
+        """Atomically complete a run and update task stats (ADR-043, AF-01/AF-02).
 
-        Delegates to Rust `task.complete_run` which atomically:
+        Delegates to Rust `task.complete_run` which atomically in one transaction:
         1. Stores the run with final status
         2. Increments task.run_count, sets last_run/last_status
         3. Checks max_runs exhaustion, disables task if exhausted
-        4. Returns updated task data for cache sync
+        4. Writes `next_run` (Python-computed) to both JSON blob and SQL indexed columns
+        5. Returns updated task data for cache sync
+
+        `next_run` is computed by the caller via `compute_next_run()` using the
+        post-completion state (run_count + 1). Rust is the sole persistor; the
+        indexed columns and JSON are always consistent after this call.
 
         Returns the updated task data dict for local cache sync.
         """
@@ -195,6 +202,7 @@ class TaskStore:
             run_data=run_data,
             workspace=run.workspace or "",
             finished_at=finished_at,
+            next_run=next_run,
         )
         if not isinstance(result, dict):
             raise DeltaCoreError("invalid task.complete_run response")

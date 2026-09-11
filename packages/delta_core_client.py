@@ -1,25 +1,25 @@
 """Delta Core host client — Python interface to the delta-core Rust process.
 
-R1 (P1-E): the unified Delta Core process entrypoint. Instead of
-spawning a fresh `write_idemlog` / `write_ledger`
-subprocess for every command, the Python delegate modules hold a
-persistent connection to a single long-running ``delta_core``
-process.
+R5.1 / AF-04/05/06: Multiplexed Runtime Protocol v16.
 
-This module provides the :class:`DeltaCoreClient` that wraps a
-``delta_core`` subprocess. Commands are line-delimited JSON on
-stdin; responses are line-delimited JSON on stdout.
+Instead of the v15 model (single lock held for entire command/stream), v16
+uses a dedicated stdout reader thread + per-request routing:
 
-Public Contract (R1):
+* Each request gets a unique ``request_id``.
+* The reader thread parses stdout lines, extracts ``request_id``, and routes
+  each frame to the correct per-request queue.
+* A writer lock guards a single JSON line write — never the whole command.
+* A single client supports many concurrent in-flight requests and streams.
+* ``request_cancel(request_id)`` sends ``request.cancel`` to interrupt a
+  running stream without waiting for it to finish.
 
-* The client is **process-local**; one client per
-  :class:`SessionManager` (or equivalent). Multiple threads may
-  share a single client; access is serialized by a lock.
-* The protocol is fire-and-await: a command blocks until its
-  response arrives, then returns the ``result`` or raises the
-  ``error``.
-* Crashes (subprocess exit) raise :class:`DeltaCoreError`. The
-  caller is responsible for restart policy.
+Public Contract (v16):
+
+* :meth:`command` — send one request, wait for its response. Thread-safe.
+* :meth:`stream` — send a streaming request, yield delta frames. Thread-safe.
+* :meth:`stream_cancel` — cancel a running stream by ``request_id``.
+* :meth:`close` — shut down the subprocess and fan-out errors to all
+  pending requests and streams.
 """
 
 from __future__ import annotations
@@ -29,48 +29,25 @@ import os
 import subprocess
 import sys
 import threading
+import time
+import queue
 from pathlib import Path
 from typing import Any, Generator
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 CRATE_DIR = REPO_ROOT / "core" / "runtime-native"
 
-# Default command timeout in seconds. The Rust process answers
-# most commands in microseconds; this is a watchdog for hangs /
-# deadlocks (e.g. lock contention on a SQLite connection). Callers
-# can override per-client via the ``command_timeout`` constructor
-# argument.
+# Default command timeout in seconds.
 DEFAULT_COMMAND_TIMEOUT_SECONDS: float = 30.0
 
 # Delta Core wire-protocol version. Must match the
 # ``PROTOCOL_VERSION`` constant in
-# ``core/runtime-native/src/bin/delta_core.rs``. The Python client
-# sends this in a ``hello`` command immediately after subprocess
-# startup; a mismatch raises :class:`DeltaCoreError` (fail-closed).
-PROTOCOL_VERSION: int = 15
+# ``core/runtime-native/src/bin/delta_core.rs``.
+PROTOCOL_VERSION: int = 16
 
 
 def _find_delta_core_binary() -> Path | None:
-    """Locate the delta_core binary in the standard search order.
-
-    Lookup order:
-
-    1. ``DELTA_CORE_BINARY`` env var (explicit override).
-    2. Same directory as the running Python executable — matches the
-       Windows Portable layout (``App/Delta/delta_core.exe`` next to
-       ``App/Delta/Delta.exe``).
-    3. Parent directories of the Python executable — covers the
-       PyInstaller onedir sidecar layout where ``sys.executable`` is
-       ``App/Delta/sidecar/delta-server/delta-server.exe`` and the
-       binary lives at ``App/Delta/delta_core.exe`` (up to 3 levels).
-    4. ``DELTA_PORTABLE_ROOT`` env var — set by the portable launcher;
-       binary is at ``App/Delta/delta_core.exe`` relative to root.
-    5. The Tauri resource path (``sys._MEIPASS`` when frozen).
-    6. The repo's dev build (``core/runtime-native/target/...``).
-
-    Returns ``None`` if no candidate is found. The caller decides
-    whether to raise (fail-closed) or to skip the delegate.
-    """
+    """Locate the delta_core binary in the standard search order."""
     target = "delta_core.exe" if sys.platform == "win32" else "delta_core"
 
     env = os.environ.get("DELTA_CORE_BINARY")
@@ -111,42 +88,20 @@ class DeltaCoreError(RuntimeError):
 
 
 class DeltaCoreClient:
-    """Persistent client to the delta_core Rust process.
+    """Persistent multiplexed client to the delta_core Rust process (v16).
 
-    The client spawns ``delta_core`` on first use, sends line-delimited
-    JSON commands, and parses line-delimited JSON responses. The
-    underlying connection is reused for every command in the
-    subprocess's lifetime.
+    Internals:
 
-    The ``core/idemlog_delegate.py``, ``core/ledger_delegate.py``,
-    and ``core/automation/store_delegate.py`` modules use this client
-    when the unified process is available. When authority is declared
-    but the binary is missing, the delegates raise
-    :class:`DeltaCoreError` (fail-closed) rather than falling back.
-
-    P1-1 lifecycle guarantees:
-
-    * **Startup failure** — a missing or non-executable binary
-      raises :class:`DeltaCoreError` on first use.
-    * **Subprocess crash** — if the subprocess dies (e.g. SIGSEGV,
-      panic) the next ``command()`` call restarts it.
-    * **Broken pipe** — ``BrokenPipeError`` on ``stdin.write`` is
-      caught; the client restarts on the next call.
-    * **Non-JSON response** — ``json.JSONDecodeError`` on the
-      response line is caught and re-raised as
-      :class:`DeltaCoreError`.
-    * **Command timeout** — ``stdout.readline()`` runs under a
-      timeout (``command_timeout`` constructor arg, default
-      :data:`DEFAULT_COMMAND_TIMEOUT_SECONDS`). A timeout closes the
-      client and raises :class:`DeltaCoreError`.
-    * **Clean shutdown** — :meth:`close` closes stdin, waits for the
-      subprocess to exit, kills + reaps on timeout. Idempotent.
-    * **Restart policy** — after any failure, the next ``command()``
-      spawns a fresh subprocess automatically.
-    * **stderr draining** — a background thread reads stderr
-      continuously so the Rust process's stderr pipe can never
-      fill up and deadlock the subprocess. The thread exits
-      cleanly on :meth:`close`.
+    * ``_write_lock`` — a lock that protects a single ``stdin.write()`` call
+      (not the whole command). Multiple threads can interleave writes.
+    * ``_reader_thread`` — a dedicated thread that reads stdout lines and
+      routes them by ``request_id`` to the correct pending request or
+      stream queue.
+    * ``_pending`` — ``{request_id: queue.Queue}`` for non-streaming responses.
+    * ``_streams`` — ``{request_id: queue.Queue}`` for streaming frames.
+    * ``_next_id`` — an atomic request_id counter.
+    * ``_crash()`` — fans out a crash error to all pending requests and
+      streams so no caller blocks forever.
     """
 
     def __init__(
@@ -163,10 +118,40 @@ class DeltaCoreClient:
                 )
         self._binary_path = binary_path
         self._command_timeout = command_timeout
+
+        # AF-07: bounded inflight requests — admission control.
+        # When this semaphore is exhausted, new commands raise
+        # DeltaCoreError("overload") instead of queuing indefinitely.
+        self._max_inflight = 64
+        self._inflight = threading.Semaphore(self._max_inflight)
+
         self._proc: subprocess.Popen | None = None
+        # RLock: _ensure_started → _handshake may call close() on failure,
+        # and close() re-acquires this lock.
+        self._proc_lock = threading.RLock()
+
+        self._write_lock = threading.Lock()  # one line write at a time
+        self._reader_thread: threading.Thread | None = None
+        self._reader_stop = threading.Event()
+
         self._stderr_thread: threading.Thread | None = None
         self._stderr_stop = threading.Event()
-        self._lock = threading.RLock()
+
+        self._pending: dict[int, queue.Queue] = {}  # request_id → response queue
+        self._streams: dict[int, queue.Queue] = {}  # request_id → stream queue
+        self._pending_lock = threading.Lock()
+
+        self._next_id = 0
+        self._id_lock = threading.Lock()
+
+        # AF-12/13: RunningTask registry — who spawned owns completion.
+        self._running: dict[int, dict] = {}  # request_id → task metadata
+        self._running_lock = threading.Lock()
+
+        # Track request_ids that were assigned by the server when the
+        # client did not send one (v15 compat path). Not used in v16.
+        # We always send request_id in v16, so this is empty.
+        self._server_assigned: set[int] = set()
 
     @staticmethod
     def _find_binary() -> Path | None:
@@ -177,18 +162,15 @@ class DeltaCoreClient:
     def binary_path(self) -> Path:
         return self._binary_path
 
+    def _alloc_id(self) -> int:
+        with self._id_lock:
+            self._next_id += 1
+            return self._next_id
+
+    # -- subprocess lifecycle ---------------------------------------------------
+
     def _stderr_drainer(self, proc: subprocess.Popen) -> threading.Thread:
-        """Start a background thread that drains ``proc.stderr``.
-
-        The Rust process is contractually silent on stderr under
-        normal operation. This drainer exists as a deadlock guard:
-        if the subprocess ever writes to stderr and the parent
-        never reads, the OS pipe buffer fills (typically 4-64 KB)
-        and the subprocess blocks on its next ``write``. The
-        drainer reads line by line until EOF or stop signal.
-
-        Returns the thread for join-on-close.
-        """
+        """Start a background thread that drains ``proc.stderr``."""
         stop = self._stderr_stop
 
         def drain():
@@ -210,34 +192,32 @@ class DeltaCoreClient:
         return thread
 
     def _ensure_started(self) -> None:
-        if self._proc is not None and self._proc.poll() is None:
-            return
-        if not self._binary_path.exists():
-            raise DeltaCoreError(
-                f"delta_core binary not built: {self._binary_path}"
+        with self._proc_lock:
+            if self._proc is not None and self._proc.poll() is None:
+                return
+            if not self._binary_path.exists():
+                raise DeltaCoreError(
+                    f"delta_core binary not built: {self._binary_path}"
+                )
+            self._proc = subprocess.Popen(
+                [str(self._binary_path)],
+                stdin=subprocess.PIPE,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                encoding="utf-8",
+                bufsize=1,
             )
-        self._proc = subprocess.Popen(
-            [str(self._binary_path)],
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            text=True,
-            encoding="utf-8",
-            bufsize=1,
-        )
-        self._stderr_stop.clear()
-        self._stderr_thread = self._stderr_drainer(self._proc)
-        self._handshake()
+            self._stderr_stop.clear()
+            self._stderr_thread = self._stderr_drainer(self._proc)
+            # Handshake BEFORE starting the stdout reader thread —
+            # the reader would consume the handshake response otherwise.
+            self._handshake()
+            self._reader_stop.clear()
+            self._reader_thread = self._stdout_reader(self._proc)
 
     def _handshake(self) -> None:
-        """Send a ``hello`` command and verify the protocol version.
-
-        Called immediately after subprocess startup. If the server
-        reports a different protocol version, the subprocess is
-        closed and :class:`DeltaCoreError` is raised (fail-closed).
-        This prevents the Python runtime from silently talking to a
-        stale or upgraded binary.
-        """
+        """Send a ``hello`` command and verify the protocol version."""
         if self._proc is None or self._proc.stdin is None or self._proc.stdout is None:
             raise DeltaCoreError("delta_core subprocess not started")
         cmd = json.dumps({"cmd": "hello", "protocol_version": PROTOCOL_VERSION})
@@ -269,206 +249,346 @@ class DeltaCoreClient:
                 f"client={PROTOCOL_VERSION}, server={server_version}"
             )
 
-    def close(self) -> None:
-        """Close the subprocess. Subsequent commands will restart it.
+    # -- stdout reader (demux) ---------------------------------------------------
 
-        Safe to call multiple times and safe against an already-dead
-        process. Kill + reap on timeout so no zombie is left behind.
-        The stderr drainer thread is signaled to stop and joined
-        with a short timeout.
+    def _stdout_reader(self, proc: subprocess.Popen) -> threading.Thread:
+        """Start a background thread that reads stdout and routes by request_id.
+
+        Each line is parsed as JSON, and the ``request_id`` field determines
+        which queue the frame goes to:
+
+        * For non-streaming responses (no ``stream`` key): routed to
+          ``_pending[request_id]``.
+        * For streaming frames (has ``stream`` key): routed to
+          ``_streams[request_id]``.
+
+        On EOF or error, crashes all pending requests and streams.
         """
-        with self._lock:
-            proc = self._proc
-            thread = self._stderr_thread
-            self._proc = None
-            self._stderr_thread = None
-            if proc is None:
-                self._stderr_stop.set()
-                return
-            try:
-                if proc.stdin is not None:
-                    try:
-                        proc.stdin.close()
-                    except Exception:
-                        pass
-                try:
-                    proc.wait(timeout=2)
-                except Exception:
-                    try:
-                        proc.kill()
-                    except Exception:
-                        pass
-                    try:
-                        proc.wait(timeout=2)
-                    except Exception:
-                        pass
-            finally:
-                self._stderr_stop.set()
-                if thread is not None and thread.is_alive():
-                    thread.join(timeout=1.0)
-
-    def _readline_with_timeout(self, stream, timeout: float) -> str:
-        """Read one line from ``stream`` with a timeout.
-
-        Uses a background thread + ``join(timeout)`` so the
-        underlying ``readline()`` is always interruptible. Returns
-        the line on success, raises :class:`DeltaCoreError` on
-        timeout.
-        """
-        result: list[str] = []
-        error: list[BaseException] = []
 
         def reader():
             try:
-                result.append(stream.readline())
-            except BaseException as exc:
-                error.append(exc)
+                stdout = proc.stdout
+                if stdout is None:
+                    return
+                while not self._reader_stop.is_set():
+                    line = stdout.readline()
+                    if not line:
+                        # EOF — process died or closed stdout. If this was
+                        # a deliberate close(), _reader_stop is set and we
+                        # must not crash-fanout (a restart may already be
+                        # registering new pending entries).
+                        if not self._reader_stop.is_set():
+                            self._crash(DeltaCoreError("delta_core closed stdout"))
+                        return
+                    line = line.strip()
+                    if not line:
+                        continue
+                    try:
+                        frame = json.loads(line)
+                    except json.JSONDecodeError:
+                        # Non-JSON line — ignore (may be a Rust panic message)
+                        continue
+                    request_id = frame.get("request_id")
+                    if request_id is None:
+                        request_id = 0
+                    elif isinstance(request_id, str):
+                        try:
+                            request_id = int(request_id)
+                        except ValueError:
+                            request_id = 0
+                    stream_kind = frame.get("stream")
+                    with self._pending_lock:
+                        if stream_kind is not None:
+                            q = self._streams.get(request_id)
+                        else:
+                            q = self._pending.get(request_id)
+                    if q is not None:
+                        q.put(frame)
+            except Exception as exc:
+                if not self._reader_stop.is_set():
+                    self._crash(DeltaCoreError(f"delta_core reader error: {exc}"))
+            finally:
+                if not self._reader_stop.is_set():
+                    self._crash(DeltaCoreError("delta_core reader thread exited"))
 
-        thread = threading.Thread(target=reader, daemon=True)
+        thread = threading.Thread(
+            target=reader, name="delta-core-stdout-reader", daemon=True
+        )
         thread.start()
-        thread.join(timeout=timeout)
-        if thread.is_alive():
+        return thread
+
+    def _crash(self, error: Exception) -> None:
+        """Fan out a crash error to all pending requests and streams.
+        Also releases all inflight slots since no request can complete."""
+        with self._pending_lock:
+            for q in self._pending.values():
+                q.put({"ok": False, "error": str(error)})
+            for q in self._streams.values():
+                q.put({"ok": False, "stream": "error", "error": str(error)})
+            self._pending.clear()
+            self._streams.clear()
+        # Release all inflight slots — crashed requests can never complete.
+        with self._running_lock:
+            n = len(self._running)
+            self._running.clear()
+        for _ in range(n):
+            try:
+                self._inflight.release()
+            except ValueError:
+                break  # semaphore underflow guard
+
+    def close(self) -> None:
+        """Close the subprocess. Subsequent commands will restart it."""
+        self._crash(DeltaCoreError("delta_core client closed"))
+        with self._proc_lock:
+            proc = self._proc
+            self._proc = None
+            self._reader_stop.set()
+            self._stderr_stop.set()
+            if proc is not None:
+                try:
+                    if proc.stdin is not None:
+                        try:
+                            proc.stdin.close()
+                        except Exception:
+                            pass
+                    try:
+                        proc.wait(timeout=2)
+                    except Exception:
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+                        try:
+                            proc.wait(timeout=2)
+                        except Exception:
+                            pass
+                finally:
+                    for thread in (self._reader_thread, self._stderr_thread):
+                        if thread is not None and thread.is_alive():
+                            thread.join(timeout=1.0)
+                    self._reader_thread = None
+                    self._stderr_thread = None
+
+    # -- public API ---------------------------------------------------------------
+
+    def _acquire_inflight(self) -> None:
+        """AF-07: admission control. Acquire one inflight slot.
+
+        If the bounded queue is full, raise DeltaCoreError("overload")
+        rather than queuing indefinitely. This prevents unbounded memory
+        growth and ensures approval/ledger requests are never starved.
+
+        Control commands (request.cancel, ping) bypass the limit so
+        cancellation and health checks always succeed even at full load.
+        """
+        if not self._inflight.acquire(timeout=0.1):
             raise DeltaCoreError(
-                f"delta_core command timed out after {timeout}s"
+                "delta_core overload: too many concurrent in-flight requests"
             )
-        if error:
-            raise DeltaCoreError(f"delta_core readline failed: {error[0]}")
-        return result[0] if result else ""
+
+    def _release_inflight(self) -> None:
+        self._inflight.release()
 
     def command(self, payload: dict[str, Any]) -> Any:
-        """Send one command, return the ``result`` field of the response.
+        """Send one command, wait for its response, return the ``result``.
 
-        Raises :class:`DeltaCoreError` if the subprocess returns
-        ``ok: false``, dies before responding, or exceeds the
-        configured command timeout.
+        AF-07: bounded inflight — raises ``DeltaCoreError("overload")`` if
+        the max concurrent request limit is exceeded. Control commands
+        (request.cancel, ping, hello) bypass the limit.
         """
-        with self._lock:
+        # Control commands bypass backpressure — they must always succeed
+        # even when the client is at full inflight capacity.
+        is_control = payload.get("cmd") in (
+            "request.cancel", "ping", "hello",
+        )
+        if not is_control:
+            self._acquire_inflight()
+        request_id = self._alloc_id()
+        payload = {**payload, "request_id": request_id}
+
+        # AF-12: register RunningTask — the caller (this thread) owns
+        # completion. On close/crash, the registry is fanned out.
+        with self._running_lock:
+            self._running[request_id] = {
+                "started_at": time.time(),
+                "owner": threading.current_thread().ident,
+                "cmd": payload.get("cmd"),
+            }
+
+        # Register the pending queue before sending the request.
+        q: queue.Queue = queue.Queue(maxsize=1)
+        with self._pending_lock:
+            self._pending[request_id] = q
+
+        try:
             self._ensure_started()
             proc = self._proc
-            if proc is None or proc.stdin is None or proc.stdout is None:
+            if proc is None or proc.stdin is None:
                 self.close()
                 raise DeltaCoreError("delta_core process pipes unavailable")
             line = json.dumps(payload)
             try:
-                proc.stdin.write(line + "\n")
-                proc.stdin.flush()
+                with self._write_lock:
+                    proc.stdin.write(line + "\n")
+                    proc.stdin.flush()
             except (BrokenPipeError, OSError, ValueError) as exc:
                 self.close()
                 raise DeltaCoreError(f"delta_core stdin write failed: {exc}") from exc
+
+            # Wait for the response (with timeout).
             try:
-                response_line = self._readline_with_timeout(
-                    proc.stdout, self._command_timeout
-                )
-            except DeltaCoreError:
-                self.close()
-                raise
-            if not response_line:
-                self.close()
-                raise DeltaCoreError("delta_core closed stdout (crash?)")
-            try:
-                response = json.loads(response_line)
-            except json.JSONDecodeError as exc:
+                response = q.get(timeout=self._command_timeout)
+            except queue.Empty:
                 self.close()
                 raise DeltaCoreError(
-                    f"delta_core returned non-JSON: {response_line!r}"
-                ) from exc
+                    f"delta_core command {payload.get('cmd')} timed out after {self._command_timeout}s"
+                )
+
             if not response.get("ok"):
                 raise DeltaCoreError(
                     f"delta_core {payload.get('cmd')}: {response.get('error')}"
                 )
             return response.get("result")
+        finally:
+            with self._pending_lock:
+                self._pending.pop(request_id, None)
+            was_running = False
+            with self._running_lock:
+                was_running = request_id in self._running
+                self._running.pop(request_id, None)
+            if is_control:
+                pass
+            elif was_running:
+                self._release_inflight()
 
     def stream(
         self, payload: dict[str, Any]
     ) -> "Generator[dict[str, Any], None, Any]":
-        """Send a streaming command, yielding delta frames.
+        """Send a streaming command, yielding delta frames as they arrive.
 
-        Yields each ``data`` payload from ``delta`` frames as they
-        arrive. Returns the ``result`` from the terminal ``done``
-        frame. Raises :class:`DeltaCoreError` on error frames or
-        protocol violations.
+        The caller must consume the generator fully (or close it) to release
+        the stream resources. Other commands can be issued concurrently —
+        the reader thread routes frames by ``request_id``.
 
-        The lock is held for the entire stream duration so no other
-        command can interleave on the stdio pipe. The caller can
-        cancel by calling :meth:`stream_cancel` from another thread
-        (which will block until the stream finishes or is closed).
+        AF-07: bounded inflight — raises ``DeltaCoreError("overload")`` if
+        the max concurrent request limit is exceeded.
         """
-        self._lock.acquire()
+        self._acquire_inflight()
+        request_id = self._alloc_id()
+        payload = {**payload, "request_id": request_id}
+
+        # AF-12: register RunningTask.
+        with self._running_lock:
+            self._running[request_id] = {
+                "started_at": time.time(),
+                "owner": threading.current_thread().ident,
+                "cmd": payload.get("cmd"),
+            }
+
+        # Register the stream queue before sending the request.
+        q: queue.Queue = queue.Queue()  # unbounded for deltas
+        with self._pending_lock:
+            self._streams[request_id] = q
+
+        self._ensure_started()
+        proc = self._proc
+        if proc is None or proc.stdin is None:
+            self.close()
+            raise DeltaCoreError("delta_core process pipes unavailable")
+        line = json.dumps(payload)
         try:
-            self._ensure_started()
-            proc = self._proc
-            if proc is None or proc.stdin is None or proc.stdout is None:
-                self.close()
-                raise DeltaCoreError("delta_core process pipes unavailable")
-            line = json.dumps(payload)
-            try:
+            with self._write_lock:
                 proc.stdin.write(line + "\n")
                 proc.stdin.flush()
-            except (BrokenPipeError, OSError, ValueError) as exc:
-                self.close()
-                raise DeltaCoreError(f"delta_core stdin write failed: {exc}") from exc
-        except BaseException:
-            self._lock.release()
-            raise
-        return self._read_stream_frames(proc)
+        except (BrokenPipeError, OSError, ValueError) as exc:
+            self.close()
+            raise DeltaCoreError(f"delta_core stdin write failed: {exc}") from exc
 
-    def stream_cancel(self, stream_id: str) -> Any:
-        """Cancel an in-flight stream by ``stream_id``.
+        # Return a generator that reads from the stream queue.
+        def _gen() -> Generator[dict[str, Any], None, Any]:
+            try:
+                while True:
+                    frame = q.get(timeout=self._command_timeout)
+                    if not frame.get("ok"):
+                        raise DeltaCoreError(
+                            f"delta_core stream error: {frame.get('error')}"
+                        )
+                    stream_kind = frame.get("stream")
+                    if stream_kind == "start":
+                        continue
+                    if stream_kind == "delta":
+                        yield frame.get("data")
+                        continue
+                    if stream_kind == "done":
+                        return frame.get("result")
+                    if stream_kind == "error":
+                        raise DeltaCoreError(
+                            f"delta_core stream error: {frame.get('error')}"
+                        )
+                    raise DeltaCoreError(
+                        f"delta_core stream: unknown frame type {stream_kind!r}"
+                    )
+            finally:
+                was_running = False
+                with self._running_lock:
+                    was_running = request_id in self._running
+                    self._running.pop(request_id, None)
+                with self._pending_lock:
+                    self._streams.pop(request_id, None)
+                # Only release if we were still registered — _crash()
+                # may have already released the slot for us.
+                if was_running:
+                    self._release_inflight()
 
-        Note: blocks until the active stream finishes (the stream
-        holds the client lock). Phase 0 placeholder.
+        return _gen()
+
+    def stream_cancel(self, request_id: int) -> Any:
+        """Cancel an in-flight stream by ``request_id``.
+
+        Sends ``request.cancel`` to the server, which sets the cancel flag
+        for the target stream. The stream thread exits at the next delta
+        boundary. Other requests are unaffected.
         """
-        return self.command({"cmd": "stream.cancel", "stream_id": stream_id})
+        return self.command({
+            "cmd": "request.cancel",
+            "target_request_id": request_id,
+        })
 
-    def _read_stream_frames(
-        self, proc: "subprocess.Popen[str]"
-    ) -> "Generator[dict[str, Any], None, Any]":
-        """Read framed stream lines from stdout, yielding deltas.
+    @property
+    def active_inflight(self) -> int:
+        """AF-12: number of currently registered in-flight requests."""
+        with self._running_lock:
+            return len(self._running)
 
-        Releases the client lock when the generator is exhausted or
-        closed.
+    def shutdown(self, *, graceful_timeout: float = 5.0) -> None:
+        """AF-13: graceful shutdown with bounded deadline.
+
+        1. Signal cancel for all active streams (graceful).
+        2. Inject error frames into stream queues so generators exit.
+        3. Wait up to ``graceful_timeout`` for inflight to drain.
+        4. If still not drained, force-close (abort).
         """
-        try:
-            while True:
-                try:
-                    line = self._readline_with_timeout(
-                        proc.stdout, self._command_timeout
-                    )
-                except DeltaCoreError:
-                    self.close()
-                    raise
-                if not line:
-                    self.close()
-                    raise DeltaCoreError("delta_core closed stdout during stream")
-                try:
-                    frame = json.loads(line)
-                except json.JSONDecodeError as exc:
-                    self.close()
-                    raise DeltaCoreError(
-                        f"delta_core stream returned non-JSON: {line!r}"
-                    ) from exc
-                if not frame.get("ok"):
-                    raise DeltaCoreError(
-                        f"delta_core stream error: {frame.get('error')}"
-                    )
-                stream_kind = frame.get("stream")
-                if stream_kind == "start":
-                    continue
-                if stream_kind == "delta":
-                    yield frame.get("data")
-                    continue
-                if stream_kind == "done":
-                    return frame.get("result")
-                if stream_kind == "error":
-                    raise DeltaCoreError(
-                        f"delta_core stream error: {frame.get('error')}"
-                    )
-                self.close()
-                raise DeltaCoreError(
-                    f"delta_core stream: unknown frame type {stream_kind!r}"
-                )
-        finally:
-            self._lock.release()
+        with self._running_lock:
+            ids = list(self._running.keys())
+        # Send cancel to Rust for each active stream.
+        for rid in ids:
+            try:
+                self.stream_cancel(rid)
+            except Exception:
+                pass
+        # Inject error frames into stream queues so generators that are
+        # blocked on q.get() will exit and release inflight slots.
+        with self._pending_lock:
+            for q in self._streams.values():
+                q.put({"ok": False, "stream": "error", "error": "shutdown"})
+        # Wait for inflight to drain.
+        deadline = time.time() + graceful_timeout
+        while time.time() < deadline:
+            if self.active_inflight == 0:
+                break
+            time.sleep(0.05)
+        self.close()
 
 
 _default_client: DeltaCoreClient | None = None
@@ -476,12 +596,7 @@ _default_lock = threading.Lock()
 
 
 def default_client() -> DeltaCoreClient:
-    """Return the process-wide shared delta_core client.
-
-    The client is created lazily on first use and reused for every
-    subsequent command. Close it via :func:`close_default_client`
-    at process shutdown.
-    """
+    """Return the process-wide shared delta_core client."""
     global _default_client
     with _default_lock:
         if _default_client is None:
@@ -499,13 +614,7 @@ def close_default_client() -> None:
 
 
 def maybe_core_client() -> DeltaCoreClient | None:
-    """Return the shared delta_core client if a binary is available, else None.
-
-    R5 / ADR-047: used at provider build time as the `core` transport. The
-    DeltaCoreClient is lazy (spawns on first command, not on construction), so
-    this is cheap. None when the binary is absent (dev/test without a build) →
-    providers use the SDK path.
-    """
+    """Return the shared delta_core client if a binary is available, else None."""
     if _find_delta_core_binary() is None:
         return None
     return default_client()

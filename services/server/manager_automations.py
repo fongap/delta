@@ -186,15 +186,6 @@ class AutomationsMixin(ManagerHostState):
                 self._runtimes[run.session_id] = runtime
             except Exception:
                 pass
-            # ADR-043: atomically complete run + update task stats (run_count,
-            # last_run, last_status, max_runs exhaustion) via Rust.
-            updated_task = self.task_store.complete_run(run, run.finished_at)
-            # Sync local task cache with updated data from Rust.
-            task.run_count = updated_task.get("run_count", task.run_count)
-            task.last_run = updated_task.get("last_run", task.last_run)
-            task.last_status = updated_task.get("last_status", task.last_status)
-            task.enabled = updated_task.get("enabled", task.enabled)
-            task.next_run = updated_task.get("next_run", task.next_run)
 
             # §7.2 Inbox 收敛: a run that did NOT succeed (error /
             # validation_failed / skipped) surfaces as an issue in the
@@ -547,7 +538,22 @@ class AutomationsMixin(ManagerHostState):
             run.status = self._validate_run(run, task, artifacts)
             run.finished_at = _epoch()
             self.task_store.add_run(run)
-            task.last_run, task.last_status = run.finished_at, run.status
-            task.run_count += 1
-            self.task_store.save(task)
+            # AF-01 fix: route manual runs through the same Rust atomic
+            # complete_run as scheduled runs (single completion owner).
+            from core.automation.store import compute_next_run as _compute_next
+
+            projected = task
+            projected.run_count = task.run_count + 1
+            projected.enabled = not (
+                task.max_runs and projected.run_count >= task.max_runs
+            )
+            nr = _compute_next(projected) if projected.enabled else None
+            updated = self.task_store.complete_run(
+                run, run.finished_at, next_run=nr
+            )
+            task.run_count = updated.get("run_count", task.run_count + 1)
+            task.last_run = updated.get("last_run", run.finished_at)
+            task.last_status = updated.get("last_status", run.status)
+            task.enabled = updated.get("enabled", task.enabled)
+            task.next_run = updated.get("next_run", nr)
         return {"ok": True, "run": run.to_dict()}

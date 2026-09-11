@@ -334,6 +334,22 @@ impl IdempotencyWriter {
             {
                 return Ok(op_id);
             }
+            // AF-10: if the row exists in a terminal state with DIFFERENT
+            // args, this is an identity collision — the same (run_id,
+            // tool_call_id) is being reused with different arguments.
+            // Fail closed: do NOT overwrite the committed result.
+            if existing_sha != sha
+                && matches!(
+                    SideEffectState::parse(&state),
+                    Some(SideEffectState::Committed)
+                        | Some(SideEffectState::Uncertain)
+                )
+            {
+                return Err(ShadowReadError::Parse(format!(
+                    "identity_collision: operation_id {} already has committed args_sha256 {} but new args produce {}",
+                    op_id, existing_sha, sha
+                )));
+            }
         }
 
         self.conn.execute(
