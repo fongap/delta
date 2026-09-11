@@ -14,6 +14,26 @@ docs/governance/
 docs/architecture/repository-layout.md
 ```
 
+## 产品范围
+
+任何新增能力在进入实现前，应先判断是否直接改善 Delta 的核心知识工作场景：办公、数据分析、研究、文档处理和内容生产。
+
+长期边界如下：
+
+- Delta 不是 Coding Agent，不建设 IDE、代码仓库理解、Git / PR、代码审查或大型软件工程工作流。
+- Delta 保留任务型脚本能力。Python、PowerShell、Shell 等脚本用于完成办公、数据、资料和内容任务，不作为独立软件开发产品线。
+- 模型层仅维护 OpenAI-compatible 与 Anthropic-compatible 两类协议，不新增第三类原生模型协议。
+- Provider 聚合、复杂模型路由、fallback 和权重调度不属于 Delta 的产品职责。
+- 新功能不得绕开统一的 Workspace Boundary、Policy、Approval、Run State、Artifact 和 Validation 语义。
+
+产品与架构长期边界以：
+
+```text
+docs/DELTA_BLUEPRINT.md
+```
+
+为准。
+
 ## Issues 与 Discussions
 
 Issues 只用于已经可以复现、执行和跟踪的问题；公开 Issue 默认通过「缺陷报告」表单提交。
@@ -37,7 +57,6 @@ chore/*
 docs/*
 test/*
 release/*
-upstream/*
 ```
 
 各前缀含义和使用规则见：
@@ -78,6 +97,7 @@ refactor: split provider routing
 4. 相关测试已完成
 5. 受影响文档已同步更新
 6. 符合当前仓库目录和模块职责要求
+7. 不扩大已冻结的产品边界
 
 ## CI
 
@@ -93,17 +113,13 @@ refactor: split provider routing
 docs/governance/quality-policy.md
 ```
 
-## 上游
+## 外部项目与代码吸收
 
-OpenWorker 上游代码不得自动合入 `main`。
+Delta 不设单一上游项目。
 
-上游变化必须经过评估、验证并通过 Pull Request 选择性吸收。
+外部项目只能作为设计或实现参考。任何外部代码、行为语义或架构方案进入 `main` 前，都必须按照 Delta 当前产品边界、Runtime Authority、许可证和测试要求独立评估，并通过普通 Pull Request 引入。
 
-详见：
-
-```text
-UPSTREAM.md
-```
+不得为了跟随任何参考项目而恢复已淘汰的目录、协议、产品形态或兼容层。
 
 ## 依赖
 
@@ -156,3 +172,5 @@ docs/governance/release-policy.md
 文件名应使用英文 `kebab-case`，并表达长期职责。
 
 不再使用 `final`、`latest`、`new`、`v2` 等阶段性名称维护当前有效文档。
+
+产品定位、长期能力边界和“不做什么”写入 `docs/DELTA_BLUEPRINT.md`；具体实现状态只记录已经完成的事实，不提前把进行中的迁移写成完成态。
