@@ -16,12 +16,20 @@ docs/architecture/repository-layout.md
 
 ## 产品范围
 
-任何新增能力在进入实现前，应先判断是否直接改善 Delta 的核心知识工作场景：办公、数据分析、研究、文档处理和内容生产。
+Delta 的产品主线固定为三项核心能力：
+
+- **日常办公**：文档、表格、PDF、邮件、会议材料、资料整理、格式转换和批量文件处理等个人办公任务。
+- **数据分析**：覆盖数据导入、清洗、统计设计、统计分析、可视化、结果解释，以及完整分析 / 研究报告撰写。
+- **内容创作**：面向自媒体和个人内容生产的选题、资料研究、写作、编辑、配图 / 图文、多格式内容整理和发布准备。
+
+任何新增能力进入实现前，都必须明确回答：它直接改善上述哪一个真实工作环节？如果不能，不进入产品主线。
+
+PDF、Office 文件处理、Search、Citation、Validation、脚本、自动化、Connector、MCP 等属于支撑能力，不作为新的产品方向单独扩张。
 
 长期边界如下：
 
 - Delta 不是 Coding Agent，不建设 IDE、代码仓库理解、Git / PR、代码审查或大型软件工程工作流。
-- Delta 保留任务型脚本能力。Python、PowerShell、Shell 等脚本用于完成办公、数据、资料和内容任务，不作为独立软件开发产品线。
+- Delta 保留任务型脚本能力。Python、PowerShell、Shell 等脚本用于完成日常办公、数据分析和内容创作任务，不作为独立软件开发产品线。
 - 模型层仅维护 OpenAI-compatible 与 Anthropic-compatible 两类协议，不新增第三类原生模型协议。
 - Provider 聚合、复杂模型路由、fallback 和权重调度不属于 Delta 的产品职责。
 - 新功能不得绕开统一的 Workspace Boundary、Policy、Approval、Run State、Artifact 和 Validation 语义。
@@ -98,6 +106,7 @@ refactor: split provider routing
 5. 受影响文档已同步更新
 6. 符合当前仓库目录和模块职责要求
 7. 不扩大已冻结的产品边界
+8. 新能力明确服务日常办公、数据分析或内容创作中的至少一个真实工作环节
 
 ## CI
 
