@@ -14,6 +14,7 @@ from packages.delta_core_client import (
     DeltaCoreClient,
     _find_delta_core_binary,
 )
+from providers.openai_provider import OpenAIProvider
 
 binary = _find_delta_core_binary()
 if binary is None:
@@ -405,3 +406,33 @@ def test_provider_stream_openai_responses(client, mock_responses_server):
     assert text_deltas[-1]["text_delta"] == " world"
     assert len(reasoning_deltas) == 1
     assert reasoning_deltas[0]["reasoning_delta"] == "stream thinking"
+
+
+# -- R5 Phase 1d: OpenAIProvider.complete() delegates to Rust -----------------
+
+
+def test_openai_provider_complete_delegates_to_rust(client, mock_server):
+    """OpenAIProvider.complete() with `core` delegates the wire call to Rust.
+
+    The provider keeps decision/parsing (caps, param-fix retry, health, salvage)
+    in Python but sends the actual HTTP request through delta_core's
+    `provider.complete` command.
+    """
+    provider = OpenAIProvider(
+        core=client,
+        api_key="test-key",
+        base_url=mock_server,
+        endpoint_caps=None,
+        endpoint_key=None,
+    )
+    turn = provider.complete(
+        model="gpt-test",
+        messages=[{"role": "user", "content": "hi"}],
+    )
+    assert turn.text == "Hello from mock!"
+    assert turn.finish_reason == "stop"
+    assert turn.reasoning == "thinking about it"
+    assert turn.usage is not None
+    assert turn.usage.input == 8
+    assert turn.usage.output == 5
+    assert turn.usage.cache_read == 2

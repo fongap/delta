@@ -35,6 +35,30 @@ fn agent() -> ureq::Agent {
         .build()
 }
 
+/// Convert a ureq error into a message string that includes the HTTP response body.
+/// The Python providers match on error-body markers (e.g. "reasoning_effort",
+/// "'max_tokens' is not supported") to drive param-fix retry, so the body must be
+/// carried in the error string.
+fn http_error(e: ureq::Error) -> String {
+    match e {
+        ureq::Error::Status(code, response) => {
+            let body = response.into_string().unwrap_or_default();
+            let truncated: &str = if body.len() > 800 {
+                &body[..800]
+            } else {
+                &body
+            };
+            format!("HTTP {code}: {truncated}")
+        }
+        ureq::Error::Transport(t) => format!("transport error: {t}"),
+    }
+}
+
+/// Send the request and map ureq errors (with body) to String.
+fn send_json(req_builder: ureq::Request, body: Value) -> Result<ureq::Response, String> {
+    req_builder.send_json(body).map_err(http_error)
+}
+
 fn build_openai_chat_body(req: &ProviderRequest, stream: bool) -> Value {
     let mut body = json!({
         "model": req.model,
@@ -81,12 +105,13 @@ fn usage_from_json(u: &Value) -> Value {
 pub fn complete_openai_chat(req: &ProviderRequest) -> Result<Value, String> {
     let url = format!("{}/chat/completions", req.base_url.trim_end_matches('/'));
     let body = build_openai_chat_body(req, false);
-    let resp = agent()
-        .post(&url)
-        .set("Authorization", &format!("Bearer {}", req.api_key))
-        .set("Content-Type", "application/json")
-        .send_json(body)
-        .map_err(|e| format!("HTTP error: {e}"))?;
+    let resp = send_json(
+        agent()
+            .post(&url)
+            .set("Authorization", &format!("Bearer {}", req.api_key))
+            .set("Content-Type", "application/json"),
+        body,
+    )?;
     let resp_json: Value = resp.into_json().map_err(|e| format!("JSON parse: {e}"))?;
     parse_openai_chat_response(&resp_json)
 }
@@ -154,12 +179,13 @@ pub fn stream_openai_chat(
 ) -> Result<Value, String> {
     let url = format!("{}/chat/completions", req.base_url.trim_end_matches('/'));
     let body = build_openai_chat_body(req, true);
-    let resp = agent()
-        .post(&url)
-        .set("Authorization", &format!("Bearer {}", req.api_key))
-        .set("Content-Type", "application/json")
-        .send_json(body)
-        .map_err(|e| format!("HTTP error: {e}"))?;
+    let resp = send_json(
+        agent()
+            .post(&url)
+            .set("Authorization", &format!("Bearer {}", req.api_key))
+            .set("Content-Type", "application/json"),
+        body,
+    )?;
     let reader = resp.into_reader();
     let buf = BufReader::new(reader);
     let mut text_parts: Vec<String> = Vec::new();
@@ -333,9 +359,7 @@ pub fn complete_anthropic(req: &ProviderRequest) -> Result<Value, String> {
     for (k, v) in anthropic_headers(req) {
         request = request.set(k, &v);
     }
-    let resp = request
-        .send_json(body)
-        .map_err(|e| format!("HTTP error: {e}"))?;
+    let resp = send_json(request, body)?;
     let resp_json: Value = resp.into_json().map_err(|e| format!("JSON parse: {e}"))?;
     parse_anthropic_response(&resp_json)
 }
@@ -418,9 +442,7 @@ pub fn stream_anthropic(
     for (k, v) in anthropic_headers(req) {
         request = request.set(k, &v);
     }
-    let resp = request
-        .send_json(body)
-        .map_err(|e| format!("HTTP error: {e}"))?;
+    let resp = send_json(request, body)?;
     let reader = resp.into_reader();
     let buf = BufReader::new(reader);
     let mut text_parts: Vec<String> = Vec::new();
@@ -597,12 +619,13 @@ fn build_openai_responses_body(req: &ProviderRequest, stream: bool) -> Value {
 pub fn complete_openai_responses(req: &ProviderRequest) -> Result<Value, String> {
     let url = format!("{}/v1/responses", req.base_url.trim_end_matches('/'));
     let body = build_openai_responses_body(req, false);
-    let resp = agent()
-        .post(&url)
-        .set("Authorization", &format!("Bearer {}", req.api_key))
-        .set("Content-Type", "application/json")
-        .send_json(body)
-        .map_err(|e| format!("HTTP error: {e}"))?;
+    let resp = send_json(
+        agent()
+            .post(&url)
+            .set("Authorization", &format!("Bearer {}", req.api_key))
+            .set("Content-Type", "application/json"),
+        body,
+    )?;
     let resp_json: Value = resp.into_json().map_err(|e| format!("JSON parse: {e}"))?;
     parse_openai_responses_response(&resp_json)
 }
@@ -719,12 +742,13 @@ pub fn stream_openai_responses(
 ) -> Result<Value, String> {
     let url = format!("{}/v1/responses", req.base_url.trim_end_matches('/'));
     let body = build_openai_responses_body(req, true);
-    let resp = agent()
-        .post(&url)
-        .set("Authorization", &format!("Bearer {}", req.api_key))
-        .set("Content-Type", "application/json")
-        .send_json(body)
-        .map_err(|e| format!("HTTP error: {e}"))?;
+    let resp = send_json(
+        agent()
+            .post(&url)
+            .set("Authorization", &format!("Bearer {}", req.api_key))
+            .set("Content-Type", "application/json"),
+        body,
+    )?;
     let reader = resp.into_reader();
     let buf = BufReader::new(reader);
     let mut text_parts: Vec<String> = Vec::new();
