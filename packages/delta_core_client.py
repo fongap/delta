@@ -496,3 +496,16 @@ def close_default_client() -> None:
         if _default_client is not None:
             _default_client.close()
             _default_client = None
+
+
+def maybe_core_client() -> DeltaCoreClient | None:
+    """Return the shared delta_core client if a binary is available, else None.
+
+    R5 / ADR-047: used at provider build time as the `core` transport. The
+    DeltaCoreClient is lazy (spawns on first command, not on construction), so
+    this is cheap. None when the binary is absent (dev/test without a build) →
+    providers use the SDK path.
+    """
+    if _find_delta_core_binary() is None:
+        return None
+    return default_client()

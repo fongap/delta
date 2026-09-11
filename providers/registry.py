@@ -88,7 +88,7 @@ class ProviderDescriptor:
         }
 
 
-def _build_openai(profile: dict[str, Any], secrets: Any) -> ProviderClient:
+def _build_openai(profile: dict[str, Any], secrets: Any, core: Any = None) -> ProviderClient:
     base_url = str(profile.get("base_url") or DEFAULT_OPENAI_URL).strip().rstrip("/")
     api_key = str(profile.get("api_key") or "").strip() or None
     official = base_url == DEFAULT_OPENAI_URL
@@ -101,6 +101,7 @@ def _build_openai(profile: dict[str, Any], secrets: Any) -> ProviderClient:
             base_url=base_url,
             secrets=secrets if official else None,
             allow_credential_fallback=official,
+            core=core,
         )
     return OpenAIProvider(
         api_key=api_key or "",
@@ -109,10 +110,11 @@ def _build_openai(profile: dict[str, Any], secrets: Any) -> ProviderClient:
         allow_credential_fallback=official,
         endpoint_caps=endpoint_caps_from_profile(profile),
         endpoint_key=base_url,
+        core=core,
     )
 
 
-def _build_anthropic(profile: dict[str, Any], secrets: Any) -> ProviderClient:
+def _build_anthropic(profile: dict[str, Any], secrets: Any, core: Any = None) -> ProviderClient:
     from providers.anthropic_provider import DEFAULT_THINKING_BUDGET
 
     base_url = str(profile.get("base_url") or DEFAULT_ANTHROPIC_URL).strip().rstrip("/")
@@ -128,6 +130,7 @@ def _build_anthropic(profile: dict[str, Any], secrets: Any) -> ProviderClient:
         secrets=secrets if official else None,
         allow_credential_fallback=official,
         thinking_budget=thinking_budget,
+        core=core,
     )
 
 
@@ -517,7 +520,7 @@ def _valid_alias(alias: str) -> bool:
 
 
 def build_provider_client(
-    name: str, profile: dict[str, Any], secrets: Any
+    name: str, profile: dict[str, Any], secrets: Any, core: Any = None
 ) -> ProviderClient:
     """Build only from the profile protocol; provider identity supplies defaults, not code."""
 
@@ -525,8 +528,8 @@ def build_provider_client(
     prepared = _profile_defaults(name, profile or {}, descriptor)
     protocol = profile_protocol(name, prepared)
     if protocol == PROFILE_PROTOCOL_ANTHROPIC:
-        return _build_anthropic(prepared, secrets)
-    return _build_openai(prepared, secrets)
+        return _build_anthropic(prepared, secrets, core)
+    return _build_openai(prepared, secrets, core)
 
 
 def descriptor_configured(

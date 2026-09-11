@@ -15,6 +15,8 @@ from packages.delta_core_client import (
     _find_delta_core_binary,
 )
 from providers.openai_provider import OpenAIProvider
+from providers.anthropic_provider import AnthropicProvider
+from providers.openai_responses import OpenAIResponsesProvider
 
 binary = _find_delta_core_binary()
 if binary is None:
@@ -467,3 +469,95 @@ def test_openai_provider_stream_delegates_to_rust(client, mock_server):
     assert turn_chunk.turn.reasoning == "thinking"
     assert turn_chunk.turn.usage is not None
     assert turn_chunk.turn.usage.output == 5
+
+
+def test_anthropic_provider_complete_delegates_to_rust(client, mock_anthropic_server):
+    """AnthropicProvider.complete() with `core` delegates the wire call to Rust."""
+    provider = AnthropicProvider(
+        core=client,
+        api_key="test-key",
+        base_url=mock_anthropic_server,
+        thinking_budget=0,
+    )
+    turn = provider.complete(
+        model="claude-test",
+        messages=[{"role": "user", "content": "hi"}],
+        max_tokens=1024,
+    )
+    assert turn.text == "Hello from Anthropic!"
+    assert turn.finish_reason == "tool_calls"
+    assert turn.reasoning == "I should greet."
+    assert turn.tool_calls[0].name == "get_weather"
+    assert turn.tool_calls[0].arguments == {"city": "SF"}
+    assert turn.usage is not None
+    assert turn.usage.input == 50
+    assert turn.usage.cache_read == 3
+
+
+def test_anthropic_provider_stream_delegates_to_rust(client, mock_anthropic_server):
+    """AnthropicProvider.stream() with `core` delegates the wire call to Rust."""
+    provider = AnthropicProvider(
+        core=client,
+        api_key="test-key",
+        base_url=mock_anthropic_server,
+        thinking_budget=0,
+    )
+    chunks = list(
+        provider.stream(
+            model="claude-test",
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=1024,
+        )
+    )
+    text_chunks = [c for c in chunks if c.text_delta is not None]
+    reasoning_chunks = [c for c in chunks if c.reasoning_delta is not None]
+    turn_chunk = next(c for c in chunks if c.turn is not None)
+    assert len(text_chunks) == 2
+    assert text_chunks[0].text_delta == "Hello"
+    assert len(reasoning_chunks) == 1
+    assert reasoning_chunks[0].reasoning_delta == "reasoning"
+    assert turn_chunk.turn.text == "Hello world"
+    assert turn_chunk.turn.finish_reason == "stop"
+
+
+def test_openai_responses_provider_complete_delegates_to_rust(client, mock_responses_server):
+    """OpenAIResponsesProvider.complete() with `core` delegates to Rust."""
+    provider = OpenAIResponsesProvider(
+        core=client,
+        api_key="test-key",
+        base_url=mock_responses_server,
+    )
+    turn = provider.complete(
+        model="gpt-5.6-test",
+        messages=[{"role": "user", "content": "hi"}],
+    )
+    assert turn.text == "Hello from responses!"
+    assert turn.finish_reason == "tool_calls"
+    assert turn.reasoning == "thinking hard"
+    assert turn.tool_calls[0].name == "lookup"
+    assert turn.tool_calls[0].arguments == {"term": "delta"}
+    assert turn.usage is not None
+    assert turn.usage.input == 30
+
+
+def test_openai_responses_provider_stream_delegates_to_rust(client, mock_responses_server):
+    """OpenAIResponsesProvider.stream() with `core` delegates to Rust."""
+    provider = OpenAIResponsesProvider(
+        core=client,
+        api_key="test-key",
+        base_url=mock_responses_server,
+    )
+    chunks = list(
+        provider.stream(model="gpt-5.6-test", messages=[{"role": "user", "content": "hi"}])
+    )
+    text_chunks = [c for c in chunks if c.text_delta is not None]
+    reasoning_chunks = [c for c in chunks if c.reasoning_delta is not None]
+    turn_chunk = next(c for c in chunks if c.turn is not None)
+    assert len(text_chunks) == 3
+    assert text_chunks[0].text_delta == "Hello"
+    assert len(reasoning_chunks) == 1
+    assert reasoning_chunks[0].reasoning_delta == "stream thinking"
+    assert turn_chunk.turn.text == "Hello streamed world"
+    assert turn_chunk.turn.finish_reason == "tool_calls"
+    assert turn_chunk.turn.usage is not None
+    assert turn_chunk.turn.usage.output == 10

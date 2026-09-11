@@ -41,10 +41,11 @@ from providers.base import (
     ModelCapabilities,
     ProviderClient,
     StreamChunk,
+    TokenUsage,
     ToolCall,
 )
 from providers.capabilities import capabilities_for
-from providers.openai_provider import resolve_api_key
+from providers.openai_provider import resolve_api_key, DEFAULT_OPENAI_URL
 
 # Request params passed through from model settings; everything else (frequency_penalty,
 # reasoning_effort — no effort knob in v1, the server default rides) is dropped.
@@ -292,17 +293,151 @@ class OpenAIResponsesProvider(ProviderClient):
         base_url: str | None = None,
         secrets: Any = None,
         allow_credential_fallback: bool = True,
+        core: Any = None,
     ):
         # Same deferred-client contract as OpenAIProvider: built lazily so an engine can be
         # assembled before any key exists; key resolves at call time (explicit → env →
         # SecretStore). Tests inject a `client` directly. No base_url — a custom endpoint
         # routes to the Chat Completions provider instead (registry.py).
+        #
+        # R5 / ADR-047: `core` is an optional DeltaCoreClient. When provided, the wire
+        # transport for complete()/stream() delegates to Rust (`provider.complete`/
+        # `provider.stream`, protocol `openai_responses`). Message conversion stays Python.
         self._client = client
+        self._core = core
         self._api_key = api_key
         self._base_url = base_url
         self._secrets = secrets
         self._allow_credential_fallback = allow_credential_fallback
         self.default_model = default_model
+
+    def _resolved_key(self) -> str:
+        key = self._api_key
+        if not key and self._allow_credential_fallback:
+            key = resolve_api_key(self._secrets)
+        if not key:
+            raise RuntimeError(
+                "No model API key configured. Set OPENAI_API_KEY in the environment, "
+                "or add your key in Manage → Settings."
+            )
+        return key
+
+    def _build_rust_request(
+        self,
+        *,
+        model: str,
+        input_items: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        settings: dict[str, Any],
+        stream: bool,
+    ) -> dict[str, Any]:
+        base_url = (self._base_url or DEFAULT_OPENAI_URL).strip()
+        req: dict[str, Any] = {
+            "cmd": "provider.stream" if stream else "provider.complete",
+            "protocol": "openai_responses",
+            "model": model,
+            "messages": input_items,
+            "api_key": self._resolved_key(),
+            "base_url": base_url,
+        }
+        if tools:
+            req["tools"] = tools
+        if settings:
+            req["settings"] = dict(settings)
+        return req
+
+    def _rust_complete(
+        self,
+        *,
+        model: str,
+        input_items: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        settings: dict[str, Any],
+    ) -> AssistantTurn:
+        req = self._build_rust_request(
+            model=model, input_items=input_items, tools=tools, settings=settings, stream=False
+        )
+        result = self._core.command(req)
+        tool_calls = [
+            ToolCall(
+                id=tc.get("id", ""),
+                name=tc.get("name", ""),
+                arguments=tc.get("arguments") or {},
+            )
+            for tc in result.get("tool_calls", [])
+        ]
+        usage_raw = result.get("usage")
+        usage = (
+            TokenUsage(
+                input=usage_raw.get("input") or 0,
+                output=usage_raw.get("output") or 0,
+                cache_read=usage_raw.get("cache_read") or 0,
+                cache_write=usage_raw.get("cache_write") or 0,
+            )
+            if usage_raw
+            else None
+        )
+        # Rust folds reasoning summaries into `reasoning`; the `_openai` replay
+        # sidecar is not reconstructed on the Rust transport path (Phase 3 surface).
+        return AssistantTurn(
+            text=result.get("text"),
+            tool_calls=tool_calls,
+            finish_reason=result.get("finish_reason"),
+            reasoning=result.get("reasoning"),
+            usage=usage,
+        )
+
+    def _rust_stream(
+        self,
+        *,
+        model: str,
+        input_items: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        settings: dict[str, Any],
+    ):
+        req = self._build_rust_request(
+            model=model, input_items=input_items, tools=tools, settings=settings, stream=True
+        )
+        final: dict[str, Any] | None = None
+        gen = self._core.stream(req)
+        try:
+            while True:
+                data = next(gen)
+                if "text_delta" in data:
+                    yield StreamChunk(text_delta=data["text_delta"])
+                elif "reasoning_delta" in data:
+                    yield StreamChunk(reasoning_delta=data["reasoning_delta"])
+        except StopIteration as exc:
+            final = exc.value
+        final = final or {}
+        tool_calls = [
+            ToolCall(
+                id=tc.get("id", ""),
+                name=tc.get("name", ""),
+                arguments=tc.get("arguments") or {},
+            )
+            for tc in final.get("tool_calls", [])
+        ]
+        usage_raw = final.get("usage")
+        usage = (
+            TokenUsage(
+                input=usage_raw.get("input") or 0,
+                output=usage_raw.get("output") or 0,
+                cache_read=usage_raw.get("cache_read") or 0,
+                cache_write=usage_raw.get("cache_write") or 0,
+            )
+            if usage_raw
+            else None
+        )
+        yield StreamChunk(
+            turn=AssistantTurn(
+                text=final.get("text"),
+                tool_calls=tool_calls,
+                finish_reason=final.get("finish_reason"),
+                reasoning=final.get("reasoning"),
+                usage=usage,
+            )
+        )
 
     def _ensure_client(self) -> Any:
         if self._client is None:
@@ -373,6 +508,16 @@ class OpenAIResponsesProvider(ProviderClient):
         kwargs = self._request_kwargs(
             model=model, messages=messages, tools=tools, settings=settings
         )
+        # R5 / ADR-047 Phase 1f: delegate the wire transport to Rust when a
+        # DeltaCoreClient is present. Message conversion stays Python.
+        if self._core is not None:
+            settings_payload = {k: v for k, v in kwargs.items() if k not in ("model", "input", "tools")}
+            return self._rust_complete(
+                model=model,
+                input_items=kwargs["input"],
+                tools=kwargs.get("tools"),
+                settings=settings_payload,
+            )
         response = self._create(self._ensure_client(), kwargs)
         return _parse_response(response)
 
@@ -391,6 +536,17 @@ class OpenAIResponsesProvider(ProviderClient):
             model=model, messages=messages, tools=tools, settings=settings
         )
         kwargs["stream"] = True
+        # R5 / ADR-047 Phase 1f: delegate the streaming wire to Rust when a
+        # DeltaCoreClient is present.
+        if self._core is not None:
+            settings_payload = {k: v for k, v in kwargs.items() if k not in ("model", "input", "tools", "stream")}
+            yield from self._rust_stream(
+                model=model,
+                input_items=kwargs["input"],
+                tools=kwargs.get("tools"),
+                settings=settings_payload,
+            )
+            return
         events = self._create(self._ensure_client(), kwargs)
 
         text_parts: list[str] = []

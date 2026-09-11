@@ -27,11 +27,15 @@ class ProviderRouter(ProviderClient):
         *,
         default_provider: str = "openai",
         on_use: Any = None,
+        core: Any = None,
     ) -> None:
         self._secrets = secrets
         self._default = default_provider
         self._clients: dict[str, ProviderClient] = {}
         self._lock = threading.Lock()
+        # R5 / ADR-047: an optional DeltaCoreClient forwarded to every built leaf
+        # provider, so the wire transport delegates to Rust. None → SDK path.
+        self._core = core
         # Optional callable(provider_name) fired when a completion is dispatched — drives the
         # Settings pane's "Last used" line. Best-effort: its failures never break a model call.
         self._on_use = on_use
@@ -63,7 +67,7 @@ class ProviderRouter(ProviderClient):
                 profile = {}
                 if self._secrets is not None:
                     profile = self._secrets.get(provider_profile_key(name)) or {}
-                client = build_provider_client(name, profile, self._secrets)
+                client = build_provider_client(name, profile, self._secrets, self._core)
                 self._clients[name] = client
             return client
 
