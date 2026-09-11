@@ -61,7 +61,7 @@ uv sync --locked --extra dev --extra messaging
 cd apps/desktop
 npm install
 npm run tauri dev
-````
+```
 
 Tauri 开发模式会使用仓库 `.venv` 中的 `delta-server`。
 
@@ -85,10 +85,11 @@ releases/
 
 ## 项目状态
 
-> Delta 仍处于开发阶段；API、数据格式与便携版布局在 R1 之前可能继续调整。
+> `main` 当前处于 `v0.4.0` 开发线，Rust Core R1 已完成。接口与数据契约以仓库内 ADR、运行时公共契约和 CHANGELOG 为准。
 
 - 开发说明：[`CONTRIBUTING.md`](https://github.com/fongap/delta/blob/main/CONTRIBUTING.md)
 - 仓库结构：[`repository-layout.md`](https://github.com/fongap/delta/blob/main/docs/architecture/repository-layout.md)
+- 运行时契约：[`runtime-public-contract.md`](https://github.com/fongap/delta/blob/main/docs/architecture/runtime-public-contract.md)
 - 变更记录：[`CHANGELOG.md`](https://github.com/fongap/delta/blob/main/CHANGELOG.md)
 - 开源许可：[`MIT License`](https://github.com/fongap/delta/blob/main/LICENSE)
 

@@ -1,12 +1,4 @@
-"""GitHub installation metadata store.
-
-`github:install:<installation_id>` holds ONE installation's metadata — account_login
-(org/user the App is installed on), the connecting user's own github_login,
-repo_selection, and that installation's inbound allow-list.
-
-`github:default` is the manual connector profile (token=PAT). It does NOT carry
-a relay flag — the managed relay path was removed in P1.
-"""
+"""GitHub installation metadata store."""
 
 from __future__ import annotations
 
@@ -23,7 +15,7 @@ def _norm(value: Any) -> str:
 
 
 def list_installs(secrets: SecretStore) -> list[tuple[str, dict[str, Any]]]:
-    """(installation_id, profile) for every connected installation."""
+    """Return ``(installation_id, profile)`` for connected installations."""
     out = []
     for meta in secrets.status():
         key = meta.get("profile", "")
@@ -43,8 +35,7 @@ def default_install(secrets: SecretStore) -> str:
 def resolve(
     secrets: SecretStore, install: str = ""
 ) -> tuple[str, dict[str, Any] | None]:
-    """(installation_id, profile) for the requested — or default — installation.
-    Accepts the id or the account login (what agents see in results)."""
+    """Resolve an installation by id, account login, or current default."""
     installs = list_installs(secrets)
     wanted = _norm(install) or default_install(secrets)
     for installation_id, profile in installs:
@@ -58,11 +49,7 @@ def resolve(
 def connect_install(
     secrets: SecretStore, profile: dict[str, Any]
 ) -> dict[str, Any]:
-    """Store a GitHub installation profile (metadata only — no token fields).
-
-    Used for both manual PAT installs and installation metadata. Returns
-    {ok, installation_id, account}. The caller is responsible for the token
-    field if it's a manual PAT install."""
+    """Store installation metadata without credential fields."""
     installation_id = _norm(profile.get("installation_id"))
     if not installation_id:
         return {"ok": False, "error": "installation_id missing"}
@@ -97,7 +84,7 @@ def connect_install(
 
 
 def disconnect_install(secrets: SecretStore, installation_id: str) -> dict[str, Any]:
-    """Drop one installation. If no installations remain, clear default_install."""
+    """Remove an installation and repair the default pointer."""
     installation_id = _norm(installation_id)
     if not secrets.get(PREFIX + installation_id):
         return {"ok": False, "error": "installation not connected"}

@@ -1,7 +1,4 @@
-"""Automation data model — a scheduled task is its own persistent entity (see
-docs/AUTOMATION-SCHEDULING.md). Each fire is a fresh Run of the task's instructions, recorded
-in the task's own thread + working folder.
-"""
+"""Persistent automation task, schedule, trigger, and run models."""
 
 from __future__ import annotations
 
@@ -10,16 +7,10 @@ import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
-# Indexed by cron day-of-week: 0 and 7 are Sunday, 1 is Monday … 6 is Saturday. Must start
-# at Sunday — indexing a Monday-first list by the cron dow labelled every weekly schedule one
-# day late (dow 1/Monday rendered "Tuesday", dow 0/Sunday rendered "Monday").
+# Cron day-of-week uses Sunday=0/7 and Monday=1.
 _DOW = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"]
 
 
-# P3 §7.3 §734: conditional triggers. A task uses either ``schedule``
-# (cron / once — time-based) OR ``trigger`` (event-based), not both.
-# The import is at the bottom of the module to dodge a cycle (the
-# Trigger dataclass itself does not need ScheduledTask).
 def _make_trigger_or_none(d: dict | None) -> Any:
     if not d:
         return None
@@ -32,13 +23,6 @@ def _now() -> float:
     return time.time()
 
 
-# -- standing scoped approvals (UX-DECISIONS §25) --------------------------------
-# An `always_allowed_tools` entry is either a bare tool name (legacy, allows the tool
-# against any argument) or "tool target" — one space, tool names never contain spaces —
-# binding the allowance to one exact target (channel address, recipient, …). Rules live
-# on the task record so revocation is per-automation and deletion takes them along.
-
-
 def rule_entry(tool: str, target: str | None = None) -> str:
     return f"{tool} {target}" if target else tool
 
@@ -49,12 +33,7 @@ def rule_parts(entry: str) -> tuple[str, str | None]:
 
 
 def grant_entries(permissions: Any) -> list[str]:
-    """Validate a proposed `permissions` list (from the create-tool schema or the GUI
-    create payload) down to the entries actually grantable. Only `access: "write"` items
-    become grants; the tool must declare a target argument (which excludes exec/destructive
-    tools by construction) and the target must be non-empty. Reads are disclosure-only —
-    rendered on the consent card, never stored. Anything else is dropped, fail-closed.
-    """
+    """Return target-bound write permissions that are safe to persist."""
     from integrations.connectors.tool_defs import target_arg_for
 
     entries: list[str] = []
@@ -83,13 +62,11 @@ def _human_time(hour: int, minute: int) -> str:
 class Schedule:
     kind: str  # "cron" | "once"
     cron: str | None = None
-    fire_at: str | None = None  # ISO datetime for one-time
-    timezone: str = (
-        "local"  # 'local' = the machine's clock (a local-first tool default)
-    )
+    fire_at: str | None = None
+    timezone: str = "local"
 
     def human(self) -> str:
-        """Best-effort human label ('Every day at ~7:10 PM'); falls back to the raw cron."""
+        """Return a best-effort human label, falling back to raw cron."""
         if self.kind == "once":
             return f"Once at {self.fire_at}"
         parts = (self.cron or "").split()
@@ -99,7 +76,7 @@ class Schedule:
         try:
             t = _human_time(int(hour), int(minute))
         except ValueError:
-            return self.cron or "?"  # non-trivial cron (ranges/steps) — show as-is
+            return self.cron or "?"
         if dom == "*" and dow == "*":
             return f"Every day at ~{t}"
         if dom == "*" and dow.isdigit():
@@ -132,35 +109,29 @@ class ScheduledTask:
     instructions: str
     schedule: Schedule
     workspace: str
-    origin_surface: str = "delta"  # where it was launched from (a reference)
+    origin_surface: str = "delta"
     origin_session_id: str = ""
     agent: str = "delta"
     id: str = field(default_factory=lambda: "task-" + uuid.uuid4().hex[:10])
-    task_session_id: str = ""  # the task's OWN thread (set to f"__task__{id}")
+    task_session_id: str = ""
     model: str | None = None
     notify_on_completion: bool = True
-    notify_target: str | None = None  # extra messaging target ("telegram:123")
+    notify_target: str | None = None
     always_allowed_tools: list[str] = field(default_factory=list)
     always_allowed_commands: list[str] = field(default_factory=list)
     enabled: bool = True
     created_at: float = field(default_factory=_now)
     updated_at: float = field(default_factory=_now)
-    next_run: float | None = None  # epoch seconds; computed by the store
+    next_run: float | None = None
     last_run: float | None = None
     last_status: str | None = None
     run_count: int = 0
     max_runs: int | None = None
-    # Sidebar unread tracking (UX-023): runs started after this mark count as
-    # "unseen"; opening the automation's detail advances it. 0.0 = never opened.
     seen_runs_at: float = 0.0
-    # ADR-005 WS3: the deterministic completion contract for this task.
-    # Stored as a plain dict for forward compatibility — the engine converts
-    # it to `core.validation.ValidationCriteria` at run time. None means
-    # "use the safe floor" (artifact count >= 1, all complete).
+    # Stored as a plain dict and converted to ValidationCriteria at runtime.
+    # None uses the safe default completion criteria.
     validation_criteria: dict | None = None
-    # P3 §7.3 §734: optional event-driven trigger. A task uses EITHER
-    # ``schedule`` (time-based) OR ``trigger`` (event-based), not both.
-    # ``None`` for legacy time-based tasks.
+    # Event-driven tasks use a trigger instead of their time-based schedule.
     trigger: Any = field(default=None)
 
     def __post_init__(self) -> None:
@@ -170,9 +141,6 @@ class ScheduledTask:
     def to_dict(self) -> dict:
         d = self.__dict__.copy()
         d["schedule"] = self.schedule.to_dict()
-        # Persist trigger as a plain dict (or None) for forward
-        # compatibility — older code that doesn't know the field
-        # still loads fine.
         trig = d.get("trigger")
         if trig is not None and hasattr(trig, "to_dict"):
             d["trigger"] = trig.to_dict()
@@ -187,10 +155,8 @@ class ScheduledTask:
         d["trigger"] = _make_trigger_or_none(d.get("trigger"))
         return cls(**d)
 
-    # -- standing rules (§25) --------------------------------------------------
     def standing_rules(self) -> dict[str, set[str]]:
-        """Target-bound entries as {tool: {targets}} — the shape the permission engine
-        matches against the declared target argument."""
+        """Return target-bound grants as ``{tool: {targets}}``."""
         out: dict[str, set[str]] = {}
         for entry in self.always_allowed_tools:
             tool, target = rule_parts(entry)
@@ -199,7 +165,7 @@ class ScheduledTask:
         return out
 
     def name_allowed_tools(self) -> set[str]:
-        """Legacy name-only entries (no target binding) — back-compatible behavior."""
+        """Return legacy name-only grants without target binding."""
         return {
             tool
             for tool, target in map(rule_parts, self.always_allowed_tools)
@@ -220,7 +186,7 @@ class ScheduledTask:
         return False
 
     def public(self) -> dict[str, Any]:
-        """Status shape for the API/UI (no instructions truncation; never any secret)."""
+        """Return the secret-free API/UI representation."""
         return {
             "id": self.id,
             "title": self.title,
@@ -235,9 +201,7 @@ class ScheduledTask:
             "last_status": self.last_status,
             "run_count": self.run_count,
             "notify_on_completion": self.notify_on_completion,
-            # UX-023: lets the detail freeze the pre-open mark for its "new" pills.
             "seen_runs_at": self.seen_runs_at,
-            # Structured for the task page's revoke list; `entry` is the revoke handle.
             "always_allowed": [
                 {"entry": e, "tool": t, "target": tg}
                 for e, (t, tg) in (
@@ -255,20 +219,11 @@ class TaskRun:
     finished_at: float | None = None
     status: str = "running"  # running | ok | error | skipped | validation_failed
     result_text: str | None = None
-    # ADR-005 WS2: artifacts are first-class objects (sha256, kind, size,
-    # incomplete flag) instead of opaque paths inferred by mtime. Stored as
-    # dicts in the SQLite record for backward compatibility with existing
-    # automation.db rows; rebuild Artifact on read.
     artifacts: list[dict] = field(default_factory=list)
     error: str | None = None
     trigger: str = "schedule"  # schedule | manual | catchup
-    session_id: str = ""  # the run's own conversation thread — persisted + continuable
-    # ADR-007 §10.6 path: a denormalized workspace column on task_runs.
-    # The same value also lives (in older rows) inside ``ScheduledTask``'s
-    # own workspace field, but storing it on the run means P3 Run Analyzer
-    # and any future per-workspace query don't need a join back to
-    # ``scheduled_tasks``. The field is optional; rows written before
-    # the migration round-trip as ``""``.
+    session_id: str = ""
+    # Denormalized on each run so workspace queries do not need a task join.
     workspace: str = ""
 
     def __post_init__(self) -> None:
@@ -280,10 +235,8 @@ class TaskRun:
 
     @classmethod
     def from_dict(cls, d: dict) -> TaskRun:
-        # Accept both list[dict] (new) and list[str] (old) artifacts rows so
-        # pre-WS2 automation.db records still load. Old rows are upgraded to
-        # bare dicts with the minimum Artifact fields; the consumer (manager)
-        # will rehash them on the next save to upgrade sha256/kind/size.
+        # Older rows stored artifact paths as strings. Preserve read compatibility
+        # by upgrading them to the minimum artifact shape in memory.
         if "artifacts" in d and d["artifacts"] and isinstance(d["artifacts"][0], str):
             d = dict(d)
             d["artifacts"] = [
@@ -295,7 +248,7 @@ class TaskRun:
                     "modified_at": 0.0,
                     "run_id": d.get("run_id", ""),
                     "sha256": None,
-                    "incomplete": True,  # upgrade-needed marker
+                    "incomplete": True,
                 }
                 for p in d["artifacts"]
             ]
