@@ -1112,3 +1112,43 @@ pub fn capabilities_for(model: &str) -> Value {
     }
     caps_json(true, false, false, false, true)
 }
+
+// -- Endpoint caps (stateful: endpoint_caps.json) ---------------------------
+
+pub fn endpoint_caps_read(path: &str, endpoint_key: &str) -> Value {
+    let p = std::path::PathBuf::from(path);
+    let store: Value = match std::fs::read_to_string(&p) {
+        Ok(s) => serde_json::from_str(&s).unwrap_or(json!({})),
+        Err(_) => json!({}),
+    };
+    store.get(endpoint_key).cloned().unwrap_or(json!({}))
+}
+
+pub fn endpoint_reject(path: &str, endpoint_key: &str, field: &str) -> Value {
+    let p = std::path::PathBuf::from(path);
+    let mut store: Value = match std::fs::read_to_string(&p) {
+        Ok(s) => serde_json::from_str(&s).unwrap_or(json!({})),
+        Err(_) => json!({}),
+    };
+    if !store.is_object() {
+        store = json!({});
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0);
+    let entry = store
+        .as_object_mut()
+        .unwrap()
+        .entry(endpoint_key.to_string())
+        .or_insert(json!({}));
+    if let Some(obj) = entry.as_object_mut() {
+        obj.insert(field.to_string(), json!(false));
+        obj.insert("updated_at".to_string(), json!(now));
+    }
+    if let Some(parent) = p.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&p, serde_json::to_string_pretty(&store).unwrap_or_default());
+    json!({"ok": true})
+}

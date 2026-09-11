@@ -558,6 +558,16 @@ enum Command {
     /// R5 / ADR-047 Phase 2: model capabilities (matrix + heuristics).
     #[serde(rename = "provider.capabilities")]
     ProviderCapabilities { model: String },
+    /// R5 / ADR-047 Phase 2b: read learned endpoint caps.
+    #[serde(rename = "endpoint.caps")]
+    EndpointCapsRead { path: String, endpoint_key: String },
+    /// R5 / ADR-047 Phase 2b: record a param rejection.
+    #[serde(rename = "endpoint.reject")]
+    EndpointReject {
+        path: String,
+        endpoint_key: String,
+        field: String,
+    },
 }
 
 struct ConnCache {
@@ -2080,6 +2090,18 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
         Command::ProviderCapabilities { model } => {
             Ok(delta_runtime_native::provider::capabilities_for(&model))
         }
+        Command::EndpointCapsRead { path, endpoint_key } => Ok(
+            delta_runtime_native::provider::endpoint_caps_read(&path, &endpoint_key),
+        ),
+        Command::EndpointReject {
+            path,
+            endpoint_key,
+            field,
+        } => Ok(delta_runtime_native::provider::endpoint_reject(
+            &path,
+            &endpoint_key,
+            &field,
+        )),
     };
     match result {
         Ok(v) => serde_json::json!({"ok": true, "result": v}),

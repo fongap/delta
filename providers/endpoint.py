@@ -27,6 +27,8 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any
 
+from packages.delta_core_client import maybe_core_client
+
 # Defaults describe the compliant modern surface (the common case). A param that's in
 # the profile with a False value is never sent; the reactive retry covers the rest.
 DEFAULTS = {
@@ -113,6 +115,17 @@ def learned_caps(endpoint_key: str | None) -> dict[str, Any]:
     """Facts learned from earlier rejections for this endpoint (best-effort read)."""
     if not endpoint_key:
         return {}
+    # R5 / ADR-047 Phase 2b: delegate to Rust when delta_core is available.
+    core = maybe_core_client()
+    if core is not None:
+        try:
+            return core.command({
+                "cmd": "endpoint.caps",
+                "path": str(_store_path()),
+                "endpoint_key": endpoint_key,
+            }) or {}
+        except Exception:
+            pass  # fall back to Python read
     return _learned().get(endpoint_key, {})
 
 
@@ -122,6 +135,19 @@ def record_rejection(endpoint_key: str | None, field: str) -> None:
     wrong keeps costing the reactive retry, which is the honest outcome."""
     if not endpoint_key or field not in DEFAULTS:
         return
+    # R5 / ADR-047 Phase 2b: delegate to Rust when delta_core is available.
+    core = maybe_core_client()
+    if core is not None:
+        try:
+            core.command({
+                "cmd": "endpoint.reject",
+                "path": str(_store_path()),
+                "endpoint_key": endpoint_key,
+                "field": field,
+            })
+            return
+        except Exception:
+            pass  # fall back to Python write
     with _lock:
         try:
             store = _learned()
