@@ -13,10 +13,7 @@ dependencies = [
     "textual==8.2.8",
     "fastapi==0.141.1",
     "uvicorn[standard]==0.52.4",
-    # Pinned to a specific commit on andrewyng/aisuite (1b4bbf3). Delta uses
-    # only the public surface (aisuite.Client, aisuite.agents.tool,
-    # aisuite.utils.tools.Tools); bumping to a newer upstream commit is a
-    # real dependency change tracked separately.
+    # Pinned to a known aisuite commit; update only as a deliberate dependency change.
     "aisuite @ git+https://github.com/andrewyng/aisuite.git@1b4bbf303ec21968230b1ec869a144d054e9b3c4",
     "docstring_parser==0.18.0",
     "pyyaml==6.0.3",  # persona manifest frontmatter (YAML)
@@ -26,13 +23,10 @@ dependencies = [
     "websockets==16.1.1",  # WS client (used by integrations/managed Capability Port tests)
     "ddgs==9.16.0",  # keyless default web-search provider (DuckDuckGo); Tavily/Brave use httpx
     "croniter==6.2.4",  # cron next-fire math for the automation scheduler
-    # PDF attachments for models without native PDF support (pdf_support.py):
-    # pypdf = pure-python text extraction; pypdfium2 = page rasterization (BSD pdfium,
-    # ships its own libpdfium — NOT PyMuPDF, whose AGPL license can't ride in a release package).
+    # PDF fallback: pypdf extracts text; pypdfium2 rasterizes scanned pages without AGPL PyMuPDF.
     "pypdf==6.16.2",
     "pypdfium2==5.13.0",
-    # IANA tz database for zoneinfo. Windows ships no system tz db, so without this every
-    # named schedule timezone (UTC, Asia/Kolkata, …) silently falls back to local time.
+    # Windows needs IANA timezone data for named schedules.
     "tzdata==2026.3; sys_platform == 'win32'",
 ]
 
@@ -41,20 +35,16 @@ dev = [
     "pytest==9.1.1",
     "pytest-asyncio==1.4.0",
     "httpx==0.28.1",
-    # CI tools are project dependencies so uv.lock fixes the exact versions used
-    # by all static/audit gates instead of resolving them separately at runtime.
+    # CI tools stay in the project lockfile for reproducible static/audit gates.
     "pip-audit==2.10.1",
     "pyright==1.1.411",
     "ruff==0.16.6",
 ]
-# Inbound messaging listeners (outbound send_message needs only httpx, already a core dep).
-# aiohttp is slack-bolt's Socket Mode transport at runtime (and the FakeSlack test harness
-# drives the real handler) — declare it so CI installs it, not just transitively.
+# Inbound messaging listeners; outbound messaging already uses core httpx.
 messaging = ["python-telegram-bot==22.8", "slack-bolt==1.30.0", "aiohttp==3.14.3"]
 # Interactive Delta browser automation.
 browser = ["playwright>=1.62.0"]
-# Windows Portable build-only dependency. Keeping it as an explicit extra lets
-# the release sidecar environment be reproduced from uv.lock.
+# Windows Portable build dependency.
 build = ["pyinstaller==6.22.2"]
 
 [project.scripts]
@@ -74,15 +64,9 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 
 [tool.ruff.lint]
-# Pin the rule set to the same surface used by ruff ≤0.11 (E4/E7/E9/F).
-# Ruff 0.12+ expanded the default selection to include BLE, S, B, UP, PLR, PLW,
-# RUF, SIM, DTZ, FURB, C4, ISC, PERF, PIE, PYI, etc.  Enabling those broadly
-# in a Dependabot version-bump PR would conflate a tool upgrade with a policy
-# change.  Enable new rule families deliberately in a dedicated PR after
-# reviewing findings and deciding which are project-appropriate.
+# Keep the lint surface explicit; expand rule families only in dedicated policy changes.
 select = ["E4", "E7", "E9", "F"]
 
 [tool.uv]
-# CI and release use this exact resolver so the committed uv.lock remains the
-# single reproducible Python dependency graph across supported platforms.
+# Pin the CI/release resolver for reproducibility across supported platforms.
 required-version = "==0.12.3"
