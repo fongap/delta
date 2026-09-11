@@ -1,13 +1,4 @@
-"""Multi-inbox routing — named inboxes + delivery bindings.
-
-An inbox is a named queue with optional delivery binding(s): in-app is always the store of
-record; a binding can also mirror items to a Slack channel or Telegram chat. Sessions route to
-an inbox by a per-session override, else the persona's default, else ``"default"``. Bindings
-are bidirectional: an item is delivered to the bound channel with its id embedded, and an
-inbound reply (correlated by that id) resolves the item — so the connectors/mobile are just
-transports of the same items. The gateway wiring is injected (a ``sender`` callable) so this
-module stays testable without touching Slack/Telegram.
-"""
+"""Named inbox routing, delivery bindings, and inbound reply correlation."""
 
 from __future__ import annotations
 
@@ -20,13 +11,6 @@ from typing import Callable
 from packages.jsonstate import load_json_state, save_json_state
 
 DEFAULT_INBOX = "default"
-# Embeds the item id in a delivered message. Write direction: `[d:<id>]`
-# (Delta brand). Parse direction: accepts only `[d:…]` — the OpenWorker-era
-# `[ow:…]` (rebrand 2026-07-22) and `[ocw:…]` aliases were removed in P2:
-# the rebrand has settled and shipping two parse paths for years of legacy
-# tokens made the module longer without buying real compatibility (any user
-# who still has an old approval in flight can refresh the inbox; old items
-# never had a real action pending).
 _ID_TOKEN = re.compile(r"\[d:([0-9a-f]{6,})\]")
 
 
@@ -69,7 +53,6 @@ class InboxRouting:
             },
         )
 
-    # -- config -----------------------------------------------------------------
     def set_binding(
         self, name: str, *, channel: str | None = None, target: str = ""
     ) -> None:
@@ -90,9 +73,8 @@ class InboxRouting:
             self._session_override[session_id] = inbox_name
             self._save()
 
-    # -- resolution -------------------------------------------------------------
     def route_for(self, session_id: str, persona_id: str | None = None) -> str:
-        """Per-session override > persona default > the global default inbox."""
+        """Per-session override > persona default > global default."""
         if session_id in self._session_override:
             return self._session_override[session_id]
         if persona_id and persona_id in self._persona_default:
@@ -103,14 +85,11 @@ class InboxRouting:
         return [asdict(b) for b in self._bindings.values()]
 
 
-# -- delivery + inbound correlation ---------------------------------------------
-Sender = Callable[[str, str, str], None]  # (channel, target, text) -> None
+Sender = Callable[[str, str, str], None]
 
 
 def deliver(item, binding: InboxBinding, sender: Sender | None) -> bool:
-    """Mirror an inbox item to its bound channel (if any). The item id is embedded so an inbound
-    reply can be correlated back. In-app-only bindings deliver nothing here. Returns True if a
-    channel message was sent."""
+    """Mirror an inbox item to its bound channel and embed its correlation id."""
     if not binding.channel or sender is None:
         return False
     text = f"{item.title}\n{item.body}\n[d:{item.id}]".strip()
@@ -118,13 +97,8 @@ def deliver(item, binding: InboxBinding, sender: Sender | None) -> bool:
     return True
 
 
-# Decision keywords for a channel reply. Matched against the reply's LEADING word/emoji
-# only (see _reply_intent). Substring matching turned "disallow" into allow and "note"
-# into deny; whole-word matching anywhere still inverted negated replies — "I cannot
-# approve this yet" matched \bapprove\b and, with allow checked first, executed the
-# declined action. Leading-word intent keeps "Yes, go ahead" / "No." / "👍" working;
-# everything else is a free-text answer, which the approval path already maps to deny —
-# the safe default for an approval gate.
+# Only the leading token carries approval intent. This avoids accidental matches
+# such as "disallow" or negated text containing "approve" later in the reply.
 _ALLOW_WORDS = frozenset({"approve", "approved", "allow", "allowed", "yes"})
 _DENY_WORDS = frozenset({"deny", "denied", "reject", "rejected", "no"})
 _ALLOW_EMOJI = ("👍", "✅")
@@ -133,9 +107,9 @@ _TOKEN_TRIM = ".,!?:;'\"()"
 
 
 def _reply_intent(text: str) -> str | None:
-    """Allow/deny intent from the first word (or emoji) of a reply, else None."""
+    """Return allow/deny intent from the first word or emoji."""
     first = text.split()[0] if text.split() else ""
-    if first.startswith(_ALLOW_EMOJI):  # startswith: tolerate skin-tone modifiers
+    if first.startswith(_ALLOW_EMOJI):
         return "allow"
     if first.startswith(_DENY_EMOJI):
         return "deny"
@@ -150,16 +124,11 @@ def _reply_intent(text: str) -> str | None:
 def resolve_from_reply(
     reply: str, resolve: Callable[[str, str], bool]
 ) -> bool | None:
-    """Correlate an inbound channel reply to its item (by the embedded id) and resolve it.
-
-    Looks for the ``[d:<id>]`` token, then an allow/deny intent in the reply's
-    leading word; falls back to treating the whole message as a free-text
-    answer. ``resolve(item_id, resolution)`` is the InboxStore.resolve. Returns
-    the resolve() result, or None if no item id was found."""
+    """Resolve the item referenced by a ``[d:<id>]`` token in an inbound reply."""
     m = _ID_TOKEN.search(reply or "")
     if not m:
         return None
     item_id = m.group(1)
     text = _ID_TOKEN.sub("", reply).strip()
-    resolution = _reply_intent(text) or text  # free-text answer to a question
+    resolution = _reply_intent(text) or text
     return resolve(item_id, resolution)
