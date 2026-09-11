@@ -525,15 +525,10 @@ enum Command {
     /// R5 / ADR-047: test command that exercises the streaming ABI.
     /// Sends N delta frames with optional delay, then a done frame.
     #[serde(rename = "stream.echo")]
-    StreamEcho {
-        chunks: u32,
-        delay_ms: Option<u64>,
-    },
+    StreamEcho { chunks: u32, delay_ms: Option<u64> },
     /// R5 / ADR-047: cancel an in-flight stream by stream_id.
     #[serde(rename = "stream.cancel")]
-    StreamCancel {
-        stream_id: String,
-    },
+    StreamCancel { stream_id: String },
 }
 
 struct ConnCache {
@@ -681,11 +676,7 @@ impl Command {
     }
 }
 
-fn handle_stream(
-    cmd: Command,
-    _cache: &Mutex<ConnCache>,
-    out: &mut impl Write,
-) {
+fn handle_stream(cmd: Command, _cache: &Mutex<ConnCache>, out: &mut impl Write) {
     use uuid::Uuid;
     let stream_id = Uuid::new_v4().to_string();
 
@@ -721,7 +712,9 @@ fn handle_stream(
             });
             writeln!(out, "{done}").ok();
         }
-        Command::StreamCancel { stream_id: target_id } => {
+        Command::StreamCancel {
+            stream_id: target_id,
+        } => {
             // Phase 0: placeholder cancel (no active streams to cancel yet).
             // Phase 1 will wire this to actual provider stream cancellation.
             let done = serde_json::json!({
