@@ -436,3 +436,34 @@ def test_openai_provider_complete_delegates_to_rust(client, mock_server):
     assert turn.usage.input == 8
     assert turn.usage.output == 5
     assert turn.usage.cache_read == 2
+
+
+def test_openai_provider_stream_delegates_to_rust(client, mock_server):
+    """OpenAIProvider.stream() with `core` delegates the wire call to Rust.
+
+    Yields text/reasoning deltas + a final turn, with truncation detection.
+    """
+    provider = OpenAIProvider(
+        core=client,
+        api_key="test-key",
+        base_url=mock_server,
+        endpoint_caps=None,
+        endpoint_key=None,
+    )
+    chunks = list(
+        provider.stream(model="gpt-test", messages=[{"role": "user", "content": "hi"}])
+    )
+    text_chunks = [c for c in chunks if c.text_delta is not None]
+    reasoning_chunks = [c for c in chunks if c.reasoning_delta is not None]
+    turn_chunk = next(c for c in chunks if c.turn is not None)
+
+    assert len(text_chunks) == 2
+    assert text_chunks[0].text_delta == "Hello"
+    assert text_chunks[1].text_delta == " world"
+    assert len(reasoning_chunks) == 1
+    assert reasoning_chunks[0].reasoning_delta == "thinking"
+    assert turn_chunk.turn.text == "Hello world"
+    assert turn_chunk.turn.finish_reason == "stop"
+    assert turn_chunk.turn.reasoning == "thinking"
+    assert turn_chunk.turn.usage is not None
+    assert turn_chunk.turn.usage.output == 5
