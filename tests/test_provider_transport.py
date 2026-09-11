@@ -279,3 +279,129 @@ def test_provider_stream_anthropic(client, mock_anthropic_server):
     assert text_deltas[1]["text_delta"] == " world"
     assert len(reasoning_deltas) == 1
     assert reasoning_deltas[0]["reasoning_delta"] == "reasoning"
+
+
+# -- OpenAI Responses tests ---------------------------------------------------
+
+
+class _MockResponsesHandler(BaseHTTPRequestHandler):
+    """Returns canned OpenAI Responses API responses."""
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", 0))
+        body = self.rfile.read(length) if length else b"{}"
+        req = json.loads(body) if body else {}
+
+        if req.get("stream"):
+            self._stream_response()
+        else:
+            self._non_stream_response()
+
+    def _non_stream_response(self):
+        resp = {
+            "id": "resp_test",
+            "status": "completed",
+            "output": [
+                {"type": "message", "content": [{"type": "output_text", "text": "Hello from responses!"}]},
+                {"type": "reasoning", "summary": [{"text": "thinking hard"}]},
+                {
+                    "type": "function_call",
+                    "id": "fc_456",
+                    "name": "lookup",
+                    "arguments": {"term": "delta"},
+                },
+            ],
+            "incomplete_details": None,
+            "usage": {"input_tokens": 30, "output_tokens": 10},
+        }
+        data = json.dumps(resp).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def _stream_response(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.end_headers()
+        full = {
+            "id": "resp_test",
+            "status": "completed",
+            "output": [
+                {"type": "message", "content": [{"type": "output_text", "text": "Hello streamed world"}]},
+                {"type": "reasoning", "summary": [{"text": "stream thinking"}]},
+                {"type": "function_call", "id": "fc_1", "name": "search", "arguments": {"q": "test"}},
+            ],
+            "incomplete_details": None,
+            "usage": {"input_tokens": 30, "output_tokens": 10},
+        }
+        events = [
+            ("response.created", {"type": "response.created", "response": full}),
+            ("response.in_progress", {"type": "response.in_progress", "response": full}),
+            ("response.output_text.delta", {"type": "response.output_text.delta", "delta": "Hello"}),
+            ("response.output_text.delta", {"type": "response.output_text.delta", "delta": " streamed"}),
+            ("response.output_text.delta", {"type": "response.output_text.delta", "delta": " world"}),
+            ("response.reasoning_summary_text.delta", {"type": "response.reasoning_summary_text.delta", "delta": "stream thinking"}),
+            ("response.completed", {"type": "response.completed", "response": full}),
+        ]
+        for evt_name, data in events:
+            line = f"event: {evt_name}\ndata: {json.dumps(data)}\n\n"
+            self.wfile.write(line.encode())
+        self.wfile.flush()
+
+    def log_message(self, *args, **kwargs):
+        pass
+
+
+@pytest.fixture()
+def mock_responses_server():
+    server = HTTPServer(("127.0.0.1", 0), _MockResponsesHandler)
+    port = server.server_address[1]
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    yield f"http://127.0.0.1:{port}"
+    server.shutdown()
+
+
+def test_provider_complete_openai_responses(client, mock_responses_server):
+    """provider.complete parses OpenAI Responses output."""
+    result = client.command({
+        "cmd": "provider.complete",
+        "protocol": "openai_responses",
+        "model": "gpt-5.6-test",
+        "messages": [{"role": "user", "content": "hi"}],
+        "settings": {"instructions": "be brief"},
+        "api_key": "test-key",
+        "base_url": mock_responses_server,
+    })
+    assert result["text"] == "Hello from responses!"
+    assert result["finish_reason"] == "tool_calls"
+    assert result["reasoning"] == "thinking hard"
+    assert result["tool_calls"][0]["id"] == "fc_456"
+    assert result["tool_calls"][0]["name"] == "lookup"
+    assert result["tool_calls"][0]["arguments"] == {"term": "delta"}
+    assert result["usage"]["input"] == 30
+    assert result["usage"]["output"] == 10
+
+
+def test_provider_stream_openai_responses(client, mock_responses_server):
+    """provider.stream yields text/reasoning deltas for OpenAI Responses."""
+    deltas = []
+    gen = client.stream({
+        "cmd": "provider.stream",
+        "protocol": "openai_responses",
+        "model": "gpt-5.6-test",
+        "messages": [{"role": "user", "content": "hi"}],
+        "api_key": "test-key",
+        "base_url": mock_responses_server,
+    })
+    for data in gen:
+        deltas.append(data)
+    text_deltas = [d for d in deltas if "text_delta" in d]
+    reasoning_deltas = [d for d in deltas if "reasoning_delta" in d]
+    assert len(text_deltas) == 3
+    assert text_deltas[0]["text_delta"] == "Hello"
+    assert text_deltas[-1]["text_delta"] == " world"
+    assert len(reasoning_deltas) == 1
+    assert reasoning_deltas[0]["reasoning_delta"] == "stream thinking"
