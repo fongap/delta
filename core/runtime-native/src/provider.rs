@@ -263,13 +263,317 @@ pub fn stream_openai_chat(
     )
 }
 
+// -- Anthropic Messages (non-streaming) -------------------------------------
+
+fn anthropic_headers(req: &ProviderRequest) -> Vec<(&str, String)> {
+    vec![
+        ("x-api-key", req.api_key.clone()),
+        ("anthropic-version", "2023-06-01".to_string()),
+        ("Content-Type", "application/json".to_string()),
+    ]
+}
+
+fn build_anthropic_body(req: &ProviderRequest, stream: bool) -> Value {
+    let mut body = json!({
+        "model": req.model,
+        "messages": req.messages,
+        "max_tokens": 4096,
+    });
+    if stream {
+        body["stream"] = json!(true);
+    }
+    if let Some(settings) = &req.settings {
+        if let Some(obj) = settings.as_object() {
+            if let Some(body_obj) = body.as_object_mut() {
+                for (k, v) in obj {
+                    body_obj.insert(k.clone(), v.clone());
+                }
+            }
+        }
+    }
+    if let Some(tools) = &req.tools {
+        body["tools"] = tools.clone();
+    }
+    body
+}
+
+fn anthropic_usage(u: &Value) -> Value {
+    let input = u.get("input_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+    let output = u.get("output_tokens").and_then(|v| v.as_i64()).unwrap_or(0);
+    let cache_read = u
+        .get("cache_read_input_tokens")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    let cache_write = u
+        .get("cache_creation_input_tokens")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(0);
+    json!({
+        "input": input,
+        "output": output,
+        "cache_read": cache_read,
+        "cache_write": cache_write,
+    })
+}
+
+fn map_stop_reason(reason: &str) -> &str {
+    match reason {
+        "end_turn" => "stop",
+        "tool_use" => "tool_calls",
+        "max_tokens" => "length",
+        "stop_sequence" => "stop",
+        _ => reason,
+    }
+}
+
+pub fn complete_anthropic(req: &ProviderRequest) -> Result<Value, String> {
+    let url = format!("{}/v1/messages", req.base_url.trim_end_matches('/'));
+    let body = build_anthropic_body(req, false);
+    let mut request = agent().post(&url);
+    for (k, v) in anthropic_headers(req) {
+        request = request.set(k, &v);
+    }
+    let resp = request
+        .send_json(body)
+        .map_err(|e| format!("HTTP error: {e}"))?;
+    let resp_json: Value = resp.into_json().map_err(|e| format!("JSON parse: {e}"))?;
+    parse_anthropic_response(&resp_json)
+}
+
+fn parse_anthropic_response(resp: &Value) -> Result<Value, String> {
+    let content = resp
+        .get("content")
+        .and_then(|c| c.as_array())
+        .ok_or("missing content array")?;
+    let mut text_parts: Vec<String> = Vec::new();
+    let mut reasoning_parts: Vec<String> = Vec::new();
+    let mut tool_calls: Vec<Value> = Vec::new();
+    for block in content {
+        match block.get("type").and_then(|t| t.as_str()) {
+            Some("text") => {
+                if let Some(t) = block.get("text").and_then(|t| t.as_str()) {
+                    text_parts.push(t.to_string());
+                }
+            }
+            Some("tool_use") => {
+                let id = block
+                    .get("id")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let name = block
+                    .get("name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("")
+                    .to_string();
+                let input = block.get("input").cloned().unwrap_or(json!({}));
+                tool_calls.push(json!({"id": id, "name": name, "arguments": input}));
+            }
+            Some("thinking") => {
+                if let Some(t) = block.get("thinking").and_then(|t| t.as_str()) {
+                    reasoning_parts.push(t.to_string());
+                }
+            }
+            Some("redacted_thinking") => {
+                reasoning_parts.push("[redacted]".to_string());
+            }
+            _ => {}
+        }
+    }
+    let stop_reason = resp
+        .get("stop_reason")
+        .and_then(|s| s.as_str())
+        .map(|s| map_stop_reason(s).to_string());
+    let usage = resp.get("usage").map(anthropic_usage);
+    let text = if text_parts.is_empty() {
+        Value::Null
+    } else {
+        Value::String(text_parts.join(""))
+    };
+    let reasoning = if reasoning_parts.is_empty() {
+        Value::Null
+    } else {
+        Value::String(reasoning_parts.join(""))
+    };
+    Ok(json!({
+        "text": text,
+        "tool_calls": tool_calls,
+        "finish_reason": stop_reason,
+        "reasoning": reasoning,
+        "usage": usage,
+        "extras": {},
+    }))
+}
+
+// -- Anthropic Messages (streaming SSE) -------------------------------------
+
+pub fn stream_anthropic(
+    req: &ProviderRequest,
+    out: &mut impl Write,
+    stream_id: &str,
+) -> Result<Value, String> {
+    let url = format!("{}/v1/messages", req.base_url.trim_end_matches('/'));
+    let body = build_anthropic_body(req, true);
+    let mut request = agent().post(&url);
+    for (k, v) in anthropic_headers(req) {
+        request = request.set(k, &v);
+    }
+    let resp = request
+        .send_json(body)
+        .map_err(|e| format!("HTTP error: {e}"))?;
+    let reader = resp.into_reader();
+    let buf = BufReader::new(reader);
+    let mut text_parts: Vec<String> = Vec::new();
+    let mut reasoning_parts: Vec<String> = Vec::new();
+    let mut tool_calls: Vec<ToolCallAccum> = Vec::new();
+    let mut block_types: Vec<String> = Vec::new();
+    let mut finish_reason: Option<String> = None;
+    let mut usage: Option<Value> = None;
+    for line_res in buf.lines() {
+        let line = line_res.map_err(|e| format!("SSE read error: {e}"))?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with(':') {
+            continue;
+        }
+        if trimmed.starts_with("event:") {
+            continue;
+        }
+        if !trimmed.starts_with("data: ") {
+            continue;
+        }
+        let payload = &trimmed[6..];
+        let chunk: Value = match serde_json::from_str(payload) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let chunk_type = chunk.get("type").and_then(|t| t.as_str()).unwrap_or("");
+        match chunk_type {
+            "message_start" => {
+                if let Some(msg) = chunk.get("message") {
+                    if let Some(u) = msg.get("usage") {
+                        usage = Some(anthropic_usage(u));
+                    }
+                }
+            }
+            "content_block_start" => {
+                let idx = chunk.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                while block_types.len() <= idx {
+                    block_types.push(String::new());
+                    tool_calls.push(ToolCallAccum::default());
+                }
+                if let Some(block) = chunk.get("content_block") {
+                    let bt = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                    block_types[idx] = bt.to_string();
+                    if bt == "tool_use" {
+                        if let Some(id) = block.get("id").and_then(|v| v.as_str()) {
+                            tool_calls[idx].id = id.to_string();
+                        }
+                        if let Some(name) = block.get("name").and_then(|v| v.as_str()) {
+                            tool_calls[idx].name = name.to_string();
+                        }
+                    }
+                }
+            }
+            "content_block_delta" => {
+                let idx = chunk.get("index").and_then(|v| v.as_u64()).unwrap_or(0) as usize;
+                if let Some(delta) = chunk.get("delta") {
+                    let dt = delta.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                    match dt {
+                        "text_delta" => {
+                            if let Some(t) = delta.get("text").and_then(|t| t.as_str()) {
+                                if !t.is_empty() {
+                                    text_parts.push(t.to_string());
+                                    let frame = json!({"ok": true, "stream": "delta", "stream_id": stream_id, "data": {"text_delta": t}});
+                                    writeln!(out, "{frame}").ok();
+                                    out.flush().ok();
+                                }
+                            }
+                        }
+                        "thinking_delta" => {
+                            if let Some(t) = delta.get("thinking").and_then(|t| t.as_str()) {
+                                if !t.is_empty() {
+                                    reasoning_parts.push(t.to_string());
+                                    let frame = json!({"ok": true, "stream": "delta", "stream_id": stream_id, "data": {"reasoning_delta": t}});
+                                    writeln!(out, "{frame}").ok();
+                                    out.flush().ok();
+                                }
+                            }
+                        }
+                        "input_json_delta" => {
+                            if let Some(pj) = delta.get("partial_json").and_then(|v| v.as_str()) {
+                                if idx < tool_calls.len() {
+                                    tool_calls[idx].args.push_str(pj);
+                                }
+                            }
+                        }
+                        "signature_delta" => {
+                            // Signature deltas are not streamed to UI;
+                            // they're part of the thinking block's signature.
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            "message_delta" => {
+                if let Some(d) = chunk.get("delta") {
+                    if let Some(sr) = d.get("stop_reason").and_then(|s| s.as_str()) {
+                        finish_reason = Some(map_stop_reason(sr).to_string());
+                    }
+                }
+                if let Some(u) = chunk.get("usage") {
+                    let prev = usage.clone().unwrap_or(json!({}));
+                    let mut merged = prev;
+                    if let Some(out_tok) = u.get("output_tokens").and_then(|v| v.as_i64()) {
+                        if let Some(obj) = merged.as_object_mut() {
+                            obj.insert("output".to_string(), json!(out_tok));
+                        }
+                    }
+                    usage = Some(merged);
+                }
+            }
+            "message_stop" => {
+                break;
+            }
+            _ => {}
+        }
+    }
+    let text = if text_parts.is_empty() {
+        Value::Null
+    } else {
+        Value::String(text_parts.join(""))
+    };
+    let reasoning = if reasoning_parts.is_empty() {
+        Value::Null
+    } else {
+        Value::String(reasoning_parts.join(""))
+    };
+    let tool_calls_json: Vec<Value> = tool_calls
+        .iter()
+        .filter(|tc| !tc.name.is_empty())
+        .map(|tc| {
+            let arguments =
+                serde_json::from_str(&tc.args).unwrap_or(json!({"_raw": tc.args.clone()}));
+            json!({"id": tc.id.clone(), "name": tc.name.clone(), "arguments": arguments})
+        })
+        .collect();
+    Ok(json!({
+        "text": text,
+        "tool_calls": tool_calls_json,
+        "finish_reason": finish_reason,
+        "reasoning": reasoning,
+        "usage": usage,
+        "extras": {},
+    }))
+}
+
 // -- Dispatch ---------------------------------------------------------------
 
 pub fn complete(req: &ProviderRequest) -> Result<Value, String> {
     match req.protocol.as_str() {
         "openai_chat" => complete_openai_chat(req),
+        "anthropic" => complete_anthropic(req),
         _ => Err(format!(
-            "unknown protocol: {} (Phase 1 supports openai_chat)",
+            "unknown protocol: {} (supports openai_chat, anthropic)",
             req.protocol
         )),
     }
@@ -282,8 +586,9 @@ pub fn stream(
 ) -> Result<Value, String> {
     match req.protocol.as_str() {
         "openai_chat" => stream_openai_chat(req, out, stream_id),
+        "anthropic" => stream_anthropic(req, out, stream_id),
         _ => Err(format!(
-            "unknown protocol: {} (Phase 1 supports openai_chat)",
+            "unknown protocol: {} (supports openai_chat, anthropic)",
             req.protocol
         )),
     }
