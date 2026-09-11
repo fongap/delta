@@ -33,6 +33,7 @@ from core.permissions import Mode, PermissionEngine
 from core.project import load_agents_md
 from core import request_log as _request_log
 from providers import ProviderClient, ProviderRouter
+from packages.delta_core_client import maybe_core_client
 from core.roots import RootDir, normalize_roots, render_context
 from packages.secrets import SecretStore, state_dir
 from core.selfwake import selfwake_tools
@@ -322,7 +323,9 @@ def build_engine(
     # Route by the model's `provider:` prefix (OpenAI default or a configured alias). The manager normally
     # passes its shared router; this fallback covers the TUI / direct build_engine() callers.
     # Resolved here (not at engine construction) because the explorer subagent captures it.
-    provider = provider or ProviderRouter(secrets, default_provider="openai")
+    provider = provider or ProviderRouter(
+        secrets, default_provider="openai", core=maybe_core_client()
+    )
     # Code-family personas can fan broad research out to read-only explorer subagents, keeping
     # their own context for the actual change.
     if agent.family == "code" and ws is not None:

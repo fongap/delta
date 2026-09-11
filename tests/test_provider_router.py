@@ -68,7 +68,7 @@ class _Recorder(ProviderClient):
 def _patch_build(monkeypatch):
     state: dict = {"created": [], "latest": {}}
 
-    def fake_build(name, profile, secrets):
+    def fake_build(name, profile, secrets, core=None):
         rec = _Recorder(name)  # a fresh client each build, so rebuilds are observable
         state["created"].append(rec)
         state["latest"][name] = rec

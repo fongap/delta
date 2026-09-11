@@ -46,6 +46,7 @@ from providers import (
 )
 from core.runtime import RuntimePort
 from packages.secrets import SecretStore, state_dir
+from packages.delta_core_client import maybe_core_client
 from core.selfwake import WakeStore
 from integrations.skills import (
     SessionSkillStore,
@@ -157,7 +158,10 @@ class SessionManager(
         # shared by every engine and the `/v1/chat/completions` proxy.
         if provider is None:
             self.provider = ProviderRouter(
-                self.secrets, default_provider="openai", on_use=self._note_provider_use
+                self.secrets,
+                default_provider="openai",
+                on_use=self._note_provider_use,
+                core=maybe_core_client(),
             )
         else:
             self.provider = provider

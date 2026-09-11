@@ -35,6 +35,8 @@ from providers.base import (
 )
 from providers.capabilities import capabilities_for
 
+DEFAULT_ANTHROPIC_URL = "https://api.anthropic.com"
+
 
 def _usage_from(usage: Any) -> TokenUsage | None:
     """Messages-API usage object → normalized counts (input_tokens excludes cache)."""
@@ -390,18 +392,164 @@ class AnthropicProvider(ProviderClient):
         secrets: Any = None,
         thinking_budget: int | None = None,
         allow_credential_fallback: bool = True,
+        core: Any = None,
     ):
         # Mirrors OpenAIProvider: the SDK client is built lazily so engines can be assembled
         # before any key exists; the key resolves at call time (explicit → env → SecretStore).
         # Tests inject a `client` directly. `thinking_budget` (tokens, from the provider
         # profile's optional field) opts every request into extended thinking.
+        #
+        # R5 / ADR-047: `core` is an optional DeltaCoreClient. When provided, the wire
+        # transport for complete()/stream() delegates to Rust (`provider.complete`/
+        # `provider.stream`, protocol `anthropic`). Decision logic (message conversion,
+        # thinking budget, cache breakpoints) stays Python.
         self._client = client
+        self._core = core
         self._api_key = api_key
         self._base_url = base_url
         self._secrets = secrets
         self._allow_credential_fallback = allow_credential_fallback
         self.default_model = default_model
         self.thinking_budget = thinking_budget or 0
+
+    def _resolved_key(self) -> str:
+        key = self._api_key
+        if not key and self._allow_credential_fallback:
+            key = resolve_api_key(self._secrets)
+        if not key:
+            raise RuntimeError(
+                "No Anthropic API key configured. Set ANTHROPIC_API_KEY in the environment, "
+                "or add your key in Manage → Configure Models."
+            )
+        return key
+
+    def _build_rust_request(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        settings: dict[str, Any],
+        stream: bool,
+    ) -> dict[str, Any]:
+        """One provider.complete/stream request with Anthropic-converted inputs.
+
+        `messages` here are already in Anthropic `convert_messages` shape (caller
+        ran `_request_kwargs`); `system`/`max_tokens`/`thinking` ride in `settings`,
+        which Rust merges into the request body.
+        """
+        base_url = (self._base_url or DEFAULT_ANTHROPIC_URL).strip()
+        req: dict[str, Any] = {
+            "cmd": "provider.stream" if stream else "provider.complete",
+            "protocol": "anthropic",
+            "model": model,
+            "messages": messages,
+            "api_key": self._resolved_key(),
+            "base_url": base_url,
+        }
+        if tools:
+            req["tools"] = tools
+        if settings:
+            req["settings"] = dict(settings)
+        return req
+
+    def _rust_complete(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        settings: dict[str, Any],
+    ) -> AssistantTurn:
+        req = self._build_rust_request(
+            model=model, messages=messages, tools=tools, settings=settings, stream=False
+        )
+        result = self._core.command(req)
+
+        tool_calls = [
+            ToolCall(
+                id=tc.get("id", ""),
+                name=tc.get("name", ""),
+                arguments=_parse_args(tc.get("arguments")),
+            )
+            for tc in result.get("tool_calls", [])
+        ]
+        usage_raw = result.get("usage")
+        usage = (
+            TokenUsage(
+                input=usage_raw.get("input") or 0,
+                output=usage_raw.get("output") or 0,
+                cache_read=usage_raw.get("cache_read") or 0,
+                cache_write=usage_raw.get("cache_write") or 0,
+            )
+            if usage_raw
+            else None
+        )
+        # Rust folds thinking blocks into `reasoning`; the `_anthropic` replay sidecar
+        # is not reconstructed on the Rust transport path (Phase 3 surface).
+        return AssistantTurn(
+            text=result.get("text"),
+            tool_calls=tool_calls,
+            finish_reason=result.get("finish_reason"),
+            reasoning=result.get("reasoning"),
+            usage=usage,
+        )
+
+    def _rust_stream(
+        self,
+        *,
+        model: str,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]] | None,
+        settings: dict[str, Any],
+    ):
+        """Delegate one streaming completion to Rust (`provider.stream`).
+
+        Yields text/reasoning deltas then a final turn, built from Rust's done frame.
+        """
+        req = self._build_rust_request(
+            model=model, messages=messages, tools=tools, settings=settings, stream=True
+        )
+        final: dict[str, Any] | None = None
+        gen = self._core.stream(req)
+        try:
+            while True:
+                data = next(gen)
+                if "text_delta" in data:
+                    yield StreamChunk(text_delta=data["text_delta"])
+                elif "reasoning_delta" in data:
+                    yield StreamChunk(reasoning_delta=data["reasoning_delta"])
+        except StopIteration as exc:
+            final = exc.value
+        final = final or {}
+        tool_calls = [
+            ToolCall(
+                id=tc.get("id", ""),
+                name=tc.get("name", ""),
+                arguments=_parse_args(tc.get("arguments")),
+            )
+            for tc in final.get("tool_calls", [])
+        ]
+        usage_raw = final.get("usage")
+        usage = (
+            TokenUsage(
+                input=usage_raw.get("input") or 0,
+                output=usage_raw.get("output") or 0,
+                cache_read=usage_raw.get("cache_read") or 0,
+                cache_write=usage_raw.get("cache_write") or 0,
+            )
+            if usage_raw
+            else None
+        )
+        yield StreamChunk(
+            turn=AssistantTurn(
+                text=final.get("text"),
+                tool_calls=tool_calls,
+                finish_reason=final.get("finish_reason"),
+                reasoning=final.get("reasoning"),
+                usage=usage,
+            )
+        )
 
     def _ensure_client(self) -> Any:
         if self._client is None:
@@ -476,6 +624,18 @@ class AnthropicProvider(ProviderClient):
         kwargs = self._request_kwargs(
             model=model, messages=messages, tools=tools, settings=settings
         )
+        # R5 / ADR-047 Phase 1f: delegate the wire transport to Rust when a
+        # DeltaCoreClient is present and no beta refusal-fallback is required
+        # (a deterministic model-family capability, not a runtime toggle).
+        if self._core is not None and not _needs_refusal_fallback(model):
+            settings_payload = {k: v for k, v in kwargs.items() if k not in ("model", "messages", "tools")}
+            return self._rust_complete(
+                model=model,
+                messages=kwargs["messages"],
+                tools=kwargs.get("tools"),
+                settings=settings_payload,
+            )
+
         client = self._ensure_client()
         if _needs_refusal_fallback(model):
             response = client.beta.messages.create(
@@ -547,6 +707,18 @@ class AnthropicProvider(ProviderClient):
             model=model, messages=messages, tools=tools, settings=settings
         )
         kwargs["stream"] = True
+        # R5 / ADR-047 Phase 1f: delegate the streaming wire to Rust when a
+        # DeltaCoreClient is present and no beta refusal-fallback is required.
+        if self._core is not None and not _needs_refusal_fallback(model):
+            settings_payload = {k: v for k, v in kwargs.items() if k not in ("model", "messages", "tools", "stream")}
+            yield from self._rust_stream(
+                model=model,
+                messages=kwargs["messages"],
+                tools=kwargs.get("tools"),
+                settings=settings_payload,
+            )
+            return
+
         client = self._ensure_client()
         if _needs_refusal_fallback(model):
             events = client.beta.messages.create(
