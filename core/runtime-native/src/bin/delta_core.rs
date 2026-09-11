@@ -82,10 +82,10 @@ use delta_runtime_native::{
     args_sha256, classify, operation_id, run_validation, validate_source_citation,
     ApprovalRecordInput, ApprovalWriter, ArtifactInput, ArtifactRegistryWriter, CheckpointReader,
     CheckpointRegisterInput, CheckpointWriter, CitationValidationResult, CitationValidity,
-    IdempotencyWriter, LedgerWriter, PolicyEvaluateInput, RetryClassifyInput, SideEffectEntry,
-    SideEffectState, SourceCitationReader, SourceCitationWriter, SourceRegisterInput, TaskStore,
-    ToolLifecycleCancelInput, ToolLifecyclePlanInput, ValidationReader, ValidationRegisterInput,
-    ValidationWriter,
+    IdempotencyWriter, LedgerWriter, PolicyEvaluateInput, ProviderRequest, RetryClassifyInput,
+    SideEffectEntry, SideEffectState, SourceCitationReader, SourceCitationWriter,
+    SourceRegisterInput, TaskStore, ToolLifecycleCancelInput, ToolLifecyclePlanInput,
+    ValidationReader, ValidationRegisterInput, ValidationWriter,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -529,6 +529,32 @@ enum Command {
     /// R5 / ADR-047: cancel an in-flight stream by stream_id.
     #[serde(rename = "stream.cancel")]
     StreamCancel { stream_id: String },
+    /// R5 / ADR-047 Phase 1: non-streaming provider completion.
+    #[serde(rename = "provider.complete")]
+    ProviderComplete {
+        protocol: String,
+        model: String,
+        messages: Value,
+        #[serde(default)]
+        tools: Option<Value>,
+        #[serde(default)]
+        settings: Option<Value>,
+        api_key: String,
+        base_url: String,
+    },
+    /// R5 / ADR-047 Phase 1: streaming provider completion (SSE).
+    #[serde(rename = "provider.stream")]
+    ProviderStream {
+        protocol: String,
+        model: String,
+        messages: Value,
+        #[serde(default)]
+        tools: Option<Value>,
+        #[serde(default)]
+        settings: Option<Value>,
+        api_key: String,
+        base_url: String,
+    },
 }
 
 struct ConnCache {
@@ -672,7 +698,10 @@ fn listed_entry_json(entry: SideEffectEntry, view: &str) -> Value {
 
 impl Command {
     fn is_streaming(&self) -> bool {
-        matches!(self, Command::StreamEcho { .. })
+        matches!(
+            self,
+            Command::StreamEcho { .. } | Command::ProviderStream { .. }
+        )
     }
 }
 
@@ -724,6 +753,35 @@ fn handle_stream(cmd: Command, _cache: &Mutex<ConnCache>, out: &mut impl Write) 
                 "result": {"cancelled": target_id}
             });
             writeln!(out, "{done}").ok();
+        }
+        Command::ProviderStream {
+            protocol,
+            model,
+            messages,
+            tools,
+            settings,
+            api_key,
+            base_url,
+        } => {
+            let req = ProviderRequest {
+                protocol,
+                model,
+                messages,
+                tools,
+                settings,
+                api_key,
+                base_url,
+            };
+            match delta_runtime_native::provider::stream(&req, out, &stream_id) {
+                Ok(result) => {
+                    let done = serde_json::json!({"ok": true, "stream": "done", "stream_id": stream_id, "result": result});
+                    writeln!(out, "{done}").ok();
+                }
+                Err(e) => {
+                    let err_frame = serde_json::json!({"ok": false, "stream": "error", "stream_id": stream_id, "error": e});
+                    writeln!(out, "{err_frame}").ok();
+                }
+            }
         }
         _ => unreachable!(),
     }
@@ -1992,6 +2050,30 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
         }
         Command::StreamEcho { .. } => Err("streaming commands handled in handle_stream".into()),
         Command::StreamCancel { stream_id } => Ok(serde_json::json!({"cancelled": stream_id})),
+        Command::ProviderComplete {
+            protocol,
+            model,
+            messages,
+            tools,
+            settings,
+            api_key,
+            base_url,
+        } => {
+            let req = ProviderRequest {
+                protocol,
+                model,
+                messages,
+                tools,
+                settings,
+                api_key,
+                base_url,
+            };
+            match delta_runtime_native::provider::complete(&req) {
+                Ok(v) => Ok(v),
+                Err(e) => Err(e),
+            }
+        }
+        Command::ProviderStream { .. } => Err("streaming commands handled in handle_stream".into()),
     };
     match result {
         Ok(v) => serde_json::json!({"ok": true, "result": v}),
