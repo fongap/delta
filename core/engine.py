@@ -475,6 +475,8 @@ class TurnEngine:
                     reasoning="".join(streamed_reasoning) or None,
                 )
 
+            # R5.1: safe-point — check for pending steers before model request.
+            self._poll_control_channel()
             try:
                 async for chunk in self._astream(
                     turn_tools, turn_tool_names, turn_tool_mode
@@ -632,6 +634,8 @@ class TurnEngine:
                 )
                 return
 
+            # R5.1: safe-point — check for pending steers before tool dispatch.
+            self._poll_control_channel()
             async for event in self._tool_lifecycle.authorize_and_execute(
                 turn.tool_calls
             ):
@@ -969,6 +973,42 @@ class TurnEngine:
                 message["source"] = source
             self.messages.append(message)
         self._steering = []
+
+    def _poll_control_channel(self) -> None:
+        """R5.1 B3/B4: check for pending steers at a safe point.
+
+        Looks up the RunControlChannel for the current run_id (via
+        runscope) and, if a steer is REQUESTED, accepts it and injects
+        it as a steering message so the model sees the user's
+        mid-execution direction change.
+
+        This is called at safe points: before model requests, before
+        tool-call dispatch, and between iterations.
+        """
+        try:
+            from core.runscope import current as _current_scope
+            from core.steering import get_control_channel, SteerSafePoint
+
+            scope = _current_scope()
+            if scope is None:
+                return
+            run_id = scope[0]
+            ch = get_control_channel(run_id)
+            if ch is None:
+                return
+            if ch.is_cancelled:
+                self.request_interrupt()
+                return
+            steer = ch.steers.poll()
+            if steer is not None:
+                ch.steers.accept(steer.steer_id)
+                self._steering.append((steer.content, {"source": "steer"}))
+                ch.apply_steer(
+                    steer.steer_id,
+                    safe_point=SteerSafePoint.APPLY_NOW,
+                )
+        except Exception:
+            pass
 
     def _outbound_messages(self) -> list[dict[str, Any]]:
         """`self.messages` prepared for the provider. The SOLE provider feed (see `_astream`).
