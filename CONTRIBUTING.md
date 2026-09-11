@@ -34,6 +34,27 @@ PDF、Office 文件处理、Search、Citation、Validation、脚本、自动化�
 - Provider 聚合、复杂模型路由、fallback 和权重调度不属于 Delta 的产品职责。
 - 新功能不得绕开统一的 Workspace Boundary、Policy、Approval、Run State、Artifact 和 Validation 语义。
 
+## 产品术语治理
+
+当前有效的 README、产品文档、开发文档、Issue 和 Pull Request 应统一使用以下一级产品名称：
+
+```text
+日常办公
+数据分析
+内容创作
+```
+
+不得把“知识工作”“研究”“资料处理”“文档处理”“PDF / Office”“自媒体”“脚本”“自动化”“Connector”“MCP”等重新写成与三项核心能力并列的产品方向。
+
+这些词可以在具体语境中使用，但必须保持层级清楚：
+
+- “研究”是数据分析中的研究解释 / 报告环节，或内容创作中的资料研究环节，不是第四条产品主线。
+- 文档、表格、PDF 和文件处理主要服务日常办公，同时可作为另外两类工作的输入输出能力。
+- Search、Citation、Validation、Scripting、Automation、Connector、MCP 属于跨场景支撑能力。
+- “知识工作”可用于一般类别描述或历史语境，但不得代替当前三个一级产品定位。
+
+历史 ADR、CHANGELOG 和 Git 历史保留当时真实用词，不为当前术语治理重写历史。
+
 产品与架构长期边界以：
 
 ```text
@@ -107,6 +128,7 @@ refactor: split provider routing
 6. 符合当前仓库目录和模块职责要求
 7. 不扩大已冻结的产品边界
 8. 新能力明确服务日常办公、数据分析或内容创作中的至少一个真实工作环节
+9. 产品术语没有重新引入与三项核心能力并列的新产品方向
 
 ## CI
 
