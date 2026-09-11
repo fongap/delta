@@ -599,6 +599,9 @@ enum Command {
         providers: Vec<String>,
         default: String,
     },
+    /// R5 / ADR-047 Phase 3: translate a model access/quota error to a friendly message.
+    #[serde(rename = "provider.friendly_error")]
+    ProviderFriendlyError { model: String, message: String },
 }
 
 struct ConnCache {
@@ -2165,6 +2168,9 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
         } => Ok(delta_runtime_native::provider::route(
             &model, &providers, &default,
         )),
+        Command::ProviderFriendlyError { model, message } => Ok(
+            delta_runtime_native::provider::friendly_model_error(&model, &message),
+        ),
     };
     match result {
         Ok(v) => serde_json::json!({"ok": true, "result": v}),

@@ -36,6 +36,22 @@ _NO_QUOTA = (
 
 def friendly_model_error(model: str, exc: Exception) -> str | None:
     """One actionable sentence for "your account can't use this model" failures, or None."""
+    # R5 / ADR-047 Phase 3: delegate the marker-matching decision to Rust when
+    # delta_core is available; fall back to the Python tables when not.
+    from packages.delta_core_client import maybe_core_client
+
+    core = maybe_core_client()
+    if core is not None:
+        try:
+            result = core.command({
+                "cmd": "provider.friendly_error",
+                "model": model,
+                "message": str(exc),
+            })
+            return result.get("message")
+        except Exception:
+            pass  # fall back to Python matching
+
     text = str(exc).lower()
     no_access = (
         f"Your account doesn't have access to {model} — new models can roll out "
