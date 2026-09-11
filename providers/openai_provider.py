@@ -274,6 +274,7 @@ class OpenAIProvider(ProviderClient):
             req["settings"] = dict(settings)
 
         _t0 = _time.perf_counter()
+        result: dict[str, Any] | None = None
         try:
             for _ in range(2):
                 try:
@@ -303,6 +304,7 @@ class OpenAIProvider(ProviderClient):
             )
             raise
 
+        assert result is not None
         text = result.get("text")
         tool_calls = [
             ToolCall(
