@@ -51,6 +51,7 @@
 - `ADR-044-r4-scheduler-audit.md` – R4 Phase 3：Scheduler 审计。Due query 已在 Rust（R1/R2）；`compute_next_run` 是纯函数（同 backoff_delay，留 Python）；tick/catch-up/overlap 是运行时力学（留 Python）；max_runs exhaustion 已在 Phase 2 迁移。无代码变更，仅审计收口。
 - `ADR-045-r4-resume-orchestration-audit.md` – R4 Phase 4：Resume orchestration 审计。Cold-start recovery（recover_stale/sweep_stale/checkpoint）、resume identity（run.resumed）、tool call disposition（toollifecycle.plan/cancel）均已在 Rust（ADR-025/029/035/037/038/042）。剩余 Python 仅为 orchestration glue 与纯解析（ADR-036 已审计）。无代码变更，仅审计收口。
 - `ADR-046-r4-final-convergence.md` – R4 正式收口。所有运行时控制 authority 已 Rust-authoritative。记录最终 authority matrix、protocol 版本历史（最终 v14）、R4 完成标准达成。
+- `ADR-047-r5-provider-core-migration-plan.md` – R5 Provider Core 迁移计划与边界：审计 Provider 5 域（OpenAI/Anthropic wire protocol、routing、capabilities、endpoint-caps、health），识别最大架构缺口（delta_core 同步 stdio 无流式能力）。区分 wire mechanics（Rust 目标）/ decision authority / pure parsing。Phase 0 先建立 streaming ABI，Phase 1 transport，Phase 2 decision，Phase 3 parsing。
 
 相关架构文档：
 - `hub-federation-boundary.md` – Delta Hub 联邦化边界设计，明确 OpenWorker 仅为可选适配器。
