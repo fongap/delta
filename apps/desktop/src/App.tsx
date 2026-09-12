@@ -57,6 +57,8 @@ import { shouldShowOverlay } from "./overlay";
 import { Icon } from "./components/Icon";
 import { Sidebar } from "./components/Sidebar";
 import { Composer } from "./components/Composer";
+import { RunStatusBar } from "./components/RunStatusBar";
+import { SteeringInput } from "./components/SteeringInput";
 import { ThinkingBlock, Transcript } from "./components/Transcript";
 import { Markdown } from "./components/Markdown";
 import { SessionIntro } from "./components/SessionIntro";
@@ -949,6 +951,17 @@ export function App() {
     return () => clearInterval(t);
   }, [surface, sessionId, browserRefreshKey, markUnattended]);
 
+  const runningStatusLabel = (_running: boolean): string => {
+    // R5.1 C3: human-readable lightweight run status (Chinese-first per product).
+    if (reasoningStream) return "正在思考…";
+    if (streaming) return "正在生成回答…";
+    return "正在执行…";
+  };
+
+  const runningDetails = (_sid: string): string[] | undefined =>
+    // C4: technical detail expansion is intentionally hidden by default.
+    undefined;
+
   const send = (text: string, attachments?: Attachment[], skill?: string) => {
     setComposerNotice(null);
     // Force-run shows exactly what the user typed: "/name rest". Must match the server's
@@ -1606,6 +1619,13 @@ export function App() {
                 </button>
               </div>
             )}
+            {running && (
+              <RunStatusBar
+                status={runningStatusLabel(running)}
+                active={running}
+                details={runningDetails(sessionId)}
+              />
+            )}
             <div className="main-scroll" ref={scrollRef} onScroll={handleScroll}>
               {idle ? (
                 agent === "delta" ? (
@@ -1751,6 +1771,14 @@ export function App() {
                   <InboxItemCard item={sessionInbox[0]} onResolve={resolveSessionInbox} compact />
                 ) : undefined
               }
+            />
+            {/* R5.1 C2/C3: when a run is active, allow Steer / Follow-up / Cancel
+                without forcing the user to create a new chat or wait for completion. */}
+            <SteeringInput
+              active={running && sessionId.startsWith("__run__")}
+              onSteer={(text) => send(text)}
+              onFollowUp={(text) => send(text)}
+              onCancel={interrupt}
             />
                   </div>
           <RightRail
