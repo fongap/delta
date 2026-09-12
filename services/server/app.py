@@ -1719,8 +1719,16 @@ def create_app(manager: SessionManager) -> FastAPI:
 
         async def claim_turn(*, retry: bool = False, content=None, display=None) -> None:
             if not manager.try_mark_running(session_id):
+                # R5.1 live steering: the main composer remains available while a turn
+                # is active. A second plain-text user message supervises that SAME turn
+                # through the already-established RuntimePort.steer() path. Do not
+                # start a concurrent turn, and do not accept attachments/skill framing
+                # as steering because those have independent lifecycle semantics.
+                if not retry and display is None and isinstance(content, str) and content.strip():
+                    runtime.steer(content)
+                    return
                 await reject_input(
-                    "This session is already running a turn. Wait for it to finish or stop it."
+                    "This session is already running. Send plain text to adjust the current task, or stop it first."
                 )
                 return
             asyncio.create_task(run_turn(content, retry=retry, display=display))
