@@ -1,62 +1,151 @@
 # Architecture Decision Records (ADRs)
 
-此目录收录 Delta 当前**有效**的架构决策记录。每个 ADR 使用 `ADR-XXX-<title>.md` 命名，遵循以下约定：
-- **Status**: `Active`（仍在使用），`Superseded`（已被后续 ADR 替代），`Deprecated`（不再推荐），`Removed`（已从代码中删除）。
-- 内容包括 **Context**, **Decision**, **Consequences**，以及代码实现位置的引用（文件:行号）。
+此目录记录 Delta 的架构决策和迁移证据。
 
-本目录仅保存 **长期有效** 的设计决策。已失效或仅用于一次性整改的文档应在对应代码提交历史中保留，不在此目录维护。
+ADR 用于回答：
 
-当前收录的 ADR：
-- `ADR-001-run-event-ledger.md` – 持久化、哈希链式运行事件记录。
-- `ADR-002-approval-taxonomy.md` – 风险等级与自动审批模型。
-- `ADR-003-provider-protocol-model.md` – Provider 的 Vendor / Protocol / Transport 三层概念。
-- `ADR-004-openworker-decouple-hub-boundary.md` – 移除 OpenWorker Cloud 运行时依赖并建立 Delta Hub Capability Port 边界。
-- `ADR-005-reliable-task-runtime.md` – 可靠任务运行时：验证门控、Artifact 领域对象、副作用安全恢复、Ledger 词汇表扩展。
-- `ADR-006-p2-source-citation-and-convergence.md` – P2 实用：Source / Citation 提升为可定位的一类证据、Automation 收敛的结构化守护、Inbox 解析方向终止兼容。
-- `ADR-007-p3-readonly-run-analyzer.md` – P3 长期「智能」第一刀：只读 Run Analyzer（`RunEventLedger` + `SourceStore` + `TaskRun` 的 query 层），零行为变更、不动 Skill / Memory / Preference 任何活跃状态，为 §7.3 治理链的 Evidence 步提供可复用基础。
-- `ADR-008-p1p2p3-baseline.md` – P1 / P2 / P3 阶段第一刀基线说明：12 个 PR 的快照、关键设计契约、蓝图 §8.9 / §7.3 明确延后或条件限定的项、下一刀"不是 PR 而是真实使用"的判定标准。
-- `ADR-009-delta-core-architecture.md` – Delta Core 长期架构：Rust Control Plane + Capability Worker；明确 Rust Core 唯一权威的领域（Task/Run/Policy/Approval/Ledger/Checkpoint/Artifact/Validation/Idempotency/Scheduler/Worker lifecycle/Provider Core）与 Python 端降级为 Worker 的边界；与 `docs/governance/rust-core-migration.md` + `docs/architecture/capability-abi.md` 共同构成 Rust 迁移的"先冻结契约再迁权威"基础。
-- `ADR-010-r1-state-foundation-shadow-read.md` – R1 State Foundation 第一刀：`core/runtime-native/` crate scaffold + Ledger/IdempotencyLog shadow-read（只读验证 Python 写入的 hash chain + side effect state machine）。不写入，不替换 Python 权威。
-- `ADR-011-r1-authority-switch-plan.md` – R1 authority switch 计划与边界：明确"先不立即切换权威"、未来每个领域一个 PR + PR-level ADR；强制 Pre-R1 plumbing（PR11）必须先做；列出 5 个领域（Idempotency / Ledger / Run state / Task identity / Storage transaction boundary）的迁移顺序与不变量。
-- `ADR-012-r1-pre-plumbing.md` – R1 Pre-R1 plumbing：`DELTA_RUST_AUTHORITY` env-var 灰度开关 + CI guard + 第三个领域 inspect binary。
-- `ADR-013-r1-idemlog-authority-switch.md` – R1 Idempotency authority switch 阶段 A：Rust `IdempotencyWriter` 写路径就位 + 跨语言测试。不切换权威。
-- `ADR-014-r1-idemlog-delegate.md` – R1 Idempotency authority switch 阶段 B：`core/idemlog_delegate.py` 提供 `IdempotencyLogWithDelegate` opt-in wrapper + `maybe_wrap` 工厂。**默认行为完全等同 main**；env var `DELTA_RUST_AUTHORITY=1` + Rust binary 存在时显式委托写。
-- `ADR-015-r1-ledger-delegate.md` – R1 Ledger authority switch 阶段 B：`core/ledger_delegate.py` 提供 `RunEventLedgerWithDelegate` + `maybe_wrap_ledger`；Rust `LedgerWriter` 镜像 Python `RunEventLedger.append` 的 hash basis (`sha256(prev_hash|seq|type|actor|repr(ts)|canonical(payload))`)；CI enforcement guard 扩展到 ledger 域。
-- `ADR-016-r1-taskstore-delegate.md` – **Superseded by ADR-024**。R1 Task identity authority switch 阶段 B：`core/automation/store_delegate.py` 提供 `TaskStoreWithDelegate` + `maybe_wrap_taskstore`；Rust `TaskStoreWriter` 镜像 Python `TaskStore` 的 save/delete/add_run 写路径；CI enforcement guard 扩展到 task_identity 域。
-- `ADR-017-r1-state-foundation-completion.md` – R1 State Foundation 完成记录：5 个领域（Idempotency / Ledger / Task identity / Run state / Storage transaction boundary）权威路径全部就位 + 统一 `delta_core` 进程入口 + CI smoke gate。灰度开关默认关闭；下一步 R2。
-- `ADR-018-r2-trusted-execution-plan.md` – R2 Trusted Execution 计划与边界：明确"先不立即切换 R2 域权威"、未来每个领域一个 PR + PR-level ADR；强制 Pre-R2 plumbing（PR131）必须先做；列出 6 个 R2 域（Artifact / Validation / Checkpoint / Policy / Approval / Source-Citation）的迁移顺序、风险评估与不变量。
-- `ADR-019-r2-pre-plumbing.md` – R2 Pre-Plumbing：扩展 `packages/storage_authority.py` 增加 `RUST_READ_DOMAINS` + `is_rust_shadow_reader()` + 独立的 `DELTA_RUST_READERS` env var；4 个 Rust 影子读模块（artifact / validation / checkpoint / source_citation）+ 3 个 inspect binary + 12 个跨语言测试。Policy / Approval 排除在 reader 模式外（评估/决策面，需要不同 hook）。
-- `ADR-020-r2-artifact-authority-switch.md` – **Superseded by ADR-026**。R2 第一域权威切换（Artifact Registry，per ADR-018 提议顺序）：`artifact` 从 `RUST_READ_DOMAINS` 提升到 `RUST_WRITE_DOMAINS`；新增 `core/artifact_delegate.py` + `ArtifactRegistryWriter`（Rust 复用 R1 `LedgerWriter`）+ `delta_core` 协议 `artifact.register` 命令 + 7 个跨语言测试。Artifact 不是新表，是 ledger 的两个特殊事件类型（`artifact.registered` + `artifact.completed`）。
-- `ADR-021-r2-source-citation-authority-plan.md` – **Superseded by ADR-027**。R2.1 Source / Citation 权威迁移计划：基于实际 production call graph 冻结 SourceId / SourceRevision / Fingerprint / Citation / typed validity 契约；明确 Rust 是最终 citation validity authority，Python 保留 PDF / Office / OCR / connector 能力；记录当前静默丢 citation 与 completion fail-open 风险、切权顺序、回滚/删除条件和 Product Reality Gate 前的验收边界。
-- `ADR-024-r1-task-identity-hard-cut.md` – R1 Task Identity 域权威硬切：Rust `delta_core` 是唯一事实来源。Python `core/automation/store.py` 是薄门面。`core/automation/store_delegate.py` 和 `tests/test_taskstore_delegate.py` 已物理删除。`DELTA_RUST_AUTHORITY=task_identity` 选择逻辑已移除。不存在 Python fallback writer、delegate wrapper 或双 Authority 路径。回滚方式仅为 Git revert。
-- `ADR-026-r2-artifact-hard-cut.md` – R2 Artifact Registry Hard-Cut：Rust `delta_core` 是唯一 Artifact authority。Python `core/artifact.py` 只做文件发现 / stat / sha256 / kind 分类，通过 `DeltaCoreClient` 发送 `artifact.register` 命令；`core/artifact_delegate.py` 已删除，`artifact` 已从 `RUST_WRITE_DOMAINS` 移除。无 fallback / delegate / feature flag，回滚仅 Git revert。
-- `ADR-027-r2-source-citation-hard-cut.md` – R2 Source/Citation Hard-Cut：Rust `delta_core` 是唯一 Source/Citation authority。Python `core/sources.py` 只做文件 I/O / sha256 / stat / candidate range 构造，通过 `DeltaCoreClient` 发送 `source.register` / `citation.mark` / `citation.validate` 等命令；`core/source_citation_delegate.py` 已删除，`source_citation` 已从 `RUST_WRITE_DOMAINS` 移除。无 fallback / delegate / feature flag，回滚仅 Git revert。
-- `ADR-028-r2-validation-hard-cut.md` – R2 Validation Hard-Cut：Rust `delta_core` 是唯一 Validation authority。Python `core/validation.py` 只做 artifact 收集 / criteria 构造，通过 `DeltaCoreClient` 发送 `validation.run` / `validation.register` / `validation.eval` 等命令；`core/validation_delegate.py` 已删除，`validation` 在 `RUST_WRITE_DOMAINS` 中。无 fallback / delegate / feature flag，回滚仅 Git revert。
-- `ADR-029-r2-checkpoint-hard-cut.md` – R2 Checkpoint Hard-Cut：Rust `delta_core` 是唯一 Checkpoint authority。Python `core/recovery.py` 只做状态收集 / 快照构造，通过 `DeltaCoreClient` 发送 `checkpoint.register` / `checkpoint.get` / `checkpoint.validate` 等命令；`inspect_checkpoint` 已删除，`checkpoint` 在 `RUST_WRITE_DOMAINS` 中，不在 `RUST_READ_DOMAINS`。无 fallback / delegate / feature flag，回滚仅 Git revert。
-- `ADR-030-r2-policy-hard-cut.md` – R2 Policy Hard-Cut：Rust `delta_core` 是唯一 Policy authority。Python `core/gateway.py` 是薄门面，通过 `DeltaCoreClient` 发送 `policy.classify` / `policy.evaluate` 命令；`enforce_level`/`restrict_grants`/`enforce_scope` Python 实现已删除，`policy` 在 `RUST_WRITE_DOMAINS` 中。无 fallback / delegate / feature flag，回滚仅 Git revert。
-- `ADR-031-r2-approval-hard-cut.md` – R2 Approval Hard-Cut：Rust `delta_core` 是唯一 Approval 审计写入 authority。Python `core/approval.py` 是薄门面，通过 `DeltaCoreClient` 发送 `approval.record` 命令；`core/audit.py` 的 `append()` 委托给 Rust，交互式决策（`ApprovalOutcome` / `PermissionRequest` / `Approver`）保留在 Python `engine.py`，`approval` 在 `RUST_WRITE_DOMAINS` 中。无 fallback / delegate / feature flag，回滚仅 Git revert。
-- `ADR-032-r2-final-convergence.md` – R2 Final Convergence：R2 Trusted Execution 正式收口。全部 6 个 R2 域（Artifact / Source-Citation / Validation / Checkpoint / Policy / Approval）已完成 hard-cut，Rust `delta_core` 为唯一 Authority。Shadow-reader 基础设施（`RUST_READ_DOMAINS` / `DELTA_RUST_READERS` / `is_rust_shadow_reader` / `tests/test_r2_shadow_read.py`）已删除。`RUST_WRITE_DOMAINS` 保留为唯一权威声明表面。无 Python fallback、无 delegate、无 feature flag、无双 Authority 路径。回滚仅 Git revert。下一阶段为 R3 Execution Lifecycle。
-- `ADR-033-r3-execution-lifecycle-plan.md` – R3 Execution Lifecycle 计划与边界：与 R2 的"authority switch"不同，R3 是**执行编排**迁移。侧效应安全（IdempotencyLog）和 Checkpoint 已完成 hard-cut。剩余域按风险分阶段：Phase 1（Backoff/Worker Restart，无引擎重构）→ Phase 2（引擎重构前置）→ Phase 3（Tool Lifecycle/Resume/Cancellation/Timeout/Retry）。
-- `ADR-034-r3-engine-loop-restructuring.md` – R3 Phase 1：将工具调用编排（authorize → execute → record → resume）从 `core/engine.py` 的 async streaming 循环中提取到 `core/tool_lifecycle.py` 的 `ToolLifecycleOrchestrator`。引擎保留流式循环和高级迭代，委托 orchestrator 处理工具生命周期。`CancellationToken` 替代 `asyncio.Event`，为未来 Rust 化做准备。不 hard-cut 任何域到 Rust。
-- `ADR-035-r3-tool-lifecycle-hard-cut.md` – R3 Phase 2：将工具调用的执行处置（execute / replay / uncertain 决策）及其配对的 `record_planned` + `mark_executing` 状态机转移收敛到 Rust `delta_core` 的 `toollifecycle.plan` 命令。Python `_execute_sync` 变为薄调用方；工具执行本身仍是 Python 能力，不是 authority。
-- `ADR-036-r3-resume-decision-audit.md` – R3 Phase 2 审计型 ADR：Resume Decision 的 authority 部分已由 ADR-029（checkpoint 持久化/验证）和 ADR-035（toollifecycle.plan dedop/replay/uncertain）完成。剩余的 `unanswered_trailing_tool_calls()` 是纯 Python 内存解析，无 authority 价值，不迁移。
-- `ADR-037-r3-cancellation-timeout-retry-audit.md` – **Superseded** (Cancellation portion). 原审计错误地将 Cancellation 判为"无 authority 价值"。Cancellation 的 lifecycle-state 决策（Uncertain vs Failed）是持久化状态机转移，有 authority 价值。
-- `ADR-037-r3-cancellation-decision-authority.md` – R3 Cancellation 决策 authority 迁移到 Rust `toollifecycle.cancel` 命令。Executing → Uncertain（never Failed）；Planned → Failed；terminal → no-op。Python `_interrupted_tool` 不再硬编码 "interrupted" 状态，委托 Rust 决策。asyncio.Event 信号传输层保留 Python。
-- `ADR-038-r3-timeout-decision-authority.md` – R3 Timeout 决策 authority。`toollifecycle.cancel` 扩展 `reason` 参数，让 timeout 和 cancellation 共享同一 Rust 状态机决策（Executing → Uncertain, Planned → Failed）同时区分审计原因。Python 新增 `tool_timeout` 配置（默认 300s）和 `ThreadPoolExecutor` deadline 机制。Protocol 10 → 11。
-- `ADR-039-r3-retry-decision-authority.md` – R3 Retry Policy 决策 authority。`retry.classify` 命令接收 error_type + error_message + is_context_overflow，返回 error_class + retryable。Python `call_errors.py` 的 `classify_error()` 和 `is_retryable()` 委托 Rust；backoff_delay 纯数学和 retry 执行机制保留 Python。Protocol 11 → 12。
-- `ADR-040-r3-final-convergence.md` – R3 正式收口。所有执行生命周期决策 authority 已 Rust-authoritative。记录最终 authority matrix、protocol 版本历史、以及原 ADR-037 审计错误的纠正。
-- `ADR-041-r4-runtime-migration-plan.md` – R4 Runtime 迁移计划与边界：审计 5 域（Task execution / Workflow lifecycle / Scheduler / Automation Runtime / Resume orchestration），区分决策 authority（run lifecycle transitions、automation run completion）与纯函数/运行时力学（scheduler tick、next-fire math、turn loop、resume glue）。Phase 1→2 为 authority 迁移，Phase 3→4 为审计。
-- `ADR-042-run-lifecycle-transition-authority.md` – R4 Phase 1：Run lifecycle transition authority 迁移到 Rust。新增 `run.transition` 命令，强制执行 run 状态机（unknown→started→running/resumed→completed/failed/interrupted/…，terminal 后不可再转）。Python `_track` 切到 `run.transition`，protocol 12→13。
-- `ADR-043-automation-run-completion-authority.md` – R4 Phase 2：Automation run completion authority 迁移到 Rust。新增 `task.complete_run` 命令，原子性完成：存储 run 最终状态、run_count+1、last_run/last_status、max_runs exhaustion 检查禁用 task。Protocol 13→14。
-- `ADR-044-r4-scheduler-audit.md` – R4 Phase 3：Scheduler 审计。Due query 已在 Rust（R1/R2）；`compute_next_run` 是纯函数（同 backoff_delay，留 Python）；tick/catch-up/overlap 是运行时力学（留 Python）；max_runs exhaustion 已在 Phase 2 迁移。无代码变更，仅审计收口。
-- `ADR-045-r4-resume-orchestration-audit.md` – R4 Phase 4：Resume orchestration 审计。Cold-start recovery（recover_stale/sweep_stale/checkpoint）、resume identity（run.resumed）、tool call disposition（toollifecycle.plan/cancel）均已在 Rust（ADR-025/029/035/037/038/042）。剩余 Python 仅为 orchestration glue 与纯解析（ADR-036 已审计）。无代码变更，仅审计收口。
-- `ADR-046-r4-final-convergence.md` – R4 正式收口。所有运行时控制 authority 已 Rust-authoritative。记录最终 authority matrix、protocol 版本历史（最终 v14）、R4 完成标准达成。
-- `ADR-047-r5-provider-core-migration-plan.md` – R5 Provider Core 迁移计划与边界：审计 Provider 5 域（OpenAI/Anthropic wire protocol、routing、capabilities、endpoint-caps、health），识别最大架构缺口（delta_core 同步 stdio 无流式能力）。区分 wire mechanics（Rust 目标）/ decision authority / pure parsing。Phase 0 先建立 streaming ABI，Phase 1 transport，Phase 2 decision，Phase 3 parsing。
-- `ADR-048-r5-final-convergence.md` – R5 正式收口。所有 provider transport authority（complete/stream for openai_chat/anthropic/openai_responses）、decision authority（capabilities/endpoint_caps/health/routing/friendly_error）已 Rust-authoritative。记录最终 authority matrix、protocol 版本历史（v15）、deferred items（tool-call salvage regex、convert_messages 纯解析）。
+- 当时面对什么问题；
+- 为什么做这个决定；
+- Authority / Contract 如何变化；
+- 后续哪个 ADR 取代或收敛了它。
 
-相关架构文档：
-- `hub-federation-boundary.md` – Delta Hub 联邦化边界设计，明确 OpenWorker 仅为可选适配器。
-- `relay-mode-removal.md` – `mode: "relay"` 运行时路径最终移除的完成记录（2026-09 已 closed；P2 终止了 Inbox 旧 token 解析兼容；未来 Federation Adapter 位于 `integrations/managed/adapters/<provider>.py`）。
-- `runtime-public-contract.md` – v0.3.2 之后 Python Runtime 的稳定契约（Task/Run/RunEvent/Approval/SideEffect/Artifact/Validation/Recovery/Source/Citation + HTTP 端点）；任何破坏性变更必须先经 ADR；Rust Core 迁移时权威从 Python 转向 Rust，但契约保持稳定。
-- `capability-abi.md` – Delta Rust Core ↔ Capability Worker 的稳定交互边界（JSON-RPC / NDJSON over stdio + Data Plane handles + Capability Manifest + Progress / Heartbeat / Cancellation / Typed Error / Retry / Approval / Discovery / MCP Adapter / 版本兼容 / 安全 / 验收）。
-- `repository-layout.md` – 仓库目录规范。
+历史 ADR 不因为当前产品术语或目录变化而重写；当前长期目标以最新 Active / Accepted 决策和目标架构文档为准。
+
+## 状态约定
+
+常见状态：
+
+```text
+Proposed
+Accepted / Active
+Superseded
+Deprecated
+Removed
+```
+
+被后续 hard-cut / convergence ADR 替代的计划或过渡 ADR 仍保留，作为迁移证据。
+
+## 当前长期基线
+
+当前产品与目标架构首先看：
+
+- [`../../DELTA_BLUEPRINT.md`](../../DELTA_BLUEPRINT.md) — 产品边界：**日常办公｜研究分析｜内容创作**；
+- [`../target-architecture.md`](../target-architecture.md) — 目标逻辑模块和 Rust + TypeScript 语言职责；
+- [`ADR-050-product-runtime-convergence.md`](ADR-050-product-runtime-convergence.md) — post-R5.1 产品与 Runtime 收敛决策；
+- [`../runtime-public-contract.md`](../runtime-public-contract.md) — R5.1 当前稳定行为契约；
+- [`../../governance/rust-core-migration.md`](../../governance/rust-core-migration.md) — R6 Runtime Convergence 治理。
+
+## ADR 演进索引
+
+为了避免把 README 维护成容易过期的 50 行流水账，按阶段组织。具体文件本身是完整事实来源。
+
+### Foundation / Product Reliability — ADR-001 ～ ADR-009
+
+覆盖：
+
+- Run Event Ledger；
+- Approval taxonomy；
+- Provider protocol model；
+- Reliable Task Runtime；
+- Source / Citation；
+- Run Analyzer；
+- P1 / P2 / P3 基线；
+- Delta Core 长期 Rust Control Plane + Capability Worker 方向。
+
+其中 [`ADR-009-delta-core-architecture.md`](ADR-009-delta-core-architecture.md) 是后续 Rust Authority 迁移的基础架构决策。
+
+### R1 State Foundation — ADR-010 ～ ADR-017 + Hard-Cut / Final Convergence ADRs
+
+覆盖 Ledger、Idempotency、Task identity、Run state 和 storage coordination 从 shadow/delegate 到 Rust hard-cut 的迁移。
+
+过渡 ADR 保留历史；最终 Authority 以对应 hard-cut / convergence ADR 为准。
+
+### R2 Trusted Execution — ADR-018 ～ ADR-032
+
+覆盖：
+
+- Artifact；
+- Source / Citation；
+- Validation；
+- Checkpoint；
+- Policy；
+- Approval。
+
+R2 Final Convergence 确立这些 trusted domains 的 Rust Authority。
+
+### R3 Execution Lifecycle — ADR-033 ～ ADR-040
+
+覆盖：
+
+- Tool lifecycle；
+- Resume decision；
+- Cancellation；
+- Timeout；
+- Retry；
+- execution lifecycle convergence。
+
+部分早期审计 ADR 被后续 authority ADR 修正或 supersede，历史保留不删。
+
+### R4 Runtime Migration — ADR-041 ～ ADR-046
+
+覆盖：
+
+- Run lifecycle transition；
+- Automation completion；
+- Scheduler audit；
+- Resume orchestration audit；
+- R4 Final Convergence。
+
+### R5 Provider Core — ADR-047 ～ ADR-048
+
+- [`ADR-047-r5-provider-core-migration-plan.md`](ADR-047-r5-provider-core-migration-plan.md) — provider transport / decision migration plan；
+- [`ADR-048-r5-final-convergence.md`](ADR-048-r5-final-convergence.md) — OpenAI-compatible / Anthropic-compatible transport 和主要 provider decision authority 收敛到 Rust，protocol v15。
+
+### R5.1 Runtime & Human Control — ADR-049
+
+[`ADR-049-r5.1-runtime-and-human-control-convergence.md`](ADR-049-r5.1-runtime-and-human-control-convergence.md)
+
+完成：
+
+- AF-01..AF-14 Runtime correctness closure；
+- protocol v16 multiplexing；
+- request identity / demux / real cancel / backpressure；
+- single completion owner；
+- side-effect fail-closed；
+- citation validity 修正；
+- first-class Steer / Follow-up / Cancel Human Control。
+
+R5.1 不是 R6，也不表示 Python application backend 已退出。
+
+### Post-R5.1 Target / R6 — ADR-050
+
+[`ADR-050-product-runtime-convergence.md`](ADR-050-product-runtime-convergence.md)
+
+冻结长期方向：
+
+- 一级产品域：**日常办公｜研究分析｜内容创作**；
+- 研究分析包含 DOE 和从第一版纳入的序贯试验设计；
+- 内容创作包含文本、图文、图片和视频；
+- 一个主 Delta Agent，Skill / Capability 是主要扩展方式；
+- 逻辑模块：Experience / Runtime / Trust / Work / Capability / Automation / Learning；
+- 核心产品语言目标：Rust + TypeScript；
+- Python / PowerShell / Shell 作为受控 Worker / Script；
+- Learning 可以改进能力，不能自行扩大权限；
+- 默认模块化单体；
+- R6 收敛 Python application/control plane，不机械重写专业 Worker 生态。
+
+## 其他当前架构文档
+
+- [`../target-architecture.md`](../target-architecture.md) — 长期目标系统形态；
+- [`../repository-layout.md`](../repository-layout.md) — 当前物理仓库结构；
+- [`../runtime-public-contract.md`](../runtime-public-contract.md) — 当前 Runtime / Human Control contract；
+- [`../capability-abi.md`](../capability-abi.md) — Rust Capability Host ↔ Worker / MCP / Connector / External Adapter；
+- [`../hub-federation-boundary.md`](../hub-federation-boundary.md) — 外部托管 / federation 边界；
+- [`../relay-mode-removal.md`](../relay-mode-removal.md) — relay compatibility removal 记录。
+
+## 维护规则
+
+1. 已发生的历史决策不为匹配当前术语而改写。
+2. 新 target decision 如果改变长期产品 / Authority / 安全边界，新增 ADR。
+3. 单纯同 contract 的 Python → Rust implementation replacement 通常不需要重新发明领域模型，但需要 migration PR 和 contract tests。
+4. ADR 索引保持阶段化和简洁；详细 PR / test 数量留在具体 ADR、PR 和审计文档。
