@@ -14,62 +14,174 @@
 
 # Delta
 
-Delta 是一个本地优先的个人工作 AI Agent，只围绕三项核心能力演进：**日常办公｜数据分析｜内容创作**。
+Delta 是一个本地优先的个人工作 AI Agent，只围绕三项核心能力持续做深：
 
-它的目标不是增加模型、Agent 或工具数量，而是把这三类工作从需求推进到可检查、可恢复、可验证、可追溯的实际成果。
+> **日常办公｜研究分析｜内容创作**
+
+目标不是增加模型、Agent 或工具数量，而是把真实工作从需求推进到可检查、可恢复、可验证、可追溯的成果，并在长期使用中把有效工作方法沉淀为可审查、可版本化的 Skills。
 
 <p align="center">
   <img src="resources/screenshots/Delta-2026082401.webp" width="95%" alt="Delta">
 </p>
 
-## 核心定位
+## 三项核心能力
 
-- **日常办公**：文档、表格、PDF、邮件、会议材料、资料整理、格式转换和批量文件处理等个人办公任务。
-- **数据分析**：从数据导入、清洗、统计设计、统计分析、可视化和结果解释，到完整分析 / 研究报告撰写的端到端工作。数据分析不是简单问数、汇总或画图，而是完整的数据统计分析与报告交付。
-- **内容创作**：面向自媒体和个人内容生产的选题、资料研究、写作、编辑、配图 / 图文、多格式内容整理和发布准备。
+### 日常办公
 
-这三个名称是 Delta 的一级产品方向。研究、文档处理、资料处理、PDF / Office、Search、Citation、Validation、Scripting、Automation、Connector、MCP 等均为三项核心能力中的工作环节或支撑能力，不单独扩展为新的产品方向。
+围绕个人高频办公成果形成完整闭环：文档、表格、PDF、演示材料、邮件 / 消息、会议材料、资料整理、格式转换、批量文件处理和轻量自动化。
 
-其中“研究”不是第四条主线：数据分析中的研究服务统计分析、结果解释和正式报告；内容创作中的研究服务选题、事实核查和资料整理。
+目标不是只“读取文件”，而是：
 
-## 产品边界
+```text
+读取 → 理解 → 修改 / 创建 → 验证 → 预览 → 交付
+```
 
-Delta 不是 Coding Agent，也不是模型聚合器。
+### 研究分析
 
-- **三类工作优先**：新增能力必须能够直接改善日常办公、数据分析或内容创作中的真实工作环节。
-- **保留脚本能力**：可以为完成任务编写、执行和修正 Python、PowerShell、Shell 等脚本；脚本是执行手段，不是软件开发产品方向。
-- **不建设 Coding 工作流**：不以 IDE、代码仓库理解、Git / PR、代码审查和大型软件工程任务作为核心能力。
-- **协议保持收敛**：模型层仅支持 OpenAI-compatible 与 Anthropic-compatible 两类协议，不扩展第三类原生模型协议。
-- **模型路由外置**：Provider 聚合、模型 fallback、权重和复杂路由不属于 Delta 的产品职责，可由兼容 Endpoint 或独立 AI Gateway 承担。
+“研究分析”不是简单问数、汇总或画图，也不局限于分析已经存在的数据。它覆盖从研究问题到正式报告的完整研究闭环：
 
-## 共同执行底座
+```text
+研究问题
+  ↓
+假设 / 目标 / 约束
+  ↓
+试验设计（DOE）
+  ↓
+序贯试验设计
+  ↓
+数据采集 / 导入 / 清洗
+  ↓
+统计分析 / 建模 / 可视化
+  ↓
+结果解释 / 不确定性判断
+  ↓
+下一轮试验 / 停止判断
+  ↓
+正式研究报告
+```
 
-三项核心能力共享同一套执行基础：
+重点包括统计推断、样本量 / 功效、随机化、区组、因子设计、筛选设计、响应面、最优设计、**序贯试验设计**、模型更新、下一轮试验推荐和正式研究报告。
 
-- **理解任务**：识别目标、资料、约束和预期成果。
-- **规划执行**：组织步骤并持续推进多步骤工作。
-- **调用资源**：使用本地文件、脚本、工具和用户明确启用的外部能力。
-- **形成成果**：生成文档、表格、统计分析、图表、分析 / 研究报告、内容素材及其他 Artifact。
-- **关键审批**：高后果操作进入统一 Policy / Approval 边界。
-- **验证与追溯**：记录来源、执行事实、验证结果和任务恢复状态。
+### 内容创作
 
-这些是共同底座，不构成新的产品方向。
+覆盖个人和自媒体内容从选题到发布复盘的完整链路：
 
-## 发展方向
+```text
+选题 → 研究 → 写作 → 编辑 → 图文 / 图片 / 视频
+     → 多平台适配 → 发布准备 → 数据复盘
+```
 
-产品能力只围绕三项核心方向继续加深：
+包括长短文、公众号 / 博客 / 社交媒体内容、图文笔记、信息卡片、封面、信息图、图片生成与处理、短视频脚本 / 分镜 / 字幕 / 轻量生成处理，以及多平台发布素材。
 
-- **日常办公**：让文档、表格、PDF、资料整理、格式转换和批量处理形成稳定闭环。
-- **数据分析**：覆盖数据导入与检查、清洗、统计设计、统计方法选择、统计计算、可视化、结果解释和正式报告撰写。
-- **内容创作**：覆盖选题、资料研究、写作、编辑、图文、多格式内容和发布准备。
+## 一个 Delta，共享一套 Runtime
 
-共同底座重点完善：可靠执行、来源引用、Artifact / Validation、执行记录、恢复与受控学习。
+三项核心能力不是三个独立 Agent 或三个 Runtime。
 
-目标是让三类真实个人工作能够持续执行、随时恢复、完整复盘并形成可靠成果，而不是停留在一次性对话。
+Delta 默认保持一个统一工作 Agent，通过 Capability 和 Skill 组合完成不同任务：
+
+```text
+                 Delta
+                   │
+        ┌──────────┼──────────┐
+        ▼          ▼          ▼
+     日常办公     研究分析     内容创作
+        └──────────┼──────────┘
+                   ▼
+               Capability
+                   │
+                Runtime
+```
+
+PDF / Office、Search、Citation、Validation、Scripting、Automation、Connector、MCP、图像 / 视频模型等属于具体能力或支撑能力，不提升为新的一级产品方向。
+
+## Skill 与受控学习
+
+Skill 是 Delta 的主要能力扩展单位，而不是不断增加专用 Agent。
+
+一个 Skill 可以组合：
+
+- instructions / workflow；
+- required capabilities；
+- permissions；
+- validation；
+- templates；
+- optional scripts；
+- version / evaluation metadata。
+
+Delta 可以从真实 Run、用户修改、Validation 和最终采用结果中沉淀 Preference、Experience、Failure Memory，并提出 Skill Candidate。
+
+长期原则：
+
+> **能力可以进化，权限不能自行进化。**
+
+Learning 可以改善工作方法、模板、Skill 和工具选择，但不能自动降低 Policy / Approval、改变 Risk Level、扩大 Secrets / Network / Sandbox 权限或绕过 Ledger / Validation。
+
+## 目标架构
+
+Delta 的长期核心产品语言收敛为：
+
+```text
+Rust + TypeScript
+```
+
+- **TypeScript / React**：负责用户交互、任务进度、Steering、审批、预览、编辑和设置；
+- **Rust**：负责 Runtime、状态、Policy、Ledger、Artifact、Validation、Automation、Learning authority 和 Capability Host；
+- **Python / PowerShell / Shell**：保留为受控 Worker / Script，用于统计分析、Office、媒体处理和其他具体任务，不拥有 Delta 核心状态或控制权。
+
+长期逻辑模块为：
+
+```text
+Experience
+Runtime
+Trust
+Work
+Capability
+Automation
+Learning
+```
+
+这七个名称表示稳定职责，不要求机械拆成七个 crate、七个目录或七个进程。Delta 默认采用本地模块化单体，没有真实隔离需求时不引入额外微服务。
+
+完整目标架构见 [`target-architecture.md`](docs/architecture/target-architecture.md)。
+
+## 产品与架构硬边界
+
+- **不做 Coding Agent**：不以 IDE、仓库理解、Git / PR、代码审查和大型软件工程任务作为产品主线。
+- **保留任务型脚本**：Python、PowerShell、Shell 是完成工作的执行手段，而不是新的产品方向。
+- **模型协议固定两类**：只维护 OpenAI-compatible 与 Anthropic-compatible。
+- **复杂模型路由外置**：Provider 聚合、多 Key、fallback、权重、额度和区域路由由兼容 Endpoint / AI Gateway 负责。
+- **一个领域一个 Authority**：Worker、Skill、Connector、Learning 不得直接拥有核心 Runtime / Trust / Work 事实。
+- **优先扩 Capability / Skill**：没有充分证据，不增加新的 Runtime、常驻服务、协议、产品 Agent 或顶级抽象。
+
+## 当前与下一阶段
+
+R1–R5 已逐步把 trusted state、execution decision 和 provider authority 收敛到 Rust；R5.1 进一步收口 Runtime correctness 与实时的人机控制（Steer / Follow-up / Cancel）。
+
+R5.1 之后的 R6 目标不是“把所有 Python 翻译成 Rust”，而是完成控制权和进程拓扑收敛：
+
+```text
+产品减法
+  ↓
+Rust Runtime Host
+  ↓
+TypeScript → Rust direct IPC
+  ↓
+Application Control Plane 迁移
+  ↓
+Agent Loop 迁移
+  ↓
+Python capability workerization
+  ↓
+常驻 Python Backend 退出
+  ↓
+Rust + TypeScript hard-cut
+```
+
+迁移期间，Office / Research / Media 的 Python 生态优势继续保留为 Worker 能力。
 
 ## 模型协议
 
-Delta 的模型协议层固定为两类：
+Delta 的模型协议层固定为：
 
 ```text
 OpenAI-compatible
@@ -77,8 +189,6 @@ Anthropic-compatible
 ```
 
 具体模型和服务商不构成 Delta 的产品边界。只要 Endpoint 符合上述协议之一，即可由用户按实际需要配置。
-
-Delta 不以增加 Provider 数量为目标，也不计划维护第三套原生模型协议。
 
 ## 安装部署
 
@@ -92,45 +202,29 @@ Delta 不以增加 Provider 数量为目标，也不计划维护第三套原生�
 
 ### 本地开发
 
-前置条件：Python 3.11+、`uv`、Node.js、Rust toolchain。
+当前实现仍处于 Rust Control Plane + Python application/runtime compatibility layer + TypeScript Desktop 的过渡阶段，因此开发环境暂时需要 Python 3.11+、`uv`、Node.js 和 Rust toolchain。
 
 ```bash
-# Python 环境
 uv sync --locked --extra dev --extra messaging
-
-# Desktop
 cd apps/desktop
 npm install
 npm run tauri dev
 ```
 
-Tauri 开发模式会使用仓库 `.venv` 中的 `delta-server`。
+当前 Tauri 开发模式仍使用仓库 `.venv` 中的 `delta-server`；这属于 R6 前的过渡实现，不代表目标架构继续保留常驻 Python Backend。
 
-浏览器开发模式及 Desktop 测试说明见：
+详细开发说明见 [`apps/desktop/README.md`](apps/desktop/README.md)。
 
-[`apps/desktop/README.md`](./apps/desktop/README.md)
+## 项目文档
 
-### 构建便携包
+- 产品与能力蓝图：[`DELTA_BLUEPRINT.md`](docs/DELTA_BLUEPRINT.md)
+- 目标架构：[`target-architecture.md`](docs/architecture/target-architecture.md)
+- Capability ABI：[`capability-abi.md`](docs/architecture/capability-abi.md)
+- 当前 Runtime 契约：[`runtime-public-contract.md`](docs/architecture/runtime-public-contract.md)
+- Rust 收敛治理：[`rust-core-migration.md`](docs/governance/rust-core-migration.md)
+- 开发说明：[`CONTRIBUTING.md`](CONTRIBUTING.md)
+- 当前仓库结构：[`repository-layout.md`](docs/architecture/repository-layout.md)
+- 变更记录：[`CHANGELOG.md`](CHANGELOG.md)
+- 开源许可：[`MIT License`](LICENSE)
 
-```powershell
-# 前置条件：Rust、Node.js、Python 3.11+、uv
-uv sync --locked --extra build
-.\packaging\portable\build_portable.ps1
-```
-
-最终产物写入仓库根目录：
-
-```text
-releases/
-```
-
-## 项目状态
-
-`main` 为持续开发线。具体实现状态、Runtime Authority 和迁移进度以当前 ADR、运行时公共契约和 CHANGELOG 中已经完成的事实为准，README 不提前声明尚未完成的阶段。
-
-- 产品与架构蓝图：[`DELTA_BLUEPRINT.md`](https://github.com/fongap/delta/blob/main/docs/DELTA_BLUEPRINT.md)
-- 开发说明：[`CONTRIBUTING.md`](https://github.com/fongap/delta/blob/main/CONTRIBUTING.md)
-- 仓库结构：[`repository-layout.md`](https://github.com/fongap/delta/blob/main/docs/architecture/repository-layout.md)
-- 运行时契约：[`runtime-public-contract.md`](https://github.com/fongap/delta/blob/main/docs/architecture/runtime-public-contract.md)
-- 变更记录：[`CHANGELOG.md`](https://github.com/fongap/delta/blob/main/CHANGELOG.md)
-- 开源许可：[`MIT License`](https://github.com/fongap/delta/blob/main/LICENSE)
+当前实现事实以已合并 ADR、Runtime contract 和 CHANGELOG 为准；目标架构以 `DELTA_BLUEPRINT.md`、`target-architecture.md` 和 ADR-050 为准。
