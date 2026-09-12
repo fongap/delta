@@ -14,6 +14,55 @@ docs/governance/
 docs/architecture/repository-layout.md
 ```
 
+## 产品范围
+
+Delta 的产品主线固定为三项核心能力：
+
+- **日常办公**：文档、表格、PDF、邮件、会议材料、资料整理、格式转换和批量文件处理等个人办公任务。
+- **数据分析**：覆盖数据导入、清洗、统计设计、统计分析、可视化、结果解释，以及完整分析 / 研究报告撰写。
+- **内容创作**：面向自媒体和个人内容生产的选题、资料研究、写作、编辑、配图 / 图文、多格式内容整理和发布准备。
+
+任何新增能力进入实现前，都必须明确回答：它直接改善上述哪一个真实工作环节？如果不能，不进入产品主线。
+
+PDF、Office 文件处理、Search、Citation、Validation、脚本、自动化、Connector、MCP 等属于支撑能力，不作为新的产品方向单独扩张。
+
+长期边界如下：
+
+- Delta 不是 Coding Agent，不建设 IDE、代码仓库理解、Git / PR、代码审查或大型软件工程工作流。
+- Delta 保留任务型脚本能力。Python、PowerShell、Shell 等脚本用于完成日常办公、数据分析和内容创作任务，不作为独立软件开发产品线。
+- 模型层仅维护 OpenAI-compatible 与 Anthropic-compatible 两类协议，不新增第三类原生模型协议。
+- Provider 聚合、复杂模型路由、fallback 和权重调度不属于 Delta 的产品职责。
+- 新功能不得绕开统一的 Workspace Boundary、Policy、Approval、Run State、Artifact 和 Validation 语义。
+
+## 产品术语治理
+
+当前有效的 README、产品文档、开发文档、Issue 和 Pull Request 应统一使用以下一级产品名称：
+
+```text
+日常办公
+数据分析
+内容创作
+```
+
+不得把“知识工作”“研究”“资料处理”“文档处理”“PDF / Office”“自媒体”“脚本”“自动化”“Connector”“MCP”等重新写成与三项核心能力并列的产品方向。
+
+这些词可以在具体语境中使用，但必须保持层级清楚：
+
+- “研究”是数据分析中的研究解释 / 报告环节，或内容创作中的资料研究环节，不是第四条产品主线。
+- 文档、表格、PDF 和文件处理主要服务日常办公，同时可作为另外两类工作的输入输出能力。
+- Search、Citation、Validation、Scripting、Automation、Connector、MCP 属于跨场景支撑能力。
+- “知识工作”可用于一般类别描述或历史语境，但不得代替当前三个一级产品定位。
+
+历史 ADR、CHANGELOG 和 Git 历史保留当时真实用词，不为当前术语治理重写历史。
+
+产品与架构长期边界以：
+
+```text
+docs/DELTA_BLUEPRINT.md
+```
+
+为准。
+
 ## Issues 与 Discussions
 
 Issues 只用于已经可以复现、执行和跟踪的问题；公开 Issue 默认通过「缺陷报告」表单提交。
@@ -37,7 +86,6 @@ chore/*
 docs/*
 test/*
 release/*
-upstream/*
 ```
 
 各前缀含义和使用规则见：
@@ -78,6 +126,9 @@ refactor: split provider routing
 4. 相关测试已完成
 5. 受影响文档已同步更新
 6. 符合当前仓库目录和模块职责要求
+7. 不扩大已冻结的产品边界
+8. 新能力明确服务日常办公、数据分析或内容创作中的至少一个真实工作环节
+9. 产品术语没有重新引入与三项核心能力并列的新产品方向
 
 ## CI
 
@@ -93,17 +144,13 @@ refactor: split provider routing
 docs/governance/quality-policy.md
 ```
 
-## 上游
+## 外部项目与代码吸收
 
-OpenWorker 上游代码不得自动合入 `main`。
+Delta 不设单一上游项目。
 
-上游变化必须经过评估、验证并通过 Pull Request 选择性吸收。
+外部项目只能作为设计或实现参考。任何外部代码、行为语义或架构方案进入 `main` 前，都必须按照 Delta 当前产品边界、Runtime Authority、许可证和测试要求独立评估，并通过普通 Pull Request 引入。
 
-详见：
-
-```text
-UPSTREAM.md
-```
+不得为了跟随任何参考项目而恢复已淘汰的目录、协议、产品形态或兼容层。
 
 ## 依赖
 
@@ -156,3 +203,5 @@ docs/governance/release-policy.md
 文件名应使用英文 `kebab-case`，并表达长期职责。
 
 不再使用 `final`、`latest`、`new`、`v2` 等阶段性名称维护当前有效文档。
+
+产品定位、长期能力边界和“不做什么”写入 `docs/DELTA_BLUEPRINT.md`；具体实现状态只记录已经完成的事实，不提前把进行中的迁移写成完成态。
