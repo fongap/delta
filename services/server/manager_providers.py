@@ -470,24 +470,14 @@ class ProvidersSettingsMixin(ManagerHostState):
 
 
     def _surfaces(self) -> dict[str, bool]:
-        """Which session surfaces are shown in the sidebar. Delta is always on; Chat and Code
-        are opt-in (default off) so a new user sees Delta only."""
-        return {
-            "delta": True,
-            "chat": bool(self._prefs.get("show_chat", False)),
-            "code": bool(self._prefs.get("show_code", False)),
-        }
+        """Session surfaces shown in the sidebar. Delta is the only product surface (R6.0)."""
+        return {"delta": True}
 
 
     def set_surfaces(
         self, chat: bool | None = None, code: bool | None = None
     ) -> dict[str, Any]:
-        """Toggle Chat/Code visibility (Delta is always shown). Persisted in prefs."""
-        if chat is not None:
-            self._prefs["show_chat"] = bool(chat)
-        if code is not None:
-            self._prefs["show_code"] = bool(code)
-        self._save_prefs()
+        """No-op kept for the settings endpoint: there is only one surface (Delta)."""
         return {"ok": True, "surfaces": self._surfaces()}
 
 

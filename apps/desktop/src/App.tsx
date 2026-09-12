@@ -100,9 +100,10 @@ function normalizeTodos(raw: unknown): TodoItem[] {
 }
 
 // Fallbacks used only before the persona list loads (the in-component, family-aware
-// needsWorkspace/gatesWorkspace consult the real persona once available).
-const needsWorkspaceFallback = (a: string) => a === "code" || a === "delta";
-const gatesWorkspaceFallback = (a: string) => a === "code";
+// needsWorkspace/gatesWorkspace consult the real persona once available). Delta is the only
+// product surface (R6.0); a legacy agent id (code/chat/ops/...) is treated as Delta.
+const needsWorkspaceFallback = (a: string) => a === "delta" || a !== "chat";
+const gatesWorkspaceFallback = (_a: string) => false;
 const LAST_SESSION_KEY = "delta:last-session-by-agent:v1";
 const NAV_COLLAPSED_KEY = "delta:nav-collapsed:v1";
 
@@ -578,15 +579,14 @@ export function App() {
     return () => window.removeEventListener(PERSONAS_CHANGED, onPersonas);
   }, [refreshSessions]);
 
-  // If the active surface isn't visible (hidden in Settings, or a resumed session landed on a
-  // hidden surface), fall back to Delta (always visible). Watches both agent and surfaces so it
-  // corrects regardless of which settled last.
+  // If the active surface isn't visible (a resumed session landed on a retired surface like
+  // the old "code"/"chat" personas), fall back to Delta (always visible).
   useEffect(() => {
-    if ((agent === "chat" && !surfaces.chat) || (agent === "code" && !surfaces.code)) {
+    if (agent !== "delta") {
       switchAgent("delta");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agent, surfaces]);
+  }, [agent]);
 
   useEffect(() => {
     if (surface === "session") rememberLastSession(agent, sessionId, workspace);
@@ -1721,13 +1721,7 @@ export function App() {
               usage={usage}
               contextWindow={modelContextWindows[model]}
               contextBar={contextBar}
-              placeholder={
-                agent === "code"
-                  ? tr("composer.placeholderCode")
-                  : agent === "chat"
-                    ? tr("composer.placeholderChat")
-                    : tr("composer.placeholderDelta")
-              }
+              placeholder={tr("composer.placeholderDelta")}
               approvalSlot={
                 // Live inline cards are for ATTENDED sessions only; when Unattended the prompt is
                 // parked in the Inbox and surfaced via the answer-in-context card below.

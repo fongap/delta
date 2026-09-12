@@ -132,7 +132,9 @@ def test_agents_and_memory_rest(tmp_path):
 def test_disable_persona_archives_its_sessions(tmp_path):
     """Disable = "put this delta and its history away": the persona's real sessions are
     archived atomically server-side (so its sidebar section disappears with it), internal
-    __run__ threads and other personas are untouched, and re-enable never unarchives."""
+    __run__ threads and sessions of other (legacy) agents are untouched, and re-enable
+    never unarchives. Only Delta is registered now, so the "other persona" case is a
+    historical/legacy agent id stored on a session row."""
     manager = SessionManager(workspace=tmp_path, provider=ScriptedProvider([]))
     store = manager.session_store
 
@@ -147,31 +149,31 @@ def test_disable_persona_archives_its_sessions(tmp_path):
             )
         )
 
-    mk("chat-a", "chat")
-    mk("chat-b", "chat")
-    mk("chat-old", "chat")
-    store.set_flags(
-        "chat-old", archived=True
-    )  # already archived — must not be re-counted
     mk("delta-a", "delta")
-    mk("__run__r1", "chat")  # internal automation thread — never touched
+    mk("delta-b", "delta")
+    mk("delta-old", "delta")
+    store.set_flags(
+        "delta-old", archived=True
+    )  # already archived — must not be re-counted
+    mk("legacy-x", "chat")  # a historical session from a retired persona
+    mk("__run__r1", "delta")  # internal automation thread — never touched
 
     client = TestClient(create_app(manager))
-    body = client.post("/v1/personas/chat", json={"enabled": False}).json()
+    body = client.post("/v1/personas/delta", json={"enabled": False}).json()
     assert body["ok"] is True
     assert body["archived_sessions"] == 2
-    assert store.load("chat-a").archived and store.load("chat-b").archived
-    assert store.load("delta-a").archived is False
+    assert store.load("delta-a").archived and store.load("delta-b").archived
+    assert store.load("legacy-x").archived is False
     assert store.load("__run__r1").archived is False
 
     # Re-enable brings the persona back but never rewrites the user's archive state.
-    client.post("/v1/personas/chat", json={"enabled": True})
-    assert store.load("chat-a").archived
+    client.post("/v1/personas/delta", json={"enabled": True})
+    assert store.load("delta-a").archived
 
     # The dedicated §5/§8 enable route shares the same semantic.
-    mk("chat-c", "chat")
-    client.post("/v1/personas/chat/enable", json={"enabled": False})
-    assert store.load("chat-c").archived
+    mk("delta-c", "delta")
+    client.post("/v1/personas/delta/enable", json={"enabled": False})
+    assert store.load("delta-c").archived
 
 
 def test_connector_tool_settings_and_audit_rest(tmp_path):
@@ -1036,22 +1038,6 @@ def test_ws_with_workspace_query(tmp_path):
         assert "turn_end" in _drain(ws)
 
 
-def test_ws_chat_agent_needs_no_workspace(tmp_path):
-    manager = SessionManager(
-        workspace=None,
-        data_dir=tmp_path,
-        provider=ScriptedProvider([_text("hi from chat")]),
-    )
-    client = TestClient(create_app(manager))
-    with client.websocket_connect("/ws/session/chat1?agent=chat") as ws:
-        ready = ws.receive_json()
-        assert ready["type"] == "ready"
-        assert ready["payload"]["agent"] == "chat"
-        assert ready["payload"]["workspace"] is None
-        ws.send_json({"type": "user_message", "text": "hello"})
-        assert "turn_end" in _drain(ws)
-
-
 def test_ws_set_mode_auto_skips_approval(tmp_path):
     from urllib.parse import quote
 
@@ -1111,14 +1097,14 @@ def test_ws_turn_survives_switching_away_from_its_session(tmp_path):
     provider = BlockingProvider()
     manager = SessionManager(workspace=tmp_path, provider=provider)
     with TestClient(create_app(manager)) as client:
-        with client.websocket_connect("/ws/session/background?agent=chat") as ws:
+        with client.websocket_connect("/ws/session/background?agent=delta") as ws:
             assert ws.receive_json()["type"] == "ready"
             ws.send_json({"type": "user_message", "text": "keep working"})
             assert provider.started.wait(1)
 
         # This represents the user selecting another conversation. The original socket has
         # gone away, but the first turn remains persisted and visibly working.
-        with client.websocket_connect("/ws/session/foreground?agent=chat") as ws:
+        with client.websocket_connect("/ws/session/foreground?agent=delta") as ws:
             assert ws.receive_json()["type"] == "ready"
             sessions = client.get("/v1/sessions").json()["sessions"]
             background = next(s for s in sessions if s["session_id"] == "background")

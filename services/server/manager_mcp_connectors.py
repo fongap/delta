@@ -39,7 +39,7 @@ class McpConnectorsMixin(ManagerHostState):
 
     # -- MCP --------------------------------------------------------------------
     async def prepare_mcp_tools(
-        self, session_id: str, *, workspace: str | None = None, agent: str = "code"
+        self, session_id: str, *, workspace: str | None = None, agent: str = "delta"
     ) -> list[Any]:
         """Connect enabled MCP servers (global + workspace) and return their tool callables.
 

@@ -95,9 +95,9 @@ def test_content_to_text_flattens_parts():
 
 
 # -- (2) the assumption: image reaches the provider unmodified ------------------
-async def test_image_reaches_provider_unmodified():
+async def test_image_reaches_provider_unmodified(tmp_path):
     from core.agent import build_engine
-    from core.agents.chat import chat_agent
+    from core.agents import delta_agent
     from providers import AssistantTurn, ModelCapabilities, ProviderClient
 
     class Spy(ProviderClient):
@@ -112,14 +112,19 @@ async def test_image_reaches_provider_unmodified():
             return ModelCapabilities(vision=True)
 
     spy = Spy()
-    engine = build_engine(agent=chat_agent(), model="gpt-4o", provider=spy)
+    engine = build_engine(
+        agent=delta_agent(), workspace=tmp_path, model="gpt-4o", provider=spy
+    )
     url = _data_url(220, 30, 30)
     content = build_user_content(
         "describe the image", [{"kind": "image", "data_url": url}]
     )
 
-    async for _ in engine.run(content):
-        pass
+    try:
+        async for _ in engine.run(content):
+            pass
+    finally:
+        engine.executor.close()
 
     user_msgs = [m for m in (spy.captured or []) if m.get("role") == "user"]
     assert user_msgs, "no user message reached the provider"
@@ -150,7 +155,7 @@ def test_list_content_message_persists_and_titles(tmp_path):
         model="gpt-4o",
         mode="interactive",
         messages=msgs,
-        agent="chat",
+        agent="delta",
     )
     store.save(rec)
     loaded = store.load("s1")

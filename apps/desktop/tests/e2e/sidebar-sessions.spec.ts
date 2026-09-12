@@ -8,12 +8,13 @@ import { test, expect } from "./fixtures";
 test("session list caps at the peek count with Show more", async ({ page }) => {
   await page.goto("/");
   // Boot resumes a delta session, so the Delta accordion body is expanded. The body holds
-  // 8 sessions (7 weekly plans + the Slack-origin one, §31 rev) against sessions_peek=5.
+  // 9 sessions (7 weekly plans + the infra triage + the Slack-origin one, §31 rev) against
+  // sessions_peek=5.
   await expect(page.getByTitle("Weekly plan 1")).toBeVisible();
   await expect(page.getByTitle("Weekly plan 5")).toBeVisible();
   await expect(page.getByTitle("Weekly plan 6")).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Show more (3)" }).click();
+  await page.getByRole("button", { name: "Show more (4)" }).click();
   await expect(page.getByTitle("Weekly plan 6")).toBeVisible();
   await expect(page.getByTitle("Weekly plan 7")).toBeVisible();
 });

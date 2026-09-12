@@ -28,10 +28,10 @@ test("kind + persona filters narrow the pending list", async ({ page }) => {
   await expect(page.getByText("Approve: run_shell")).not.toBeVisible();
   await expect(page.getByText(question)).toBeVisible();
 
-  // Persona chips render because two personas hold items; filtering to Ops hides the delta item.
+  // Delta is the only persona — no per-persona filter chips render (the section is hidden
+  // with a single surfaced persona). The kind tabs alone remain.
   await filters.getByRole("button", { name: "All", exact: true }).click();
-  await filters.getByRole("button", { name: "Ops", exact: true }).click();
-  await expect(page.getByText("Approve: run_shell")).not.toBeVisible();
+  await expect(page.getByText("Approve: run_shell")).toBeVisible();
   await expect(page.getByText(question)).toBeVisible();
 });
 

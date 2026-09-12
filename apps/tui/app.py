@@ -15,7 +15,8 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Footer, Header, Input, Label, RichLog, Static
 
-from core.agent import build_code_engine
+from core.agent import build_engine
+from core.agents import delta_agent
 from core.conversations import ConversationStore
 from core.engine import ApprovalOutcome, PermissionRequest
 from core.events import Event, EventType
@@ -109,11 +110,12 @@ class DeltaApp(App):
     def compose(self) -> ComposeResult:
         yield Header(show_clock=False)
         yield RichLog(id="log", wrap=True, markup=True, highlight=False)
-        yield Input(placeholder="Ask the coder…   (/help for commands)", id="prompt")
+        yield Input(placeholder="Ask Delta…   (/help for commands)", id="prompt")
         yield Footer()
 
     def on_mount(self) -> None:
-        self.engine = build_code_engine(
+        self.engine = build_engine(
+            agent=delta_agent(),
             workspace=self.workspace,
             model=self.model,
             mode=self.mode,
@@ -229,7 +231,8 @@ class DeltaApp(App):
         elif name == "/clear":
             if self.engine:
                 self.engine.messages = []
-                self.engine = build_code_engine(
+                self.engine = build_engine(
+                    agent=delta_agent(),
                     workspace=self.workspace,
                     model=self.model,
                     mode=self.mode,

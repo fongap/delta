@@ -1,22 +1,16 @@
-"""Personas — specialized deltas as declarative, skill-shaped bundles.
+"""Personas — Delta as the single registered agent.
 
-A persona is a manifest (YAML frontmatter + a markdown body that is the system prompt) that
-composes vetted catalog capabilities, a family/workspace shape, and lifecycle metadata. The
-built-in surfaces (Code, Delta, Chat, Ops) are themselves manifests — the same format third
-parties use. See `platform/docs/PERSONAS.md`.
+A persona was historically a manifest (YAML frontmatter + a markdown body) that composed
+vetted catalog capabilities. The product has converged on a single agent (Delta) extended
+through Skills / Capabilities, so the registry now registers exactly one built-in persona.
 """
 
 from __future__ import annotations
 
-from core.personas.manifest import ManifestError, PersonaManifest, load_manifest_file, parse_manifest
 from core.personas.registry import DEFAULT_PERSONA_ID, PersonaRegistry, PersonaState
 
 __all__ = [
     "DEFAULT_PERSONA_ID",
-    "ManifestError",
-    "PersonaManifest",
     "PersonaRegistry",
     "PersonaState",
-    "load_manifest_file",
-    "parse_manifest",
 ]

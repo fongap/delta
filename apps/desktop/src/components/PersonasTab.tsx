@@ -3,37 +3,25 @@ import {
   deletePersona,
   getPersonas,
   getSessions,
-  installPersona,
   updatePersona,
   type Persona,
-  type PersonaConsent,
 } from "../api";
 import type { SessionInfo } from "../types";
 import { Icon } from "./Icon";
 import { useI18n } from "@delta/i18n/I18nContext";
 import { fullPersonaName } from "../personaScope";
 
-// Personas management: enable a persona, choose whether it shows in the new-session picker,
-// set the default, and install more from a local directory or a GitHub repo (snapshotted).
-// Re-skinned to the mock's Tailwind card idiom (§ Settings-as-page); the page title supplies the
-// heading, so this drops its own "Personas" sub-header.
+// Personas: Delta is the single registered persona. This panel manages its enabled / surfaced
+// / default lifecycle; with only Delta there is little to toggle, but the surface stays (R6.0
+// did not redo the UI). Third-party persona install was removed with the persona platform.
 const CARD = "rounded-xl2 border border-line bg-panel";
-const SEC_H = "text-[11px] uppercase tracking-[0.05em] text-faint font-semibold";
 const CHECK = "flex items-center gap-1.5 text-[12.5px] text-muted select-none shrink-0";
-const SELECT = "px-2.5 py-2 rounded-lg border border-line bg-paper text-[13px] text-ink shrink-0";
-const INPUT =
-  "flex-1 min-w-0 px-3 py-2 rounded-lg border border-line bg-paper text-[13px] text-ink outline-none focus:border-accent";
-const BTN_ACCENT = "text-[12.5px] px-3 py-2 rounded-lg bg-accent text-onAccent shrink-0 disabled:opacity-40";
 const BTN_BORDERED =
   "text-[12.5px] px-2.5 py-1.5 rounded-lg border border-line bg-paper hover:border-lineStrong shrink-0 disabled:opacity-40 disabled:hover:border-line";
 
 export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) => void }) {
   const [personas, setPersonas] = useState<Persona[]>([]);
-  const [mode, setMode] = useState<"git" | "dir">("git");
-  const [src, setSrc] = useState("");
-  const [busy, setBusy] = useState(false);
   const [msg, setMsg] = useState<string | null>(null);
-  const [consent, setConsent] = useState<PersonaConsent[] | null>(null);
   const [confirmDel, setConfirmDel] = useState<string | null>(null);
   // Disabling archives the persona's conversations (server-side), so when there are any we
   // arm an inline confirm (same two-step idiom as delete) instead of flipping immediately.
@@ -76,31 +64,6 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
     }
     if (r.personas) setPersonas(r.personas);
     else reload();
-  };
-
-  const install = async () => {
-    if (!src.trim()) return;
-    setBusy(true);
-    setMsg(null);
-    setConsent(null);
-    const r = await installPersona(
-      mode === "git" ? { git_url: src.trim() } : { dir: src.trim() },
-    );
-    setBusy(false);
-    if (!r.ok) {
-      setMsg(r.error || t("personas.errorInstall", undefined, "install failed"));
-      return;
-    }
-    setConsent(r.consent || []);
-    if (r.personas) setPersonas(r.personas);
-    setMsg(
-      t(
-        "personas.installedCount",
-        { n: (r.consent || []).length },
-        "Installed {n} persona(s) — review and enable below.",
-      ),
-    );
-    setSrc("");
   };
 
   return (
@@ -233,64 +196,7 @@ export function PersonasTab({ onOpenPersona }: { onOpenPersona?: (id: string) =>
         ))}
       </div>
 
-      <div className={SEC_H + " mb-1.5"}>{t("personas.addTitle", undefined, "Add personas")}</div>
-      <p className="text-[12px] text-muted mb-3 leading-relaxed">
-        {t(
-          "personas.installHelp",
-          undefined,
-          "Load from a local directory or a public GitHub repo. Files are copied into a managed area (a snapshot), so the persona stays stable even if the source changes. No code runs — a persona only composes vetted tools.",
-        )}
-      </p>
-      <div className="flex items-center gap-2">
-        <select className={SELECT} value={mode} onChange={(e) => setMode(e.target.value as "git" | "dir")}>
-          <option value="git">{t("personas.srcGitHub", undefined, "GitHub URL")}</option>
-          <option value="dir">{t("personas.srcDir", undefined, "Local directory")}</option>
-        </select>
-        <input
-          className={INPUT}
-          placeholder={
-            mode === "git"
-              ? t("personas.placeholderGit", undefined, "https://github.com/acme/ops-persona")
-              : t("personas.placeholderDir", undefined, "/path/to/personas")
-          }
-          value={src}
-          onChange={(e) => setSrc(e.target.value)}
-          onKeyDown={(e) => e.key === "Enter" && install()}
-        />
-        <button className={BTN_ACCENT} disabled={busy || !src.trim()} onClick={install}>
-          {busy ? t("personas.installing", undefined, "Installing…") : t("personas.install", undefined, "Install")}
-        </button>
-      </div>
       {msg && <div className="text-[12.5px] text-muted mt-2.5">{msg}</div>}
-
-      {consent && consent.length > 0 && (
-        <div className="mt-4 space-y-2">
-          {consent.map((c) => (
-            <div key={c.id} className={CARD + " p-3.5"}>
-              <div className="text-[13.5px] font-medium">{c.name}</div>
-              <div className="text-[12px] text-muted mt-0.5 mb-2">{c.description}</div>
-              <div className="text-[12px] text-ink">
-                {t("personas.consentTools", { tools: c.tools.join(", ") || "—" }, "Tools: {tools}")}
-              </div>
-              <div className="text-[12px] text-ink">
-                {t("personas.consentRisk", { risk: c.risk.join(", ") || "read" }, "Risk: {risk}")}
-                {c.connectors ? t("personas.consentConnectors", undefined, " · connectors") : ""}
-                {c.messaging ? t("personas.consentMessaging", undefined, " · messaging") : ""}
-                {c.mcp.length
-                  ? t("personas.consentMcp", { mcp: c.mcp.join(", ") }, " · mcp: {mcp}")
-                  : ""}
-              </div>
-              <div className="text-[12px] text-faint mt-1">
-                {t(
-                  "personas.consentMode",
-                  { mode: c.recommended_mode },
-                  "Recommended mode: {mode}. Enable it above to use it.",
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
     </div>
   );
 }

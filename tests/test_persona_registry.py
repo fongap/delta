@@ -1,4 +1,8 @@
-"""Phase 1 gate — persona registry lifecycle (installed → enabled → surfaced + default)."""
+"""Phase 1 gate — persona registry lifecycle (delta-only, default + fallback).
+
+R6.0 converged the registry to a single registered persona (Delta). Unknown, missing, or
+legacy ids (code/chat/ops/myhelper) all resolve to Delta so historical sessions keep
+working."""
 
 from __future__ import annotations
 
@@ -11,92 +15,69 @@ def _reg(tmp_path) -> PersonaRegistry:
     return PersonaRegistry(state_path=tmp_path / "personas.json")
 
 
-def test_builtins_present(tmp_path):
+def test_delta_is_the_only_builtin(tmp_path):
     reg = _reg(tmp_path)
-    assert {"code", "chat", "delta", "ops"} <= set(reg.ids())
-    assert reg.get("ops").builtin is True
-    # Ops came from a markdown manifest; Code from a builder.
-    assert reg.get("ops").manifest is not None
-    assert reg.get("code").manifest is None
+    assert set(reg.ids()) == {"delta"}
+    assert reg.get("delta").builtin is True
 
 
-def test_sidebar_defaults_to_delta_only(tmp_path):
+def test_sidebar_is_delta_only(tmp_path):
     reg = _reg(tmp_path)
     sidebar = reg.sidebar()
-    ids = [e["name"] for e in sidebar]
-    # A fresh install offers ONLY the default persona (owner call 2026-07-09);
-    # everything else is opt-in from Settings ▸ Personas.
-    assert ids == ["delta"]
+    assert [e["name"] for e in sidebar] == ["delta"]
     assert sidebar[0]["default"] is True
-    # Enabling adds to the picker (enable implies surface).
-    reg.set_enabled("code", True)
-    reg.set_enabled("ops", True)
-    ids = [e["name"] for e in reg.sidebar()]
-    assert ids[0] == "delta"
-    assert set(ids) == {"delta", "code", "ops"}
 
 
-def test_chat_disabled_by_default_but_resolvable(tmp_path):
+def test_surface_toggle_keeps_delta_resolvable(tmp_path):
     reg = _reg(tmp_path)
-    assert reg.is_surfaced("chat") is False  # default-hidden
-    assert reg.is_enabled("chat") is False  # opt-in like every non-default persona
-    assert reg.agent("chat").name == "chat"  # live sessions keep resolving
-    # The user can enable it from the Personas tab (enable implies surface).
-    reg.set_enabled("chat", True)
-    assert "chat" in [e["name"] for e in reg.sidebar()]
+    reg.set_surfaced("delta", False)
+    assert reg.sidebar() == []
+    # Still installed + still resolvable.
+    assert "delta" in reg.ids()
+    assert reg.agent("delta").name == "delta"
 
 
-def test_surface_toggle_filters_picker_but_keeps_resolvable(tmp_path):
+def test_default_is_delta(tmp_path):
     reg = _reg(tmp_path)
-    reg.set_surfaced("ops", False)
-    assert "ops" not in [e["name"] for e in reg.sidebar()]
-    # Still installed + still resolvable (a session already on Ops keeps working).
-    assert "ops" in reg.ids()
-    assert reg.agent("ops").name == "ops"
-    assert any(p["id"] == "ops" and not p["surfaced"] for p in reg.list_all())
+    assert reg.default_id() == DEFAULT_PERSONA_ID == "delta"
 
 
-def test_disable_default_falls_back(tmp_path):
+def test_set_default_and_persists(tmp_path):
     reg = _reg(tmp_path)
-    assert reg.default_id() == DEFAULT_PERSONA_ID  # delta
-    reg.set_enabled("ops", True)  # another persona must be enabled to fall back to
-    reg.set_enabled("delta", False)
-    # Delta off → default resolves to another enabled persona, not delta.
-    assert reg.default_id() != "delta"
-    # Unknown / unspecified persona falls back to the (new) default, which is enabled.
-    fallback = reg.agent(None)
-    assert reg.is_enabled(fallback.name)
-
-
-def test_set_default_enables_and_persists(tmp_path):
-    reg = _reg(tmp_path)
-    reg.set_default("ops")
-    assert reg.default_id() == "ops" and reg.is_enabled("ops")
-    # New instance reads persisted state.
+    reg.set_default("delta")
+    assert reg.default_id() == "delta" and reg.is_enabled("delta")
     reg2 = _reg(tmp_path)
-    assert reg2.default_id() == "ops"
+    assert reg2.default_id() == "delta"
 
 
-def test_agent_resolution(tmp_path):
+def test_agent_resolution_and_legacy_fallback(tmp_path):
     reg = _reg(tmp_path)
-    assert reg.agent("ops").family == "knowledge"
-    assert reg.agent("code").family == "code"
-    # Unknown id → default persona.
-    assert reg.agent("does-not-exist").name == reg.default_id()
+    assert reg.agent("delta").name == "delta"
+    assert reg.agent("delta").family == "knowledge"
+    # Historical ids resolve to the default (Delta) — never 404, never data loss.
+    assert reg.agent("code").name == "delta"
+    assert reg.agent("chat").name == "delta"
+    assert reg.agent("ops").name == "delta"
+    assert reg.agent("myhelper").name == "delta"
+    assert reg.agent("does-not-exist").name == "delta"
+    assert reg.agent(None).name == "delta"
 
 
-def test_list_all_carries_workspace_enum(tmp_path):
-    # Post-§16 collapse: workspace derives from family — code → git, knowledge → deliverable
-    # (scratch). Only builder-registered Chat keeps "none". Ops is a scratch persona now.
+def test_delta_keeps_workspace_enum(tmp_path):
     reg = _reg(tmp_path)
     ws = {p["id"]: p["workspace"] for p in reg.list_all()}
-    assert ws["code"] == "git"
-    assert ws["delta"] == "deliverable"
-    assert ws["chat"] == "none"
-    assert ws["ops"] == "deliverable"
+    assert ws == {"delta": "deliverable"}
 
 
 def test_set_unknown_persona_raises(tmp_path):
     reg = _reg(tmp_path)
     with pytest.raises(KeyError):
         reg.set_enabled("ghost", False)
+    with pytest.raises(KeyError):
+        reg.set_default("ghost")
+
+
+def test_uninstall_builtin_raises(tmp_path):
+    reg = _reg(tmp_path)
+    with pytest.raises(ValueError):
+        reg.uninstall("delta")

@@ -127,10 +127,11 @@ def test_web_search_rest(tmp_path, monkeypatch):
 
 def test_engine_registers_web_search(tmp_path):
     from core.agent import build_engine
-    from core.agents import chat_agent
+    from core.agents import delta_agent
 
     eng = build_engine(
-        agent=chat_agent(),
+        agent=delta_agent(),
+        workspace=tmp_path,
         provider=_StubProvider(),
         secrets=SecretStore(tmp_path / "s.json"),
     )

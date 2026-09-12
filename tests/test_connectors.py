@@ -213,21 +213,18 @@ class _StubProvider:
 
 def test_engine_connector_tools_are_delta_scoped(tmp_path):
     from core.agent import build_engine
-    from core.agents import chat_agent, code_agent, delta_agent, myhelper_agent
+    from core.agents import delta_agent
 
     secrets = SecretStore(tmp_path / "secrets.json")
-    eng = build_engine(agent=chat_agent(), provider=_StubProvider(), secrets=secrets)
-    assert "send_message" not in eng.registry.names()  # no connector yet
-    assert "browser_read_url" not in eng.registry.names()
-
-    secrets.put("telegram:default", {"bot_token": "T"})
-    chat = build_engine(agent=chat_agent(), provider=_StubProvider(), secrets=secrets)
-    code = build_engine(
-        agent=code_agent(),
+    eng = build_engine(
+        agent=delta_agent(),
         workspace=tmp_path,
         provider=_StubProvider(),
         secrets=secrets,
     )
+    assert "send_message" not in eng.registry.names()  # no messaging connector yet
+
+    secrets.put("telegram:default", {"bot_token": "T"})
     delta = build_engine(
         agent=delta_agent(),
         workspace=tmp_path,
@@ -235,16 +232,11 @@ def test_engine_connector_tools_are_delta_scoped(tmp_path):
         secrets=secrets,
     )
     helper = build_engine(
-        agent=myhelper_agent(),
+        agent=delta_agent(),
         workspace=tmp_path,
         provider=_StubProvider(),
         secrets=secrets,
     )
-
-    assert "send_message" not in chat.registry.names()
-    assert "send_message" not in code.registry.names()
-    assert "browser_read_url" not in chat.registry.names()
-    assert "browser_read_url" not in code.registry.names()
 
     assert "send_message" in delta.registry.names()
     assert "browser_read_url" in delta.registry.names()
@@ -253,8 +245,6 @@ def test_engine_connector_tools_are_delta_scoped(tmp_path):
     assert "browser_type" in delta.registry.names()
     assert "github_search" not in delta.registry.names()
     assert "send_message" in helper.registry.names()
-    assert "browser_read_url" not in helper.registry.names()
-    assert "browser_open_url" not in helper.registry.names()
 
     # §36: browser READS (registry kind) are free; interactions still gate — and a
     # model-chosen URL is egress, so browser_open_url gates like web_fetch.

@@ -800,10 +800,12 @@ export async function closeBrowser(): Promise<{ ok?: boolean; error?: string }> 
 }
 
 // -- settings (model API key, default model, onboarding) ----------------------
+// Delta is the only product surface (R6.0). chat/code keys are retained as optional for
+// backward-compat with older persisted settings reads, but the server only emits delta.
 export interface SurfaceVisibility {
   delta: boolean; // always true
-  chat: boolean;
-  code: boolean;
+  chat?: boolean;
+  code?: boolean;
 }
 
 export interface ModelSettings {
@@ -1028,16 +1030,11 @@ export async function deletePersona(
 }
 
 export async function installPersona(
-  body: { dir?: string; git_url?: string },
+  _body: { dir?: string; git_url?: string },
 ): Promise<{ ok: boolean; consent?: PersonaConsent[]; personas?: Persona[]; error?: string }> {
-  const res = await fetch(`${httpBase()}/v1/personas/install`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const out = await res.json();
-  if (out.ok) announcePersonasChanged();
-  return out;
+  // R6.0: the third-party persona install endpoint was removed. Kept as a stub so a stale
+  // caller can't crash — it always fails cleanly rather than 404ing mid-flow.
+  return { ok: false, error: "persona install is retired" };
 }
 
 // -- Persona detail + connection defaults (§5) --------------------------------

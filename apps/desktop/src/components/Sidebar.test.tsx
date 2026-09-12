@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { Sidebar } from "./Sidebar";
 import { I18nProvider } from "@delta/i18n/I18nContext";
 import type { SessionInfo } from "../types";
@@ -28,27 +28,27 @@ function stubFetch(routes: { match: string; method?: string; json: any }[]) {
   return calls;
 }
 
+// Delta is the only enabled persona (R6.0); a disabled "legacy" row is included to exercise the
+// enabled-filter without creating a second product surface.
 const PERSONAS = {
   personas: [
-    { id: "delta", name: "Delta", icon: "delta", tagline: "general assistant", family: "knowledge", enabled: true, surfaced: true, default: true },
-    { id: "ops", name: "Ops", icon: "ops", tagline: "incidents, runbooks", family: "code", enabled: true, surfaced: true, default: false },
-    { id: "code", name: "Code", icon: "code", tagline: "repository work", family: "code", enabled: true, surfaced: true, default: false },
-    { id: "secret", name: "Disabled One", icon: "delta", tagline: "off", family: "knowledge", enabled: false, surfaced: false, default: false },
+    { id: "delta", name: "Delta", icon: "delta", tagline: "office, research, content, scripts", family: "knowledge", enabled: true, surfaced: true, default: true },
+    { id: "legacy", name: "Disabled Legacy", icon: "delta", tagline: "off", family: "knowledge", enabled: false, surfaced: false, default: false },
   ],
 };
 
 const SESSIONS: SessionInfo[] = [
-  { session_id: "s-ops-1", title: "incident watch", workspace: "/w", agent: "ops", model: "m", mode: "interactive", updated_at: "2026-06-29", messages: 2 },
-  { session_id: "s-delta-1", title: "hi there", workspace: "", agent: "delta", model: "m", mode: "interactive", updated_at: "2026-06-29", messages: 1 },
+  { session_id: "s-research-doe", title: "DOE — factor screening", workspace: "", agent: "delta", model: "m", mode: "interactive", updated_at: "2026-07-01", messages: 4 },
+  { session_id: "s-office-batch", title: "batch rename 100 images", workspace: "", agent: "delta", model: "m", mode: "interactive", updated_at: "2026-06-29", messages: 2 },
 ];
 
 const baseProps = {
   agent: "delta",
   workspace: "",
-  surfaces: { delta: true, chat: false, code: false },
+  surfaces: { delta: true },
   sessions: SESSIONS,
   projects: [],
-  activeSession: "s-delta-1",
+  activeSession: "s-research-doe",
   onSwitchAgent: vi.fn(),
   onNewSession: vi.fn(),
   onSelectSession: vi.fn(),
@@ -87,36 +87,28 @@ describe("Sidebar group/filter control", () => {
     ]);
     renderSidebar(<Sidebar {...baseProps} />);
 
-    // personas load drives the surfaces; the RECENT header's group/filter control is always present.
     const control = await screen.findByLabelText("Group and filter conversations");
-
-    // Open the popover and choose "Group by → Persona".
     fireEvent.click(control);
     fireEvent.click(await screen.findByText("By persona"));
 
-    // POSTs the new layout pref.
     await waitFor(() => {
       const post = calls.find((c) => c.method === "POST" && c.url.includes("/v1/settings/nav-layout"));
       expect(post).toBeTruthy();
       expect(post!.body).toMatchObject({ nav_layout: "grouped" });
     });
 
-    // Close the popover (it stays open so you can group AND filter in one visit) before asserting
-    // the accordion — otherwise "Ops" also matches the filter-by-delta checkbox.
     fireEvent.click(control);
 
-    // Grouped view = the per-persona accordion. The Ops header appears; expanding it lists its
-    // session. (Persona configuration moved to Settings ▸ Personas, so there is no header gear.)
-    const opsHeader = await screen.findByText("Ops");
-    fireEvent.click(opsHeader);
-    expect(screen.getByText("incident watch")).toBeTruthy();
-    expect(screen.queryByTitle("About the Ops persona")).toBeNull();
+    // Grouped view = the per-persona accordion. Delta is the only group; the active surface's
+    // body renders its sessions. Both Delta sessions stay visible inside the expanded group.
+    expect(screen.getByText("DOE — factor screening")).toBeTruthy();
+    expect(screen.getByText("batch rename 100 images")).toBeTruthy();
   });
 });
 
 describe("Chronological list row actions (⋮ menu)", () => {
-  // The Recent list sorts by updated_at desc with store order breaking ties, so index 0 = s-ops-1.
-  const openOpsMenu = () => fireEvent.click(screen.getAllByTestId("row-menu")[0]);
+  // The Recent list sorts by updated_at desc; index 0 = s-research-doe (most recent).
+  const openMenu = () => fireEvent.click(screen.getAllByTestId("row-menu")[0]);
 
   it("rename / pin / archive / two-step delete all live behind the row's single kebab", async () => {
     stubFetch([
@@ -124,33 +116,29 @@ describe("Chronological list row actions (⋮ menu)", () => {
       { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
     ]);
     renderSidebar(<Sidebar {...baseProps} />);
-    await screen.findByText("incident watch"); // flat Recent list rendered
+    await screen.findByText("DOE — factor screening");
 
-    // Rename: menu item → inline input → Enter commits.
-    openOpsMenu();
+    openMenu();
     fireEvent.click(screen.getByTestId("row-menu-rename"));
-    const input = screen.getByDisplayValue("incident watch");
-    fireEvent.change(input, { target: { value: "war room" } });
+    const input = screen.getByDisplayValue("DOE — factor screening");
+    fireEvent.change(input, { target: { value: "factor screening final" } });
     fireEvent.keyDown(input, { key: "Enter" });
-    expect(baseProps.onRenameSession).toHaveBeenCalledWith("s-ops-1", "war room");
+    expect(baseProps.onRenameSession).toHaveBeenCalledWith("s-research-doe", "factor screening final");
 
-    // Pin moved inside the menu (unpinned session → "Pin").
-    openOpsMenu();
+    openMenu();
     fireEvent.click(screen.getByTestId("row-menu-pin"));
-    expect(baseProps.onTogglePin).toHaveBeenCalledWith("s-ops-1", true);
+    expect(baseProps.onTogglePin).toHaveBeenCalledWith("s-research-doe", true);
 
-    // Archive.
-    openOpsMenu();
+    openMenu();
     fireEvent.click(screen.getByTestId("row-menu-archive"));
-    expect(baseProps.onArchiveSession).toHaveBeenCalledWith("s-ops-1", true);
+    expect(baseProps.onArchiveSession).toHaveBeenCalledWith("s-research-doe", true);
 
-    // Delete is two-step: first click arms ("Delete?"), the second deletes.
-    openOpsMenu();
+    openMenu();
     fireEvent.click(screen.getByTestId("row-menu-delete"));
     expect(baseProps.onDeleteSession).not.toHaveBeenCalled();
     expect(screen.getByTestId("row-menu-delete").textContent).toContain("Delete?");
     fireEvent.click(screen.getByTestId("row-menu-delete"));
-    expect(baseProps.onDeleteSession).toHaveBeenCalledWith("s-ops-1");
+    expect(baseProps.onDeleteSession).toHaveBeenCalledWith("s-research-doe");
   });
 
   it("the kebab and its menu never select the row; Escape closes the menu", async () => {
@@ -159,13 +147,13 @@ describe("Chronological list row actions (⋮ menu)", () => {
       { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
     ]);
     renderSidebar(<Sidebar {...baseProps} />);
-    await screen.findByText("incident watch");
+    await screen.findByText("DOE — factor screening");
 
-    openOpsMenu();
+    openMenu();
     fireEvent.click(screen.getByTestId("row-menu-pin"));
     expect(baseProps.onSelectSession).not.toHaveBeenCalled();
 
-    openOpsMenu();
+    openMenu();
     expect(screen.getByTestId("row-menu-rename")).toBeTruthy();
     fireEvent.keyDown(window, { key: "Escape" });
     expect(screen.queryByTestId("row-menu-rename")).toBeNull();
@@ -192,68 +180,30 @@ describe("From Slack group (§31)", () => {
       { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
     ]);
     renderSidebar(<Sidebar {...baseProps} sessions={[...SESSIONS, SLACK_SESSION]} />);
-    await screen.findByText("incident watch"); // flat Recent rendered
+    await screen.findByText("DOE — factor screening");
 
-    // No collapsed band — the session sits directly in the Recent list, exactly once…
     expect(screen.queryByTestId("from-slack-toggle")).toBeNull();
     const row = await screen.findByText("#general — check the deploy?");
     expect(screen.getAllByText("#general — check the deploy?")).toHaveLength(1);
 
-    // …wearing the Slack logo in the row's indicator cluster.
     const cluster = row.closest(".group");
     expect(cluster?.querySelector('[data-logo="slack"]')).toBeTruthy();
   });
 });
 
-describe("New-session split button", () => {
-  it("collapses to a plain button when only one persona is enabled", async () => {
-    stubFetch([
-      {
-        match: "/v1/personas",
-        method: "GET",
-        json: { personas: [PERSONAS.personas[0], PERSONAS.personas[3]] }, // delta + a disabled one
-      },
-      { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
-    ]);
-    const { container } = renderSidebar(<Sidebar {...baseProps} />);
-    await screen.findByText("incident watch");
-
-    // No ▾ — nothing to pick; the primary button starts the sole enabled persona.
-    await waitFor(() => expect(screen.queryByLabelText("Choose a persona")).toBeNull());
-    fireEvent.click(container.querySelector(".newsplit-primary")!);
-    expect(baseProps.onNewSession).toHaveBeenCalledWith("delta");
-  });
-
-  it("primary starts the last-used persona; the menu lists enabled personas + Manage personas…", async () => {
-    localStorage.setItem("delta.flag.personas", "1"); // Manage entry is launch-flagged off
+describe("New-session button", () => {
+  it("collapses to a plain button when only one persona is enabled (Delta-only)", async () => {
     stubFetch([
       { match: "/v1/personas", method: "GET", json: PERSONAS },
       { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
     ]);
     const { container } = renderSidebar(<Sidebar {...baseProps} />);
-    await screen.findByLabelText("Group and filter conversations");
+    await screen.findByText("DOE — factor screening");
 
-    // Primary action → a new session with the current (last-used) persona.
+    // No ▾ — nothing to pick; the primary button starts the sole enabled persona.
+    await waitFor(() => expect(screen.queryByLabelText("Choose a persona")).toBeNull());
     fireEvent.click(container.querySelector(".newsplit-primary")!);
     expect(baseProps.onNewSession).toHaveBeenCalledWith("delta");
-
-    // ▾ opens the persona menu: enabled personas appear, the disabled one does not, plus a manage entry.
-    fireEvent.click(screen.getByLabelText("Choose a persona"));
-    const menu = (await screen.findByText("Start as")).closest(".newsplit-menu") as HTMLElement;
-    const w = within(menu);
-    expect(w.getByText("Ops")).toBeTruthy();
-    expect(w.getByText("Code")).toBeTruthy();
-    expect(w.queryByText("Disabled One")).toBeNull();
-    expect(w.getByText("Manage personas…")).toBeTruthy();
-
-    // Selecting a persona starts a session as that persona.
-    fireEvent.click(w.getByText("Ops"));
-    expect(baseProps.onNewSession).toHaveBeenCalledWith("ops");
-
-    // "Manage personas…" opens the persona management surface.
-    fireEvent.click(screen.getByLabelText("Choose a persona"));
-    fireEvent.click(await screen.findByText("Manage personas…"));
-    expect(baseProps.onManagePersonas).toHaveBeenCalled();
   });
 
   it("hides Manage personas… while the launch flag is off (the default)", async () => {
@@ -264,9 +214,7 @@ describe("New-session split button", () => {
     ]);
     renderSidebar(<Sidebar {...baseProps} />);
     await screen.findByLabelText("Group and filter conversations");
-    fireEvent.click(screen.getByLabelText("Choose a persona"));
-    const menu = (await screen.findByText("Start as")).closest(".newsplit-menu") as HTMLElement;
-    expect(within(menu).getByText("Ops")).toBeTruthy();
-    expect(within(menu).queryByText("Manage personas…")).toBeNull();
+    // Only Delta enabled → no ▾ persona menu at all.
+    expect(screen.queryByLabelText("Choose a persona")).toBeNull();
   });
 });

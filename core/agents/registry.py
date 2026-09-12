@@ -1,24 +1,22 @@
-"""Agent registry — resolves a persona id to its runtime Agent.
+"""Agent registry — resolves an agent id to its runtime Agent.
 
-Delegates to the persona registry (``core.personas``) so built-in surfaces and
-markdown/third-party personas resolve through one path. MyHelper is a legacy personal-helper
-persona resolved directly (kept for sessions that still reference it).
-Imports of the persona registry are lazy to avoid an import cycle (personas → agents builders).
+Delta is the single product agent. There is exactly one registered agent (``delta``);
+any missing, empty, or unknown id (including ids from historical sessions) resolves to
+Delta through the persona registry's default fallback. Imports of the persona registry
+are lazy to avoid an import cycle (personas → agents builders).
 """
 
 from __future__ import annotations
 
 from core.agents.base import Agent
-from core.agents.myhelper import myhelper_agent
+
+DEFAULT_AGENT_ID = "delta"
 
 
 def get_agent(name: str) -> Agent:
-    name = name or "code"
-    if name == "myhelper":
-        return myhelper_agent()
     from core.personas.registry import get_registry
 
-    return get_registry().agent(name)
+    return get_registry().agent(name or DEFAULT_AGENT_ID)
 
 
 def list_agents() -> list[dict]:

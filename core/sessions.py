@@ -18,7 +18,7 @@ class SessionRecord:
     mode: str
     messages: list[dict[str, Any]] = field(default_factory=list)
     title: str | None = None
-    agent: str = "code"
+    agent: str = "delta"
     message_count: int = 0
     updated_at: str | None = None
     # Folders added to the session beyond its primary scratch dir, each {path, writable, label}.

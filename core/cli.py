@@ -1,4 +1,4 @@
-"""CLI entry point. `delta` launches the TUI; `delta code` boots the code skill."""
+"""CLI entry point. `delta` launches the TUI."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ def main(argv: list[str] | None = None) -> None:
         prog="delta", description="Agent delta (TUI)."
     )
     parser.add_argument(
-        "skill", nargs="?", default="code", help="skill to launch (default: code)"
+        "skill", nargs="?", default="delta", help="skill to launch (default: delta)"
     )
     parser.add_argument("--cwd", default=".", help="workspace directory")
     parser.add_argument(

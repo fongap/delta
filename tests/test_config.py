@@ -118,7 +118,8 @@ def test_workspace_trust_marks_acl_degradation(tmp_path, monkeypatch):
 
 
 def test_build_engine_honors_explicit_empty_command_allowlist(tmp_path):
-    from core.agent import build_code_engine
+    from core.agent import build_engine
+    from core.agents import delta_agent
     from packages.config import global_config_path
 
     global_config_path().parent.mkdir(parents=True)
@@ -131,8 +132,11 @@ def test_build_engine_honors_explicit_empty_command_allowlist(tmp_path):
         def capabilities(self, m):  # pragma: no cover
             raise NotImplementedError
 
-    engine = build_code_engine(
-        workspace=tmp_path, provider=_Stub(), allowed_commands=[]
+    engine = build_engine(
+        agent=delta_agent(),
+        workspace=tmp_path,
+        provider=_Stub(),
+        allowed_commands=[],
     )
     try:
         decision = engine.permissions.evaluate(
@@ -147,7 +151,8 @@ def test_build_engine_respects_max_iterations(tmp_path):
     (tmp_path / ".delta").mkdir()
     (tmp_path / ".delta" / "config.toml").write_text("max_iterations = 3\n")
 
-    from core.agent import build_code_engine
+    from core.agent import build_engine
+    from core.agents import delta_agent
 
     class _Stub:
         def complete(self, **k):  # pragma: no cover
@@ -156,7 +161,9 @@ def test_build_engine_respects_max_iterations(tmp_path):
         def capabilities(self, m):  # pragma: no cover
             raise NotImplementedError
 
-    engine = build_code_engine(workspace=tmp_path, provider=_Stub())
+    engine = build_engine(
+        agent=delta_agent(), workspace=tmp_path, provider=_Stub()
+    )
     try:
         assert engine.max_iterations == 3
     finally:

@@ -1,15 +1,14 @@
-"""Phase 1 gate — built-in personas resolve to the same toolsets as the legacy agents.
+"""Phase 1 gate — Delta is the single registered persona.
 
-The equivalence net: routing Code/Delta through the persona registry must yield the exact
-same tools the agent builders produce, and Ops (a markdown persona) must compose the knowledge
-toolset. Ties back to the Phase 0 catalog equivalence."""
+The persona registry resolves Delta to the same toolset its builder produces, and any
+unknown / legacy id (e.g. a historical ``code`` session) falls back to Delta so live
+sessions keep working even though those personas are no longer registered products."""
 
 from __future__ import annotations
 
 from core.agents.base import AgentContext
-from core.agents.code import code_agent
 from core.agents.delta_agent import delta_agent
-from core.personas.registry import PersonaRegistry
+from core.personas.registry import DEFAULT_PERSONA_ID, PersonaRegistry
 from integrations.tools.todo import TodoList
 
 
@@ -21,35 +20,39 @@ def _names(agent, ctx) -> set:
     return {getattr(t, "__name__", "") for t in agent.build_tools(ctx)}
 
 
-def test_code_persona_matches_builder(tmp_path):
+def test_delta_is_registered_default(tmp_path):
     reg = PersonaRegistry()
-    ctx = _ctx(tmp_path)
-    assert _names(reg.agent("code"), ctx) == _names(code_agent(), ctx)
-    assert reg.agent("code").family == "code"
-
-
-def test_delta_persona_matches_builder(tmp_path):
-    reg = PersonaRegistry()
+    assert DEFAULT_PERSONA_ID == "delta"
+    assert reg.default_id() == "delta"
     ctx = _ctx(tmp_path)
     assert _names(reg.agent("delta"), ctx) == _names(delta_agent(), ctx)
     a = reg.agent("delta")
     assert a.messaging and a.connectors
 
 
-def test_ops_persona_composes_knowledge_toolset(tmp_path):
+def test_unknown_id_falls_back_to_delta(tmp_path):
     reg = PersonaRegistry()
     ctx = _ctx(tmp_path)
-    # Ops uses the same capability list as Delta (files/search/shell/todo).
+    # Historical "code" is no longer registered — it must resolve to Delta, not 404.
+    assert _names(reg.agent("code"), ctx) == _names(delta_agent(), ctx)
+    assert _names(reg.agent("chat"), ctx) == _names(delta_agent(), ctx)
     assert _names(reg.agent("ops"), ctx) == _names(delta_agent(), ctx)
-    a = reg.agent("ops")
-    assert a.family == "knowledge" and a.messaging and a.connectors
-    assert "read_file_lines" in _names(a, ctx)  # multi-root knowledge files
+    assert _names(reg.agent("myhelper"), ctx) == _names(delta_agent(), ctx)
+    assert _names(reg.agent("never-existed"), ctx) == _names(delta_agent(), ctx)
+    assert _names(reg.agent(None), ctx) == _names(delta_agent(), ctx)
 
 
-def test_code_keeps_single_root_file_tools(tmp_path):
+def test_sidebar_only_delta(tmp_path):
     reg = PersonaRegistry()
-    names = _names(reg.agent("code"), _ctx(tmp_path))
-    # v0.3.1: both `read_file` and `read_file_lines` are our multi-root-aware
-    # tools, and the code agent gets the small-window sibling too.
-    assert "read_file" in names and "read_file_lines" in names
-    assert "git_log" in names  # code has git; delta/ops do not
+    sidebar = reg.sidebar()
+    assert len(sidebar) == 1
+    assert sidebar[0]["name"] == "delta"
+
+
+def test_delta_keeps_generic_file_tools(tmp_path):
+    reg = PersonaRegistry()
+    names = _names(reg.agent("delta"), _ctx(tmp_path))
+    for n in ("read_file", "read_file_lines", "read_document", "write_file", "run_shell"):
+        assert n in names, n
+    # No coding/git surface.
+    assert not {"git_status", "git_diff", "git_log"} & names

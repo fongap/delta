@@ -1,4 +1,4 @@
-"""Agent-facing scheduling tools (Delta + MyHelper).
+"""Agent-facing scheduling tools (Delta).
 
 `create_scheduled_task` is gated (`requires_approval`) so it surfaces a confirm card before a
 standing automation is created (approve-at-creation). The agent converts natural language

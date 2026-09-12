@@ -15,7 +15,6 @@ from core.tool_selection import (
 REGISTRY = [
     "list_files", "read_file", "write_file", "apply_patch", "request_directory",
     "grep", "run_shell", "shell_task_output",
-    "git_status", "git_diff", "git_log",
     "web_search", "web_fetch",
     "remember", "memory_read", "memory_forget",
     "send_message", "send_file", "subscribe_channel",
@@ -25,8 +24,8 @@ REGISTRY = [
 ]
 
 
-def _selected(messages, family="knowledge", minimal=False):
-    return set(select_tool_names(REGISTRY, messages, family=family, minimal=minimal))
+def _selected(messages, minimal=False):
+    return set(select_tool_names(REGISTRY, messages, minimal=minimal))
 
 
 def _turn(*user_texts):
@@ -41,7 +40,7 @@ def test_categories_are_specific_not_generic():
     assert tool_category("send_file") == "messaging"  # NOT files (order matters)
     assert tool_category("web_search") == "web"  # NOT search
     assert tool_category("grep") == "search"
-    assert tool_category("git_diff") == "git"
+    assert tool_category("git_diff") == "files"  # git surface gone in R6.0; name now files-matched
     assert tool_category("remember") == "memory"
     assert tool_category("create_scheduled_task") == "automation"
     assert tool_category("read_file") == "files"
@@ -81,13 +80,6 @@ def test_english_signals():
     selected = _selected(_turn("remember that I prefer short replies"))
     assert "remember" in selected
     assert "run_shell" not in selected
-
-
-def test_code_family_pins_workspace_base():
-    selected = _selected(_turn("hi"), family="code")
-    # A coding agent gets its workspace base on every call regardless of keywords.
-    assert {"read_file", "grep", "run_shell", "git_status"} <= selected
-    assert "send_message" not in selected  # …but not the whole toolbox
 
 
 def test_categories_grow_within_a_turn():
