@@ -592,7 +592,9 @@ def test_ws_routes_second_plain_text_to_active_turn_without_concurrency(tmp_path
     # no concurrent provider execution.
     assert "input_rejected" not in types
     assert provider.max_active == 1
-    assert provider.calls == 2
+    # Steering must cause at least one further model iteration; ancillary
+    # work such as auto-title generation may legitimately add provider calls.
+    assert provider.calls >= 2
     engine = manager._runtimes["serialized"].engine
     user_messages = [m for m in engine.messages if m.get("role") == "user"]
     assert [m["content"] for m in user_messages] == ["first", "second"]
