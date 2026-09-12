@@ -28,7 +28,8 @@
 - [`quality-policy.md`](quality-policy.md)：CI、测试、质量门禁、安全与 R6 contract 验证；
 - [`release-policy.md`](release-policy.md)：版本、Tag、构建和 Release；
 - [`dependency-policy.md`](dependency-policy.md)：核心 Rust / TypeScript 与 Capability Worker 依赖治理；
-- [`rust-core-migration.md`](rust-core-migration.md)：R5.1 后 Runtime Convergence / R6 治理，规定 Python 控制面冻结、Authority 迁移、Worker 化与 hard-cut 标准。
+- [`rust-core-migration.md`](rust-core-migration.md)：R5.1 后 Runtime Convergence / R6 长期治理，规定 Python 控制面冻结、Authority 迁移、Worker 化与 hard-cut 标准；
+- [`r6-execution-plan.md`](r6-execution-plan.md)：基于 R5.1 最终修复态代码审计形成的 R6 实际执行顺序、当前迁移面和阶段 Exit Condition。
 
 ## 当前核心治理原则
 
