@@ -597,6 +597,7 @@ def test_ws_routes_second_plain_text_to_active_turn_without_concurrency(tmp_path
     user_messages = [m for m in engine.messages if m.get("role") == "user"]
     assert [m["content"] for m in user_messages] == ["first", "second"]
 
+
 def test_ws_rate_limits_inbound_frames(tmp_path):
     from starlette.websockets import WebSocketDisconnect
 
