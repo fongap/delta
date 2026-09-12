@@ -1,0 +1,119 @@
+name: R5.1 live steering repair
+
+on:
+  push:
+    branches:
+      - feat/r5.1-runtime-human-control
+
+permissions:
+  contents: write
+
+jobs:
+  repair:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/r5.1-runtime-human-control
+          fetch-depth: 0
+
+      - name: Apply R5.1 repair
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import re
+
+          def replace_once(path: str, old: str, new: str) -> None:
+              p = Path(path)
+              text = p.read_text(encoding="utf-8")
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f"{path}: expected one replacement, found {count}")
+              p.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+          # The websocket already has the canonical busy/idle ownership guard. When a
+          # normal text user_message arrives while the same session is running, route it
+          # through the EXISTING RuntimePort.steer -> TurnEngine.queue_steering path
+          # instead of rejecting it or starting a concurrent turn.
+          replace_once(
+              "services/server/app.py",
+              '''        async def claim_turn(*, retry: bool = False, content=None, display=None) -> None:\n            if not manager.try_mark_running(session_id):\n                await reject_input(\n                    "This session is already running a turn. Wait for it to finish or stop it."\n                )\n                return\n            asyncio.create_task(run_turn(content, retry=retry, display=display))\n''',
+              '''        async def claim_turn(*, retry: bool = False, content=None, display=None) -> None:\n            if not manager.try_mark_running(session_id):\n                # R5.1 live steering: the main composer remains available while a turn\n                # is active. A second plain-text user message supervises that SAME turn\n                # through the already-established RuntimePort.steer() path. Do not\n                # start a concurrent turn, and do not accept attachments/skill framing\n                # as steering because those have independent lifecycle semantics.\n                if not retry and display is None and isinstance(content, str) and content.strip():\n                    runtime.steer(content)\n                    return\n                await reject_input(\n                    "This session is already running. Send plain text to adjust the current task, or stop it first."\n                )\n                return\n            asyncio.create_task(run_turn(content, retry=retry, display=display))\n''',
+          )
+
+          # Remove the second, unbound RunControlChannel implementation from the engine.
+          # The real production authority is RuntimePort.steer -> queue_steering.
+          engine = Path("core/engine.py")
+          text = engine.read_text(encoding="utf-8")
+          for block in (
+              '''            # R5.1: safe-point — check for pending steers before model request.\n            self._poll_control_channel()\n''',
+              '''            # R5.1: safe-point — check for pending steers before tool dispatch.\n            self._poll_control_channel()\n''',
+          ):
+              if block not in text:
+                  raise SystemExit("core/engine.py: expected control-channel call not found")
+              text = text.replace(block, "", 1)
+          text, n = re.subn(
+              r'\n    def _poll_control_channel\(self\) -> None:\n.*?(?=\n    def _outbound_messages\(self\))',
+              "",
+              text,
+              count=1,
+              flags=re.S,
+          )
+          if n != 1:
+              raise SystemExit(f"core/engine.py: expected one _poll_control_channel block, found {n}")
+          engine.write_text(text, encoding="utf-8")
+
+          # App no longer needs a second steering composer. The main Composer switches
+          # into active-run supervision mode for ALL sessions, not only __run__ sessions.
+          replace_once(
+              "apps/desktop/src/App.tsx",
+              'import { SteeringInput } from "./components/SteeringInput";\n',
+              "",
+          )
+          replace_once(
+              "apps/desktop/src/App.tsx",
+              '''  const runningDetails = (_sid: string): string[] | undefined =>\n    // C4: technical detail expansion is intentionally hidden by default.\n    undefined;\n\n''',
+              "",
+          )
+          replace_once(
+              "apps/desktop/src/App.tsx",
+              '''                details={runningDetails(sessionId)}\n''',
+              "",
+          )
+          replace_once(
+              "apps/desktop/src/App.tsx",
+              '''            {/* R5.1 C2/C3: when a run is active, allow Steer / Follow-up / Cancel\n                without forcing the user to create a new chat or wait for completion. */}\n            <SteeringInput\n              active={running && sessionId.startsWith("__run__")}\n              onSteer={(text) => send(text)}\n              onFollowUp={(text) => send(text)}\n              onCancel={interrupt}\n            />\n''',
+              "",
+          )
+
+          # Remove the now-dead duplicate control-channel implementation and its tests.
+          for path in (
+              "core/steering.py",
+              "tests/test_steering.py",
+              "apps/desktop/src/components/SteeringInput.tsx",
+          ):
+              p = Path(path)
+              if not p.exists():
+                  raise SystemExit(f"expected file missing: {path}")
+              p.unlink()
+
+          # Status bar stays deliberately lightweight. It reflects live UI/runtime stream
+          # state only; no fake expandable ledger/timeline is advertised.
+          status = Path("apps/desktop/src/components/RunStatusBar.tsx")
+          status.write_text('''/**\n * Lightweight active-run status.\n *\n * The label is derived from events the desktop is actually receiving (reasoning,\n * streaming, or generic execution). It deliberately does not fabricate a\n * timeline or technical detail history.\n */\n\nexport interface RunStatusProps {\n  status: string;\n  active: boolean;\n}\n\nexport function RunStatusBar({ status, active }: RunStatusProps) {\n  if (!active) return null;\n\n  return (\n    <div\n      className="run-status-bar"\n      style={{\n        display: "flex",\n        alignItems: "center",\n        gap: "8px",\n        padding: "4px 12px",\n        fontSize: "13px",\n        color: "var(--text-secondary, #666)",\n        background: "var(--bg-subtle, #f5f5f5)",\n        borderBottom: "1px solid var(--border-line, #e0e0e0)",\n      }}\n      aria-live="polite"\n    >\n      <span\n        className="run-status-dot"\n        style={{\n          width: "6px",\n          height: "6px",\n          borderRadius: "50%",\n          background: "var(--accent, #3b82f6)",\n          animation: "pulse 1.5s ease-in-out infinite",\n          flexShrink: 0,\n        }}\n      />\n      <span>{status}</span>\n    </div>\n  );\n}\n''', encoding="utf-8")
+
+          # The one-shot workflow removes itself in the repair commit.
+          Path(".github/workflows/r51-live-steering-repair.yml").unlink()
+          PY
+
+      - name: Commit repair
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "fix(r5.1): wire active-run steering through existing runtime"
+          git push origin HEAD:feat/r5.1-runtime-human-control
