@@ -39,7 +39,7 @@ export function isEmojiIcon(icon?: string): boolean {
   return !!icon && /[^\x00-\x7F]/.test(icon);
 }
 
-export function personaGlyph(icon?: string, family?: string): IconName {
+export function personaGlyph(icon?: string, _family?: string): IconName {
   if (icon && NAMED.has(icon)) return icon as IconName;
   if (icon && LEGACY[icon]) return LEGACY[icon];
   // No code family exists (R6.0); the only registered persona is Delta → sparkle.

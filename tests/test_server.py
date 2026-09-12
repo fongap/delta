@@ -1007,16 +1007,20 @@ def test_open_workspace_create(tmp_path):
     assert fresh.is_dir()
 
 
-def test_ws_requires_workspace_when_no_default(tmp_path):
-    # Manager with no default workspace: a session with no folder is rejected.
+def test_ws_no_workspace_provisions_a_scratch_dir(tmp_path):
+    # Manager with no default workspace: Delta auto-provisions a per-conversation scratch
+    # dir (R6.0 — Delta is the only surface and runs orphan, unlike the retired "code"
+    # surface which demanded an explicit folder).
     manager = SessionManager(
         workspace=None, data_dir=tmp_path, provider=ScriptedProvider([])
     )
+    manager._prefs["scratch_base"] = str(tmp_path / "scratch")
     client = TestClient(create_app(manager))
     with client.websocket_connect("/ws/session/nofolder") as ws:
         first = ws.receive_json()
-        assert first["type"] == "error"
-        assert "workspace" in first["payload"]["error"]
+        assert first["type"] == "ready"
+        assert first["payload"]["workspace"] is not None
+        assert first["payload"]["workspace"].startswith(str(tmp_path / "scratch"))
 
 
 def test_ws_with_workspace_query(tmp_path):
