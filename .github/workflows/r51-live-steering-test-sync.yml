@@ -26,102 +26,70 @@ jobs:
 
           path = Path("tests/test_server.py")
           text = path.read_text(encoding="utf-8")
-          old = '''def test_ws_allows_only_one_inflight_turn_per_session(tmp_path):
-    import threading
-    import time
+          start_marker = "def test_ws_allows_only_one_inflight_turn_per_session(tmp_path):"
+          end_marker = "\ndef test_ws_rate_limits_inbound_frames(tmp_path):"
+          start = text.find(start_marker)
+          if start < 0:
+              raise SystemExit("old websocket serialization test not found")
+          end = text.find(end_marker, start)
+          if end < 0:
+              raise SystemExit("websocket test end marker not found")
 
-    class SlowProvider(ProviderClient):
-        def __init__(self):
-            self._lock = threading.Lock()
-            self.active = 0
-            self.max_active = 0
-
-        def complete(self, *, model, messages, tools=None, **settings):
-            with self._lock:
-                self.active += 1
-                self.max_active = max(self.max_active, self.active)
-            try:
-                time.sleep(0.08)
-                return _text("done")
-            finally:
-                with self._lock:
-                    self.active -= 1
-
-        def capabilities(self, model):
-            return ModelCapabilities()
-
-    provider = SlowProvider()
-    manager = SessionManager(workspace=tmp_path, provider=provider)
-    client = TestClient(create_app(manager))
-    with client.websocket_connect("/ws/session/serialized") as ws:
-        assert ws.receive_json()["type"] == "ready"
-        ws.send_json({"type": "user_message", "text": "first"})
-        ws.send_json({"type": "user_message", "text": "second"})
-
-        types = []
-        while "turn_done" not in types:
-            types.append(ws.receive_json()["type"])
-
-    assert "input_rejected" in types
-    assert provider.max_active == 1
-    engine = manager._runtimes["serialized"].engine
-    user_messages = [m for m in engine.messages if m.get("role") == "user"]
-    assert [m["content"] for m in user_messages] == ["first"]
-'''
-          new = '''def test_ws_routes_second_plain_text_to_active_turn_without_concurrency(tmp_path):
-    import threading
-    import time
-
-    class SlowProvider(ProviderClient):
-        def __init__(self):
-            self._lock = threading.Lock()
-            self.active = 0
-            self.max_active = 0
-            self.calls = 0
-
-        def complete(self, *, model, messages, tools=None, **settings):
-            with self._lock:
-                self.active += 1
-                self.max_active = max(self.max_active, self.active)
-                self.calls += 1
-                call_no = self.calls
-            try:
-                # Keep the first model call active long enough for the second websocket
-                # frame to exercise the busy-session steering path deterministically.
-                time.sleep(0.08)
-                return _text(f"done-{call_no}")
-            finally:
-                with self._lock:
-                    self.active -= 1
-
-        def capabilities(self, model):
-            return ModelCapabilities()
-
-    provider = SlowProvider()
-    manager = SessionManager(workspace=tmp_path, provider=provider)
-    client = TestClient(create_app(manager))
-    with client.websocket_connect("/ws/session/serialized") as ws:
-        assert ws.receive_json()["type"] == "ready"
-        ws.send_json({"type": "user_message", "text": "first"})
-        ws.send_json({"type": "user_message", "text": "second"})
-
-        types = []
-        while "turn_done" not in types:
-            types.append(ws.receive_json()["type"])
-
-    # The second message steers the SAME active turn. It must neither be rejected
-    # nor launch a concurrent model call.
-    assert "input_rejected" not in types
-    assert provider.max_active == 1
-    assert provider.calls == 2
-    engine = manager._runtimes["serialized"].engine
-    user_messages = [m for m in engine.messages if m.get("role") == "user"]
-    assert [m["content"] for m in user_messages] == ["first", "second"]
-'''
-          count = text.count(old)
-          if count != 1:
-              raise SystemExit(f"expected one old websocket serialization test, found {count}")
-          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          new_lines = [
+              "def test_ws_routes_second_plain_text_to_active_turn_without_concurrency(tmp_path):",
+              "    import threading",
+              "    import time",
+              "",
+              "    class SlowProvider(ProviderClient):",
+              "        def __init__(self):",
+              "            self._lock = threading.Lock()",
+              "            self.active = 0",
+              "            self.max_active = 0",
+              "            self.calls = 0",
+              "",
+              "        def complete(self, *, model, messages, tools=None, **settings):",
+              "            with self._lock:",
+              "                self.active += 1",
+              "                self.max_active = max(self.max_active, self.active)",
+              "                self.calls += 1",
+              "                call_no = self.calls",
+              "            try:",
+              "                # Keep the first call active long enough for the second frame",
+              "                # to deterministically exercise busy-session steering.",
+              "                time.sleep(0.08)",
+              "                return _text(f\"done-{call_no}\")",
+              "            finally:",
+              "                with self._lock:",
+              "                    self.active -= 1",
+              "",
+              "        def capabilities(self, model):",
+              "            return ModelCapabilities()",
+              "",
+              "    provider = SlowProvider()",
+              "    manager = SessionManager(workspace=tmp_path, provider=provider)",
+              "    client = TestClient(create_app(manager))",
+              "    with client.websocket_connect(\"/ws/session/serialized\") as ws:",
+              "        assert ws.receive_json()[\"type\"] == \"ready\"",
+              "        ws.send_json({\"type\": \"user_message\", \"text\": \"first\"})",
+              "        ws.send_json({\"type\": \"user_message\", \"text\": \"second\"})",
+              "",
+              "        types = []",
+              "        while \"turn_done\" not in types:",
+              "            types.append(ws.receive_json()[\"type\"])",
+              "",
+              "    # The second message steers the SAME active turn: no rejection and",
+              "    # no concurrent provider execution.",
+              "    assert \"input_rejected\" not in types",
+              "    assert provider.max_active == 1",
+              "    assert provider.calls == 2",
+              "    engine = manager._runtimes[\"serialized\"].engine",
+              "    user_messages = [m for m in engine.messages if m.get(\"role\") == \"user\"]",
+              "    assert [m[\"content\"] for m in user_messages] == [\"first\", \"second\"]",
+              "",
+              "",
+          ]
+          replacement = "\n".join(new_lines)
+          path.write_text(text[:start] + replacement + text[end + 1 :], encoding="utf-8")
 
           # One-shot workflow: remove itself from the resulting branch commit.
           Path(".github/workflows/r51-live-steering-test-sync.yml").unlink()
