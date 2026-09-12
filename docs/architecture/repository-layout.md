@@ -2,24 +2,28 @@
 
 Delta 按系统职责组织代码。
 
+> 本文只描述**当前有效的物理仓库结构**。长期逻辑模块、语言职责和 R6 目标拓扑见 [`target-architecture.md`](target-architecture.md)。
+>
+> Experience / Runtime / Trust / Work / Capability / Automation / Learning 是逻辑职责，不要求当前立即创建同名顶层目录、crate 或进程。
+
 目录名称应描述当前职责，不描述上游来源、历史阶段或兼容时代。
 
 ## 顶层目录
 
-| 目录              | 职责                                 |
-| --------------- | ---------------------------------- |
-| `apps/`         | 用户可直接运行的应用                         |
-| `core/`         | Agent runtime、工作流、状态、记忆、权限等核心能力    |
-| `providers/`    | 模型协议、Provider 适配、模型能力和路由           |
+| 目录 | 当前职责 |
+| --- | --- |
+| `apps/` | 用户可直接运行的应用 |
+| `core/` | 当前 Agent/runtime、状态、权限、记忆以及 Rust Core 迁移实现 |
+| `providers/` | 当前模型协议、Provider 适配、模型能力和路由兼容层 |
 | `integrations/` | Connector、MCP、Skill、Tool、Web 等外部能力 |
-| `services/`     | 可独立运行的后台服务                         |
-| `packages/`     | 跨模块共享的基础能力                         |
-| `resources/`    | 品牌、截图等非代码资源                        |
-| `packaging/`    | 构建、打包和发布相关内容                       |
-| `tests/`        | Python/runtime 测试及测试专用资源           |
-| `docs/`         | 架构、治理和运维文档                         |
-| `scripts/`      | 仓库维护和验证脚本                          |
-| `.github/`      | GitHub 配置和自动化                      |
+| `services/` | 当前可独立运行的后台服务；部分属于 R6 前过渡结构 |
+| `packages/` | 跨模块共享的基础能力和 Rust/Python bridge |
+| `resources/` | 品牌、截图等非代码资源 |
+| `packaging/` | 构建、打包和发布相关内容 |
+| `tests/` | 当前 Python / Rust bridge / runtime 测试及测试资源 |
+| `docs/` | 产品、架构、治理、审计和运维文档 |
+| `scripts/` | 仓库维护和验证脚本 |
+| `.github/` | GitHub 配置和自动化 |
 
 ## `apps/`
 
@@ -34,101 +38,95 @@ apps/tui/
 
 ### `apps/desktop/`
 
-负责：
+当前负责：
 
-* React UI
-* Tauri
-* Desktop platform integration
-* 用户交互
-* Provider 配置界面
-* Connector 展示界面
+- React / TypeScript UI；
+- Tauri host；
+- Desktop platform integration；
+- 用户交互；
+- Provider / Connector / Skill / Automation 等设置和展示。
 
-业务核心逻辑不得长期沉积在 Desktop UI 层。
+业务 Authority 不得沉积在 TypeScript UI。
+
+目标架构中，Desktop 通过 Tauri Commands / Events 与 Rust Runtime 直接交互；当前 HTTP/WS → Python sidecar 链属于 R6 前的过渡实现。
 
 ### `apps/tui/`
 
 负责终端交互界面。
 
-TUI 应通过既有核心边界使用 Delta 能力，不复制核心运行时逻辑。
+TUI 应通过稳定 Runtime / Capability contract 使用 Delta 能力，不复制核心运行时逻辑。
 
 ## `core/`
 
-`core/` 负责 Delta 核心运行时。
+`core/` 当前包含 Python Agent/runtime 与逐步 Rust-authoritative 的核心领域。
 
-包括：
+历史和当前职责包括：
 
-* Agent
-* Workflow
-* Task execution
-* State
-* Memory
-* Permission
-* Persona
-* Approval
+- Agent / Runtime glue；
+- Session / Run / workflow；
+- Memory；
+- Permission / Approval；
+- Automation state glue；
+- Artifact / Citation / Validation facade；
+- Rust Core bridge。
 
-`core/` 可以包含 Rust 原生运行时子目录：
+Rust 原生实现位于：
 
 ```text
 core/runtime-native/
 ```
 
-该目录持有 Delta Core Rust 实现（R1 State Foundation shadow-read → 后续权威写入者）。它不创建顶层 `crates/` 目录（已被禁止）。CI 的 rust matrix 识别该路径。
+R1–R5.1 已逐步把 trusted state、execution decision、provider transport/decision 和 runtime correctness 迁到 Rust。
 
-`core/` 可以依赖：
+R6 期间的规则：
 
-```text
-providers/
-integrations/
-packages/
-```
+- 不再向 Python `core/` 新增长期 Manager / Store / Runtime Authority；
+- 新控制面默认实现于 Rust；
+- Python 中与 Office / Research / Media 相关的专业执行逻辑最终应 Worker 化；
+- Python facade 在调用方完成迁移后删除，不长期保留转发链。
 
-`core/` 不应依赖具体 UI 实现。
+当前仍不为了目标架构提前创建顶层 `crates/` 或七个模块目录。物理拆分应在依赖边界稳定后通过独立架构变更完成。
 
 ## `providers/`
 
-`providers/` 负责模型服务和协议适配。
+`providers/` 当前保存模型协议和 Python compatibility / profile surface。
 
-包括：
-
-* Provider registry
-* Model discovery
-* Capability metadata
-* Protocol adaptation
-* Routing-related provider logic
-
-Provider 的配置界面仍属于：
+模型产品边界固定为：
 
 ```text
-apps/desktop/
+OpenAI-compatible
+Anthropic-compatible
 ```
 
-不得把 UI 逻辑放入 `providers/`。
+R5 已把 provider transport 和主要 decision authority 迁到 Rust。R6 的目标不是扩大 Provider 数量，而是删除不再需要的 Python forwarding / SDK fallback 控制路径并把最终 Runtime Host 收敛到 Rust。
+
+Provider 的配置界面属于 `apps/desktop/`。
+
+不得把复杂多 Provider 调度、额度、权重和模型市场做进 Delta；这些能力外置给兼容 Endpoint / AI Gateway。
 
 ## `integrations/`
 
-`integrations/` 负责 Delta 与外部能力的集成。
+`integrations/` 当前负责外部能力和工具生态：
 
-包括：
+- Connector；
+- MCP；
+- Skill；
+- Tool；
+- Web access；
+- 第三方平台集成。
 
-* Connector
-* MCP
-* Skill
-* Tool
-* Web access
-* 第三方平台集成
+长期看，这些能力属于 Capability / Automation 边界。
 
-外部系统协议实现与 UI 展示应保持分离。
+约束：
 
-例如：
-
-* Connector 协议和调用逻辑属于 `integrations/`
-* Connector 界面属于 `apps/desktop/`
+- Integration 不拥有 Runtime / Trust / Work Authority；
+- Skill 不直接获得额外权限；
+- MCP / Connector 不绕过 Policy / Approval / Ledger / Validation；
+- Python capability 可以保留，但应通过受控 Capability ABI，而不是依赖 Python Server 内部状态。
 
 ## `services/`
 
-`services/` 保存可以独立运行的后台服务。
-
-当前包括：
+`services/` 当前保存独立后台服务：
 
 ```text
 services/server/
@@ -137,216 +135,175 @@ services/stt/
 
 ### `services/server/`
 
-作为应用访问 Delta 核心能力的 HTTP/API 边界。
+当前是 Desktop / browser 访问 Python application layer 的 HTTP/WS 边界，并承载 SessionManager 等过渡编排。
 
-不应在该层复制 `core/` 中已经存在的业务逻辑。
+这是 **R6 迁移对象**，不是长期目标模块。
+
+从 R5.1 后开始：
+
+- 不向该层新增新的长期业务 Authority；
+- 新控制逻辑优先 Rust；
+- TypeScript 调用逐步迁往 Tauri → Rust；
+- 当 Session / Runtime / Automation / IPC 完成 Rust hard-cut 后删除常驻 `delta-server` 主控职责。
 
 ### `services/stt/`
 
-负责本地 Speech-to-Text 服务。
+负责本地 Speech-to-Text 能力。
 
-应保持为独立服务边界。
+长期应作为 Capability / Worker 看待。它是否继续独立进程由真实资源隔离和生态依赖决定，而不是因为“模块独立”就必须服务化。
 
 ## `packages/`
 
-`packages/` 保存真正具有跨模块共享价值的基础能力。
+`packages/` 保存当前跨模块共享基础能力和 bridge。
 
 例如：
 
-* Configuration
-* Secrets
-* Persistence
-* Sanitization
-* i18n
-* 跨应用基础设施
+- Configuration；
+- Secrets；
+- Persistence helper；
+- Sanitization；
+- i18n；
+- `DeltaCoreClient` 等迁移期 bridge。
 
 不得把 `packages/` 变成无法分类代码的收容目录。
 
-如果某个模块只服务于单一领域，应优先放入对应领域目录，而不是默认放入 `packages/`。
+R6 期间 bridge 只允许缩小或提供必要迁移 seam，不得形成新的长期 TS → Python → Rust 转发层。
 
 ## `resources/`
 
-`resources/` 只保存非代码资源。
-
-例如：
+`resources/` 只保存非代码资源，例如：
 
 ```text
 resources/brand/
 resources/screenshots/
 ```
 
-`resources/brand/` 是 Delta 品牌资源的唯一来源。
-
-生成后的图标可以位于实际使用目录，但源品牌资产不得多处独立维护。
+`resources/brand/` 是 Delta 品牌源资源的唯一维护位置。
 
 ## `packaging/`
 
-`packaging/` 只负责构建、打包和发行。
+`packaging/` 只负责构建、打包和发行：
 
-包括：
+- Portable；
+- 当前 Sidecar packaging；
+- Installer；
+- Release artifact；
+- Build script。
 
-* Portable
-* Sidecar packaging
-* Installer
-* Release artifact
-* Build script
+不得放业务运行时逻辑。
 
-不得把业务运行时代码放入 `packaging/`。
+当前 Python sidecar packaging 属于 R6 前实现事实；Rust + TypeScript hard-cut 后应删除不再需要的 Python Server 打包链。
 
 ## `tests/`
 
-Python/runtime 测试统一位于：
+当前 Python/runtime/跨语言测试统一位于：
 
 ```text
 tests/
 ```
 
-测试专用内容也应位于测试边界内，例如：
+Rust 单元测试与 crate 共置，Frontend test 与前端模块共置。
 
-* Fake
-* Fixture
-* Test helper
-* Mock service
+测试专用 Fake / Fixture / Mock 不得成为生产依赖。
 
-生产包中不得长期保留测试专用实现。
-
-Frontend 测试可以与对应模块共置。
-
-例如：
-
-```text
-apps/desktop/src/**/*.test.*
-packages/i18n/**/*.test.*
-```
-
-Frontend e2e 位于：
-
-```text
-apps/desktop/tests/
-```
+R6 期间测试应逐步从“Python 实现行为”转为“Runtime / Capability contract 行为”，使 Python Backend 可以被移除而不丢失产品语义基线。
 
 ## `docs/`
 
-文档按职责分为：
+当前文档职责：
 
 ```text
 docs/
-├─ architecture/
-├─ governance/
-└─ operations/
+├── DELTA_BLUEPRINT.md
+├── architecture/
+├── audits/
+├── governance/
+└── operations/
 ```
+
+### `docs/DELTA_BLUEPRINT.md`
+
+产品长期边界、三项核心能力、Skill / Learning 原则和长期成功标准。
 
 ### `docs/architecture/`
 
-保存当前有效的系统和代码结构说明。
+保存当前有效系统结构和目标架构：
 
-用于回答：
+- `target-architecture.md`：长期目标模块与语言边界；
+- `repository-layout.md`：当前物理目录；
+- `runtime-public-contract.md`：当前稳定 Runtime contract；
+- `capability-abi.md`：Rust ↔ Worker / Adapter 执行边界；
+- `adr/`：架构决策历史。
 
-* 系统如何划分
-* 模块职责是什么
-* 为什么采用当前结构
-* 依赖边界如何定义
+### `docs/audits/`
+
+保存仍有工程价值的审计闭环证据。审计文档不是产品目标定义来源。
 
 ### `docs/governance/`
 
-保存长期有效的项目治理规则。
-
-包括：
-
-* 开发治理
-* 质量治理
-* 发布治理
-* 依赖治理
-
-不保存：
-
-* 一次性整改报告
-* 已完成迁移记录
-* 临时操作步骤
-* 已失效历史说明
+保存长期开发、质量、发布、依赖和迁移治理。
 
 ### `docs/operations/`
 
-保存具体维护和平台操作说明。
-
-例如：
-
-* GitHub repository settings
-* Windows code signing
-* 后续确有必要保留的运维操作文档
-
-这里描述“如何操作”，不承担长期治理原则的定义。
+保存具体维护和平台操作说明，不承担长期产品或架构定义。
 
 ## `scripts/`
 
-`scripts/` 保存仓库维护和验证脚本。
+`scripts/` 保存仓库维护和验证脚本，例如 layout、legacy path、brand、build helper。
 
-例如：
-
-* Repository validation
-* Layout check
-* Legacy path check
-* Brand asset check
-* Build helper
-
-脚本应服务于明确的仓库维护目标。
-
-不得把业务运行时逻辑长期放在 `scripts/`。
+业务任务脚本不应因为“也是脚本”就长期放在这里；未来 Capability Worker / Skill script 应进入其明确能力边界。
 
 ## `.github/`
 
-`.github/` 保存 GitHub 平台相关配置。
+`.github/` 保存 GitHub 平台配置和 workflow。
 
-例如：
+治理原则写入 `docs/governance/`，具体平台操作写入 `docs/operations/`。
 
-```text
-.github/workflows/
-.github/dependabot.yml
-```
+## 当前依赖方向
 
-Workflow 负责自动化执行。
-
-治理原则应记录在：
+当前仓库仍处于 R6 前过渡形态，大致为：
 
 ```text
-docs/governance/
+TypeScript Desktop
+      ↓
+Tauri / local proxy
+      ↓
+Python server / application layer
+      ↓
+Python facades / capability glue
+      ↓
+Rust delta_core authority
 ```
 
-具体 GitHub 平台设置应记录在：
+这不是长期目标。
+
+## 目标依赖方向
 
 ```text
-docs/operations/
+Experience (TypeScript)
+        ↓
+Runtime (Rust)
+   ┌────┼────┐
+   ▼    ▼    ▼
+ Trust Work Capability
+   │           │
+   ├──────┐    ▼
+   ▼      ▼  Worker / External
+Automation Learning
 ```
 
-## 依赖边界
+目标要求：
 
-总体依赖方向应保持清晰。
-
-推荐关系：
-
-```text
-apps
-  ↓
-services
-  ↓
-core
- ↙   ↘
-providers integrations
-    ↓
-  packages
-```
-
-实际依赖不要求机械符合单一树形结构，但必须避免：
-
-* UI 反向成为核心运行时依赖
-* Provider 依赖具体 UI
-* Integration 直接控制 Desktop 展示
-* Packaging 承载业务逻辑
-* Test helper 被生产代码依赖
+- UI 不成为业务 Authority；
+- Worker 不拥有 Runtime；
+- Learning 不拥有 Trust；
+- Automation 不绕过 Runtime；
+- Provider / Integration 不反向控制 Desktop；
+- Packaging 不承载业务逻辑。
 
 ## 禁止恢复的旧顶层目录
 
-以下旧顶层目录不得重新出现：
+以下旧顶层目录当前不得重新出现：
 
 ```text
 surfaces/
@@ -357,13 +314,13 @@ assets/
 crates/
 ```
 
-这些目录已经被当前职责结构取代。
+其中 `crates/` 的禁止是**当前物理仓库治理规则**，不是“Rust 永远不能多 crate”的产品原则。若 R6 后真实依赖边界证明需要调整顶层 Rust 布局，应通过独立 ADR + layout migration 修改本文和 CI，而不是提前创建空结构。
 
-不得为了兼容旧路径重新建立空目录、代理目录或长期兼容层。
+不得为了兼容旧路径建立长期代理目录。
 
 ## 避免模糊顶层目录
 
-原则上不得新增缺乏明确职责的顶层目录，例如：
+原则上不得新增：
 
 ```text
 common/
@@ -375,34 +332,31 @@ base/
 legacy/
 ```
 
-新增模块必须优先归入现有职责边界。
-
-如果确实无法合理归类，应先重新评估架构职责，而不是直接增加一个模糊目录。
+若真实能力无法归类，应先检查目标七模块的职责，再决定是否需要物理结构变化。
 
 ## 目录变更
 
-涉及以下内容时，视为架构变更：
+以下视为架构变更：
 
-* 新增顶层目录
-* 删除顶层目录
-* 模块职责迁移
-* 关键依赖方向变化
-* 大规模路径调整
+- 新增 / 删除顶层目录；
+- 模块职责迁移；
+- 关键依赖方向变化；
+- Python Backend 物理退出；
+- 新增长期 Worker 根目录；
+- 大规模路径调整。
 
-此类变更必须：
+必须：
 
-1. 说明调整原因
-2. 明确新职责边界
-3. 完成相关代码迁移
-4. 更新本文档
-5. 更新相关 CI 检查
-6. 清理旧路径引用
-7. 不长期保留无必要兼容结构
+1. 说明调整原因；
+2. 明确当前与目标职责；
+3. 完成相关迁移；
+4. 更新本文；
+5. 更新 CI；
+6. 清理旧路径引用；
+7. 不长期保留无必要 compatibility structure。
 
 ## 当前结构优先
 
-仓库规范只描述当前有效结构。
+本文只描述当前有效物理结构。
 
-已经淘汰的目录和迁移过程不继续保存在当前架构文档中。
-
-历史需要追溯时，应通过 Git commit、Pull Request 和 `CHANGELOG.md` 查询。
+目标架构不应通过“提前建目录”伪装成已实现；已经淘汰的迁移过程通过 Git、PR、ADR 和 CHANGELOG 追溯。
