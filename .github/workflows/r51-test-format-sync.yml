@@ -24,7 +24,7 @@ jobs:
           from pathlib import Path
           p = Path("tests/test_server.py")
           s = p.read_text(encoding="utf-8")
-          old = '    assert [m["content"] for m in user_messages] == ["first", "second"]\ndef test_ws_rate_limits_inbound_frames(tmp_path):'
+          old = '    assert [m["content"] for m in user_messages] == ["first", "second"]\n\ndef test_ws_rate_limits_inbound_frames(tmp_path):'
           new = '    assert [m["content"] for m in user_messages] == ["first", "second"]\n\n\ndef test_ws_rate_limits_inbound_frames(tmp_path):'
           if s.count(old) != 1:
               raise SystemExit("expected steering test boundary not found exactly once")
