@@ -35,9 +35,28 @@ describe("composer runtime controls", () => {
     expect(onReasoningEffortChange).toHaveBeenCalledWith("high");
   });
 
-  it("disables reasoning changes while a task is running", () => {
-    renderComposer({ reasoningEffort: "low", onReasoningEffortChange: vi.fn(), running: true });
-    expect(screen.getByTestId("reasoning-menu-trigger").hasAttribute("disabled")).toBe(true);
+  it("keeps one active composer for steering while preserving stop and disabled reasoning", () => {
+    const onSend = vi.fn();
+    const onInterrupt = vi.fn();
+    renderComposer({
+      running: true,
+      reasoningEffort: "low",
+      onReasoningEffortChange: vi.fn(),
+      onSend,
+      onInterrupt,
+    });
+
+    const reasoning = screen.getByTestId("reasoning-menu-trigger");
+    expect(reasoning.textContent).toContain("Light");
+    expect(reasoning.hasAttribute("disabled")).toBe(true);
+
+    const input = screen.getByLabelText("调整当前任务");
+    fireEvent.change(input, { target: { value: "use the shorter path" } });
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+    expect(onSend).toHaveBeenCalledWith("use the shorter path");
+
+    fireEvent.click(screen.getByRole("button", { name: /Stop/ }));
+    expect(onInterrupt).toHaveBeenCalledTimes(1);
   });
 });
 
