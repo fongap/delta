@@ -1,123 +1,285 @@
 # Runtime Public Contract
 
-> 本文档规定 v0.3.2 之后，Delta Python Runtime（`core/` + `services/server/`）对外**不可随意变动**的稳定契约。
-> 当 Rust Core 迁移到来时，权威写入者由 Python 改为 Rust，但本契约的字段名、事件类型、HTTP 端点语义必须保持稳定。
-> 任何破坏性变更必须先经 ADR。
+> 本文记录 **R5.1 当前实现的稳定兼容契约**。它不是长期物理架构定义。
+>
+> 当前 Desktop 仍通过 Python application/server layer 使用 Runtime；多个 trusted domain 已由 Rust `delta_core` authoritative。R6 将把 Runtime Host 和 application control plane 收敛到 Rust，但在明确 ADR 破坏性变更前，应尽量保持本文的用户可见语义、领域对象和事件行为稳定。
+>
+> 目标架构见 `target-architecture.md`。
 
 ## 1. 范围
 
-### 包含
+当前契约包含：
 
-- `core/idemlog.py` 公开 API；
-- `core/recovery.py` 公开 API；
-- `core/artifact.py` 公开 API；
-- `core/validation.py` 公开 API；
-- `core/sources.py` 公开 API；
-- `core/analyzer.py` 公开 query；
-- `core/ledger.py` 事件类型集合；
-- `services/server/{manager.py, app.py, manager_*.py}` 对外 HTTP 端点。
+- Task / Session / Run identity 与 lifecycle 语义；
+- RunEvent / Ledger 事件；
+- SideEffect / Idempotency；
+- Approval / Policy 对外行为；
+- Artifact / Validation；
+- Source / Citation；
+- Checkpoint / Recovery；
+- Steer / Follow-up / Cancel 的用户控制语义；
+- `services/server/` 当前 HTTP / WS 表面；
+- Python ↔ Rust protocol compatibility（当前 v16）。
 
-### 不包含
+不包含：
 
-- 内部实现细节（如 sqlite schema column 顺序）；
-- 私有方法（下划线前缀）；
-- 测试 fixtures 字段；
-- 文档 markdown 排版。
+- Python class / mixin 内部结构；
+- sqlite schema column 顺序；
+- Tauri proxy 实现细节；
+- Worker 内部实现；
+- 测试 fixture；
+- 目标 R6 物理目录。
+
+R6 允许替换 Python 实现，但不能把“实现替换”伪装成可以随意改变产品 contract。
 
 ## 2. Core 领域对象
 
-### 2.1 Task
+### 2.1 Workspace / Session
 
-- 身份：`ScheduledTask.id` (string)；
-- 名称 / 描述 / 触发方式（`schedule` 或 `trigger` 二选一）；
-- 关联 `agent="code"|"delta"`（R1.6 起；2026-09-07 之前为 `"cowork"`，已 source-level rename 收口）。
-- 关联 `validation_criteria: ValidationCriteria`。
+- Workspace 是本地资源和授权边界；
+- Session 是持续工作上下文；
+- Session 可以关联 Workspace / roots、model、mode、messages、agent、reasoning effort、grants 等当前兼容字段；
+- R6 可改变存储 / IPC 实现，但应保留等价用户语义。
 
-### 2.2 Run
+### 2.2 Task
 
-- 身份：`run_id` (string, uuid)；
-- 与 Task 一一对应或由交互路径独立生成；
-- 状态机：见 §2.4 SideEffect 状态 + ledger events。
+当前 Automation Task 使用稳定 identity，并可产生 TaskRun。
 
-### 2.3 RunEvent (Ledger)
+Task 的 completion ownership 在 R5.1 中收敛：Scheduler 是 scheduled-run finalization 的唯一 owner，`complete_run` 原子更新运行结果与 task 调度状态。
 
-- 来源：`core/ledger.py` `KNOWN_EVENT_TYPES` 固定集合；
-- 字段：`run_id` / `type` / `seq` / `ts` / `actor` / `payload` / `workspace`；
-- 已知类型：
-  - `tool.proposed` / `tool.started` / `tool.finished` / `tool.denied`
-  - `approval.requested` / `approval.granted` / `approval.denied`
-  - `artifact.registered` / `artifact.completed`
-  - `validation.passed` / `validation.failed`
-  - `side_effect.planned` / `side_effect.committed` / `side_effect.failed` / `side_effect.uncertain` / `side_effect.uncommitted`（legacy alias）
-  - `run.started` / `run.resumed` / `run.completed` / `run.failed`
+### 2.3 Run
 
-> `run.resumed` 与 `run.started` 必须明确区分：resume 路径**不得**发 `run.started`。
+- `run_id` 是一次实际执行的稳定 identity；
+- 交互 turn、automation 和 resume 都必须归属清晰 Run；
+- resume 保持原 Run identity，不把恢复伪装成新 Run；
+- `interrupted` 是可恢复状态，不是“只要历史出现过就永久 terminal”。
 
-### 2.4 SideEffect
+### 2.4 RunEvent / Ledger
 
-- 状态机（`core/idemlog.py` `SideEffectState`）：
-  - `Planned` → `Executing` → `Committed` | `Failed` | `Uncertain`；
-- 操作身份：`operation_id(run_id, tool_call_id) = sha256(...).hexdigest()`；
-- 查询：
-  - `uncommitted_for_run(run_id)`；
-  - `uncertain_for_run(run_id)`；
-  - `committed_for_run(run_id)`；
-- Uncertain 一经写盘，**不得**由 engine 自动 replay，必须经 `POST /v1/runs/{run_id}/side-effects/{tool_call_id}/resolve`。
+核心字段：
 
-### 2.5 Artifact
+```text
+run_id
+type
+seq
+ts
+actor
+payload
+workspace
+```
 
-- 显式注册：`register_artifact(workspace, path, run_id, ledger, kind_classifier)`；
-- 写工具（`write_file` / `replace_in_file` / `apply_patch` / `apply_unified_diff`）commit 后由 engine 自动调用一次；
-- 字段：`path` / `name` / `kind` / `size` / `sha256` / `run_id` / `incomplete` / `registered_at`。
+长期事件类别包括：
 
-### 2.6 Validation
+```text
+run.*
+tool.*
+approval.*
+side_effect.*
+artifact.*
+validation.*
+user.steer.*
+```
 
-- 入口：`run_validation(artifacts, criteria, *, workspace, valid_citation_count)`；
-- 字段（`ValidationCriteria`）：
-  - `min_artifacts` / `max_artifacts`；
-  - `required_paths` / `required_substrings`；
-  - `min_size` / `max_size`；
-  - `require_complete`；
-  - `csv_required_headers`；
-  - `require_citations` / `min_valid_citations`（v0.3.2 新增）。
-- 失败结果以 `validation.failed` 入 ledger，任务状态变为 `validation_failed`。
+R5.1 Steering 事件：
 
-### 2.7 Recovery
+```text
+user.steer.requested
+user.steer.accepted
+user.steer.applied
+user.steer.deferred
+user.steer.rejected
+```
 
-- 快照：`RecoveryStore(base / "recovery-snapshots.json")`；
-- 写入时机：4 个 Inbox asker（approval / question / directory / plan）pending 时；
-- 字段：`schema` / `snapshot_at` / `run_id` / `session_id` / `phase` / `pending_tool_call` / `pending_inbox_item_id` / `last_event_seq` / `todo_summary` / `recent_artifacts` / `error`；
-- 契约：snapshot 是 **advisory**，engine resume 暂不读它。
+Steering 必须可复盘；UI 中的一次“改一下方向”不能只存在于瞬时内存。
+
+### 2.5 SideEffect
+
+Side-effect lifecycle 的 trusted decision 由 Rust authority 决定。
+
+核心状态：
+
+```text
+Planned → Executing → Committed | Failed | Uncertain
+```
+
+不变量：
+
+- operation identity 由 `run_id + tool_call_id` 稳定派生；
+- 相同 operation identity + 不同 args hash = identity collision，fail-closed；
+- 已执行但 trusted persistence 失败 → `Uncertain`，不得自动重放；
+- timeout 后无法证明未执行完成的动作 → `Uncertain`，不能假装 Failed 后安全重试。
+
+### 2.6 Artifact
+
+正式 Artifact 必须由 trusted Work/Artifact authority 登记，而不是 Worker 自报“完成”。
+
+核心信息至少包含：
+
+```text
+path
+name
+kind
+size
+sha256
+run_id
+incomplete
+registered_at
+```
+
+R6 Worker 化后仍保持：
+
+```text
+Worker staging
+  ↓
+Boundary / hash / validation
+  ↓
+Formal Artifact registration
+```
+
+### 2.7 Validation
+
+Validation 是“任务是否真正完成”的确定性证据之一。
+
+当前 Criteria 包含文件数量、路径、内容、大小、完整性、CSV headers 和 Citation 等约束。
+
+后续日常办公 / 研究分析 / 内容创作可以增加新的 Validator，但 Validator 不应被模型自然语言结论替代。
+
+研究分析尤其应允许验证：
+
+- 输入数据 identity / hash；
+- 分析产物完整性；
+- 设计矩阵 / 参数结构；
+- 必需报告章节；
+- 图表 / structured result 存在；
+- Source / Citation consistency。
 
 ### 2.8 Source / Citation
 
-- `core/sources.py` `Source` / `SourceStore` / `CitationRange`；
-- 5 类 validity：`valid` / `content_changed` / `out_of_bounds` / `file_missing` / `source_gone`；
-- `_VALIDITY_RANK` 决定跨 range hit 时的 worst-reason roll-up；
-- `core/analyzer.py` `source_citation_hits(source_id)` 按 source 维度计数（不接受 `workspace` / `run_id` 形参）；
-- per-run 有效引用计数由 `services/server/manager_automations.py` `_count_valid_citations` 提供（迭代 `src.all()` + 过滤 `run_id`）。
+Source / Citation 记录任务实际依据。
 
-## 3. HTTP 端点
+Validity 不能把“尚未验证”当成“有效”。R5.1 明确：`range_valid = None` 不计为 fully valid，无法验证范围时使用 `range_unverified` 等明确 reason。
 
-> 路径与字段名是契约的一部分；JSON 字段顺序不是。
+### 2.9 Checkpoint / Recovery
 
-| 路径 | 方法 | 用途 |
-|---|---|---|
-| `/v1/runs/{run_id}/side-effects` | GET | 列出该 run 所有 side effect（含 uncommitted / uncertain / committed） |
-| `/v1/runs/{run_id}/side-effects/{tool_call_id}/resolve` | POST | 用户/Operator 显式解决 uncertain |
-| `/v1/runs/{run_id}/detail` | GET | 聚合 timeline / artifacts / validation / side_effects / citations / recovery |
-| `/v1/subscriptions` | GET | 列出当前可订阅的事件源 |
+恢复事实必须由 trusted authority 保存。
 
-## 4. 不变量
+恢复应保留：
 
-1. **一份 run_id 贯穿五处**：TaskStore / Ledger / Artifact / Validation / IdemLog / Source store 全部使用同一 `run_id`。
-2. **Worker 不得直接修改 core 状态**（来自 ADR-009 §2）：Capability Worker 只能输出 staging，由 Rust Core（迁移前是 Python Server）做正式登记。
-3. **不确定副作用不自动 replay**：`Uncertain` 状态需 Operator 显式 `resolve`。
-4. **恢复边界 = 已提交事件**：`run.resumed` 不会发在比 `last_event_seq` 更早的位置。
-5. **mtime fast path 是启发式**：per-citation 强校验由 SHA256 验证承担；mtime 仅是性能捷径。
+- run identity；
+- phase；
+- pending action / human decision；
+- last committed event；
+- todo / work summary；
+- recent artifacts；
+- uncertain side effects；
+- error context。
 
-## 5. 变更流程
+R6 可以替换 Python Recovery glue，但不得降低这些语义。
 
-- **非破坏性**（新增字段 / 新增端点 / 新增事件类型）：直接 PR，但必须在 changelog 列出。
-- **破坏性**（删除字段 / 改字段类型 / 改状态机语义）：先写 ADR 改本文件，再写实现。
-- **跨领域**（如 SideEffect 状态机变化影响 Inbox）：先在 §2 列对照表里更新接口，再实现。
+## 3. Human Control Contract
+
+R5.1 将活动 Run 的用户控制明确分为三个不同语义。
+
+### 3.1 Steer
+
+- 修改**当前 Run** 的方向；
+- 保持同一个 `run_id`；
+- 在 Runtime safe point 应用；
+- 必须进入可审计事件；
+- 如果当前阶段不能安全应用，应 deferred / rejected，而不是悄悄丢失。
+
+### 3.2 Follow-up
+
+- 排队到当前 Run 完成后处理；
+- 不修改当前 Run 已在执行的方向；
+- 不应和 Steer 混成同一个“发送消息”动作。
+
+### 3.3 Cancel
+
+- 请求停止当前 Run；
+- 必须尊重 side-effect uncertainty；
+- 不得把已经产生的副作用伪装成未执行；
+- 不得无提示丢弃 queued follow-up。
+
+这三个语义在未来 TS → Rust direct IPC 后继续保持，不依赖 Python Server 存在。
+
+## 4. Runtime Protocol v16
+
+R5.1 当前 Python ↔ Rust control protocol 为 v16。
+
+关键 contract：
+
+- 每个 request 有 `request_id`；
+- streaming / long command 不阻塞主输入读取；
+- stdout reader + per-request demux；
+- real `request.cancel` 按 `request_id` 取消；
+- bounded inflight / backpressure；
+- control request 可在普通 inflight 饱和时保持可用；
+- protocol mismatch fail-closed；
+- shutdown 采用 graceful cancel → bounded wait → force-close。
+
+R6 将逐步减少跨进程 Python ↔ Rust protocol 在主产品路径中的地位，但这些并发、取消和 backpressure 语义应迁移到 Rust Runtime Host，而不是丢失。
+
+## 5. 当前 HTTP / WS Compatibility Surface
+
+`services/server/` 当前仍是 Desktop / browser 的 application API 边界。
+
+已有用户可见行为和 JSON/WS 语义在 R6 迁移期间应通过 TypeScript domain API、Tauri commands/events 或兼容 shim 保持，除非经过 ADR 明确改变。
+
+当前重要 API 类别包括：
+
+- session / run driving；
+- approval / inbox；
+- artifacts / sources / validation；
+- automation；
+- provider / settings；
+- connectors / skills / memory；
+- app-wide / session event streams。
+
+具体 Python endpoint 路径不是目标架构永远必须保留的网络协议；**用户行为和领域 contract 才是需要稳定迁移的部分**。
+
+## 6. 不变量
+
+1. **一个领域一个 Authority**：迁移不能恢复 Python/Rust 双主控。
+2. **一份 run identity 贯穿事实链**：Ledger、Artifact、Validation、SideEffect、Source 等必须可归属到同一 Run。
+3. **Worker 不修改核心状态**：Capability Worker 只返回 structured result / staging；Rust 正式登记。
+4. **Uncertain 不自动 replay**：无法证明安全时 fail-closed。
+5. **Human control 可审计**：Steer / Cancel 等影响执行方向的动作必须成为 Runtime 事实。
+6. **UI 不推导 Authority**：React 显示状态，但不自行决定 Run / Approval / Validation 事实。
+7. **Learning 不改变权限**：Experience / Skill promotion 不得绕过 Trust。
+8. **迁移实现可以改变，产品语义不能静默漂移**。
+
+## 7. R6 兼容策略
+
+目标调用路径：
+
+```text
+TypeScript
+   ↓
+Tauri Commands / Events
+   ↓
+Rust Runtime Host
+```
+
+迁移优先顺序：
+
+1. 保持前端 domain types / user semantics；
+2. 在 Rust 实现等价 Runtime API；
+3. 逐项切换 TypeScript 调用；
+4. contract / E2E 双向验证；
+5. 删除对应 Python endpoint / manager / facade；
+6. 不长期维护 TS → Python → Rust 纯转发链。
+
+## 8. 变更流程
+
+### 非破坏性
+
+新增字段、事件、validator 或 capability metadata，可以普通 PR，但必须有测试和文档。
+
+### 破坏性
+
+删除字段、改变 lifecycle / approval / side-effect / steering 语义、改变持久化 identity 等，必须先有 ADR。
+
+### Runtime replacement
+
+如果仅把同一 contract 从 Python 搬到 Rust，不需要重新发明产品模型；应以 contract test + E2E 证明行为保持。
