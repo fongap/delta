@@ -348,7 +348,7 @@ class TurnEngineAdapter:
 
     @property
     def agent_name(self) -> str:
-        return getattr(self._engine, "agent_name", "code")
+        return getattr(self._engine, "agent_name", "delta")
 
     @property
     def model(self) -> str:

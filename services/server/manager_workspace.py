@@ -169,13 +169,13 @@ class WorkspaceTrustMixin(ManagerHostState):
 
     # -- engines ----------------------------------------------------------------
     def engine_workspace(
-        self, session_id: str, *, workspace: str | None = None, agent: str = "code"
+        self, session_id: str, *, workspace: str | None = None, agent: str = "delta"
     ) -> str | None:
         """The workspace `get_engine` would bind — for prepping MCP tools beforehand."""
         record = self.session_store.load(session_id)
         if record:
             return record.workspace or None
-        ag = get_agent(agent or "code")
+        ag = get_agent(agent or "delta")
         return self.resolve_workspace(workspace) if ag.needs_workspace else None
 
 

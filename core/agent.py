@@ -1,4 +1,4 @@
-"""Engine assembly from an Agent (Code / Chat / …).
+"""Engine assembly from an Agent (Delta).
 
 Wires the agent's base tools + permissions + AGENTS.md (workspace agents) + memory +
 the skill catalog (progressive disclosure) + load_skill into a TurnEngine.
@@ -9,7 +9,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Callable
 
-from core.agents import Agent, AgentContext, code_agent
+from core.agents import Agent, AgentContext
 from core.automation import scheduling_tools
 from packages.config import load_config
 from integrations.connectors import (
@@ -49,7 +49,6 @@ from integrations.tools.ask import ask_user_tool
 from integrations.tools.directories import request_directory_tool
 from integrations.tools.plan import propose_plan_tool
 from integrations.tools.shell import LocalExecutor
-from integrations.tools.subagent import explorer_tools
 from integrations.tools.todo import TodoList
 from integrations.web import make_web_fetch_tool, make_web_search_tool
 from core.workspace_trust import WorkspaceTrustStore
@@ -275,7 +274,7 @@ def build_engine(
     # MCP / connector tools (supplied by the manager) carry their own metadata + schema.
     if extra_tools:
         registry.register_all(extra_tools)
-    # Messaging personas (Delta / Ops / MyHelper) expose send_message; MyHelper also uses it as
+    # Messaging personas (Delta) expose send_message.
     # the reply path for inbound Telegram/Slack super-agent sessions.
     secrets = secrets or SecretStore()
     if agent.messaging and any(s.enabled for s in load_settings(secrets).values()):
@@ -322,23 +321,11 @@ def build_engine(
         registry.register(ask_user_tool())
     # Route by the model's `provider:` prefix (OpenAI default or a configured alias). The manager normally
     # passes its shared router; this fallback covers the TUI / direct build_engine() callers.
-    # Resolved here (not at engine construction) because the explorer subagent captures it.
     provider = provider or ProviderRouter(
         secrets, default_provider="openai", core=maybe_core_client()
     )
-    # Code-family personas can fan broad research out to read-only explorer subagents, keeping
-    # their own context for the actual change.
-    if agent.family == "code" and ws is not None:
-        registry.register_all(
-            explorer_tools(
-                workspace=ws,
-                provider=provider,
-                model=model,
-                model_settings=model_settings,
-            )
-        )
-    # Scheduling: knowledge surfaces with a workspace can set up scheduled tasks (origin = this
-    # session). Code stays out (it fans out to explorers instead).
+    # Scheduling: a workspace-bound agent can set up scheduled tasks (origin = this
+    # session).
     if task_store is not None and ws is not None and agent.family == "knowledge":
         origin = {
             "surface": agent.name,
@@ -446,7 +433,7 @@ def build_engine(
     # Per-turn ephemeral context, appended to the latest user message since mid-thread system
     # messages aren't reliable across providers. Three producers: the plan-mode reminder (mode can
     # flip mid-session, so it's checked each turn, not baked into the instructions), the live
-    # directory list (orphan Delta can gain folders mid-session; Delta/MyHelper only), and the
+    # directory list (orphan Delta can gain folders mid-session), and the
     # memory-SAVING notice (same reason as plan mode — the switch flips either way mid-chat).
     # Note what is NOT here: the memories and the user's rules. Those are knowledge, fixed at
     # session start (§7.1).
@@ -540,8 +527,3 @@ def build_engine(
     engine.skill_loader = skill_loader  # type: ignore[attr-defined]
     _engine_box.append(engine)  # late-bind for the countermand (see context_provider)
     return engine
-
-
-def build_code_engine(**kwargs: Any) -> TurnEngine:
-    """Back-compat shim: build the Code agent's engine."""
-    return build_engine(agent=code_agent(), **kwargs)

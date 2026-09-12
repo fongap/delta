@@ -161,14 +161,14 @@ if TYPE_CHECKING:
             session_id: str,
             *,
             workspace: str | None = None,
-            agent: str = "code",
+            agent: str = "delta",
         ) -> str | None: ...
         def get_engine(
             self,
             session_id: str,
             *,
             workspace: str | None = None,
-            agent: str = "code",
+            agent: str = "delta",
             approver: Approver | None = None,
             extra_tools: list[Any] | None = None,
             directory_requester: Any | None = None,

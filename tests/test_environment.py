@@ -65,9 +65,9 @@ class _Stub:
 
 def test_build_engine_injects_environment(tmp_path):
     from core.agent import build_engine
-    from core.agents import code_agent
+    from core.agents import delta_agent
 
-    engine = build_engine(agent=code_agent(), workspace=tmp_path, provider=_Stub())
+    engine = build_engine(agent=delta_agent(), workspace=tmp_path, provider=_Stub())
     try:
         system = engine.messages[0]
         assert system["role"] == "system"

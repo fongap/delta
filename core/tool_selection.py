@@ -18,13 +18,6 @@ deterministic and conservative:
 - Categories only GROW within a turn (the scan window widens as the turn progresses) —
   a task that starts as "summarize this" and turns into "save it to a file" keeps its
   file tools from the moment the model asks for them.
-- `family="code"` pins the workspace base (files/search/shell/git): a coding agent whose
-  shell tools depend on keyword luck is broken by design.
-
-Escape hatches (engine-owned): a turn whose reply contains tool-call markup naming a
-withheld tool flips the session to full injection (`named_withheld_tools`), and a
-context-budget trim can drop to CORE-only for a turn. `"full"`/`"off"` modes (and any
-non-"auto" value) restore the old always-everything behavior exactly.
 """
 
 from __future__ import annotations
@@ -43,20 +36,12 @@ CORE_TOOLS = frozenset(
 # skill to disk), which is core otherwise but must not ride a read-only turn.
 CORE_READONLY = CORE_TOOLS - {"save_skill"}
 
-# family → categories injected regardless of signals. Code is workspace-bound BY
-# PURPOSE; keyword-gating its file/shell/search/git tools would trade reliability
-# for tokens on the surface where reliability is the product.
-FAMILY_BASE: dict[str, frozenset[str]] = {
-    "code": frozenset({"files", "search", "shell", "git"}),
-}
-
 # Ordered name → category rules; first match wins. Order matters: `send_file` must be
-# messaging (not files), `web_search` must be web (not search), `git_diff` must be git.
+# messaging (not files), `web_search` must be web (not search).
 _NAME_RULES: tuple[tuple[str, str], ...] = (
     (r"shell|^run_|command", "shell"),
     (r"send_|message|channel|subscription|notif", "messaging"),
     (r"schedul|wake|sleep_|timer|cron|recurr|remind", "automation"),
-    (r"^git_|commit|branch|pull_request", "git"),
     (r"memory|remember|recall", "memory"),
     (r"web_|browser|_url", "web"),
     (r"^grep$|search_files|^search$|ripgrep", "search"),
@@ -147,9 +132,6 @@ _SIGNALS: dict[str, tuple[str, ...]] = {
         r"grep|ripgrep|全文|源码|代码里|codebase",
         r"\bfind\b.{0,16}\b(files|code|where)\b|search.{0,12}(code|files)",
     ),
-    "git": (
-        r"\bgit\b|commit|push|branch|merge|rebase|\bdiff\b|提交|分支|合并|版本",
-    ),
     "web": (
         r"网页|网站|上网|搜索|链接|最新|今天|新闻|热搜|截图|浏览器",
         r"\bweb\b|\bsearch\b|look\s?up|browse|http|url|google|bing|duckduckgo|browser|screenshot|latest|news",
@@ -237,7 +219,8 @@ def select_tool_names(
     """The tool names to inject for THIS call. `minimal` (context-budget trim) drops
     to the core set only; `read_only` (a read-only task or plan phase) additionally
     excludes write/exec tools so a "summarize this" turn never carries run_shell or
-    write_file. Core + family base + signal matches + misc otherwise."""
+    write_file. Core + signal matches + misc otherwise. ``family`` is accepted for
+    signature stability (R6.0 removed the code-family base; it is now unused)."""
     available = set(registry_names)
     core = CORE_READONLY if read_only else CORE_TOOLS
     selected = set(core & available)
@@ -246,7 +229,7 @@ def select_tool_names(
     misc = {n for n in available if tool_category(n) == "misc"}
     if minimal:
         return sorted(selected | misc)
-    categories = FAMILY_BASE.get(family, frozenset()) | turn_signal_categories(messages)
+    categories = turn_signal_categories(messages)
     for name in available - selected - misc:
         if tool_category(name) not in categories:
             continue

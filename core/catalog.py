@@ -1,15 +1,15 @@
-"""Vetted tool catalog — the stable ``id → capability`` layer a persona references.
+"""Vetted tool catalog — the stable ``id → capability`` layer the Delta agent references.
 
 A *capability* bundles a group of tools (the existing ``tools/`` factories) behind a stable
 id, plus what session context it needs (``requires``) and the risk classes it can produce
-(``risk``, used by the Phase 2 install-consent screen). ``expand(ids, context)`` turns a
-persona's ``tools:`` list into concrete callables, skipping capabilities whose context
-prerequisites aren't met (e.g. no shell without an executor) — matching the per-agent
-factories that used to assemble tools by hand.
+(``risk``). ``expand(ids, context)`` turns a capability id list into concrete callables,
+skipping capabilities whose context prerequisites aren't met (e.g. no shell without an
+executor).
 
-The catalog is **platform-owned and closed**: third parties get breadth from us adding
-vetted capabilities here and from MCP, never by adding entries. MCP tools are *not* in the
-catalog (see ``PERMISSIONS-AND-INBOX.md``).
+The catalog is **platform-owned and closed**: breadth comes from vetted capabilities here
+and from MCP, never from third-party entries. Coding-specific capabilities (repo-centric
+file editing, git) were removed in R6.0 — generic file editing lives in ``files`` and
+script execution in ``shell``.
 """
 
 from __future__ import annotations
@@ -23,7 +23,6 @@ from core.agents.base import AgentContext
 from core.risk import RiskClass
 from integrations.tools.documents import document_tools
 from integrations.tools.files import file_tools
-from integrations.tools.git import git_tools
 from integrations.tools.search import search_tools
 from integrations.tools.shell import shell_tools
 from integrations.tools.todo import todo_tools
@@ -39,7 +38,7 @@ _REQUIREMENTS: dict[str, Callable[[AgentContext], bool]] = {
 @dataclass(frozen=True)
 class Capability:
     id: str
-    name: str  # human label (consent screen)
+    name: str  # human label
     description: str
     build: Callable[[AgentContext], list]
     requires: tuple[str, ...] = ()
@@ -50,43 +49,13 @@ class Capability:
 
 
 # -- capability builders --------------------------------------------------------
-# These reproduce, exactly, what the Code and Delta agent factories assembled by hand.
-
-
-def _code_files(context: AgentContext) -> list:
-    """Repo-oriented files: single-root, line-numbered/windowed `read_file`. Our `grep` and
-    windowed `read_file` / `read_file_lines` replace aisuite's slower
-    `search_files` / `read_file` / `read_file_lines`. `read_document` (P2 实用)
-    adds PDF / XLSX / DOCX reading with typed citations.
-    """
-    ws = str(context.workspace)
-    replaced = {"search_files", "read_file", "read_file_lines"}
-    files = [
-        t
-        for t in ai.toolkits.files(root=ws, allow_write=True)
-        if getattr(t, "__name__", "") not in replaced
-    ]
-    return [
-        *files,
-        *file_tools(
-            ws,
-            source_store=context.source_store,
-            run_id=context.run_id,
-        ),
-        *document_tools(
-            ws,
-            source_store=context.source_store,
-            run_id=context.run_id,
-        ),
-    ]
 
 
 def _files(context: AgentContext) -> list:
     """Knowledge-work files: multi-root aware (reads/writes across the session's roots).
-    Both ``read_file`` and ``read_file_lines`` come from our cite-aware multi-root
-    toolkit (P2 follow-up A; ``read_file_lines`` gained a Source/Citation hook in
-    the v0.3.1 release-hardening pass so windowed reads are also auditable).
-    Only our ``grep`` replaces the slow ``search_files``.
+    Includes the generic editors — write_file, apply_patch, apply_unified_diff,
+    replace_in_file, list_files — plus our cite-aware multi-root ``read_file`` /
+    ``read_file_lines`` and ``grep`` (our readers replace aisuite's slower ones).
     """
     ws = str(context.workspace)
     toolkit = (
@@ -110,12 +79,15 @@ def _files(context: AgentContext) -> list:
             run_id=context.run_id,
             roots=context.roots,
         ),
+        # read_document (moved from the retired code_files capability): PDF / XLSX /
+        # DOCX reading with typed citations. Office work needs document reading, so this
+        # generic capability lives in `files` now, not on a retired coding surface.
+        *document_tools(
+            ws,
+            source_store=context.source_store,
+            run_id=context.run_id,
+        ),
     ]
-
-
-def _git(context: AgentContext) -> list:
-    ws = str(context.workspace)
-    return [*ai.toolkits.git(root=ws), *git_tools(ws)]  # git_status, git_diff, git_log
 
 
 def _search(context: AgentContext) -> list:
@@ -134,14 +106,6 @@ def _todo(context: AgentContext) -> list:
 
 _CAPS: list[Capability] = [
     Capability(
-        id="code_files",
-        name="Code files",
-        description="Read & edit files in a single repo workspace (line-numbered reads).",
-        build=_code_files,
-        requires=("workspace",),
-        risk=(RiskClass.READ, RiskClass.WRITE_LOCAL),
-    ),
-    Capability(
         id="files",
         name="Files",
         description="Read & edit files across the session's workspace folders.",
@@ -150,17 +114,9 @@ _CAPS: list[Capability] = [
         risk=(RiskClass.READ, RiskClass.WRITE_LOCAL),
     ),
     Capability(
-        id="git",
-        name="Git",
-        description="Inspect git state and history (status, diff, log).",
-        build=_git,
-        requires=("workspace",),
-        risk=(RiskClass.READ,),
-    ),
-    Capability(
         id="search",
         name="Search",
-        description="Fast code/content search (grep).",
+        description="Fast content search (grep).",
         build=_search,
         requires=("workspace",),
         risk=(RiskClass.READ,),
@@ -168,7 +124,7 @@ _CAPS: list[Capability] = [
     Capability(
         id="shell",
         name="Shell",
-        description="Run shell commands in a persistent session.",
+        description="Run shell commands and scripts in a persistent session.",
         build=_shell,
         requires=("executor",),
         risk=(RiskClass.EXEC,),
@@ -194,10 +150,9 @@ def capability(cap_id: str) -> Capability:
 
 
 def expand(ids: list[str], context: AgentContext) -> list:
-    """Expand a persona's ``tools:`` id list into concrete tool callables for this context.
+    """Expand a ``tools:`` id list into concrete tool callables for this context.
     Capabilities whose context prerequisites aren't met are skipped (no shell without an
-    executor, no files without a workspace) — exactly like the old hand-written factories.
-    """
+    executor, no files without a workspace)."""
     tools: list = []
     for cap_id in ids:
         cap = capability(cap_id)
@@ -207,8 +162,9 @@ def expand(ids: list[str], context: AgentContext) -> list:
 
 
 def risk_summary(ids: list[str]) -> set[RiskClass]:
-    """The union of risk classes a tool list can produce — for the install-consent screen."""
+    """The union of risk classes a tool list can produce."""
     out: set[RiskClass] = set()
     for cap_id in ids:
         out.update(capability(cap_id).risk)
     return out
+

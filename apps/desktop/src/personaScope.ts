@@ -1,30 +1,18 @@
-// A persona is "project-scoped" only when it's code-family: an explicit directory the user
-// picks, sessions grouped by project in the sidebar. Everything else (knowledge, chat) runs on
-// a transparent per-conversation scratch dir, with real folders added as roots when needed —
-// no folder gate, ever. (The old workspace enum — git/project/deliverable/none — collapsed
-// into family; owner decision 2026-07-03, UX-DECISIONS §16.)
-export function isProjectScoped(p?: { workspace?: string; family?: string }): boolean {
-  return p?.family === "code";
+// Delta is the only product persona. No persona is "project-scoped" (that was the retired
+// code-family behavior: an explicit directory picked by the user, sessions grouped by project);
+// Delta runs on a transparent per-conversation scratch dir, with real folders added as roots
+// when needed — no folder gate.
+export function isProjectScoped(_p?: { workspace?: string; family?: string }): boolean {
+  return false;
 }
 
-// Persona naming: the product is "Delta"; the personas are a "Delta" family — Delta (general),
-// Delta Code, Delta Ops. In lists/chrome we use the SHORT label (Delta / Code / Ops); the persona
-// detail page uses the FULL family name. Backend names are left untouched (the API + tests keep
-// "Delta" / "Ops Delta"); this is purely the display layer.
-
-// Short label for the sidebar + top bar: "Delta" / "Code" / "Ops" / "Chat".
+// Persona naming: the product is "Delta"; there is exactly one persona. These helpers keep the
+// API shape (name + id) so the display layer doesn't special-case; with only Delta they always
+// render "Delta".
 export function shortPersonaName(name?: string, id?: string): string {
-  if (id === "delta") return "Delta";
-  const n = (name || id || "").trim();
-  return n.replace(/\s*delta$/i, "").trim() || n;
+  return id === "delta" ? "Delta" : (name || id || "").trim() || "Delta";
 }
 
-// Full family name for the persona detail page: "Delta" / "Delta Code" / "Delta Ops".
-// Chat isn't a Delta persona — left as-is.
 export function fullPersonaName(name?: string, id?: string): string {
-  if (id === "delta") return "Delta";
-  const n = (name || id || "").trim();
-  if (id === "chat" || !n) return n;
-  const short = n.replace(/\s*delta$/i, "").trim() || n;
-  return `Delta ${short}`;
+  return id === "delta" ? "Delta" : (name || id || "").trim() || "Delta";
 }

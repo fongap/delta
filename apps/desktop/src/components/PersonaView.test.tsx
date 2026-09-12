@@ -26,20 +26,20 @@ function stubFetch(routes: { match: string; method?: string; json: any }[]) {
 }
 
 const DETAIL = {
-  id: "ops",
-  name: "Ops Delta",
-  icon: "🛠️",
-  tagline: "Operate and investigate",
-  description: "A careful, methodical operations engineer.",
+  id: "delta",
+  name: "Delta",
+  icon: "◆",
+  tagline: "Produce a deliverable — office, research, content, scripts",
+  description: "A local-first work agent for office work, research & analysis, and content creation.",
   enabled: true,
-  tools: ["files", "search", "shell"],
+  tools: ["files", "search", "shell", "todo"],
   recommended_models: ["claude-opus-4-8", "gpt-5.5"],
   default_permission_mode: "interactive",
   workspace: "deliverable",
   recommends: [
-    { kind: "connector", ref: "github", reason: "confirm deploys", tier: "core", connected: true },
-    { kind: "connector", ref: "datadog", reason: "pull alerts", tier: "core", connected: false },
-    { kind: "mcp", ref: "filesystem", reason: "read runbooks", tier: "optional", connected: false },
+    { kind: "connector", ref: "github", reason: "pull context from repos", tier: "core", connected: true },
+    { kind: "connector", ref: "datadog", reason: "pull metrics", tier: "core", connected: false },
+    { kind: "mcp", ref: "filesystem", reason: "read shared files", tier: "optional", connected: false },
   ],
   default_connections: [
     { connector: "slack", enabled: true, connected: true },
@@ -63,14 +63,14 @@ afterEach(() => {
 describe("PersonaView", () => {
   it("renders the persona detail (identity, tools, recommends + connect state) from the endpoint", async () => {
     stubFetch([
-      { match: "/v1/personas/ops", method: "GET", json: DETAIL },
+      { match: "/v1/personas/delta", method: "GET", json: DETAIL },
       { match: "/v1/connectors", method: "GET", json: CONNECTORS },
     ]);
-    renderView(<PersonaView personaId="ops" />);
+    renderView(<PersonaView personaId="delta" />);
 
-    expect(await screen.findByText("Delta Ops")).toBeTruthy();
-    expect(screen.getByText("Operate and investigate")).toBeTruthy();
-    expect(screen.getByText("A careful, methodical operations engineer.")).toBeTruthy();
+    expect(await screen.findByText("Delta")).toBeTruthy();
+    expect(screen.getByText("Produce a deliverable — office, research, content, scripts")).toBeTruthy();
+    expect(screen.getByText("A local-first work agent for office work, research & analysis, and content creation.")).toBeTruthy();
     // tools rendered as chips
     expect(screen.getByText("shell")).toBeTruthy();
     // a connected recommend shows "connected"; an unconnected one offers Connect/Add
@@ -83,10 +83,10 @@ describe("PersonaView", () => {
 
   it("toggling a default connection POSTs /connections and applies the returned defaults", async () => {
     const calls = stubFetch([
-      { match: "/v1/personas/ops", method: "GET", json: DETAIL },
+      { match: "/v1/personas/delta", method: "GET", json: DETAIL },
       { match: "/v1/connectors", method: "GET", json: CONNECTORS },
       {
-        match: "/v1/personas/ops/connections",
+        match: "/v1/personas/delta/connections",
         method: "POST",
         json: {
           ok: true,
@@ -97,8 +97,8 @@ describe("PersonaView", () => {
         },
       },
     ]);
-    renderView(<PersonaView personaId="ops" />);
-    await screen.findByText("Delta Ops");
+    renderView(<PersonaView personaId="delta" />);
+    await screen.findByText("Delta");
 
     // Switches in DOM order: [0] persona Enable, then the default-connection toggles. Slack is the
     // checked+enabled default; datadog is disabled (not connected). Target the last checked+enabled
@@ -111,7 +111,7 @@ describe("PersonaView", () => {
 
     await waitFor(() => {
       const post = calls.find(
-        (c) => c.method === "POST" && c.url.includes("/v1/personas/ops/connections"),
+        (c) => c.method === "POST" && c.url.includes("/v1/personas/delta/connections"),
       );
       expect(post).toBeTruthy();
       expect(post!.body).toMatchObject({ connector: "slack", enabled: false });
@@ -120,19 +120,19 @@ describe("PersonaView", () => {
 
   it("toggling Enable POSTs /enable", async () => {
     const calls = stubFetch([
-      { match: "/v1/personas/ops", method: "GET", json: DETAIL },
+      { match: "/v1/personas/delta", method: "GET", json: DETAIL },
       { match: "/v1/connectors", method: "GET", json: CONNECTORS },
-      { match: "/v1/personas/ops/enable", method: "POST", json: { ok: true } },
+      { match: "/v1/personas/delta/enable", method: "POST", json: { ok: true } },
     ]);
-    renderView(<PersonaView personaId="ops" />);
-    await screen.findByText("Delta Ops");
+    renderView(<PersonaView personaId="delta" />);
+    await screen.findByText("Delta");
 
     // The enable switch is the first one in DOM order (identity header).
     const enableToggle = screen.getAllByRole("switch")[0];
     fireEvent.click(enableToggle);
 
     await waitFor(() => {
-      const post = calls.find((c) => c.method === "POST" && c.url.includes("/v1/personas/ops/enable"));
+      const post = calls.find((c) => c.method === "POST" && c.url.includes("/v1/personas/delta/enable"));
       expect(post).toBeTruthy();
       expect(post!.body).toMatchObject({ enabled: false });
     });

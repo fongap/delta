@@ -274,7 +274,8 @@ def test_engine_catalog_respects_settings_disable(tmp_path):
     from core.agents.registry import get_agent
 
     engine = build_engine(
-        agent=get_agent("chat"),
+        agent=get_agent("delta"),
+        workspace=tmp_path,
         provider=ScriptedProvider(),
         skill_filter=lambda: manager.effective_skill_names("s1"),
     )

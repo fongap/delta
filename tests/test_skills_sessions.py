@@ -151,8 +151,11 @@ def test_live_load_skill_semantics(manager):
     from core.agents.registry import get_agent
 
     _skill(manager.skill_store.global_dir, "early", body="early body")
+    ws = manager.default_workspace
+    Path(ws).mkdir(parents=True, exist_ok=True)
     engine = build_engine(
-        agent=get_agent("chat"),
+        agent=get_agent("delta"),
+        workspace=ws,
         provider=ScriptedProvider(),
         skill_filter=lambda: manager.effective_skill_names("s1"),
     )
@@ -201,8 +204,11 @@ def test_disable_countermand_for_loaded_skills(manager):
 
     _skill(manager.skill_store.global_dir, "used-one", body="used body")
     _skill(manager.skill_store.global_dir, "unused-one", body="never loaded")
+    ws = manager.default_workspace
+    Path(ws).mkdir(parents=True, exist_ok=True)
     engine = build_engine(
-        agent=get_agent("chat"),
+        agent=get_agent("delta"),
+        workspace=ws,
         provider=ScriptedProvider(),
         skill_filter=lambda: manager.effective_skill_names("s1"),
     )

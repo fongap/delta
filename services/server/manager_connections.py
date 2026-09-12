@@ -75,16 +75,14 @@ class ConnectionsMixin(ManagerHostState):
     # -- persona + session connection surfaces (UI-REFRESH §5/§6) ----------------
     @staticmethod
     def _workspace_kind(entry) -> str:
-        """The persona's workspace requirement as a stable string for the GUI. Manifest-backed
-        personas carry it verbatim (git|deliverable|none); builtins (which have no manifest) map
-        family/needs_workspace into the SAME vocabulary so the frontend reads one enum:
-        code-family → git, knowledge-family with a workspace → deliverable, none → none.
-        """
+        """The persona's workspace requirement as a stable string for the GUI. Delta is the
+        only registered persona and always carries ``workspace="deliverable"``; a legacy
+        built-in (no manifest) maps to deliverable/none here for one-vocabulary reads."""
         if entry.manifest is not None:
             return entry.manifest.workspace
         if not entry.needs_workspace:
             return "none"
-        return "git" if entry.family == "code" else "deliverable"
+        return entry.workspace or "deliverable"
 
 
     def _connected_connectors(self) -> set[str]:

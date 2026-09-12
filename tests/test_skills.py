@@ -1,9 +1,9 @@
-"""Agents (Code/Chat) + SKILL.md loader (catalog + load_skill)."""
+"""Delta agent + SKILL.md loader (catalog + load_skill)."""
 
 from __future__ import annotations
 
 from core.agent import build_engine
-from core.agents import AgentContext, chat_agent, code_agent, get_agent
+from core.agents import AgentContext, delta_agent, get_agent
 from providers import ModelCapabilities
 from integrations.skills import SkillLoader, skill_catalog_text, skill_tools
 from integrations.tools import ToolRegistry
@@ -22,15 +22,14 @@ class _Stub:
 # -- agents ---------------------------------------------------------------------
 
 
-def test_code_agent_tools(tmp_path):
+def test_delta_agent_tools(tmp_path):
     ex = LocalExecutor(cwd=tmp_path, default_timeout=5)
     try:
         ctx = AgentContext(workspace=tmp_path, executor=ex, todo=TodoList())
-        names = {getattr(t, "__name__", "?") for t in code_agent().build_tools(ctx)}
+        names = {getattr(t, "__name__", "?") for t in delta_agent().build_tools(ctx)}
         assert {
             "read_file",
             "write_file",
-            "git_status",
             "run_shell",
             "todo_write",
         } <= names
@@ -38,14 +37,8 @@ def test_code_agent_tools(tmp_path):
         ex.close()
 
 
-def test_chat_agent_has_no_workspace_tools():
-    assert chat_agent().build_tools(AgentContext()) == []
-    assert chat_agent().needs_workspace is False
-    assert code_agent().needs_workspace is True
-
-
 def test_get_agent_fallback():
-    assert get_agent("chat").name == "chat"
+    assert get_agent("chat").name == "delta"
     # Unknown ids fall back to the default persona (Delta), per the persona registry.
     assert get_agent("nope").name == "delta"
 
@@ -83,21 +76,13 @@ def test_skill_loader_catalog_and_load(tmp_path):
 # -- engine assembly per agent --------------------------------------------------
 
 
-def test_build_engine_chat(tmp_path):
-    engine = build_engine(agent=chat_agent(), provider=_Stub())
-    assert "load_skill" in engine.registry.names()
-    assert "read_file" not in engine.registry.names()
-    assert engine.executor is None
-    assert engine.agent_name == "chat"
-
-
-def test_build_engine_code_has_agents_md_and_skills(tmp_path):
+def test_build_engine_delta_has_agents_md_and_skills(tmp_path):
     (tmp_path / "AGENTS.md").write_text("PROJECT RULE: prefer pathlib.")
-    engine = build_engine(agent=code_agent(), workspace=tmp_path, provider=_Stub())
+    engine = build_engine(agent=delta_agent(), workspace=tmp_path, provider=_Stub())
     try:
         assert "prefer pathlib" in engine.messages[0]["content"]
         assert "todo_write" in engine.registry.names()
         assert "load_skill" in engine.registry.names()
-        assert engine.agent_name == "code"
+        assert engine.agent_name == "delta"
     finally:
         engine.executor.close()

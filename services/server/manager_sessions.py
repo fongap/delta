@@ -90,7 +90,7 @@ class SessionsMixin(ManagerHostState):
         session_id: str,
         *,
         workspace: str | None = None,
-        agent: str = "code",
+        agent: str = "delta",
         approver: Approver | None = None,
         extra_tools: list[Any] | None = None,
         directory_requester: Any | None = None,
@@ -110,7 +110,7 @@ class SessionsMixin(ManagerHostState):
 
         record = self.session_store.load(session_id)
         is_new_session = record is None
-        agent_name = (record.agent if record else agent) or "code"
+        agent_name = (record.agent if record else agent) or "delta"
         ag = get_agent(agent_name)
 
         if record:
@@ -121,18 +121,14 @@ class SessionsMixin(ManagerHostState):
             model, mode, messages = self.model, self.mode, None
 
         if ag.needs_workspace and (not ws or not Path(ws).is_dir()):
-            # Knowledge surfaces (Delta, Ops, …) start "orphan": no folder picked →
-            # auto-provision a per-conversation scratch directory (generalizes MyHelper's
-            # auto-workspace). Code-family surfaces still require a real repo; Chat needs none.
-            if ag.family == "knowledge":
-                ws = self._provision_scratch(session_id)
-            else:
-                return None
+            # No folder picked → auto-provision a per-conversation scratch directory.
+            # Delta always has a workspace.
+            ws = self._provision_scratch(session_id)
 
         if ws:
             self.session_store.touch_workspace(ws)
         # Orphan surfaces are multi-root: the scratch (ws) is the primary writable root, plus any
-        # folders the user added (persisted per session). Code/Chat stay single-root (roots=None).
+        # folders the user added (persisted per session).
         roots = None
         if ag.family == "knowledge" and ws:
             extra = [

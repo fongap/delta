@@ -683,25 +683,13 @@ def test_surface_visibility(tmp_path, monkeypatch):
     from services.server.manager import SessionManager
 
     mgr = SessionManager(data_dir=tmp_path)
-    # default: Delta only
+    # R6.0: Delta is the only surface.
     s = mgr.get_settings()["surfaces"]
-    assert s == {"delta": True, "chat": False, "code": False}
+    assert s == {"delta": True}
 
-    mgr.set_surfaces(chat=True)
-    assert mgr.get_settings()["surfaces"]["chat"] is True
-    assert mgr.get_settings()["surfaces"]["code"] is False  # untouched
-
-    mgr.set_surfaces(code=True)
-    assert mgr.get_settings()["surfaces"] == {
-        "delta": True,
-        "chat": True,
-        "code": True,
-    }
-
-    mgr.set_surfaces(chat=False)
-    assert mgr.get_settings()["surfaces"]["chat"] is False
-    # delta is always on regardless
-    assert mgr.get_settings()["surfaces"]["delta"] is True
+    # set_surfaces is a no-op (only one surface); delta stays on.
+    mgr.set_surfaces(chat=True, code=True)
+    assert mgr.get_settings()["surfaces"] == {"delta": True}
 
 
 def test_provider_suggested_models(tmp_path, monkeypatch):

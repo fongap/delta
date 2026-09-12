@@ -158,10 +158,10 @@ class _Stub:
 
 def test_build_engine_plan_mode_wiring(tmp_path):
     from core.agent import build_engine
-    from core.agents import code_agent
+    from core.agents import delta_agent
 
     engine = build_engine(
-        agent=code_agent(), workspace=tmp_path, provider=_Stub(), mode=Mode.PLAN
+        agent=delta_agent(), workspace=tmp_path, provider=_Stub(), mode=Mode.PLAN
     )
     try:
         assert "propose_plan" in engine.registry.names()
@@ -175,11 +175,11 @@ def test_build_engine_plan_mode_wiring(tmp_path):
 
 def test_build_engine_interactive_registers_tool_without_reminder(tmp_path):
     from core.agent import build_engine
-    from core.agents import code_agent
+    from core.agents import delta_agent
 
     # The tool is always registered (the GUI can flip a live session into plan mode via
     # set_mode), but the per-turn reminder only appears while actually planning.
-    engine = build_engine(agent=code_agent(), workspace=tmp_path, provider=_Stub())
+    engine = build_engine(agent=delta_agent(), workspace=tmp_path, provider=_Stub())
     try:
         assert "propose_plan" in engine.registry.names()
         assert "Plan mode is active" not in engine.context_provider()
@@ -220,10 +220,10 @@ def test_propose_plan_in_discuss_mode_says_describe_instead(tmp_path):
 
 def test_build_engine_discuss_reminder_not_plan_contract(tmp_path):
     from core.agent import build_engine
-    from core.agents import code_agent
+    from core.agents import delta_agent
 
     engine = build_engine(
-        agent=code_agent(), workspace=tmp_path, provider=_Stub(), mode=Mode.DISCUSS
+        agent=delta_agent(), workspace=tmp_path, provider=_Stub(), mode=Mode.DISCUSS
     )
     try:
         ctx = engine.context_provider()

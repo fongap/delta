@@ -27,16 +27,6 @@ test("Settings opens as a full page and navigates sections", async ({ page }) =>
   await expect(page.getByTestId("set-alias")).toBeVisible();
 });
 
-// The launch flag brings the Personas tab back (local persona install, not the
-// removed cloud gallery).
-test("Settings: Personas tab returns behind the launch flag", async ({ page }) => {
-  await page.addInitScript(() => localStorage.setItem("delta.flag.personas", "1"));
-  await page.goto("/");
-  await page.getByTestId("sidebar-footer-settings").click();
-  await page.getByRole("button", { name: "Personas", exact: true }).click();
-  await expect(page.getByText("Add personas")).toBeVisible();
-});
-
 // Token savings (owner ask 2026-07-17; moved under Models by UX-021): the card renders with
 // the PDF fallback segmented control + attach thresholds, and edits POST through.
 test("Settings: Token savings card edits PDF fallback and thresholds", async ({ page }) => {

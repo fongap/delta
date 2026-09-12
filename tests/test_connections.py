@@ -7,7 +7,7 @@ else inherit-on). These tests pin the stores, the resolver, and the two runtime 
 """
 
 import asyncio
-from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -17,8 +17,6 @@ from core.connections import (
     effective,
 )
 from integrations.connectors.base import MessageEvent, SessionSource
-from core.personas import registry as persona_registry
-from core.personas.manifest import load_manifest_file
 from providers import ModelCapabilities, ProviderClient
 from services.server.manager import SessionManager
 from core.sessions import SessionRecord
@@ -48,8 +46,21 @@ class ScriptedProvider(ProviderClient):
 
 
 def _ops_manifest():
-    md = Path(persona_registry.__file__).parent / "builtin" / "ops.md"
-    return load_manifest_file(md, builtin=True)
+    # The persona connection store seeds defaults from a persona's connector recommends.
+    # The manifest subsystem was retired in R6.0; this stub namespace supplies the same
+    # recommends shape the store reads (kind/ref/tier) so the seeding mechanism stays covered.
+    def rec(kind, ref, tier, reason=""):
+        return SimpleNamespace(kind=kind, ref=ref, tier=tier, reason=reason)
+
+    return SimpleNamespace(
+        recommends=[
+            rec("connector", "github", "core"),
+            rec("connector", "slack", "core"),
+            rec("connector", "datadog", "core"),
+            rec("connector", "pagerduty", "optional"),
+            rec("mcp", "filesystem", "optional"),
+        ]
+    )
 
 
 def _channel_event(text="deploy failed", chat_id="C1", platform="slack"):

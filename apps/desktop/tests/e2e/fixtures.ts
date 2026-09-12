@@ -54,7 +54,7 @@ const SETTINGS = {
   source: "store",
   onboarded: true,
   experimental_connectors: false,
-  surfaces: { delta: true, chat: false, code: true },
+  surfaces: { delta: true },
   nav_layout: "grouped",
   scratch_base: "~/Delta",
   secrets_path: "/Users/test/.config/delta/secrets.json",
@@ -78,13 +78,7 @@ const SETTINGS = {
 
 const PERSONAS = {
   personas: [
-    { id: "delta", name: "Delta", icon: "delta", tagline: "Produce a deliverable — research, analysis, scripts", needs_workspace: true, builtin: true, family: "knowledge", workspace: "deliverable", tools: ["files", "search"], enabled: true, surfaced: true, default: true },
-    { id: "code", name: "Code", icon: "code", tagline: "Work in a codebase — files, git, shell", needs_workspace: true, builtin: true, family: "code", workspace: "git", tools: ["code_files", "git"], enabled: true, surfaced: true, default: false },
-    { id: "chat", name: "Chat", icon: "chat", tagline: "Quick questions — no workspace", needs_workspace: false, builtin: true, family: "knowledge", workspace: "none", tools: [], enabled: true, surfaced: false, default: false },
-    { id: "ops", name: "Ops Delta", icon: "wrench", tagline: "Operate and investigate — runbooks, logs, infrastructure", needs_workspace: true, builtin: true, family: "knowledge", workspace: "deliverable", tools: ["files", "shell"], enabled: true, surfaced: true, default: false },
-    // A non-builtin install (disabled pending consent — invisible to picker specs) so the
-    // Personas page's delete/enable affordances have a target.
-    { id: "acme-notes", name: "Acme Notes", icon: "pencil", tagline: "Acme's note-taking delta", needs_workspace: true, builtin: false, family: "knowledge", workspace: "deliverable", tools: ["files"], enabled: false, surfaced: false, default: false },
+    { id: "delta", name: "Delta", icon: "delta", tagline: "Produce a deliverable — office, research, content, scripts", needs_workspace: true, builtin: true, family: "knowledge", workspace: "deliverable", tools: ["files", "search", "shell", "todo"], enabled: true, surfaced: true, default: true },
   ],
 };
 
@@ -124,13 +118,12 @@ const EXTRA_SESSIONS = Array.from({ length: 7 }, (_, i) => ({
   subscriptions: [],
 }));
 
-// One Ops session (older than everything above so boot-resume stays deterministic) — the
-// target for the disable-archives-conversations confirm flow on the Personas page.
-const OPS_SESSION = {
-  session_id: "ops-1",
-  title: "Ops triage",
-  workspace: "/Users/test/Delta/ops-triage",
-  agent: "ops",
+// One additional Delta session (older than everything above so boot-resume stays deterministic).
+const EXTRA_SESSION_2 = {
+  session_id: "infra-1",
+  title: "infra triage",
+  workspace: "/Users/test/Delta/infra-triage",
+  agent: "delta",
   model: "anthropic:claude-opus-4-8",
   mode: "interactive",
   updated_at: "2026-06-15 10:00:00",
@@ -208,7 +201,7 @@ const INBOX_ITEMS = [
   },
   {
     id: "inb-question-1",
-    session_id: "ops-1",
+    session_id: "infra-1",
     kind: "question",
     title: "Which environment should I restart?",
     body: "",
@@ -221,7 +214,7 @@ const INBOX_ITEMS = [
     created_at: "2026-07-01 08:05:00",
     resolved_at: null,
     session_title: "Investigate alerts",
-    session_agent: "ops",
+    session_agent: "delta",
     session_workspace: "",
     session_exists: true,
   },
@@ -500,7 +493,7 @@ export async function mockApi(page: import("@playwright/test").Page) {
   const sessions: any[] = [
     { ...PINNED_SESSION },
     ...EXTRA_SESSIONS.map((s) => ({ ...s })),
-    { ...OPS_SESSION },
+    { ...EXTRA_SESSION_2 },
     { ...SLACK_SESSION },
   ];
   // Inbox items + the outbound routing binding — mutable for resolve + the inline Slack config.

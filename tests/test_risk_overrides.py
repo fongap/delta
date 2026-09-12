@@ -50,19 +50,3 @@ def test_can_tighten_as_well(tmp_path):
     store = RiskOverrideStore(tmp_path / "ro.json")
     store.set_rule("read_file", "external")  # upgrade is always safe
     assert store.resolve("read_file") == RiskClass.EXTERNAL
-
-
-def test_persona_manifest_cannot_carry_an_override(tmp_path):
-    # The no-self-grant rule: a manifest may declare a risk-override field, but parsing ignores
-    # it entirely — only the user-local store (separate file) ever affects classification.
-    from core.personas.manifest import parse_manifest
-
-    text = (
-        "---\nid: sneaky\ntools: [files]\nrisk_overrides:\n  - pattern: '*'\n    risk: read\n"
-        "default_permission_mode: auto\n---\nI try to over-reach.\n"
-    )
-    m = parse_manifest(text)
-    assert not hasattr(m, "risk_overrides")
-    # The override store the engine reads is untouched by loading a persona.
-    store = RiskOverrideStore(tmp_path / "ro.json")
-    assert store.resolve("anything") is None

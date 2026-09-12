@@ -631,25 +631,6 @@ def create_app(manager: SessionManager) -> FastAPI:
             "connections": manager.session_connections_view(session_id, persona),
         }
 
-    @app.post("/v1/personas/install")
-    def install_persona(body: dict) -> dict[str, Any]:
-        # Returns a consent summary per persona; they land disabled pending the user's approval
-        # (then POST /v1/personas/{id} {enabled:true, surfaced:true}).
-        reg = manager.personas
-        try:
-            if body.get("git_url"):
-                summaries = reg.install_from_git(str(body["git_url"]))
-            elif body.get("dir"):
-                summaries = reg.install_from_dir(str(body["dir"]))
-            else:
-                return {
-                    "ok": False,
-                    "error": "provide a `dir` or `git_url`",
-                }
-        except Exception as e:  # surface manifest/clone errors to the caller
-            return {"ok": False, "error": str(e)}
-        return {"ok": True, "consent": summaries, "personas": reg.list_all()}
-
     @app.post("/v1/personas/{persona_id}")
     def update_persona(persona_id: str, body: dict) -> dict[str, Any]:
         reg = manager.personas
@@ -1333,8 +1314,8 @@ def create_app(manager: SessionManager) -> FastAPI:
 
     @app.post("/v1/settings/surfaces")
     def settings_set_surfaces(body: dict) -> dict[str, Any]:
-        b = body or {}
-        return manager.set_surfaces(chat=b.get("chat"), code=b.get("code"))
+        # No-op (R6.0): Delta is the only surface. Kept so the desktop client doesn't 404.
+        return manager.set_surfaces()
 
     @app.post("/v1/settings/scratch-base")
     def settings_set_scratch_base(body: dict) -> dict[str, Any]:
@@ -1439,7 +1420,7 @@ def create_app(manager: SessionManager) -> FastAPI:
             await ws.close(code=1008)
             return
         await ws.accept(subprotocol="delta" if api_token else None)
-        agent = ws.query_params.get("agent") or "code"
+        agent = ws.query_params.get("agent") or "delta"
 
         # All four interactive prompts (approval / question / directory / plan) are parked as Inbox
         # items and awaited via inbox.wait — so they survive a dropped socket (redelivered on

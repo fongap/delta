@@ -21,12 +21,10 @@ import { baseName } from "../paths";
 import { showPersonas } from "../flags";
 import { useI18n } from "@delta/i18n/I18nContext";
 
-// Session surfaces shown as accordions, in display order. The surfaced personas drive this list
-// (so third-party / Ops personas appear); the hardcoded set is the fallback before personas load.
+// Session surfaces shown as accordions, in display order. The surfaced personas drive this list;
+// the hardcoded set is the fallback before personas load. Delta is the only product surface (R6.0).
 const SURFACES: { key: string; label: string; icon: IconName; cls: string }[] = [
   { key: "delta", label: "Delta", icon: "diamond", cls: "ico-delta" },
-  { key: "chat", label: "Chat", icon: "chat", cls: "ico-chat" },
-  { key: "code", label: "Code", icon: "code", cls: "ico-code" },
 ];
 
 const surfaceFromPersona = (p: Persona) => ({
