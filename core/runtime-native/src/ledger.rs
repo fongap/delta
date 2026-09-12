@@ -198,24 +198,43 @@ impl LedgerReader {
         Ok(out)
     }
 
-    /// List run_ids that have at least one event but no terminal event.
+    /// List run_ids that are currently open (no terminal event as their
+    /// latest lifecycle state).
     ///
-    /// Mirrors `core/ledger.py` `RunEventLedger.open_runs()`.
+    /// AF-03 fix: a run that went `started → interrupted → resumed` is
+    /// open again because `resumed` is the latest lifecycle event, not
+    /// `interrupted`. The old query excluded any run that EVER had an
+    /// `interrupted` event — now we use the LATEST lifecycle state.
+    ///
+    /// Terminal events: completed, failed, skipped, cancelled,
+    /// validation.failed.
+    /// Recoverable-open: running, resumed. A run whose latest state is
+    /// `interrupted` (crash detected, not yet resumed) is NOT re-listed:
+    /// recover_stale marks it once and idempotency holds; it re-opens
+    /// only after an explicit `resumed` event.
     pub fn open_runs(&self) -> Result<Vec<String>, ShadowReadError> {
-        let mut stmt = self.conn.prepare(
-            "SELECT DISTINCT run_id FROM run_events \
-             WHERE run_id NOT IN ( \
-                 SELECT run_id FROM run_events WHERE type IN \
-                 ('run.completed', 'run.failed', 'run.interrupted', \
-                  'run.skipped', 'run.cancelled') \
-             )",
-        )?;
-        let rows = stmt.query_map([], |row| row.get(0))?;
-        let mut out = Vec::new();
-        for row in rows {
-            out.push(row?);
+        // Get all run_ids that have at least one event.
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT run_id FROM run_events")?;
+        let all_ids: Vec<String> = stmt
+            .query_map([], |row| row.get(0))?
+            .filter_map(|r| r.ok())
+            .collect();
+        drop(stmt);
+
+        // For each run, check if the latest lifecycle event is terminal.
+        let mut open = Vec::new();
+        for run_id in &all_ids {
+            let status = run_status_from_conn(&self.conn, run_id)?;
+            // Recoverable-open states: running, resumed.
+            // Terminal/interrupted states close the run.
+            match status.as_str() {
+                "running" | "resumed" => open.push(run_id.clone()),
+                _ => {}
+            }
         }
-        Ok(out)
+        Ok(open)
     }
 
     /// Derive a run's lifecycle status from its last **terminal** event.

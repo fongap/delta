@@ -57,6 +57,7 @@ import { shouldShowOverlay } from "./overlay";
 import { Icon } from "./components/Icon";
 import { Sidebar } from "./components/Sidebar";
 import { Composer } from "./components/Composer";
+import { RunStatusBar } from "./components/RunStatusBar";
 import { ThinkingBlock, Transcript } from "./components/Transcript";
 import { Markdown } from "./components/Markdown";
 import { SessionIntro } from "./components/SessionIntro";
@@ -949,6 +950,13 @@ export function App() {
     return () => clearInterval(t);
   }, [surface, sessionId, browserRefreshKey, markUnattended]);
 
+  const runningStatusLabel = (_running: boolean): string => {
+    // R5.1 C3: human-readable lightweight run status (Chinese-first per product).
+    if (reasoningStream) return "正在思考…";
+    if (streaming) return "正在生成回答…";
+    return "正在执行…";
+  };
+
   const send = (text: string, attachments?: Attachment[], skill?: string) => {
     setComposerNotice(null);
     // Force-run shows exactly what the user typed: "/name rest". Must match the server's
@@ -1605,6 +1613,12 @@ export function App() {
                   ← Back to runs
                 </button>
               </div>
+            )}
+            {running && (
+              <RunStatusBar
+                status={runningStatusLabel(running)}
+                active={running}
+              />
             )}
             <div className="main-scroll" ref={scrollRef} onScroll={handleScroll}>
               {idle ? (

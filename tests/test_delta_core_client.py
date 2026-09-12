@@ -309,27 +309,34 @@ def test_idem_commit_full_cycle(client, tmp_path):
 
 
 def test_command_timeout_raises_delta_core_error(monkeypatch, tmp_path):
-    """P1-1: a hung subprocess (readline blocks forever) must time
-    out rather than block the caller indefinitely. The timeout
-    closes the client and raises DeltaCoreError."""
+    """P1-1: a hung subprocess (no response ever routed) must time out
+    rather than block the caller indefinitely. The timeout closes the
+    client and raises DeltaCoreError.
+
+    v16 note: responses are routed by the background reader thread, so
+    patching ``proc.stdout.readline`` cannot affect an in-flight read.
+    We simulate the hang at the routing layer instead: a stubbed reader
+    that never delivers frames — equivalent to a server that never
+    responds."""
+    import threading
+
     from packages.delta_core_client import DeltaCoreClient
 
     if _dev_binary() is None:
         pytest.skip("delta_core binary not built")
 
+    def _stub_reader(self, proc):
+        # Never routes anything — simulates a hung server.
+        t = threading.Thread(target=lambda: None, daemon=True)
+        t.start()
+        return t
+
+    monkeypatch.setattr(DeltaCoreClient, "_stdout_reader", _stub_reader)
+
     c = DeltaCoreClient(command_timeout=0.2)
     try:
-        c.command({"cmd": "ping"})  # start subprocess
-        # Now simulate a hang: replace stdout.readline with a sleeper.
-        proc = c._proc
-        assert proc is not None
-
-        def hang_readline(*a, **kw):
-            import time
-            time.sleep(5)
-            return ""
-
-        monkeypatch.setattr(proc.stdout, "readline", hang_readline)
+        # The handshake is direct readline (pre-reader), so startup succeeds;
+        # the first command then hangs because no frame is ever routed.
         with pytest.raises(DeltaCoreError, match="timed out"):
             c.command({"cmd": "ping"})
         # Client should have closed itself.
@@ -488,7 +495,7 @@ def test_hello_handshake_succeeds_on_startup():
         pass
 # If startup succeeded without raising, the handshake passed.
         # The PROTOCOL_VERSION constant must match the Rust side.
-        assert PROTOCOL_VERSION == 14
+        assert PROTOCOL_VERSION == 16
 
 
 def test_hello_handshake_fails_on_protocol_mismatch(monkeypatch, tmp_path):

@@ -170,9 +170,11 @@ def test_validate_citation_source_gone_when_ref_removed(tmp_path):
 
 def test_validate_citation_non_lines_kind_validated_by_status_only(tmp_path):
     """page / cells / message_id / custom kinds don't have a cheap
-    bound check - when the file is current we mark valid and let
-    the reader that opens the file surface a real 'page not found'
-    if the locator is off."""
+    bound check — when the file is current we mark the citation as
+    navigable (valid=True) but with reason=range_unverified so that
+    min_valid_citations does NOT count it as fully valid (AF-11).
+    The reader that opens the file still surfaces a real 'page not
+    found' if the locator is off."""
     _ws, f, store, _ = _make_store_and_analyzer(tmp_path)
     ref = store.capture_file(f)
     for _kind, range_obj in [
@@ -182,7 +184,7 @@ def test_validate_citation_non_lines_kind_validated_by_status_only(tmp_path):
     ]:
         out = store.validate_citation(ref.id, "run-1", range_obj)
         assert out["valid"] is True
-        assert out["reason"] == CITATION_VALID
+        assert out["reason"] == SourceStore.CITATION_RANGE_UNVERIFIED
         assert out["current_sha256"] == ref.fingerprint
 
 

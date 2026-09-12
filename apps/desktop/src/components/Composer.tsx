@@ -372,6 +372,17 @@ export function Composer(props: Props) {
   const needsModel = props.modelReady === false;
 
   const submit = () => {
+    // During an active turn the same composer becomes the supervision channel. A
+    // plain text send is routed server-side to RuntimePort.steer() and therefore
+    // changes the CURRENT turn instead of starting a concurrent turn. Attachments,
+    // /skills and model changes deliberately stay out of this path.
+    if (props.running) {
+      const steer = text.trim();
+      if (!steer || dictation?.recording || dictationBusy) return;
+      props.onSend(steer);
+      setText("");
+      return;
+    }
     // While the "/" popup is open the draft is a query, not a message — never send it.
     if (slashQuery !== null) return;
     // The visible "/name " prefix is UI state, not message text — strip it for the send;
@@ -380,7 +391,6 @@ export function Composer(props: Props) {
     const t = (skill ? text.slice(skill.length + 1) : text).trim();
     if (
       (!t && attachments.length === 0 && !skill) ||
-      props.running ||
       dictation?.recording ||
       dictationBusy
     )
@@ -402,7 +412,7 @@ export function Composer(props: Props) {
   };
 
   const onKey = (e: React.KeyboardEvent) => {
-    if (slashQuery !== null) {
+    if (!props.running && slashQuery !== null) {
       if (e.key === "ArrowDown") {
         e.preventDefault();
         setSlashIndex((i) => Math.min(i + 1, Math.max(slashMatches.length - 1, 0)));
@@ -432,6 +442,7 @@ export function Composer(props: Props) {
   };
 
   const onPaste = (e: React.ClipboardEvent) => {
+    if (props.running) return;
     const files = Array.from(e.clipboardData.items)
       .filter((it) => it.kind === "file")
       .map((it) => it.getAsFile())
@@ -493,6 +504,61 @@ export function Composer(props: Props) {
   // A pinned /skill is sendable content on its own (tester catch 2026-07-26: the arrow
   // stayed grey after picking a skill, reading as "stuck").
   const hasContent = text.trim().length > 0 || attachments.length > 0 || !!pendingSkill;
+
+  // Active run: keep ONE familiar composer instead of spawning a second steering box.
+  // Enter sends a steer into the current turn; Stop remains adjacent and explicit.
+  // Follow-up is intentionally not exposed until it has a distinct durable queue semantics.
+  if (props.running) {
+    const canSteer = text.trim().length > 0;
+    return (
+      <div className="composer-wrap px-6 pb-5 pt-4">
+        {props.approvalSlot}
+        <div className="composer max-w-3xl mx-auto rounded-2xl border border-line bg-panel shadow-sm">
+          <textarea
+            ref={textareaRef}
+            className="w-full block px-3.5 pt-3.5 pb-1.5 text-[14.5px]"
+            placeholder="输入对当前任务的调整…"
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={onKey}
+            onPaste={onPaste}
+            rows={1}
+            aria-label="调整当前任务"
+          />
+          <div className="px-2.5 pb-2.5 pt-1 flex items-center gap-1.5">
+            <span className="text-[11.5px] text-faint px-1">调整当前任务</span>
+            <span className="ml-auto" />
+            {props.onReasoningEffortChange && (
+              <ReasoningMenu
+                value={props.reasoningEffort || "auto"}
+                disabled={true}
+                onChange={props.onReasoningEffortChange}
+              />
+            )}
+            <button className="btn danger" onClick={props.onInterrupt}>
+              ⏹ {t("composer.stop", undefined, "Stop")}
+            </button>
+            <button
+              className={
+                "w-7 h-7 rounded-full grid place-items-center shrink-0 transition-colors " +
+                (canSteer
+                  ? "bg-accent text-onAccent hover:brightness-105"
+                  : "bg-paper border border-line text-faint")
+              }
+              onClick={submit}
+              disabled={!canSteer}
+              title="立即调整当前任务"
+              aria-label="立即调整当前任务"
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M12 19V5M5 12l7-7 7 7" />
+              </svg>
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="composer-wrap px-6 pb-5 pt-4">
@@ -737,29 +803,22 @@ export function Composer(props: Props) {
             </button>
           )}
 
-          {/* send / stop */}
-          {props.running ? (
-            <button className="btn danger" onClick={props.onInterrupt}>
-              ⏹ {t("composer.stop", undefined, "Stop")}
-            </button>
-          ) : (
-            <button
-              className={
-                "w-7 h-7 rounded-full grid place-items-center shrink-0 transition-colors " +
-                (hasContent && !dictation?.recording && !dictationBusy
-                  ? "bg-accent text-onAccent hover:brightness-105"
-                  : "bg-paper border border-line text-faint")
-              }
-              onClick={submit}
-              disabled={!!dictation?.recording || !!dictationBusy}
-              title={needsModel ? t("composer.connectModelToSend", undefined, "Connect a model to send") : undefined}
-              aria-label={t("composer.send", undefined, "Send")}
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M12 19V5M5 12l7-7 7 7" />
-              </svg>
-            </button>
-          )}
+          <button
+            className={
+              "w-7 h-7 rounded-full grid place-items-center shrink-0 transition-colors " +
+              (hasContent && !dictation?.recording && !dictationBusy
+                ? "bg-accent text-onAccent hover:brightness-105"
+                : "bg-paper border border-line text-faint")
+            }
+            onClick={submit}
+            disabled={!!dictation?.recording || !!dictationBusy}
+            title={needsModel ? t("composer.connectModelToSend", undefined, "Connect a model to send") : undefined}
+            aria-label={t("composer.send", undefined, "Send")}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M12 19V5M5 12l7-7 7 7" />
+            </svg>
+          </button>
         </div>
       </div>
       <span className="sr-only" role="status" aria-live="polite">

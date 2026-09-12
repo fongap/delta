@@ -257,20 +257,20 @@ def test_write_paths_unchanged():
 # -- protocol version --------------------------------------------------------
 
 
-def test_protocol_version_is_15():
-    """Python and Rust must agree on PROTOCOL_VERSION = 15."""
+def test_protocol_version_is_16():
+    """Python and Rust must agree on PROTOCOL_VERSION = 16 (R5.1 multiplexed)."""
     from packages.delta_core_client import PROTOCOL_VERSION
 
-    assert PROTOCOL_VERSION == 15
-    # Verify Rust side also has 15
+    assert PROTOCOL_VERSION == 16
+    # Verify Rust side also has 16
     import subprocess
 
     result = subprocess.run(
         ["cargo", "run", "--bin", "delta_core"],
         cwd=REPO / "core" / "runtime-native",
-        input='{"cmd":"hello","protocol_version":15}',
+        input='{"cmd":"hello","protocol_version":16}',
         capture_output=True,
         text=True,
         timeout=30,
     )
-    assert '"protocol_version":15' in result.stdout
+    assert '"protocol_version":16' in result.stdout

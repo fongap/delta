@@ -114,7 +114,31 @@ class Scheduler:
         finally:
             self._running_ids.discard(task.id)
 
+    @staticmethod
+    def _project_next_run(task: ScheduledTask, *, after: float | None = None) -> float | None:
+        """Compute the post-completion next_run using the projected state.
+
+        AF-01/AF-02: the scheduler is the single finalize owner. It projects
+        run_count+1 to determine exhaustion, then (if not exhausted) computes
+        next_run via the pure `compute_next_run` and hands it to `complete_run`
+        so Rust persists JSON and SQL columns atomically in one transaction.
+        """
+        from core.automation.store import compute_next_run
+
+        projected = task
+        projected.run_count = task.run_count + 1
+        if task.max_runs and projected.run_count >= task.max_runs:
+            return None
+        return compute_next_run(projected, after=after)
+
     async def _execute(self, task: ScheduledTask, *, trigger: str) -> TaskRun | None:
+        """Execute one task run. The scheduler is the single completion owner.
+
+        AF-01 fix: the runner only executes and returns a ``TaskRun``. It must not
+        call ``complete_run`` or mutate task stats (run_count/last_run/last_status/
+        enabled/next_run). This scheduler alone finalizes — once — via
+        ``TaskStore.complete_run``, on both the success and the failure path.
+        """
         try:
             run = await self.runner(task, trigger)
         except Exception as exc:
@@ -123,13 +147,12 @@ class Scheduler:
                 task_id=task.id, status="error", error=str(exc), trigger=trigger
             )
             self.store.add_run(run)
-        # advance the task (run_count/last_run) → save recomputes next_run.
-        fresh = self.store.get(task.id)
-        if fresh is not None:
-            fresh.run_count += 1
-            fresh.last_run = run.started_at if run else None
-            # A runner may legitimately return None ("nothing to do") — that is not an
-            # error, so record it distinctly instead of the indistinguishable "error".
-            fresh.last_status = run.status if run else "skipped"
-            self.store.save(fresh)
+        if run is not None:
+            # Single finalize path — the runner never calls complete_run itself.
+            # Guarantee finished_at is a real timestamp: a runner returning a
+            # bare TaskRun (or the scheduler's own error path) may leave it None.
+            if run.finished_at is None:
+                run.finished_at = run.started_at
+            next_run = self._project_next_run(task)
+            self.store.complete_run(run, run.finished_at, next_run=next_run)
         return run

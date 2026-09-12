@@ -176,6 +176,7 @@ pub fn stream_openai_chat(
     req: &ProviderRequest,
     out: &mut impl Write,
     stream_id: &str,
+    cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<Value, String> {
     let url = format!("{}/chat/completions", req.base_url.trim_end_matches('/'));
     let body = build_openai_chat_body(req, true);
@@ -194,6 +195,9 @@ pub fn stream_openai_chat(
     let mut finish_reason: Option<String> = None;
     let mut usage: Option<Value> = None;
     for line_res in buf.lines() {
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return Ok(serde_json::json!({"cancelled": true}));
+        }
         let line = line_res.map_err(|e| format!("SSE read error: {e}"))?;
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with(':') {
@@ -225,7 +229,7 @@ pub fn stream_openai_chat(
         if let Some(content) = delta.get("content").and_then(|c| c.as_str()) {
             if !content.is_empty() {
                 text_parts.push(content.to_string());
-                let frame = json!({"ok": true, "stream": "delta", "stream_id": stream_id, "data": {"text_delta": content}});
+                let frame = json!({"ok": true, "stream": "delta", "request_id": stream_id, "data": {"text_delta": content}});
                 writeln!(out, "{frame}").ok();
                 out.flush().ok();
             }
@@ -237,7 +241,7 @@ pub fn stream_openai_chat(
         {
             if !r.is_empty() {
                 reasoning_parts.push(r.to_string());
-                let frame = json!({"ok": true, "stream": "delta", "stream_id": stream_id, "data": {"reasoning_delta": r}});
+                let frame = json!({"ok": true, "stream": "delta", "request_id": stream_id, "data": {"reasoning_delta": r}});
                 writeln!(out, "{frame}").ok();
                 out.flush().ok();
             }
@@ -435,6 +439,7 @@ pub fn stream_anthropic(
     req: &ProviderRequest,
     out: &mut impl Write,
     stream_id: &str,
+    cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<Value, String> {
     let url = format!("{}/v1/messages", req.base_url.trim_end_matches('/'));
     let body = build_anthropic_body(req, true);
@@ -452,6 +457,9 @@ pub fn stream_anthropic(
     let mut finish_reason: Option<String> = None;
     let mut usage: Option<Value> = None;
     for line_res in buf.lines() {
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return Ok(serde_json::json!({"cancelled": true}));
+        }
         let line = line_res.map_err(|e| format!("SSE read error: {e}"))?;
         let trimmed = line.trim();
         if trimmed.is_empty() || trimmed.starts_with(':') {
@@ -505,7 +513,7 @@ pub fn stream_anthropic(
                             if let Some(t) = delta.get("text").and_then(|t| t.as_str()) {
                                 if !t.is_empty() {
                                     text_parts.push(t.to_string());
-                                    let frame = json!({"ok": true, "stream": "delta", "stream_id": stream_id, "data": {"text_delta": t}});
+                                    let frame = json!({"ok": true, "stream": "delta", "request_id": stream_id, "data": {"text_delta": t}});
                                     writeln!(out, "{frame}").ok();
                                     out.flush().ok();
                                 }
@@ -515,7 +523,7 @@ pub fn stream_anthropic(
                             if let Some(t) = delta.get("thinking").and_then(|t| t.as_str()) {
                                 if !t.is_empty() {
                                     reasoning_parts.push(t.to_string());
-                                    let frame = json!({"ok": true, "stream": "delta", "stream_id": stream_id, "data": {"reasoning_delta": t}});
+                                    let frame = json!({"ok": true, "stream": "delta", "request_id": stream_id, "data": {"reasoning_delta": t}});
                                     writeln!(out, "{frame}").ok();
                                     out.flush().ok();
                                 }
@@ -739,6 +747,7 @@ pub fn stream_openai_responses(
     req: &ProviderRequest,
     out: &mut impl Write,
     stream_id: &str,
+    cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<Value, String> {
     let url = format!("{}/v1/responses", req.base_url.trim_end_matches('/'));
     let body = build_openai_responses_body(req, true);
@@ -756,6 +765,9 @@ pub fn stream_openai_responses(
     let mut final_response: Option<Value> = None;
     let mut event_type: Option<String> = None;
     for line_res in buf.lines() {
+        if cancel.load(std::sync::atomic::Ordering::Relaxed) {
+            return Ok(serde_json::json!({"cancelled": true}));
+        }
         let line = line_res.map_err(|e| format!("SSE read error: {e}"))?;
         let trimmed = line.trim();
         if trimmed.is_empty() {
@@ -785,7 +797,7 @@ pub fn stream_openai_responses(
                 if let Some(t) = chunk.get("delta").and_then(|d| d.as_str()) {
                     if !t.is_empty() {
                         text_parts.push(t.to_string());
-                        let frame = json!({"ok": true, "stream": "delta", "stream_id": stream_id, "data": {"text_delta": t}});
+                        let frame = json!({"ok": true, "stream": "delta", "request_id": stream_id, "data": {"text_delta": t}});
                         writeln!(out, "{frame}").ok();
                         out.flush().ok();
                     }
@@ -795,7 +807,7 @@ pub fn stream_openai_responses(
                 if let Some(t) = chunk.get("delta").and_then(|d| d.as_str()) {
                     if !t.is_empty() {
                         reasoning_parts.push(t.to_string());
-                        let frame = json!({"ok": true, "stream": "delta", "stream_id": stream_id, "data": {"reasoning_delta": t}});
+                        let frame = json!({"ok": true, "stream": "delta", "request_id": stream_id, "data": {"reasoning_delta": t}});
                         writeln!(out, "{frame}").ok();
                         out.flush().ok();
                     }
@@ -852,11 +864,12 @@ pub fn stream(
     req: &ProviderRequest,
     out: &mut impl Write,
     stream_id: &str,
+    cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<Value, String> {
     match req.protocol.as_str() {
-        "openai_chat" => stream_openai_chat(req, out, stream_id),
-        "anthropic" => stream_anthropic(req, out, stream_id),
-        "openai_responses" => stream_openai_responses(req, out, stream_id),
+        "openai_chat" => stream_openai_chat(req, out, stream_id, cancel),
+        "anthropic" => stream_anthropic(req, out, stream_id, cancel),
+        "openai_responses" => stream_openai_responses(req, out, stream_id, cancel),
         _ => Err(format!(
             "unknown protocol: {} (supports openai_chat, anthropic, openai_responses)",
             req.protocol

@@ -353,10 +353,13 @@ pub fn validate_source_citation(
 
     // Legacy-compatible until revision-bound extent attestations land: the
     // source and structure are proven, but the kind-specific extent is not.
+    // AF-11: a citation with range_valid=None must NOT count as fully valid
+    // for min_valid_citations. Return a distinct validity that the Python
+    // counter will not treat as "valid".
     let mut result = verdict(
         CitationValidity::Valid,
         "current",
-        "valid",
+        "range_unverified",
         CitationFacts {
             source_exists: true,
             source_unchanged: true,

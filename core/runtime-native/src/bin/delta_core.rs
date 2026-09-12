@@ -1,81 +1,48 @@
 //! delta-core — long-running Rust Core process for the Delta Runtime.
 //!
-//! R1 (P1-E): unifies the per-write subprocess pattern into a single
-//! host process. Reads line-delimited JSON commands from stdin and
-//! writes one JSON response per line to stdout. The Python facade
-//! modules hold a persistent connection to this process instead of
-//! spawning a fresh subprocess for every command.
+//! R5.1 / AF-04/05/06: Multiplexed Runtime Protocol v16.
+//!
+//! Each request may carry an optional ``request_id: u64``. Responses and
+//! stream frames echo it back so the Python demux client can route
+//! concurrent in-flight requests without head-of-line blocking.
 //!
 //! Protocol (request):
 //!
 //! ```json
-//! {"cmd": "<domain.action>", ...args}
+//! {"cmd": "<domain.action>", "request_id": 42, ...args}
 //! ```
 //!
-//! Protocol (response): one line of JSON per request.
+//! Protocol (response):
 //!
 //! ```json
-//! {"ok": true, "result": {...}}  // success
-//! {"ok": false, "error": "..."}  // failure
+//! {"ok": true, "request_id": 42, "result": {...}}
+//! {"ok": false, "request_id": 42, "error": "..."}
 //! ```
 //!
-//! R5 / ADR-047 streaming: commands marked streaming (e.g.
-//! ``stream.echo``) write a sequence of frames instead of a single
-//! response: a ``start`` frame, zero or more ``delta`` frames, and a
-//! terminal ``done`` frame. Each frame carries a ``stream_id``:
+//! Streaming (v16): a ``start`` frame, zero or more ``delta`` frames,
+//! and a terminal ``done`` (or ``error``) frame. Every frame carries
+//! ``request_id``:
 //!
 //! ```json
-//! {"ok": true, "stream": "start", "stream_id": "<uuid>"}
-//! {"ok": true, "stream": "delta", "stream_id": "<uuid>", "data": {...}}
-//! {"ok": true, "stream": "done",  "stream_id": "<uuid>", "result": {...}}
+//! {"ok": true, "request_id": 42, "stream": "start"}
+//! {"ok": true, "request_id": 42, "stream": "delta", "data": {...}}
+//! {"ok": true, "request_id": 42, "stream": "done", "result": {...}}
 //! ```
 //!
-//! A non-streaming control command (``stream.cancel``) returns a
-//! single response like any other command.
+//! Cancellation (v16): ``request.cancel`` carries ``target_request_id``.
+//! The server sets a cancel flag for the target stream; the stream thread
+//! checks the flag at each delta boundary and exits early.
 //!
-//! Startup handshake: the Python client sends a ``hello`` command
-//! immediately after spawning the subprocess. The server replies
-//! with its protocol version; a mismatch raises an error and the
-//! subprocess is closed (fail-closed). This prevents the Python
-//! runtime from silently talking to a stale or upgraded binary.
-//!
-//! ```json
-//! {"cmd": "hello", "protocol_version": 2}
-//! {"ok": true, "result": {"protocol_version": 2, "server": "delta_core"}}
-//! ```
-//!
-//! Supported commands (R1 minimum):
-//!
-//! - `ledger.append` — append one event to ``run_events.db``.
-//! - `ledger.events` — list events for a run.
-//! - `ledger.events_in_workspace` — list events filtered by workspace.
-//! - `ledger.runs` — list all run_ids.
-//! - `ledger.open_runs` — list runs without terminal events.
-//! - `ledger.run_status` — derive lifecycle status from last event.
-//! - `ledger.verify` — verify hash chain for a run.
-//! - `ledger.recover_stale` — close open runs with synthetic interrupted events.
-//! - `idem.record_planned` / `idem.mark_executing` / `idem.commit` /
-//!   `idem.mark_failed` / `idem.mark_uncertain` — state transitions
-//!   on ``side_effects.db``.
-//! - `task.save` / `task.delete` / `task.add_run` — identity writes
-//!   to ``automation.db``.
-//!
-//! Design notes (R1):
-//!
-//! - This is a minimum host interface, not a JSON-RPC framework. No
-//!   id negotiation, no streaming, no async. The Python side keeps
-//!   a single subprocess open and round-robins commands.
-//! - The existing per-operation CLI binaries (`write_idemlog`,
-//!   `write_ledger`) remain in place as migration
-//!   diagnostic tools. The new `delta-core` is the production
-//!   writer.
-//! - Each request opens (and holds) a connection to the named DB
-//!   the first time. Subsequent requests reuse the same connection.
-//!   This is the main performance win over per-subprocess invocation.
+//! Concurrency (v16): streaming commands run in a spawned thread so the
+//! main stdin loop continues to read and dispatch other commands (ping,
+//! ledger, task, etc.) while a provider stream is in-flight.
 
 use std::collections::HashMap;
 use std::io::{self, BufRead, Write};
 use std::path::PathBuf;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
+use std::sync::Arc;
 use std::sync::Mutex;
 
 use delta_runtime_native::{
@@ -100,7 +67,7 @@ use time::OffsetDateTime;
 /// immediately after subprocess startup; a mismatch raises
 /// :class:`DeltaCoreError` (fail-closed) so we never silently talk to
 /// an incompatible binary.
-const PROTOCOL_VERSION: u32 = 15;
+const PROTOCOL_VERSION: u32 = 16;
 
 #[derive(Debug, Deserialize)]
 #[serde(tag = "cmd")]
@@ -273,6 +240,7 @@ enum Command {
         run_data: String,
         workspace: String,
         finished_at: f64,
+        next_run: Option<f64>,
     },
     #[serde(rename = "task.close")]
     TaskClose { db: String },
@@ -526,9 +494,12 @@ enum Command {
     /// Sends N delta frames with optional delay, then a done frame.
     #[serde(rename = "stream.echo")]
     StreamEcho { chunks: u32, delay_ms: Option<u64> },
-    /// R5 / ADR-047: cancel an in-flight stream by stream_id.
-    #[serde(rename = "stream.cancel")]
-    StreamCancel { stream_id: String },
+    /// R5.1 v16: cancel an in-flight stream by request_id.
+    /// Handled in `main()` via raw JSON before Command parsing, so the
+    /// enum field is intentionally unused.
+    #[serde(rename = "request.cancel")]
+    #[allow(dead_code)]
+    RequestCancel { target_request_id: u64 },
     /// R5 / ADR-047 Phase 1: non-streaming provider completion.
     #[serde(rename = "provider.complete")]
     ProviderComplete {
@@ -751,55 +722,83 @@ impl Command {
         )
     }
 }
+/// v16 stream context: carries request_id, cancel flag, and shared stdout.
+struct StreamCtx {
+    request_id: u64,
+    cancel: Arc<AtomicBool>,
+    out: Arc<io::Stdout>,
+    cache: Arc<Mutex<ConnCache>>,
+}
 
-fn handle_stream(cmd: Command, _cache: &Mutex<ConnCache>, out: &mut impl Write) {
-    use uuid::Uuid;
-    let stream_id = Uuid::new_v4().to_string();
+/// v16 helper: write one JSON line to the shared stdout.
+/// Locks per-write so the main loop can interleave between stream frames.
+fn emit(out: &Arc<io::Stdout>, frame: Value) {
+    let mut guard = out.lock();
+    writeln!(guard, "{frame}").ok();
+    guard.flush().ok();
+}
 
-    // Write start frame
-    let start = serde_json::json!({
-        "ok": true,
-        "stream": "start",
-        "stream_id": stream_id
-    });
-    writeln!(out, "{start}").ok();
-    out.flush().ok();
+/// Wrapper around Arc<Stdout> that implements Write by locking per call.
+/// This ensures no thread holds the stdout lock for an entire stream.
+struct LineWriter(Arc<io::Stdout>);
+impl io::Write for LineWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        let mut g = self.0.lock();
+        g.write(buf)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        let mut g = self.0.lock();
+        g.flush()
+    }
+}
+
+fn handle_stream(cmd: Command, ctx: StreamCtx) {
+    let StreamCtx {
+        request_id,
+        cancel,
+        out,
+        cache,
+    } = ctx;
+
+    // Start frame
+    emit(
+        &out,
+        serde_json::json!({
+            "ok": true, "request_id": request_id, "stream": "start"
+        }),
+    );
 
     match cmd {
         Command::StreamEcho { chunks, delay_ms } => {
             for i in 0..chunks {
-                let delta = serde_json::json!({
-                    "ok": true,
-                    "stream": "delta",
-                    "stream_id": stream_id,
-                    "data": {"chunk": i, "total": chunks}
-                });
-                writeln!(out, "{delta}").ok();
-                out.flush().ok();
+                if cancel.load(Ordering::Relaxed) {
+                    emit(
+                        &out,
+                        serde_json::json!({
+                            "ok": true, "request_id": request_id, "stream": "done",
+                            "result": {"cancelled": true, "chunk": i}
+                        }),
+                    );
+                    return;
+                }
+                emit(
+                    &out,
+                    serde_json::json!({
+                        "ok": true, "request_id": request_id, "stream": "delta",
+                        "data": {"chunk": i, "total": chunks}
+                    }),
+                );
                 if let Some(ms) = delay_ms {
                     std::thread::sleep(std::time::Duration::from_millis(ms));
                 }
             }
-            let done = serde_json::json!({
-                "ok": true,
-                "stream": "done",
-                "stream_id": stream_id,
-                "result": {"chunks_sent": chunks}
-            });
-            writeln!(out, "{done}").ok();
-        }
-        Command::StreamCancel {
-            stream_id: target_id,
-        } => {
-            // Phase 0: placeholder cancel (no active streams to cancel yet).
-            // Phase 1 will wire this to actual provider stream cancellation.
-            let done = serde_json::json!({
-                "ok": true,
-                "stream": "done",
-                "stream_id": stream_id,
-                "result": {"cancelled": target_id}
-            });
-            writeln!(out, "{done}").ok();
+            emit(
+                &out,
+                serde_json::json!({
+                    "ok": true, "request_id": request_id, "stream": "done",
+                    "result": {"chunks_sent": chunks}
+                }),
+            );
         }
         Command::ProviderStream {
             protocol,
@@ -819,20 +818,48 @@ fn handle_stream(cmd: Command, _cache: &Mutex<ConnCache>, out: &mut impl Write) 
                 api_key,
                 base_url,
             };
-            match delta_runtime_native::provider::stream(&req, out, &stream_id) {
+            // The stream runs in a background thread. Use a LineWriter that
+            // locks stdout per-write so the main loop (and other streams)
+            // can interleave between frames — no HOL blocking.
+            let _ = &cache; // shared cache available for future provider needs
+            let mut writer = LineWriter(out.clone());
+            match delta_runtime_native::provider::stream(
+                &req,
+                &mut writer,
+                &request_id.to_string(),
+                &cancel,
+            ) {
                 Ok(result) => {
-                    let done = serde_json::json!({"ok": true, "stream": "done", "stream_id": stream_id, "result": result});
-                    writeln!(out, "{done}").ok();
+                    let cancelled = result
+                        .get("cancelled")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let result_val = if cancelled {
+                        serde_json::json!({"cancelled": true})
+                    } else {
+                        result
+                    };
+                    emit(
+                        &out,
+                        serde_json::json!({
+                            "ok": true, "request_id": request_id, "stream": "done",
+                            "result": result_val
+                        }),
+                    );
                 }
                 Err(e) => {
-                    let err_frame = serde_json::json!({"ok": false, "stream": "error", "stream_id": stream_id, "error": e});
-                    writeln!(out, "{err_frame}").ok();
+                    emit(
+                        &out,
+                        serde_json::json!({
+                            "ok": false, "request_id": request_id, "stream": "error",
+                            "error": e
+                        }),
+                    );
                 }
             }
         }
         _ => unreachable!(),
     }
-    out.flush().ok();
 }
 
 fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
@@ -1202,9 +1229,10 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
                     let mut val = entry.data.clone();
                     if let Some(obj) = val.as_object_mut() {
                         obj.insert("enabled".into(), Value::Bool(entry.enabled));
-                        if let Some(nr) = entry.next_run {
-                            obj.insert("next_run".into(), Value::from(nr));
-                        }
+                        obj.insert(
+                            "next_run".into(),
+                            entry.next_run.map(Value::from).unwrap_or(Value::Null),
+                        );
                     }
                     Ok(val)
                 }
@@ -1225,9 +1253,10 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
                             let mut val = e.data.clone();
                             if let Some(obj) = val.as_object_mut() {
                                 obj.insert("enabled".into(), Value::Bool(e.enabled));
-                                if let Some(nr) = e.next_run {
-                                    obj.insert("next_run".into(), Value::from(nr));
-                                }
+                                obj.insert(
+                                    "next_run".into(),
+                                    e.next_run.map(Value::from).unwrap_or(Value::Null),
+                                );
                             }
                             val
                         })
@@ -1249,9 +1278,10 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
                             let mut val = e.data.clone();
                             if let Some(obj) = val.as_object_mut() {
                                 obj.insert("enabled".into(), Value::Bool(e.enabled));
-                                if let Some(nr) = e.next_run {
-                                    obj.insert("next_run".into(), Value::from(nr));
-                                }
+                                obj.insert(
+                                    "next_run".into(),
+                                    e.next_run.map(Value::from).unwrap_or(Value::Null),
+                                );
                             }
                             val
                         })
@@ -1359,6 +1389,7 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
             run_data,
             workspace,
             finished_at,
+            next_run,
         } => {
             let store = match cache.task(&db) {
                 Ok(w) => w,
@@ -1371,6 +1402,7 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
                 &run_data,
                 &workspace,
                 finished_at,
+                next_run,
             ) {
                 Ok(updated_task) => Ok(updated_task),
                 Err(e) => Err(e.to_string()),
@@ -2096,7 +2128,9 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
             }
         }
         Command::StreamEcho { .. } => Err("streaming commands handled in handle_stream".into()),
-        Command::StreamCancel { stream_id } => Ok(serde_json::json!({"cancelled": stream_id})),
+        Command::RequestCancel {
+            target_request_id: _,
+        } => Ok(serde_json::json!({"handled_in_main": true})),
         Command::ProviderComplete {
             protocol,
             model,
@@ -2179,10 +2213,23 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
 }
 
 fn main() -> std::process::ExitCode {
+    use std::sync::atomic::AtomicU64;
+
     let stdin = io::stdin();
-    let stdout = io::stdout();
-    let mut out = stdout.lock();
-    let cache = Mutex::new(ConnCache::new());
+    let stdout = Arc::new(io::stdout());
+    let cache = Arc::new(Mutex::new(ConnCache::new()));
+
+    // v16: active stream registry — maps request_id → cancel flag.
+    // The main loop sets the flag when request.cancel arrives; the
+    // stream thread checks it at each delta boundary.
+    let active: Arc<Mutex<HashMap<u64, Arc<AtomicBool>>>> = Arc::new(Mutex::new(HashMap::new()));
+
+    // Auto-incrementing request_id for commands that don't carry one
+    // (v15 backward compat: hello, ping, etc.).
+    let auto_id = AtomicU64::new(1);
+
+    // Track spawned stream threads so we can join on shutdown.
+    let mut threads: Vec<std::thread::JoinHandle<()>> = Vec::new();
 
     for line in stdin.lock().lines() {
         let line = match line {
@@ -2193,22 +2240,98 @@ fn main() -> std::process::ExitCode {
         if trimmed.is_empty() {
             continue;
         }
-        let cmd: Command = match serde_json::from_str(trimmed) {
-            Ok(c) => c,
+
+        // Parse request_id from the raw JSON (it's not part of Command enum).
+        let raw: Value = match serde_json::from_str(trimmed) {
+            Ok(v) => v,
             Err(e) => {
-                let resp = serde_json::json!({"ok": false, "error": format!("parse: {e}")});
-                writeln!(out, "{resp}").ok();
-                out.flush().ok();
+                emit(
+                    &stdout,
+                    serde_json::json!({"ok": false, "error": format!("parse: {e}")}),
+                );
                 continue;
             }
         };
+        let request_id: u64 = raw
+            .get("request_id")
+            .and_then(|v| v.as_u64())
+            .unwrap_or_else(|| auto_id.fetch_add(1, Ordering::Relaxed));
+
+        // Handle request.cancel specially (non-streaming, needs active registry).
+        let is_cancel = raw.get("cmd").and_then(|v| v.as_str()) == Some("request.cancel");
+        if is_cancel {
+            let target = raw
+                .get("target_request_id")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0);
+            let cancelled = {
+                let map = active.lock().unwrap();
+                if let Some(flag) = map.get(&target) {
+                    flag.store(true, Ordering::Relaxed);
+                    true
+                } else {
+                    false
+                }
+            };
+            emit(
+                &stdout,
+                serde_json::json!({
+                    "ok": true, "request_id": request_id,
+                    "result": {"cancelled": cancelled, "target_request_id": target}
+                }),
+            );
+            continue;
+        }
+
+        let cmd: Command = match serde_json::from_value(raw) {
+            Ok(c) => c,
+            Err(e) => {
+                emit(
+                    &stdout,
+                    serde_json::json!({
+                        "ok": false, "request_id": request_id,
+                        "error": format!("parse: {e}")
+                    }),
+                );
+                continue;
+            }
+        };
+
         if cmd.is_streaming() {
-            handle_stream(cmd, &cache, &mut out);
+            // v16: dispatch streaming commands to a background thread so
+            // the main loop continues reading stdin (AF-04: no HOL blocking).
+            let cancel = Arc::new(AtomicBool::new(false));
+            {
+                let mut map = active.lock().unwrap();
+                map.insert(request_id, cancel.clone());
+            }
+            let ctx = StreamCtx {
+                request_id,
+                cancel,
+                out: stdout.clone(),
+                cache: cache.clone(),
+            };
+            let active_clone = active.clone();
+            let handle = std::thread::spawn(move || {
+                handle_stream(cmd, ctx);
+                // Cleanup: remove from active registry.
+                let mut map = active_clone.lock().unwrap();
+                map.remove(&request_id);
+            });
+            threads.push(handle);
         } else {
             let resp = handle(cmd, &cache);
-            writeln!(out, "{resp}").ok();
-            out.flush().ok();
+            let mut full = serde_json::to_value(&resp).unwrap_or(resp);
+            if let Some(obj) = full.as_object_mut() {
+                obj.insert("request_id".into(), Value::from(request_id));
+            }
+            emit(&stdout, full);
         }
+    }
+
+    // Graceful shutdown: join all stream threads.
+    for t in threads {
+        let _ = t.join();
     }
     std::process::ExitCode::SUCCESS
 }

@@ -337,11 +337,25 @@ class ToolLifecycleOrchestrator:
         timeout = ctx.tool_timeout
         try:
             if timeout and timeout > 0:
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    future = pool.submit(
-                        ctx.registry.execute, tool_call.name, tool_call.arguments
-                    )
+                # AF-08: do NOT use `with` — its __exit__ calls
+                # shutdown(wait=True), which blocks until the orphaned
+                # thread finishes, defeating the timeout. Instead,
+                # submit, wait, and abandon the thread if it times out.
+                pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+                future = pool.submit(
+                    ctx.registry.execute, tool_call.name, tool_call.arguments
+                )
+                try:
                     result = future.result(timeout=timeout)
+                except concurrent.futures.TimeoutError:
+                    # Abandon the worker thread — it may still be running.
+                    # The tool's side effect (if any) is in an uncertain
+                    # state: we stopped waiting, but the callable may
+                    # complete in the background. Mark as uncertain.
+                    pool.shutdown(wait=False)
+                    raise
+                else:
+                    pool.shutdown(wait=True)
             else:
                 result = ctx.registry.execute(tool_call.name, tool_call.arguments)
         except concurrent.futures.TimeoutError:
@@ -363,9 +377,12 @@ class ToolLifecycleOrchestrator:
                             )
                         except Exception:
                             pass
+            # AF-08: timeout means we stopped waiting, not that the
+            # thread was killed. If the tool may have side effects,
+            # the state is uncertain, not failed.
             return (
                 {"error": f"tool timed out after {timeout:.0f}s", "error_type": "TimeoutError"},
-                "timeout",
+                "uncertain",
             )
         except Exception as exc:
             if planned:
@@ -392,6 +409,10 @@ class ToolLifecycleOrchestrator:
             if scope is not None:
                 run_id, _session_id = scope
                 if run_id:
+                    # AF-09: if the side effect already executed but
+                    # trusted persistence fails, we must NOT return
+                    # "ok" and continue. The state is uncertain:
+                    # the effect happened but was not recorded.
                     try:
                         idem_log.commit(  # type: ignore[union-attr]
                             run_id,
@@ -402,7 +423,14 @@ class ToolLifecycleOrchestrator:
                             ledger=ctx.ledger,
                         )
                     except Exception:
-                        pass
+                        return (
+                            {
+                                "error": "post_effect_persistence_failed",
+                                "error_type": "PersistenceFailure",
+                                "tool": tool_call.name,
+                            },
+                            "uncertain",
+                        )
                     if tool_call.name in _WRITE_TOOLS and isinstance(
                         tool_call.arguments, dict
                     ):

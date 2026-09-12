@@ -797,6 +797,7 @@ class SourceStore:
     # same thing), but a missing file cannot; a lines citation past
     # EOF is unambiguously invalid even when the file is current.
     CITATION_VALID = "valid"
+    CITATION_RANGE_UNVERIFIED = "range_unverified"  # source+structure valid but kind-specific extent not verified (AF-11)
     CITATION_CONTENT_CHANGED = "content_changed"  # sha256 differs; UI can still navigate, but the cited bytes aren't what the run saw
     CITATION_OUT_OF_BOUNDS = "out_of_bounds"  # range past EOF in a current file (stale lines)
     CITATION_FILE_MISSING = "file_missing"  # status: missing → cannot navigate at all

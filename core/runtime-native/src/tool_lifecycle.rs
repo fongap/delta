@@ -344,14 +344,21 @@ mod tests {
             )
             .unwrap();
 
-        // Different args → different sha → not a replay; treated as execute.
+        // AF-10: same (run_id, tool_call_id) with different args is an
+        // identity collision — must NOT be treated as a fresh execute.
+        // The system must fail-closed instead of silently overwriting
+        // the committed result.
         let different = serde_json::json!({"path": "b.txt"});
-        let out = plan(
+        let result = plan(
             &writer,
             &input(db.to_str().unwrap(), "r3", "c3", "write_file", different),
-        )
-        .unwrap();
-        assert!(matches!(out.action, PlanAction::Execute));
+        );
+        assert!(result.is_err(), "identity collision must fail-closed");
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("identity_collision"),
+            "error must mention identity_collision: {err_msg}"
+        );
     }
 
     #[test]
