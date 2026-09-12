@@ -213,9 +213,9 @@ impl LedgerReader {
     /// `resumed` after it means the run is open again.
     pub fn open_runs(&self) -> Result<Vec<String>, ShadowReadError> {
         // Get all run_ids that have at least one event.
-        let mut stmt = self.conn.prepare(
-            "SELECT DISTINCT run_id FROM run_events",
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT DISTINCT run_id FROM run_events")?;
         let all_ids: Vec<String> = stmt
             .query_map([], |row| row.get(0))?
             .filter_map(|r| r.ok())

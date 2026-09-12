@@ -750,35 +750,52 @@ impl io::Write for LineWriter {
 }
 
 fn handle_stream(cmd: Command, ctx: StreamCtx) {
-    let StreamCtx { request_id, cancel, out, cache } = ctx;
+    let StreamCtx {
+        request_id,
+        cancel,
+        out,
+        cache,
+    } = ctx;
 
     // Start frame
-    emit(&out, serde_json::json!({
-        "ok": true, "request_id": request_id, "stream": "start"
-    }));
+    emit(
+        &out,
+        serde_json::json!({
+            "ok": true, "request_id": request_id, "stream": "start"
+        }),
+    );
 
     match cmd {
         Command::StreamEcho { chunks, delay_ms } => {
             for i in 0..chunks {
                 if cancel.load(Ordering::Relaxed) {
-                    emit(&out, serde_json::json!({
-                        "ok": true, "request_id": request_id, "stream": "done",
-                        "result": {"cancelled": true, "chunk": i}
-                    }));
+                    emit(
+                        &out,
+                        serde_json::json!({
+                            "ok": true, "request_id": request_id, "stream": "done",
+                            "result": {"cancelled": true, "chunk": i}
+                        }),
+                    );
                     return;
                 }
-                emit(&out, serde_json::json!({
-                    "ok": true, "request_id": request_id, "stream": "delta",
-                    "data": {"chunk": i, "total": chunks}
-                }));
+                emit(
+                    &out,
+                    serde_json::json!({
+                        "ok": true, "request_id": request_id, "stream": "delta",
+                        "data": {"chunk": i, "total": chunks}
+                    }),
+                );
                 if let Some(ms) = delay_ms {
                     std::thread::sleep(std::time::Duration::from_millis(ms));
                 }
             }
-            emit(&out, serde_json::json!({
-                "ok": true, "request_id": request_id, "stream": "done",
-                "result": {"chunks_sent": chunks}
-            }));
+            emit(
+                &out,
+                serde_json::json!({
+                    "ok": true, "request_id": request_id, "stream": "done",
+                    "result": {"chunks_sent": chunks}
+                }),
+            );
         }
         Command::ProviderStream {
             protocol,
@@ -790,7 +807,13 @@ fn handle_stream(cmd: Command, ctx: StreamCtx) {
             base_url,
         } => {
             let req = ProviderRequest {
-                protocol, model, messages, tools, settings, api_key, base_url,
+                protocol,
+                model,
+                messages,
+                tools,
+                settings,
+                api_key,
+                base_url,
             };
             // The stream runs in a background thread. Use a LineWriter that
             // locks stdout per-write so the main loop (and other streams)
@@ -798,26 +821,37 @@ fn handle_stream(cmd: Command, ctx: StreamCtx) {
             let _ = &cache; // shared cache available for future provider needs
             let mut writer = LineWriter(out.clone());
             match delta_runtime_native::provider::stream(
-                &req, &mut writer, &request_id.to_string(), &cancel,
+                &req,
+                &mut writer,
+                &request_id.to_string(),
+                &cancel,
             ) {
                 Ok(result) => {
-                    let cancelled = result.get("cancelled")
-                        .and_then(|v| v.as_bool()).unwrap_or(false);
+                    let cancelled = result
+                        .get("cancelled")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
                     let result_val = if cancelled {
                         serde_json::json!({"cancelled": true})
                     } else {
                         result
                     };
-                    emit(&out, serde_json::json!({
-                        "ok": true, "request_id": request_id, "stream": "done",
-                        "result": result_val
-                    }));
+                    emit(
+                        &out,
+                        serde_json::json!({
+                            "ok": true, "request_id": request_id, "stream": "done",
+                            "result": result_val
+                        }),
+                    );
                 }
                 Err(e) => {
-                    emit(&out, serde_json::json!({
-                        "ok": false, "request_id": request_id, "stream": "error",
-                        "error": e
-                    }));
+                    emit(
+                        &out,
+                        serde_json::json!({
+                            "ok": false, "request_id": request_id, "stream": "error",
+                            "error": e
+                        }),
+                    );
                 }
             }
         }
@@ -2091,7 +2125,9 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
             }
         }
         Command::StreamEcho { .. } => Err("streaming commands handled in handle_stream".into()),
-        Command::RequestCancel { target_request_id: _ } => Ok(serde_json::json!({"handled_in_main": true})),
+        Command::RequestCancel {
+            target_request_id: _,
+        } => Ok(serde_json::json!({"handled_in_main": true})),
         Command::ProviderComplete {
             protocol,
             model,
@@ -2183,8 +2219,7 @@ fn main() -> std::process::ExitCode {
     // v16: active stream registry — maps request_id → cancel flag.
     // The main loop sets the flag when request.cancel arrives; the
     // stream thread checks it at each delta boundary.
-    let active: Arc<Mutex<HashMap<u64, Arc<AtomicBool>>>> =
-        Arc::new(Mutex::new(HashMap::new()));
+    let active: Arc<Mutex<HashMap<u64, Arc<AtomicBool>>>> = Arc::new(Mutex::new(HashMap::new()));
 
     // Auto-incrementing request_id for commands that don't carry one
     // (v15 backward compat: hello, ping, etc.).
@@ -2207,7 +2242,10 @@ fn main() -> std::process::ExitCode {
         let raw: Value = match serde_json::from_str(trimmed) {
             Ok(v) => v,
             Err(e) => {
-                emit(&stdout, serde_json::json!({"ok": false, "error": format!("parse: {e}")}));
+                emit(
+                    &stdout,
+                    serde_json::json!({"ok": false, "error": format!("parse: {e}")}),
+                );
                 continue;
             }
         };
@@ -2232,20 +2270,26 @@ fn main() -> std::process::ExitCode {
                     false
                 }
             };
-            emit(&stdout, serde_json::json!({
-                "ok": true, "request_id": request_id,
-                "result": {"cancelled": cancelled, "target_request_id": target}
-            }));
+            emit(
+                &stdout,
+                serde_json::json!({
+                    "ok": true, "request_id": request_id,
+                    "result": {"cancelled": cancelled, "target_request_id": target}
+                }),
+            );
             continue;
         }
 
         let cmd: Command = match serde_json::from_value(raw) {
             Ok(c) => c,
             Err(e) => {
-                emit(&stdout, serde_json::json!({
-                    "ok": false, "request_id": request_id,
-                    "error": format!("parse: {e}")
-                }));
+                emit(
+                    &stdout,
+                    serde_json::json!({
+                        "ok": false, "request_id": request_id,
+                        "error": format!("parse: {e}")
+                    }),
+                );
                 continue;
             }
         };

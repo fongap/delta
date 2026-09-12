@@ -341,8 +341,7 @@ impl IdempotencyWriter {
             if existing_sha != sha
                 && matches!(
                     SideEffectState::parse(&state),
-                    Some(SideEffectState::Committed)
-                        | Some(SideEffectState::Uncertain)
+                    Some(SideEffectState::Committed) | Some(SideEffectState::Uncertain)
                 )
             {
                 return Err(ShadowReadError::Parse(format!(

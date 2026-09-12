@@ -649,7 +649,10 @@ mod tests {
         // SQL enabled column must be 0 (disabled) — NOT left stale at 1.
         let task = store.get_task("task_1").unwrap().unwrap();
         assert!(!task.enabled, "exhausted task must have SQL enabled=0");
-        assert!(task.next_run.is_none(), "exhausted task must have SQL next_run=NULL");
+        assert!(
+            task.next_run.is_none(),
+            "exhausted task must have SQL next_run=NULL"
+        );
 
         // due_tasks() reads SQL columns; an exhausted task must not be due.
         let due = store.due_tasks(f64::MAX).unwrap();
@@ -685,8 +688,15 @@ mod tests {
 
         let task = store.get_task("task_1").unwrap().unwrap();
         assert!(task.enabled);
-        assert_eq!(task.next_run, Some(5000.0), "SQL next_run must match Python value");
-        assert_eq!(task.data["next_run"], 5000.0_f64, "JSON next_run must match SQL");
+        assert_eq!(
+            task.next_run,
+            Some(5000.0),
+            "SQL next_run must match Python value"
+        );
+        assert_eq!(
+            task.data["next_run"], 5000.0_f64,
+            "JSON next_run must match SQL"
+        );
         assert_eq!(task.data["run_count"], 1);
     }
 
