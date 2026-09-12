@@ -52,7 +52,11 @@ Task 的 completion ownership 在 R5.1 中收敛：Scheduler 是 scheduled-run f
 - `run_id` 是一次实际执行的稳定 identity；
 - 交互 turn、automation 和 resume 都必须归属清晰 Run；
 - resume 保持原 Run identity，不把恢复伪装成新 Run；
-- `interrupted` 是可恢复状态，不是“只要历史出现过就永久 terminal”。
+- Run 是否 recoverable-open 由**最新 lifecycle state**决定，而不是由历史上是否出现过 `interrupted` 决定；
+- latest `running` / `resumed` → recoverable-open；
+- latest `interrupted` → 不再次由 `open_runs()` 列出，避免 stale recovery 重复处理；
+- 显式 `resumed` 后，同一 `run_id` 再次成为 recoverable-open，因此后续再次 crash 仍可恢复；
+- completed / failed / skipped / cancelled / validation-failed 保持 closed。
 
 ### 2.4 RunEvent / Ledger
 
@@ -157,7 +161,7 @@ Validation 是“任务是否真正完成”的确定性证据之一。
 
 Source / Citation 记录任务实际依据。
 
-Validity 不能把“尚未验证”当成“有效”。R5.1 明确：`range_valid = None` 不计为 fully valid，无法验证范围时使用 `range_unverified` 等明确 reason。
+Validity 不能把“尚未验证”当成“有效”。R5.1 明确：`range_valid = None` 不计为 fully valid，无法验证范围时使用 `range_unverified` 等明确 reason；只有 `reason == "valid"` 才计入 fully-valid citation 数量。
 
 ### 2.9 Checkpoint / Recovery
 
