@@ -547,7 +547,7 @@ def test_ws_rejects_malformed_payloads_without_killing_socket(tmp_path):
         assert "turn_done" in _drain(ws)
 
 
-def test_ws_allows_only_one_inflight_turn_per_session(tmp_path):
+def test_ws_routes_second_plain_text_to_active_turn_without_concurrency(tmp_path):
     import threading
     import time
 
@@ -556,14 +556,19 @@ def test_ws_allows_only_one_inflight_turn_per_session(tmp_path):
             self._lock = threading.Lock()
             self.active = 0
             self.max_active = 0
+            self.calls = 0
 
         def complete(self, *, model, messages, tools=None, **settings):
             with self._lock:
                 self.active += 1
                 self.max_active = max(self.max_active, self.active)
+                self.calls += 1
+                call_no = self.calls
             try:
+                # Keep the first call active long enough for the second frame
+                # to deterministically exercise busy-session steering.
                 time.sleep(0.08)
-                return _text("done")
+                return _text(f"done-{call_no}")
             finally:
                 with self._lock:
                     self.active -= 1
@@ -583,12 +588,14 @@ def test_ws_allows_only_one_inflight_turn_per_session(tmp_path):
         while "turn_done" not in types:
             types.append(ws.receive_json()["type"])
 
-    assert "input_rejected" in types
+    # The second message steers the SAME active turn: no rejection and
+    # no concurrent provider execution.
+    assert "input_rejected" not in types
     assert provider.max_active == 1
+    assert provider.calls == 2
     engine = manager._runtimes["serialized"].engine
     user_messages = [m for m in engine.messages if m.get("role") == "user"]
-    assert [m["content"] for m in user_messages] == ["first"]
-
+    assert [m["content"] for m in user_messages] == ["first", "second"]
 
 def test_ws_rate_limits_inbound_frames(tmp_path):
     from starlette.websockets import WebSocketDisconnect
