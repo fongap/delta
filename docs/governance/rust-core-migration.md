@@ -1,448 +1,465 @@
-# Rust Core Migration Governance
+# Runtime Convergence Governance
 
-## 1. 目的
+> 本文规定 R5.1 之后 Delta 从过渡态收敛到 **Rust + TypeScript 核心产品架构**的长期治理规则。
+>
+> R1–R5.1 的具体迁移历史、Protocol 版本和单领域 hard-cut 证据保留在 ADR、PR、审计记录和 CHANGELOG 中；本文不再重复维护完整历史流水账。
 
-本文规定 Delta 从 Legacy Python Runtime 向 Rust Control Plane 迁移时的治理规则。
+## 1. 目标
 
-目标不是“重写 Python”。
+目标不是“把所有 Python 翻译成 Rust”，也不是提高 Rust 行数占比。
 
 目标是：
 
-> **把核心领域控制权单向迁移到 Rust，同时保持产品语义、数据一致性和可回滚性。**
+> **把核心产品控制权、事实和常驻 Runtime 收敛到 Rust，把用户交互收敛到 TypeScript，并把 Python / PowerShell / Shell 降为受控工作执行语言。**
 
----
+最终主路径：
 
-## 2. 总原则
+```text
+TypeScript Experience
+        ↓
+Tauri Commands / Events
+        ↓
+Rust Runtime Host
+   ┌────┼──────────────┐
+   ▼    ▼              ▼
+ Trust Work       Capability Host
+                     ↓
+             Worker / MCP / External
+```
 
-迁移必须遵循：
+## 2. 已完成基础
 
-1. 控制权按领域迁移；
-2. Python → Rust 单向迁移；
-3. 一个领域只能有一个 authority；
-4. 迁移期间允许兼容，不允许长期双主控；
-5. 产品行为先保持一致，再优化实现；
-6. 不以语言占比作为 KPI；
-7. 不借迁移扩大产品范围；
-8. 不在迁移期间同步推进大规模 P3 智能能力。
+R1–R5 已完成的核心方向：
 
----
+- Run / Ledger / Idempotency / Task identity 等 trusted state 向 Rust hard-cut；
+- Artifact / Source / Citation / Validation / Checkpoint / Policy / Approval 等 trusted execution authority 向 Rust hard-cut；
+- Tool lifecycle / cancellation / timeout / retry decision authority 向 Rust 收敛；
+- Run lifecycle / automation completion authority 向 Rust 收敛；
+- OpenAI-compatible / Anthropic-compatible provider transport 与主要 decision authority 向 Rust 收敛。
 
-## 3. Authority Matrix
+R5.1 进一步完成：
 
-目标状态：
+- Runtime correctness AF-01..AF-14 closure；
+- multiplexed protocol v16；
+- request identity / demux / real cancel / backpressure；
+- scheduler single completion owner；
+- side-effect fail-closed 与 identity collision；
+- citation validity 修正；
+- Steer / Follow-up / Cancel 的 Human Control 基础。
 
-| 领域 | 当前可能实现 | 最终 Authority |
-| --- | --- | --- |
-| Task | Rust（ADR-024 hard-cut） | **Rust** |
-| Run | Rust Ledger（ADR-025） | **Rust** |
-| Runtime | Python | Rust |
-| Scheduler | Python | Rust |
-| Policy | Python | Rust |
-| Approval | Rust（ADR-031 hard-cut） | **Rust** |
-| Ledger | Rust（ADR-023 hard-cut） | **Rust** |
-| Checkpoint | Rust（ADR-029 hard-cut） | **Rust** |
-| Resume | Python | Rust |
-| Artifact Registry | Rust（ADR-026 hard-cut） | **Rust** |
-| Source/Citation | Rust（ADR-027 hard-cut） | **Rust** |
-| Validation | Rust（ADR-028 hard-cut） | **Rust** |
-| Idempotency | Rust（ADR-022 hard-cut） | **Rust** |
-| Tool lifecycle | Python | Rust |
-| Worker lifecycle | 分散 | Rust |
-| Provider Core | Python | Rust-first |
-| PDF / Office | Python | Capability Worker |
-| OCR / STT | Python / Rust service | Capability Worker |
-| Data / ML | Python | Capability Worker |
-| 特殊 SDK | Python | Capability Worker |
-| UI | TypeScript | TypeScript |
-| Tauri Host | Rust | Rust |
+这些能力构成 R6 的迁移 seam，不应在 R6 中重新发明。
 
-> **R1 Final Convergence（ADR-025，2026-09-09）**：R1 State Foundation 正式封板。Run State 完全由 Ledger 决定，`TaskRun.status` 不参与任何调度、恢复、完成/失败判断、重试、Automation 控制或生命周期控制。`derive_run_status()` 无 fallback 参数。`core/storage_transaction.py`、`CoreStorage`、`CoreTransaction`、`tests/test_storage_transaction.py` 已全部删除。不存在假事务抽象。Authority Matrix：Task Identity = Rust、Run Identity = Rust、Run State = Rust Ledger、Ledger = Rust、Idempotency = Rust、Task persistence = Rust、Run persistence = Rust、Storage coordination = No separate authority、Python fallback = None。
+## 3. R6 最终目标
 
-> **R1 State Foundation 完成状态（ADR-017）**：R1 全部 5 个领域的 Rust delegate 路径已就位。`RunEventLedger.run_status()` 从 ledger 事件派生运行状态，`TaskRun.status` 仅为 legacy / denormalized display cache，不参与任何控制流判断。Storage transaction boundary 已在 R1 Final Convergence（ADR-025）删除，不存在假事务抽象。Authority 声明后 binary 缺失走 fail-closed，禁止静默 fallback。CI smoke gate 覆盖 authority regression + cross-language contract + production call chain。
->
-> **R1 Idempotency Hard-Cut（ADR-022，2026-09-08）**：Idempotency 域已完成 hard-cut。Rust `delta_core` 是唯一事实来源。Python `core/idemlog.py` 是薄门面。`core/idemlog_delegate.py` 和 `tests/test_idemlog_delegate.py` 已物理删除。`DELTA_RUST_AUTHORITY=idempotency` 选择逻辑已移除。不存在 Python fallback writer、delegate wrapper 或双 Authority 路径。回滚方式仅为 Git revert。
->
-> **R1 Ledger Hard-Cut（ADR-023，2026-09-08）**：Ledger 域已完成 hard-cut。Rust `delta_core` 是唯一事实来源。Python `core/ledger.py` 是薄门面。`core/ledger_delegate.py` 和 `tests/test_ledger_delegate.py` 已物理删除。`DELTA_RUST_AUTHORITY=ledger` 选择逻辑已移除。不存在 Python fallback writer、delegate wrapper 或双 Authority 路径。回滚方式仅为 Git revert。
->
-> **R1 Task Identity Hard-Cut（ADR-024，2026-09-08）**：Task Identity 域已完成 hard-cut。Rust `delta_core` 是唯一事实来源。Python `core/automation/store.py` 是薄门面。`core/automation/store_delegate.py` 和 `tests/test_taskstore_delegate.py` 已物理删除。`DELTA_RUST_AUTHORITY=task_identity` 选择逻辑已移除。不存在 Python fallback writer、delegate wrapper 或双 Authority 路径。回滚方式仅为 Git revert。
->
-> **R2 Artifact Registry Hard-Cut（ADR-026，2026-09-09）**：Artifact Registry 域已完成 hard-cut。Rust `delta_core` 是唯一事实来源。Python `core/artifact.py` 只负责文件发现 / stat / sha256 / kind 分类，通过 `DeltaCoreClient` 发送 `artifact.register` 命令。`core/artifact_delegate.py` 和 `tests/test_artifact_delegate.py` 已物理删除。`DELTA_RUST_AUTHORITY=artifact` 选择逻辑已移除（`artifact` 不在 `RUST_WRITE_DOMAINS`）。不存在 Python fallback writer、delegate wrapper、feature flag 或双 Authority 路径。回滚方式仅为 Git revert。
->
-> **R2 Source/Citation Hard-Cut（ADR-027，2026-09-10）**：Source/Citation 域已完成 hard-cut。Rust `delta_core` 是唯一事实来源。Python `core/sources.py` 只负责文件 I/O / sha256 / stat / candidate range 构造，通过 `DeltaCoreClient` 发送 `source.register` / `citation.mark` / `citation.validate` 等命令。`core/source_citation_delegate.py` 和 `tests/test_source_citation_delegate.py` 已物理删除。`DELTA_RUST_AUTHORITY=source_citation` 选择逻辑已移除（`source_citation` 不在 `RUST_WRITE_DOMAINS`）。不存在 Python fallback writer、delegate wrapper、feature flag 或双 Authority 路径。回滚方式仅为 Git revert。
+### 3.1 核心产品语言
 
-> **R2 Validation Hard-Cut（ADR-028，2026-09-10）**：Validation 域已完成 hard-cut。Rust `delta_core` 是唯一事实来源。Python `core/validation.py` 只负责 artifact 收集 / criteria 构造，通过 `DeltaCoreClient` 发送 `validation.run` / `validation.register` / `validation.eval` 等命令。`core/validation_delegate.py` 和 `tests/test_validation_delegate.py` 已物理删除。`validation` 在 `RUST_WRITE_DOMAINS` 中。不存在 Python fallback writer、delegate wrapper、feature flag 或双 Authority 路径。回滚方式仅为 Git revert。
->
-> **R2 Checkpoint Hard-Cut（ADR-029，2026-09-10）**：Checkpoint 域已完成 hard-cut。Rust `delta_core` 是唯一事实来源。Python `core/recovery.py` 只负责状态收集 / 快照构造，通过 `DeltaCoreClient` 发送 `checkpoint.register` / `checkpoint.get` / `checkpoint.validate` 等命令。`inspect_checkpoint` 已删除，`checkpoint` 在 `RUST_WRITE_DOMAINS` 中，不在 `RUST_READ_DOMAINS`。不存在 Python fallback writer、delegate wrapper、feature flag 或双 Authority 路径。回滚方式仅为 Git revert。
->
-> **R2 Policy Hard-Cut（ADR-030，2026-09-10）**：Policy 域已完成 hard-cut。Rust `delta_core` 是唯一事实来源。Python `core/gateway.py` 只负责状态收集 / 元数据构造，通过 `DeltaCoreClient` 发送 `policy.classify` / `policy.evaluate` 命令。`enforce_level` / `restrict_grants` / `enforce_scope` Python 实现已删除，`policy` 在 `RUST_WRITE_DOMAINS` 中。不存在 Python fallback writer、delegate wrapper、feature flag 或双 Authority 路径。回滚方式仅为 Git revert。
->
-> **R2 Approval Hard-Cut（ADR-031，2026-09-10）**：Approval 审计写入域已完成 hard-cut。Rust `delta_core` 是唯一事实来源。Python `core/approval.py` 是薄门面，通过 `DeltaCoreClient` 发送 `approval.record` 命令。`core/audit.py` 的 `append()` 委托给 Rust，交互式决策（`ApprovalOutcome` / `PermissionRequest` / `Approver`）保留在 Python `engine.py`，`approval` 在 `RUST_WRITE_DOMAINS` 中。不存在 Python fallback writer、delegate wrapper、feature flag 或双 Authority 路径。回滚方式仅为 Git revert。
->
-> **R2 Final Convergence（ADR-032，2026-09-10）**：R2 Trusted Execution 正式收口。全部 6 个 R2 域（Artifact / Source-Citation / Validation / Checkpoint / Policy / Approval）已完成 hard-cut，Rust `delta_core` 为唯一 Authority。Shadow-reader 基础设施（`RUST_READ_DOMAINS` / `DELTA_RUST_READERS` / `is_rust_shadow_reader` / `tests/test_r2_shadow_read.py`）已删除。`RUST_WRITE_DOMAINS` 保留为唯一权威声明表面。无 Python fallback、无 delegate、无 feature flag、无双 Authority 路径。回滚仅 Git revert。
+```text
+Rust + TypeScript
+```
 
-> **R3 Execution Lifecycle Plan（ADR-033，2026-09-10）**：R3 与 R2 结构不同——R2 是 authority switch，R3 是执行编排迁移。Side-Effect Safety（IdempotencyLog）和 Checkpoint 已完成 hard-cut。剩余域按风险分阶段：Phase 1（Backoff/Worker Restart，无引擎重构）→ Phase 2（引擎重构前置）→ Phase 3（Tool Lifecycle/Resume/Cancellation/Timeout/Retry）。详见 ADR-033。
->
-> **R3 Tool Lifecycle Orchestration Hard-Cut（ADR-035，2026-09-10）**：工具调用的执行处置（execute / replay / uncertain）及其配对的 `record_planned` + `mark_executing` 状态机转移收敛到 Rust `delta_core` 的 `toollifecycle.plan` 命令。Python `ToolLifecycleOrchestrator._execute_sync` 变为薄调用方；工具执行本身（`registry.execute`）仍是 Python 能力。Rust 决定"是否执行"，Python 执行。无新表、无新持久化状态、复用 `IdempotencyWriter`。
->
-> **R3 Resume Decision Audit（ADR-036，2026-09-10）**：审计型 ADR，无代码变更。Resume Decision 域的 authority 部分已由 ADR-029（checkpoint 持久化/验证）和 ADR-035（`toollifecycle.plan` 的 dedop/replay/uncertain）完成。剩余的 `unanswered_trailing_tool_calls()` 是纯 Python 内存解析，无 authority 价值，不迁移。
->
-> **R3 Final Audit — Cancellation / Timeout / Retry（ADR-037，2026-09-10）**：~~审计型 ADR，无代码变更。Cancellation / Timeout / Retry 三个域全部是纯运行时守卫或纯函数，无持久化、无 crash 恢复、无数据一致性。~~ **修正**：Cancellation 的 lifecycle-state 决策（Uncertain vs Failed）是持久化状态机转移，有 authority 价值。ADR-037 revised 将 Cancellation 决策 authority 迁到 Rust `toollifecycle.cancel` 命令。Timeout / Retry 的审计仍待修订（ADR-038/039）。
->
-> **R3 Timeout Decision Authority（ADR-038，2026-09-10）**：`toollifecycle.cancel` 命令扩展 `reason` 参数（"user_stop" / "timeout"），让 timeout 和 cancellation 共享同一 Rust 状态机决策（Executing → Uncertain, Planned → Failed）同时区分审计原因。Python 侧新增 `tool_timeout` 配置（默认 300s）和 `ThreadPoolExecutor` deadline 机制；超时时 Python 调用 `idem_log.cancel(reason="timeout")` 委托 Rust 决策。Protocol 10 → 11。
->
-> **R3 Retry Policy Decision Authority（ADR-039，2026-09-10）**：`retry.classify` 命令接收 error_type + error_message + is_context_overflow，返回 error_class + retryable。Python `call_errors.py` 的 `classify_error()` 和 `is_retryable()` 委托 Rust；backoff_delay 纯数学和 retry 执行机制（sleep、Retry-After 解析、budget 跟踪）保留 Python。Protocol 11 → 12。
+- TypeScript：Experience / React UI；
+- Rust：Runtime、Trust、Work、Automation、Learning authority、Capability Host。
 
-每次迁移必须更新实际 Authority Matrix。
+### 3.2 工作执行语言
 
----
+允许：
 
-## 4. Legacy Python Runtime 冻结规则
+```text
+Python
+PowerShell
+Shell
+```
 
-Legacy Python Runtime 可以：
+但身份只能是 Worker / Script。
 
-- 修复安全问题；
-- 修复 P0/P1 功能问题；
-- 补充测试；
-- 提供 Rust migration 对照；
-- 保持现有功能可运行。
+Python 文件数量不是治理指标。判断标准是 Python 是否拥有系统 Authority。
 
-原则上不得新增：
+### 3.3 最终禁止的主路径
 
-- 新 Ledger 体系；
-- 新 Approval 体系；
-- 新 Scheduler；
-- 新 Checkpoint 模型；
-- 新 Artifact authority；
-- 新 Validation authority；
-- 新长期 Runtime 状态；
-- 与 Rust Core 重叠的新控制面。
+R6 完成后不得继续存在：
 
-如果新增能力不可避免，应优先确认是否应该直接实现于 Rust Core。
+```text
+TypeScript
+   ↓
+Python HTTP/WS Server
+   ↓
+Python Manager / TurnEngine
+   ↓
+Rust Authority
+```
 
----
+也不得长期存在纯转发：
 
-## 5. 迁移阶段
+```text
+TypeScript → Python facade → Rust
+```
 
-### R0 — Architecture Contract
+## 4. Authority Matrix
 
-必须先完成：
+R6 目标：
 
-- Rust Control Plane ADR；
-- Capability ABI；
-- Process Supervisor 基础；
-- Worker Manifest；
-- Error contract；
-- Progress / Cancel contract；
-- Artifact staging；
-- Authority Matrix；
-- 行为测试基线。
+| 领域 | 最终 Authority / Owner |
+| --- | --- |
+| Experience / UI state presentation | TypeScript |
+| Session / Run / Turn lifecycle | Rust |
+| Agent loop / Context / Compaction | Rust |
+| Provider protocol / streaming / routing decision | Rust |
+| Tool dispatch / lifecycle decision | Rust |
+| Scheduler / Automation lifecycle | Rust |
+| Policy / Risk / Approval | Rust |
+| Ledger / Audit / Idempotency | Rust |
+| Secrets authority | Rust |
+| Workspace / Source / Citation | Rust |
+| Artifact / Version / Validation / Provenance | Rust |
+| Memory / Experience / Skill evaluation authority | Rust |
+| Office / statistics / media algorithms | Capability Worker allowed |
+| Python / PS / Shell process execution | Rust-supervised Worker |
 
-R0 完成前禁止大规模搬代码。
+一个领域只能有一个 Authority。
 
-### R1 — State Foundation
+## 5. Python 冻结规则
+
+从 R5.1 后开始，Python 控制面进入冻结状态。
+
+### 允许
+
+- 修复安全 / P0 / P1 问题；
+- 保持迁移前行为；
+- 补 contract / regression tests；
+- 临时 migration shim；
+- Office / Research / Media 专业算法；
+- Worker / Script implementation。
+
+### 原则上禁止新增
+
+- Session Manager；
+- Runtime Manager；
+- 长期 Store Authority；
+- 新 Scheduler authority；
+- 新 Policy / Approval authority；
+- 新 Provider control plane；
+- 新核心数据库 writer；
+- 新常驻 Python 服务职责；
+- 新 TS → Python → Rust forwarding surface。
+
+如果新能力需要控制状态，应默认进入 Rust。
+
+## 6. R6 分阶段顺序
+
+### R6-0 — Product Surface Cleanup
+
+先做减法：
+
+- 默认产品身份收敛到 Delta；
+- 删除 / 隔离 Code Agent 产品入口；
+- 删除 Coding 专用 Git / repo / PR 产品能力；
+- 保留通用 File / Search / Shell / Script 能力；
+- 不影响日常办公、研究分析、内容创作的真实任务执行。
+
+目的：减少后续迁移面。
+
+### R6-1 — Rust Runtime Host
+
+基于现有 Runtime contract 建立 Rust implementation：
+
+```text
+run
+resume
+retry
+steer
+follow-up
+cancel / interrupt
+runtime events
+```
+
+要求：
+
+- 复用已存在 Rust authority；
+- 不创建第二套事实模型；
+- 用 contract tests 对齐当前 Runtime 行为；
+- Human Control v16 语义不能退化。
+
+### R6-2 — TypeScript Direct IPC
+
+逐步从：
+
+```text
+TS → HTTP/WS → Python Server
+```
+
+迁到：
+
+```text
+TS → Tauri Commands / Events → Rust
+```
+
+原则：
+
+- 优先保持 `api.ts` 等前端 domain semantics；
+- 换 Backend，不顺手重做 UI；
+- 每切一组接口就删除对应 Python forwarding path。
+
+### R6-3 — Application Control Plane
 
 迁移：
 
-- Task / Run identity；
-- Run state；
-- Ledger；
-- Idempotency；
-- Storage transaction boundary。
+- Session lifecycle；
+- Runtime registry；
+- Settings / Secrets authority；
+- Scheduler / Inbox / Automation orchestration；
+- Source / Artifact / Validation application wiring；
+- Connector / MCP host boundary。
 
-### R2 — Trusted Execution
+### R6-4 — Agent Loop
 
-迁移：
+最后迁移最复杂的 intelligence loop：
 
-- Artifact Registry；
-- Validation；
-- Checkpoint；
-- Policy；
-- Approval；
-- Source / Citation 核心事实关系。
+```text
+context
+→ model
+→ tool calls
+→ trust decision
+→ tool execution
+→ result
+→ next iteration
+```
 
-### R3 — Execution Lifecycle
+Agent loop 迁移前必须确认 Provider、Tool lifecycle、Steering、Resume、Cancel 和 process supervision 的 Rust seam 已足够稳定。
 
-> **R3 Execution Lifecycle 完成（ADR-040，2026-09-10）**：所有执行生命周期决策 authority 已 Rust-authoritative。Tool lifecycle disposition（`toollifecycle.plan`）、cancellation/timeout lifecycle state（`toollifecycle.cancel`）、retry policy decision（`retry.classify`）均在 Rust。Python 保留能力面：工具执行、信号传输、deadline 机制、backoff 数学、消息历史解析。
+### R6-5 — Capability Workerization
 
-迁移：
+将专业 Python 代码明确分类：
 
-- Tool lifecycle；✅ ADR-035 hard-cut（disposition 决策）
-- Retry；✅ ADR-039（retry policy 决策 authority via `retry.classify`）
-- Backoff；✅ ADR-033 审计（纯函数，无 authority 价值）
-- Timeout；✅ ADR-038（lifecycle-state 决策 authority via `toollifecycle.cancel`）
-- Cancellation；✅ ADR-037 revised（lifecycle-state 决策 authority）
-- Worker restart；✅ ADR-033 审计（无 authority 价值）
-- Resume decision；✅ ADR-036 审计（已由 ADR-029+035 覆盖）
-- side-effect safety。✅ ADR-022（R1 已 hard-cut）
+```text
+KEEP AS WORKER
+MOVE TO RUST
+DELETE
+```
 
-### R4 — Runtime
+Office、Research、Statistics、OCR、Media 等优先保留生态优势，改为受控 Worker，而不是为了语言纯度重写。
 
-> **R4 Runtime Migration Plan（ADR-041，2026-09-11）**：审计 5 域。Run lifecycle transitions（`runtime.py:_track` 决策 `run.started/completed/failed`，Rust 仅存储无状态机校验）和 Automation run completion（`manager_automations.py` 决策 run status + max_runs exhaustion）有 authority 价值，分 Phase 1/2 迁移。Scheduler tick/next-fire 是纯函数/运行时力学（同 backoff_delay），Resume orchestration 已由 Rust 覆盖（ADR-029/035/037/038），Phase 3/4 审计不迁移。
+### R6-6 — Python Backend Removal
 
-> **R4 Phase 1 完成（ADR-042，2026-09-11）**：Run lifecycle transition authority 迁移到 Rust。新增 `run.transition` 命令，强制执行 run 状态机。Python `_track` 切到 `run.transition`，protocol 12→13。不存在 fallback/dual-write。
+完成后删除不再需要的：
 
-> **R4 Phase 2 完成（ADR-043，2026-09-11）**：Automation run completion authority 迁移到 Rust。新增 `task.complete_run` 命令，原子性完成：存储 run 最终状态、run_count+1、last_run/last_status、max_runs exhaustion 检查禁用 task。Protocol 13→14。不存在 fallback/dual-write。
+- persistent FastAPI / Uvicorn application control plane；
+- Python SessionManager / TurnEngine authority；
+- duplicate provider SDK / routing fallback；
+- aisuite 等仅为旧 Runtime/tool abstraction 服务的依赖；
+- PyInstaller `delta-server` sidecar packaging；
+- pure forwarding DTO / facade / compatibility path。
 
-> **R4 Phase 3 完成（ADR-044，2026-09-11）**：Scheduler 审计。Due query 已在 Rust（R1/R2）；`compute_next_run` 是纯函数（同 backoff_delay，留 Python）；tick/catch-up/overlap 是运行时力学（留 Python）；max_runs exhaustion 已在 Phase 2 迁移。无代码变更，仅审计收口。
+### R6-7 — Hard-Cut
 
-> **R4 Phase 4 完成（ADR-045，2026-09-11）**：Resume orchestration 审计。Cold-start recovery（recover_stale/sweep_stale/checkpoint）、resume identity（run.resumed）、tool call disposition（toollifecycle.plan/cancel）均已在 Rust（ADR-025/029/035/037/038/042）。剩余 Python 仅为 orchestration glue 与纯解析（ADR-036 已审计）。无代码变更，仅审计收口。
+最终验收：
 
-> **R4 Final Convergence（ADR-046，2026-09-11）**：R4 正式收口。所有运行时控制 authority 已 Rust-authoritative。记录最终 authority matrix、protocol 版本历史（最终 v14）、R4 完成标准达成。
+```text
+Core app/runtime = Rust + TypeScript
+Python = Worker / task scripts only
+No persistent Python backend authority
+No TS → Python → Rust forwarding main path
+```
 
-迁移：
+## 7. Worker 规则
 
-- Task execution；✅ ADR-042 (run lifecycle transitions)
-- Workflow lifecycle；✅ ADR-042/043 (run/automation completion)
-- Scheduler；✅ ADR-044 (audit: due query Rust, next-fire pure fn, tick mechanics)
-- Automation Runtime；✅ ADR-043 (task.complete_run atomic)
-- Resume orchestration；✅ ADR-045 (audit: all authority already Rust)
+Python / PowerShell / Shell Worker 必须通过 Capability ABI。
 
-R4 完成后，普通任务不得继续依赖 Legacy Python Runtime 作为主控。**R4 完成（ADR-046，2026-09-11）**。
+Worker 不得：
 
-### R5 — Provider Core
+- 拥有 Session；
+- 拥有 Run lifecycle；
+- 直接写 core DB；
+- 决定 Approval / Policy；
+- 保存核心 Secrets；
+- 决定 Artifact 正式状态；
+- 绕过 Rust 获取 Network / File 权限；
+- 作为常驻 application server 承担主控。
 
-> **R5 Final Convergence（ADR-048，2026-09-11）**：所有 provider transport authority（complete/stream for openai_chat/anthropic/openai_responses）、decision authority（capabilities/endpoint_caps/health/routing/friendly_error）已 Rust-authoritative。Protocol 14→15（streaming ABI）。生产 wiring 通过 `maybe_core_client()` 自动检测二进制存在启用 Rust transport，不存在时回退 SDK。Tool-call salvage regex 和 convert_messages 纯解析 deferred（ADR-047 Phase 3 "or deferred"）。
+Worker 应支持：
 
-Rust-first：
-
-- OpenAI-compatible；
-- Anthropic-compatible；
-- streaming；
-- tool call；
-- reasoning metadata；
-- usage；
-- retry；
+- scoped input；
+- staged output；
 - timeout；
-- routing；
-- fallback。
+- cancel；
+- process supervision；
+- typed error；
+- progress；
+- resource / network grants。
 
----
+## 8. Skill / Learning 边界
 
-## 6. 单领域迁移流程
+R6 不需要暂停全部 Skill / Learning 工作，但必须避免 Learning 反向扩大迁移面。
 
-每个领域按以下顺序执行：
+允许：
+
+- Skill schema / registry contract；
+- Experience evidence；
+- Skill Candidate / Evaluation 数据模型；
+- 只读分析和用户显式 Skill 管理。
+
+禁止在 Trust / Runtime 尚未 hard-cut 前引入：
+
+- 自动降低审批；
+- 自动调整 Risk Level；
+- 自动扩大 Network / Secrets 权限；
+- Learning 自改 Runtime；
+- 自动把一次成功任务直接提升为永久高权限 Skill。
+
+原则：
+
+> **能力可以进化，权限不能自行进化。**
+
+## 9. 产品扩展冻结边界
+
+R6 期间可以继续修复和验证三产品域，但不把迁移与“大扩建”绑定。
+
+原则上不同步进行：
+
+- 新 WorkItem / Project 抽象；
+- 复杂 Multi-Agent 平台；
+- 新 Coding 产品线；
+- 第三模型协议；
+- 模型市场；
+- 大规模 Connector 扩张；
+- 重型视频编辑器；
+- 无证据的新 Workflow Engine；
+- 全新 UI 设计系统重写。
+
+日常办公、研究分析和内容创作需要新增的 Capability 可以做，但应优先 Worker / Skill 化，不能重新扩大 Python control plane。
+
+## 10. 单领域迁移流程
+
+每个迁移域按：
 
 ```text
-1. 明确当前 Python 行为
-2. 补齐行为测试
-3. 定义 Rust domain contract
-4. 实现 Rust authority
-5. Shadow / dual-read 验证
-6. 切换权威写入
-7. 禁止 Python direct write
-8. 删除不必要兼容路径
-9. 更新 CI
-10. 更新 Authority Matrix
+1. 审计当前真实 call graph
+2. 补 contract / regression test
+3. 明确 Authority Before
+4. 定义 Rust contract
+5. 实现 Rust owner
+6. 切换调用方
+7. fail-closed / compatibility verification
+8. 删除 Python owner / forwarding path
+9. 更新 CI / docs
+10. 明确 Authority After
 ```
 
----
+不要长期停在“Rust 已有一份、Python 也继续一份”。
 
-## 7. 双写规则
+## 11. 兼容规则
 
-原则上禁止长期双写。
+迁移期允许 compatibility seam，但必须满足：
 
-如果迁移期必须双写：
+- 只有一个 primary Authority；
+- fallback 不得偷偷恢复已经 hard-cut 的 Python writer；
+- 有明确删除条件；
+- 有 contract / E2E 验证；
+- PR 写清 Exit Condition。
 
-- 必须明确 primary authority；
-- secondary 只能用于验证；
-- 不得由 secondary 驱动产品行为；
-- 必须设置删除条件；
-- 必须有一致性检查；
-- PR 中说明结束时间点或退出条件。
+新代码不得依赖“Rust 不可用就静默走 Python”作为长期可用性策略。
 
-禁止：
+## 12. 数据与用户历史
 
-```text
-Python 和 Rust 都能独立把 Run 标记 Completed
-```
+迁移必须优先保持：
 
-允许短期：
-
-```text
-Rust writes authoritative state
-Python shadow-computes expected state
-CI / test compares result
-```
-
----
-
-## 8. 数据迁移
-
-数据迁移必须优先保持：
-
-- Run identity；
+- Session / Run identity；
 - Ledger continuity；
 - Approval history；
-- Artifact relation；
-- Validation result；
-- Checkpoint semantics。
+- Source / Citation；
+- Artifact / Version；
+- Validation；
+- Memory / Skill state；
+- Automation state。
 
-不得为了 Rust migration 随意重置用户历史。
+不能为了删除 Python Backend 重置用户数据。
 
-如果 schema 必须改变：
+## 13. CI Guard
 
-- 提供 migration；
-- 提供 rollback 或兼容读取策略；
-- 测试旧数据库升级；
-- 测试异常中断后的数据库一致性。
+R6 CI 应逐步增加：
 
----
+- Rust Runtime contract tests；
+- TypeScript ↔ Rust IPC contract；
+- Capability ABI compatibility；
+- forbidden Python authority regression；
+- forbidden direct core DB write from Worker；
+- forbidden new persistent Python server authority；
+- no fallback to migrated Python owner；
+- portable packaging smoke；
+- E2E Human Control（Steer / Follow-up / Cancel）；
+- layout check。
 
-## 9. 测试要求
+## 14. PR 规则
 
-每个控制权迁移 PR 至少验证：
+涉及 R6 的 PR 必须写清：
 
-- existing behavior；
-- restart；
-- crash；
-- approval；
-- validation failure；
-- side-effect replay；
-- idempotency；
-- artifact registration；
-- ledger consistency。
+### Scope
 
-涉及 Worker 的 PR 额外验证：
-
-- worker crash；
-- timeout；
-- cancellation；
-- malformed response；
-- protocol mismatch；
-- staging boundary。
-
----
-
-## 10. CI Guard
-
-CI 应逐步增加：
-
-- Rust Core tests；
-- Capability protocol compatibility；
-- Legacy authority regression；
-- forbidden direct DB write；
-- forbidden Python write after migration；
-- layout check；
-- Rust/Python boundary check。
-
-已经迁移的领域不得通过后续 PR 重新把 authority 放回 Python。
-
----
-
-## 11. PR 规则
-
-涉及 Rust Core Migration 的 PR 必须说明：
-
-### Domain
-
-迁移哪个领域。
+迁移哪个明确职责，不混入大规模产品功能。
 
 ### Authority Before
 
-当前谁是权威。
+当前谁拥有状态 / 决策。
 
 ### Authority After
 
-合并后谁是权威。
+合并后谁拥有状态 / 决策。
 
 ### Compatibility
 
-是否存在临时兼容路径。
+有哪些临时 shim / fallback。
 
 ### Exit Condition
 
-何时删除兼容路径。
+什么时候删除它们。
 
 ### Failure / Rollback
 
-失败后如何回退。
+如何安全回退而不恢复双 Authority。
 
 ### Tests
 
-如何证明产品语义未漂移。
+如何证明用户行为、事实和安全边界未漂移。
 
----
+## 15. 完成标准
 
-## 12. 冻结范围
-
-Rust Control Plane 收敛前，原则上不主动扩大：
-
-- 自动 Reflection；
-- Failure Memory；
-- Skill Evaluation；
-- 高级 Long-term Context；
-- 复杂 Multi-Agent；
-- 大量新增 Provider；
-- 大规模 Connector 扩张；
-- 复杂 Federation；
-- 新一轮独立 Runtime。
-
-已有能力可以修复和收敛。
-
----
-
-## 13. 不允许借迁移做的事
-
-禁止把 Rust migration 变成：
-
-- 全仓库重命名；
-- 无关 UI 重构；
-- 新设计系统；
-- Provider 大扩张；
-- Prompt 体系重写；
-- 产品语义重做；
-- 数据库全面换型；
-- “顺手”重写所有 Python。
-
-迁移 PR 应保持边界小而明确。
-
----
-
-## 14. 完成标准
-
-Rust Core Migration 完成不以：
+R6 完成不以：
 
 - Rust 百分比；
-- Python 文件数量；
-- crate 数量；
+- Python 文件数；
+- crate 数；
+- 删除行数；
 
 判断。
 
-完成标准是普通任务主路径满足：
+完成标准：
 
 ```text
-UI
- ↓
-Rust Core
- ↓
-Capability ABI
- ↓
-Worker / MCP / External
+TypeScript Experience
+        ↓
+Rust Runtime Host
+        ↓
+Trust / Work / Capability / Automation / Learning
+        ↓
+Controlled Worker / External
 ```
 
-并且以下领域由 Rust 权威持有：
+并且：
 
-- Task；
-- Run；
-- Policy；
-- Approval；
-- Ledger；
-- Checkpoint；
-- Artifact；
-- Validation；
-- Idempotency；
-- Runtime；
-- Scheduler；
-- Worker lifecycle。
+- 常驻 Python application backend 不再是产品依赖；
+- Runtime / Session / Agent loop / Scheduler 不再由 Python 拥有；
+- Worker 无核心 Authority；
+- Office / Research / Media Python 生态仍可通过 Capability ABI 使用；
+- Portable / CI / E2E 正常；
+- 三产品域的现有真实工作不因迁移退化。
 
-Python 可以继续占据相当代码量，只要它不再拥有系统控制权。
-
----
-
-## 15. 最终原则
+## 16. 最终原则
 
 > **迁移控制权，不迁移生态优势。**
 
-> **Rust 掌控事实与后果，Python 提供专业能力。**
+> **TypeScript 管产品交互，Rust 管系统与事实，Worker 负责具体工作。**
 
-> **一个领域，一个 authority。**
+> **一个领域，一个 Authority。**
+
+> **先删除重复控制面，再增加新抽象。**
+
+> **长期、稳定、高效、安全、敏捷优先于语言纯度和架构形式感。**

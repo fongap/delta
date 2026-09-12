@@ -1,147 +1,178 @@
-# Delta 联邦化边界设计
+# Delta Federation 边界
 
-本文档描述 Delta 的联邦化（Federation）边界：Delta 是独立、本地优先的运行时；Federation 是一条开放、供应商无关的可选边界；任何外部系统都只是潜在的 Federation 适配对象之一。
+本文描述 Delta 与可选托管 / 联邦能力之间的长期边界。
+
+Federation 不是 Delta 的一级产品方向，也不是核心 Runtime 前置依赖。它属于 **Capability / Automation 的外部适配边界**。
 
 ## 核心原则
 
 > **Delta MUST operate independently of any external Federation provider.**
 >
-> **Federation is an open, provider-neutral, optional capability boundary.**
+> **Federation is optional, provider-neutral and subordinate to Delta Trust.**
 >
-> **Removal or failure of any Federation adapter MUST NOT affect native Delta functionality.**
+> **Removal or failure of any Federation adapter MUST NOT affect native Delta work.**
 
 中文：
 
-> Delta 必须完全独立于任何外部 Federation 提供方运行。
->
-> Federation 是一条开放、供应商无关、可选的能力边界。
->
-> 任何 Federation 适配器被删除、不可达或失效时，Delta 的原生能力必须保持完整。
+- Delta 必须可以完全不依赖任何外部 Federation provider 运行；
+- Federation 开放、供应商无关、可选；
+- 外部 Adapter 不得拥有 Runtime / Trust / Work Authority；
+- Adapter 删除、不可达或失败时，本地核心能力仍然成立。
 
-## 架构边界
+## 目标架构位置
 
 ```text
-Delta (Core)
-    │
-    │ optional, provider-neutral
-    ▼
-Federation Boundary
-    ├── Self-hosted Adapter       (potential self-hosted)
-    ├── Third-party Adapter       (potential external)
-    └── Custom Adapter            (potential user-defined)
+Delta Runtime / Trust / Work — Rust
+              │
+              ▼
+        Capability Host
+              │
+      Federation Adapter
+       ┌──────┼──────┐
+       ▼      ▼      ▼
+ self-hosted third-party custom
 ```
 
-Federation 是开放、供应商无关的能力边界。任何实现 Federation 能力协议的适配器（第三方、用户自建或未来自托管实现）都可以接入。任何单一适配器都不是 Federation 的核心。
-
-### 依赖方向（正确）
+依赖方向：
 
 ```text
-Any Federation Provider
-        ↓ optional
-Delta Core
+External Federation Provider
+          ↓ optional
+Delta Capability Boundary
+          ↓
+Delta Runtime remains authoritative
 ```
 
-### 依赖方向（禁止）
+禁止：
 
 ```text
-Delta Core
-        ↓
+Delta Runtime
+    ↓ mandatory
 Single Federation Provider
 ```
 
-Delta Core 不依赖任何特定 Federation 提供方；Federation 协议不绑定具体项目、厂商或托管平台。
+## Adapter Contract
 
-## 核心 Capability Ports
+Federation Adapter 可以提供：
 
-Federation 边界通过 `integrations/managed/` 中定义的 Capability Port 协议与 Delta 交互：
+- OAuth broker；
+- webhook / inbound event relay；
+- external identity mapping；
+- installation / delegated-token broker；
+- managed connector metadata。
 
-| Port | Protocol | 默认实现 | 说明 |
-|------|----------|----------|------|
-| OAuth Broker | `OAuthBroker` | `NullOAuthBroker` | 代理 OAuth 流程（begin/exchange/refresh/disconnect） |
-| Relay Transport | `RelayTransport` | `NullRelayTransport` | WebSocket Relay 入站事件 |
-| GitHub App Broker | `GitHubAppBroker` | `NullGitHubAppBroker` | Installation Token Mint |
-| External Identity | `ExternalIdentityProvider` | `NullIdentityProvider` | 身份联邦 / Device Token 验证 |
-
-**默认 = Null***：未配置任何 Federation 适配器时，所有 managed 能力返回 "unavailable"，manual/local 路径完全不受影响。
-
-> **Federation 适配器位置（未来）**：
-> 若具体 Federation 适配器被实现，它应位于 `integrations/managed/adapters/<provider>.py`，与 Capability Port 并列；Core 不感知、不依赖任何具体实现。
->
-> 截至当前（2026-09），所有 Capability Port 的实现都是 `Null*`；没有真实的 Federation 适配器被实现。Capability Port 保留用于未来扩展。
-
-## Native Device Token：架构基座
-
-Native Device Token 是 Delta 的**原生认证基座**。作用包括：
-
-- 完全自托管 / 局域网 / NAS / Tailscale / 企业内网 / 离线私网
-- Break-glass access（紧急访问）
-- 任何 Federation 失效时仍可管理 Hub
-- **绝不**把任何单一外部 Federation 提供方变成 Delta 的认证根
-
-## Delta Hub 的未来职责（仅限 Federation 边界内）
-
-Delta Hub（未来实现）若存在，仅负责：
-
-- Device Authentication（Native Device Token）
-- OAuth Broker（代理 OAuth 流程、刷新）
-- Token Refresh Broker（刷新 managed connector token）
-- Webhook Receiver（接收平台回调）
-- WebSocket Relay（Slack/GitHub inbound 事件转发）
-- GitHub App Token Mint（代理 Installation Token 申请）
-
-**不负责**：
-
-- 模型代理 / AI Gateway
-- 多租户账号平台
-- 公共 SaaS
-- 云端 Workspace / Memory / 文档存储
-
-## 模型请求永久绕过 Hub
+但进入 Delta 后仍必须绑定：
 
 ```text
-Delta
+Run / Automation Trigger
+        ↓
+Trust / Policy / Approval
+        ↓
+Capability / Automation
+        ↓
+Ledger / Work facts
+```
+
+外部服务不能因为“托管能力”绕过本地 Policy、Approval、Ledger、Source / Artifact / Validation。
+
+## 当前实现与目标实现
+
+当前仓库仍存在 `integrations/managed/` 的 Capability Port / `Null*` 兼容边界；截至 2026-09，没有真实 Federation provider 成为 Delta 的必需依赖。
+
+R6 后具体 Adapter 的物理实现位置和语言不在本文冻结。它可以是 Rust Adapter、受控 Worker、MCP / Connector 或 External Adapter，只要满足 `capability-abi.md` 和 Trust 边界。
+
+因此不再规定未来 Adapter 必须位于某个 `.py` 路径。
+
+## Native / Local fallback
+
+任何 Federation 功能都必须有清晰的“没有 Federation 时怎么办”。
+
+本地核心能力不能以云端身份或托管 Relay 为认证根。
+
+如果未来保留 Native Device Token / local device authentication，其职责是支持：
+
+- 本机 / 局域网；
+- NAS / Tailscale / 企业内网；
+- break-glass access；
+- 外部 provider 故障时的本地管理。
+
+具体认证实现需独立安全 ADR，不在 Federation 文档里预先冻结协议。
+
+## Hub（如果未来确有需要）
+
+如果真实需求证明需要独立 Delta Hub，它最多承担 Federation 边界能力，例如：
+
+- device / delegated authentication broker；
+- OAuth exchange / refresh；
+- webhook receiver；
+- inbound event relay；
+- installation token broker。
+
+它不负责：
+
+- 模型代理 / AI Gateway；
+- 公共模型市场；
+- Delta Runtime Authority；
+- 云端 Workspace / Memory / Source / Artifact 主存储；
+- 多租户 SaaS 控制面。
+
+没有真实需求时，不因为“架构完整”提前建设 Hub。
+
+## 模型请求永久独立于 Federation
+
+Delta 模型边界只有：
+
+```text
+OpenAI-compatible
+Anthropic-compatible
+```
+
+调用路径：
+
+```text
+Delta Runtime
       ↓
-OpenAI-compatible / Anthropic-compatible endpoint
+User-configured compatible endpoint
 ```
 
-**永远禁止**：
+复杂 Provider 聚合 / multi-key / fallback / quota / region routing 外置给 AI Gateway 或其他兼容 Endpoint，与 Federation 是不同职责。
 
-```text
-Delta
-  ↓
-Delta Hub
-  ↓
-Model
-```
+禁止把 Federation Hub 变成隐式模型代理。
 
-Delta Hub 与 AI Gateway 是两个独立系统；Delta 直接与用户配置的模型 Endpoint 通信。
+## 数据边界
 
-## Hub 数据边界
+Federation Adapter 如有必要，可以处理最少量：
 
-**可保存**：
+- connection metadata；
+- pending OAuth state；
+- relay cursor；
+- external identity mapping；
+- installation metadata。
 
-- device metadata
-- OAuth pending state / temporary exchange code
-- connection metadata
-- GitHub installation metadata
-- relay cursor
-- federation subject mapping
+默认禁止成为以下数据的权威存储：
 
-**禁止保存**：
+- conversation / prompt / model output；
+- Workspace files；
+- Memory / Experience / Skill authority；
+- Session / Run history；
+- Artifact / Validation；
+- 长期模型 API Key。
 
-- conversation / prompts / model outputs
-- workspace files / memory / user documents
-- Delta session history
-- 长期模型 API Key
+Connector token 的长期存储和 delegated access 需服从 Secrets / Trust 设计。
 
-Connector token 长期存储策略应单独设计安全模型，不因任何具体 Federation 实现而直接继承。
-
-## 验收标准
+## 验收
 
 | 检查项 | 标准 |
-|--------|------|
-| 任何单一 Federation 提供方运行时依赖 | = 0 |
-| Core 包含特定 Federation 提供方专属语义 | = 0 |
-| Native Device Token | = architecture baseline |
-| Federation 适配器 | = optional, provider-neutral |
-| 离线验证（阻断所有外部 Federation endpoints） | Delta 核心功能完整 |
+| --- | --- |
+| 单一 Federation provider 为 Runtime 必需依赖 | = 0 |
+| 外部 Adapter 拥有核心 Authority | = 0 |
+| Adapter 绕过 Trust / Ledger | = 0 |
+| Federation 与模型 Gateway 强耦合 | = 0 |
+| 阻断外部 Federation 后 | 本地核心工作仍可运行 |
+| 新 Federation 能力 | 优先走 Capability / Automation boundary |
+
+## 设计过滤器
+
+Federation 只有在真实外部连接问题无法由普通 Connector / MCP / Capability 解决时才扩展。
+
+> **没有真实依赖，不新增 Hub；没有安全边界，不新增 Relay；没有产品价值，不新增 Federation 复杂度。**

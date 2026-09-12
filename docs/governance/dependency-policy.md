@@ -1,257 +1,274 @@
 ﻿# 依赖治理
 
-本文规定 Delta 的依赖升级、Dependabot、兼容性检查和自动合并要求。
+本文规定 Delta 的依赖升级、Dependabot、兼容性检查、自动合并，以及 R6 期间核心产品依赖与 Worker 生态依赖的边界。
 
 ## 基本原则
 
-依赖管理以以下目标为优先：
+依赖管理优先级：
 
-1. 安全
-2. 兼容
-3. 稳定
-4. 可维护
-5. 必要时再追求新版本
+1. 安全；
+2. 兼容；
+3. 稳定；
+4. 可维护；
+5. 体积 / 启动 / 性能；
+6. 必要时再追求新版本。
 
-不以“始终升级到最新版本”作为目标。
+不以“永远最新”作为目标。
+
+## 依赖域
+
+R6 后必须区分两类依赖。
+
+### Core Product Dependencies
+
+目标仅服务 Rust + TypeScript 核心产品：
+
+- Rust Runtime / Tauri；
+- TypeScript / React；
+- IPC / serialization / database / crypto / network / UI 等基础依赖。
+
+核心依赖会影响 Runtime、Trust、Work、Automation 或 Experience，应提高审查等级。
+
+### Capability Worker Dependencies
+
+用于具体工作能力，例如：
+
+- Python statistics / data stack；
+- Office / PDF / OCR；
+- image / video processing；
+- specialized SDK；
+- PowerShell / Shell 调用工具。
+
+Worker 依赖不得因为方便而把 Python / 第三方 SDK 重新带回核心 Runtime Authority。
+
+原则：
+
+> **生态依赖可以丰富，控制面依赖必须收敛。**
+
+## R6 依赖冻结规则
+
+在 Rust + TypeScript hard-cut 完成前：
+
+- 原则上不新增 Python application server / manager / persistence framework；
+- 不新增仅为 TS → Python → Rust 转发服务的依赖；
+- 不新增第三套模型协议 SDK；
+- Python Office / Research / Media 依赖应能明确归类为 Capability Worker；
+- Rust Runtime 新依赖必须说明它服务哪个长期模块；
+- 删除 Python Backend 时同步删除 FastAPI / Uvicorn / PyInstaller sidecar 等不再需要的依赖和打包链；
+- 旧 Runtime/tool abstraction 依赖在调用方退出后及时删除，不保留“可能以后有用”的备用路径。
 
 ## Dependabot
 
-Dependabot 用于：
+Dependabot 用于发现更新和创建 PR，不负责决定是否安全合并。
 
-* 检测依赖更新
-* 创建升级 Pull Request
-* 提供版本变更信息
+`.github/dependabot.yml` 只定义 ecosystem、directory、schedule、version policy 和 grouping；自动合并策略由 CI / workflow / Ruleset 决定。
 
-Dependabot 本身不负责决定某个 Pull Request 是否可以安全合并。
+## 升级风险分类
 
-`.github/dependabot.yml` 只定义更新策略，例如：
+版本号只是信号，不代替实际判断。
 
-* package ecosystem
-* directory
-* schedule
-* version update policy
-* grouping
+### Patch
 
-PR 自动合并逻辑应由独立 GitHub Actions workflow 负责。
+通常低风险，但自动合并前至少满足：
 
-## 升级分类
+1. `ci-required` 通过；
+2. 无 merge conflict；
+3. 无安全 / license 异常；
+4. 不需要人工代码适配；
+5. 无已知 breaking change；
+6. 不改变核心 Runtime / Trust / Worker ABI 行为。
 
-依赖升级按风险分为：
+### Minor
 
-* Patch
-* Minor
-* Major
+开发 / 测试工具、兼容性明确的基础依赖，在 CI 全绿且行为未变时可以低风险处理。
 
-版本号只是风险信号之一，不能替代实际兼容性判断。
+以下即使 Minor 也提高审查等级：
 
-某些 Minor 更新也可能包含明显行为变化。
+- Rust async / IPC / HTTP / serialization；
+- Tauri；
+- database；
+- model protocol / SSE / streaming；
+- Worker process / sandbox；
+- statistics / scientific libraries；
+- Office / PDF parser；
+- image / video codec / processing；
+- packaging toolchain。
 
-## Patch
+### Major
 
-Patch 更新通常可以作为低风险升级处理。
-
-自动合并前至少满足：
-
-1. `ci-required` 通过
-2. 没有 Merge conflict
-3. 没有安全或许可证异常
-4. 不需要人工代码适配
-5. 没有已知 breaking change
-6. 不改变核心运行时行为
-
-满足条件时，可以允许自动合并。
-
-## Minor
-
-Minor 更新需要根据依赖类型判断。
-
-对于：
-
-* 开发工具
-* 测试工具
-* 格式化工具
-* 兼容性明确的基础依赖
-
-在 CI 完整通过且没有行为变化时，可以允许自动合并。
-
-对于：
-
-* Runtime 核心依赖
-* Provider SDK
-* HTTP client
-* 序列化库
-* 异步运行时
-* 数据库
-* 构建工具链
-* Packaging 相关依赖
-
-即使是 Minor，也应提高审查等级。
-
-## Major
-
-Major 更新不得自动合并。
+不得自动合并。
 
 必须人工检查：
 
-* Breaking changes
-* API 删除或重命名
-* 默认行为变化
-* 配置格式变化
-* Error 类型变化
-* Serialization 行为变化
-* Runtime 性能变化
-* Build toolchain 影响
-* Packaging 影响
-* License 变化
+- breaking changes；
+- API 删除 / 重命名；
+- 默认行为；
+- serialization / protocol；
+- error type；
+- numerical behavior；
+- Runtime performance；
+- build / packaging；
+- license。
 
-如果需要修改业务代码才能适配，应将依赖升级和兼容性代码作为同一个明确 PR 处理。
+## Scientific / Research Dependencies
 
-## CI 与自动合并
-
-依赖 PR 的 CI 失败时，不得继续自动合并。
-
-必须区分：
-
-* 依赖本身不兼容
-* 测试暴露真实回归
-* Lockfile 冲突
-* GitHub Auto Merge 未启用
-* Ruleset 阻止
-* Workflow permission 不足
-* 临时外部服务失败
-
-自动合并 workflow 自身失败，不等于依赖升级本身存在问题。
-
-反过来，CI 通过也不代表所有 Major 升级都可以自动合并。
-
-## 多依赖冲突
-
-如果多个依赖对同一个基础库要求不同版本，应优先解决依赖关系本身，而不是强制锁定一个无法同时满足双方约束的版本。
-
-处理顺序：
-
-1. 找出冲突依赖
-2. 确认双方版本要求
-3. 检查是否存在可兼容的新版本
-4. 优先升级限制较旧的一方
-5. 必要时评估替换依赖
-6. 无法安全统一时暂停其中一个升级
-
-不得通过忽略 resolver 错误来继续构建。
-
-## Lockfile
-
-修改依赖定义后，应同步更新对应 Lockfile。
+研究分析依赖需要额外治理。
 
 例如：
 
-```text id="m0g6ov"
+```text
+pandas / polars
+numpy
+scipy
+statsmodels
+matplotlib
+DOE / optimization libraries
+```
+
+升级时除普通测试外，应关注：
+
+- 数值结果是否改变；
+- 默认算法 / optimizer 是否改变；
+- statistical distribution / p-value / CI 行为；
+- missing-data / dtype semantics；
+- random seed / reproducibility；
+- DOE design generation；
+- model fit / convergence warning；
+- output schema。
+
+对会改变统计结果的升级，不得只凭“测试没崩”自动合并，应有基准数据或结果容差测试。
+
+## Media Dependencies
+
+图像 / 视频依赖升级额外关注：
+
+- codec support；
+- output size / quality；
+- metadata handling；
+- platform binary compatibility；
+- resource usage；
+- security advisories；
+- license / redistribution。
+
+重型媒体引擎优先作为受控外部 Capability，而不是无条件塞进核心桌面包。
+
+## Provider / Protocol Dependencies
+
+Delta 只维护：
+
+```text
+OpenAI-compatible
+Anthropic-compatible
+```
+
+涉及 HTTP / SSE / TLS / JSON / provider transport 时验证：
+
+- request / response；
+- streaming；
+- tool calls；
+- reasoning / usage；
+- timeout / cancel / backpressure；
+- headers / auth；
+- proxy；
+- protocol compatibility。
+
+不得因为某个厂商推出新 SDK 就新增第三套原生协议。
+
+## Lockfile
+
+修改依赖定义后同步对应 Lockfile：
+
+```text
 uv.lock
 package-lock.json
 Cargo.lock
 ```
 
-不得手工修改 Lockfile 来伪造兼容结果。
+不得手工伪造 Lockfile 兼容结果。
 
-Lockfile 的变化应与依赖定义变化相对应。
+R6 删除 Python core dependency 时，应确认 `uv.lock` 中只剩仍被 Worker / dev / packaging 真实需要的 Python 依赖。
 
-## Provider 与协议相关依赖
+## CI 与自动合并
 
-涉及以下依赖时，应额外检查协议兼容性：
+依赖 PR CI 失败时不得自动合并。
 
-* OpenAI-compatible
-* Anthropic-compatible
-* HTTP client
-* SSE / streaming
-* WebSocket
-* JSON serialization
-* TLS
+必须区分：
 
-重点验证：
+- 依赖不兼容；
+- 真实回归；
+- Lockfile conflict；
+- Auto Merge / Ruleset / permission 问题；
+- 临时外部服务失败。
 
-* 请求格式
-* 响应格式
-* Streaming 行为
-* Timeout
-* Retry
-* Error mapping
-* Header
-* Authentication
-* Proxy
+CI 通过也不代表高风险升级可以自动合并。
 
-## 构建相关依赖
+## 多依赖冲突
 
-涉及以下内容时，应额外检查构建和发布：
+处理顺序：
 
-* Rust toolchain
-* Tauri
-* Node.js build tooling
-* Python packaging
-* PyInstaller
-* WebView
-* Installer / Portable tooling
+1. 找出冲突依赖；
+2. 确认版本要求；
+3. 查找可兼容版本；
+4. 优先升级限制较旧的一方；
+5. 必要时替换依赖；
+6. 无法安全统一时暂停升级。
 
-必须确认：
+不得忽略 resolver 错误继续构建。
 
-* CI 可以构建
-* Release workflow 可以构建
-* Artifact 可正常运行
+## Build / Packaging Dependencies
+
+当前过渡期可能同时涉及：
+
+- Rust toolchain；
+- Tauri；
+- Node.js build tooling；
+- Python packaging / PyInstaller；
+- WebView；
+- Portable tooling。
+
+必须确认 CI、Release 和实际 Artifact 可运行。
+
+R6 hard-cut 后，不再需要的 Python sidecar packaging 依赖应物理删除，而不是永久留作备用。
 
 ## 安全更新
 
-存在明确安全漏洞时，应提高处理优先级。
+存在明确安全漏洞时提高优先级。若不能立即升级，应记录影响、可利用性、缓解措施和后续计划。
 
-安全升级仍需要验证兼容性，但不能因为升级困难而长期忽略高风险漏洞。
+Worker 生态安全漏洞同样重要：被 Sandbox 限制不意味着可以忽略恶意文件解析、codec 或 scientific stack 漏洞。
 
-如果暂时无法升级，应明确记录：
+## 自动合并原则
 
-* 漏洞影响范围
-* 当前是否可被利用
-* 临时缓解措施
-* 后续升级计划
+- Patch：明确低风险时可自动；
+- Minor：按依赖域判断；
+- Major：禁止自动；
+- Scientific numerical behavior / Runtime / Trust / packaging：默认人工审查。
 
-## 自动合并策略
-
-自动合并仅适用于已经明确界定的低风险更新。
-
-推荐原则：
-
-* Patch：默认可自动
-* Minor：按依赖类别判断
-* Major：禁止自动
-
-最终是否合并仍应受：
-
-```text id="3tk2xa"
-ci-required
-```
-
-以及 GitHub Ruleset 约束。
+最终仍受 `ci-required` 与 Ruleset 约束。
 
 ## 依赖删除
 
-不再使用的依赖应及时删除。
+不再使用的依赖及时删除，并同步清理：
 
-删除依赖时应同步清理：
+- import；
+- config；
+- feature flag；
+- build script；
+- documentation；
+- lockfile；
+- packaging；
+- CI matrix。
 
-* import
-* configuration
-* feature flag
-* build script
-* documentation
-* lockfile
-
-避免保留已经失效的“备用依赖”或历史兼容代码。
+避免保留已经失效的“备用 SDK”“备用 Runtime”或静默 fallback。
 
 ## 评估依据
 
-依赖升级判断应基于：
+依赖决策基于：
 
-* Release notes
-* Changelog
-* Migration guide
-* 实际编译结果
-* 自动化测试
-* Delta 当前使用方式
+- release notes / changelog / migration guide；
+- 编译与自动化测试；
+- contract / numerical regression；
+- packaging smoke；
+- license；
+- Delta 当前真实使用方式。
 
-不得仅根据版本号判断升级是否安全。
+不得只根据版本号或流行度判断。

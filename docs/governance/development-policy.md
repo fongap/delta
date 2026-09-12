@@ -1,18 +1,18 @@
 ﻿# 开发治理
 
-本文规定 Delta 的日常开发流程，包括分支、Commit、Pull Request、Review、Merge 和变更记录。
+本文规定 Delta 的日常开发流程，包括分支、Commit、Pull Request、Review、Merge、文档和变更记录。
+
+产品长期边界以 `docs/DELTA_BLUEPRINT.md` 为准；目标架构以 `docs/architecture/target-architecture.md` 和 ADR-050 为准。
 
 ## 主分支
 
-`main` 是 Delta 的稳定集成分支。
+`main` 是稳定集成分支。
 
-所有常规开发均从 `main` 创建工作分支，并通过 Pull Request 合入。
-
-禁止直接向 `main` 提交开发代码。
+所有常规开发从 `main` 创建工作分支，并通过 Pull Request 合入。禁止直接向 `main` 提交开发代码。
 
 ## 工作分支
 
-允许使用以下前缀：
+允许：
 
 ```text
 feat/
@@ -23,206 +23,219 @@ chore/
 docs/
 test/
 release/
-upstream/
 ```
 
-含义如下：
+含义：
 
-* `feat/*`：新增功能
-* `fix/*`：缺陷修复
-* `refactor/*`：重构
-* `ci/*`：CI/CD 调整
-* `chore/*`：维护性工作
-* `docs/*`：文档修改
-* `test/*`：测试调整
-* `release/*`：发布准备
-* `upstream/*`：上游同步或吸收
+- `feat/*`：新增产品能力；
+- `fix/*`：缺陷修复；
+- `refactor/*`：行为保持型重构 / 迁移；
+- `ci/*`：CI/CD；
+- `chore/*`：维护；
+- `docs/*`：文档；
+- `test/*`：测试；
+- `release/*`：发布准备。
 
-一个分支应聚焦一个主要目标。
+Delta 不维护单一上游，因此不再保留 `upstream/*` 作为常规分支类型。
 
-避免在同一个 Pull Request 中混入大量无关的：
+一个分支聚焦一个主要目标，避免把产品功能、目录迁移、依赖升级、大规模格式化和 Runtime 重构混在同一个 PR。
 
-* 功能开发
-* 目录迁移
-* 依赖升级
-* 大规模格式化
-* 架构重构
+## 产品 / 架构分类
+
+开始实现前先判断变更属于：
+
+```text
+产品域：日常办公 / 研究分析 / 内容创作
+
+逻辑模块：
+Experience / Runtime / Trust / Work /
+Capability / Automation / Learning
+```
+
+如果是新增能力，优先问：
+
+> 能否作为 Capability / Skill 实现，而不扩张 Runtime、Agent 或常驻服务？
+
+如果是控制状态、权限、事实或生命周期，默认应进入 Rust Authority，而不是新增 Python Manager / Store / Runtime abstraction。
 
 ## Commit
 
-推荐格式：
+推荐：
 
 ```text
 <type>: <description>
-```
-
-常用 `type`：
-
-```text
-feat
-fix
-refactor
-docs
-test
-ci
-chore
-build
-release
 ```
 
 例如：
 
 ```text
 fix: handle truncated model streams
-refactor: split provider routing
-docs: update governance rules
+refactor: move session runtime ownership to Rust
+docs: define research analysis scope
 ```
 
-工作分支允许存在临时 Commit，但合入 `main` 时应通过 Squash merge 保持主分支历史清晰。
+工作分支允许临时 Commit；合入 `main` 时默认 Squash merge。
 
-Commit 记录具体实现变化；不要把 Commit 粒度直接复制到 `CHANGELOG.md`。
+Commit 记录实现变化，不把 Commit 粒度复制到 CHANGELOG。
 
 ## Pull Request
 
-所有进入 `main` 的变更必须通过 Pull Request。
+PR 至少说明：
 
-Pull Request 应至少说明：
+- 修改目标；
+- 产品域 / 逻辑模块；
+- 主要变化；
+- 验证方式；
+- 兼容性；
+- 安全 / 权限影响；
+- 文档影响；
+- 是否达到 CHANGELOG 记录标准。
 
-* 修改目标
-* 主要变化
-* 验证方式
-* 是否影响兼容性
-* 是否影响安全或权限
-* 是否需要同步更新文档
-* 是否属于需要记录到 `CHANGELOG.md` 的版本级变化
+不得包含 API Key、Token、Password、私钥、用户私有数据、私有环境信息或无关大型二进制文件。
 
-不是每个 Pull Request 都需要修改 `CHANGELOG.md`。
+### Runtime / Authority PR 额外字段
 
-Pull Request 应判断本次变化是否达到版本记录标准；如果多个 Commit 或 Pull Request 属于同一个变化主题，应在 `[Unreleased]` 中合并描述，而不是逐条记录。
+涉及 R6 Runtime Convergence 时必须写清：
 
-Pull Request 不得包含：
+```text
+Authority Before
+Authority After
+Compatibility
+Exit Condition
+Failure / Rollback
+Tests
+```
 
-* API Key
-* Access Token
-* Password
-* 私钥
-* 用户私有数据
-* 私有域名或内部环境信息
-* 与本次变更无关的大型二进制文件
+迁移 PR 不得用“以后再删”代替明确 Exit Condition。
 
 ## Review
 
-Review 重点检查：
+Review 重点：
 
-1. 是否真正解决目标问题
-2. 是否引入不必要复杂度
-3. 是否破坏模块职责边界
-4. 是否存在安全风险
-5. 是否有足够测试
-6. 是否需要更新文档
-7. 是否产生兼容性变化
-8. 是否存在更小、更清晰的实现方式
-9. 是否正确判断了 `CHANGELOG.md` 的更新需求
-10. `CHANGELOG.md` 是否保持版本级摘要，而非开发流水账
+1. 是否解决真实目标；
+2. 是否直接服务日常办公、研究分析或内容创作；
+3. 是否优先使用 Capability / Skill，而不是新 Agent / Runtime；
+4. 是否引入不必要复杂度；
+5. 是否破坏七个长期模块的职责；
+6. 是否恢复 Python core authority 或双 Authority；
+7. 是否存在安全风险；
+8. Worker / Skill / Learning 是否绕过 Trust；
+9. 是否有足够测试；
+10. 是否需要同步文档；
+11. 是否产生兼容性变化；
+12. 是否存在更小、更清晰的实现；
+13. CHANGELOG 粒度是否是版本级摘要。
 
-需要处理的 Review conversation 应在合并前解决。
+需要处理的 Review conversation 合并前必须解决。
 
 ## Merge
 
-默认使用：
+默认：
 
 ```text
 Squash merge
 ```
 
-`main` 应保持：
-
-* 线性
-* 清晰
-* 可追溯
-* 不包含 WIP 历史
+`main` 应保持线性、清晰、可追溯，不包含 WIP 历史。
 
 原则上禁止：
 
-* 直接 push 到 `main`
-* force push
-* 绕过 Required Check
-* 绕过未解决的 Review
-* 为赶进度降低既有质量门槛
+- 直接 push `main`；
+- force push；
+- 绕过 Required Check；
+- 绕过 Review；
+- 为赶进度降低质量 / Trust 门槛。
 
 ## 重构
 
-重构应以行为保持为基本目标。
+重构以行为保持为默认目标。
 
 大型重构应：
 
-1. 控制范围
-2. 分阶段实施
-3. 每个阶段保持可验证
-4. 尽量保留稳定测试 seam
-5. 避免同时引入无关功能
-6. 同步更新受影响的架构文档
+1. 控制范围；
+2. 分阶段；
+3. 每阶段可验证；
+4. 保留 contract / test seam；
+5. 不混入无关功能；
+6. 同步架构文档；
+7. 切换调用方后删除旧 owner / forwarding path。
 
-如果变更改变了用户行为、公开接口或配置语义，应按功能变更处理，而不能仅以 `refactor` 名义合入。
+R6 特别禁止“为了 Rust 纯度重写全部 Office / statistics / media Python”。迁移的是控制权；专业生态优先 Worker 化。
+
+## 产品能力开发
+
+新增能力应按以下优先级：
+
+```text
+现有 Capability 组合
+    ↓
+Skill
+    ↓
+新增 Capability / Worker
+    ↓
+扩展 Rust Host / Runtime（仅确有必要）
+```
+
+专用 Agent、新 Runtime、新协议、新常驻服务是最后选择。
+
+### 研究分析
+
+涉及统计 / DOE / 序贯试验时，必须区分：
+
+- 确定性计算；
+- 方法选择；
+- 研究假设；
+- 可调整范围；
+- 停止规则；
+- 用户决定。
+
+序贯设计不得因为看到了当前结果就无记录地重写研究目标或停止标准。
+
+### Learning
+
+Experience / Skill Evaluation 可以演进，但任何学习结果都不得自动：
+
+- 降低审批；
+- 提高 Risk grant；
+- 扩大 Network / Secrets / File scope；
+- 改变核心 Authority。
 
 ## CHANGELOG
 
 `CHANGELOG.md` 是版本级变更摘要，不是开发日志。
 
-其目标是让用户和维护者快速理解：
-
-* 一个版本增加了什么
-* 哪些行为发生了变化
-* 修复了哪些重要问题
-* 是否存在兼容性、安全或迁移影响
-
 ### 应记录
 
-以下变化原则上应记录到 `[Unreleased]`：
+原则上记录：
 
-* 用户可感知的新功能
-* 用户可感知的行为变化
-* 重要缺陷修复
-* 公开接口或配置语义变化
-* 重要兼容性变化
-* 重要架构或 Runtime 能力变化
-* 安全边界或权限模型变化
-* Release 或运维行为的重要变化
-* 已正式移除或弃用的能力
+- 用户可感知新功能 / 行为变化；
+- 重要缺陷修复；
+- 公开接口 / 配置语义变化；
+- 重要兼容性变化；
+- 重要 Runtime / Architecture 能力变化；
+- 安全 / 权限变化；
+- Release / 运维重要变化；
+- 正式移除 / 弃用能力。
 
 ### 不应记录
 
-以下内容原则上不进入 `CHANGELOG.md`：
+不记录：
 
-* 单个 Commit
-* 实现过程
-* 类、函数、变量等内部代码变化
-* 单独测试文件
-* 测试数量
-* CI pass/fail 数量
-* 调试过程
-* 问题排查证据链
-* 本地开发环境调整
-* Lockfile 普通变化
-* 纯格式调整
-* 无行为变化的代码整理
-* 无行为变化的普通重构
-* 无版本意义的依赖更新
-* 仅用于验证的临时工作
+- 单个 Commit；
+- 实现过程；
+- 内部函数 / 文件变化；
+- 单独测试文件或测试数量；
+- CI pass/fail 数量；
+- 调试证据链；
+- 普通 lockfile / 格式调整；
+- 无行为变化重构；
+- 无版本意义依赖更新。
 
-这些信息应保留在：
-
-* Pull Request
-* Commit
-* CI
-* Issue
-* Architecture 文档
-
-而不是重复进入 `CHANGELOG.md`。
+这些信息保留在 PR、Commit、CI、Issue 和 Architecture 文档。
 
 ### 分类
 
-仅使用 Keep a Changelog 的标准分类：
+只使用 Keep a Changelog：
 
 ```text
 ### 新增 (Added)
@@ -233,108 +246,39 @@ Squash merge
 ### 安全 (Security)
 ```
 
-没有对应内容的分类可以省略。
-
-不要新增：
-
-```text
-### Tests
-### Notes
-### Internal
-### Maintenance
-```
-
-等自定义分类。
-
 ### 粒度
 
-一个 Changelog 条目应表达一个有意义的变化主题。
-
-多个 Commit 或 Pull Request 如果共同完成同一能力，应合并为一个条目。
-
-推荐：
-
-```markdown
-- **Provider 路由与凭据模型**
-  - 自定义 endpoint 不再继承无关官方 Provider 的 API Key。
-  - Provider 按实际协议和 endpoint/profile 路由。
-```
-
-不推荐：
-
-```markdown
-- 修改 `providers/registry.py`
-- 修改 `_build_openai()`
-- 新增 17 个测试
-- 修复测试失败
-- CI 1285 passed
-```
-
-### 时间和实现细节
-
-版本发布日期记录在：
-
-```text
-## [X.Y.Z] - YYYY-MM-DD
-```
-
-条目内部不再增加小时级时间标题，例如：
-
-```text
-#### 2026-08-25 21:27
-```
-
-也不使用：
-
-```text
-P0
-P1
-P2
-```
-
-等开发阶段标记作为 Changelog 结构。
+一个条目表达一个有意义的版本变化主题，不按 Commit 流水追加。
 
 ### Unreleased
 
-所有尚未正式发布但达到记录标准的变化进入：
-
-```text
-## [Unreleased]
-```
-
-新增条目前，应先检查现有 `[Unreleased]`：
-
-* 已存在同主题条目时，应合并
-* 不应重复记录同一变化
-* 不应按 Commit 顺序持续追加流水账
-
-正式发布时，再将相关内容归入对应版本。
+未发布但达到标准的变化进入 `## [Unreleased]`。新增前先合并同主题内容，避免重复。
 
 ### 已发布历史
 
-已发布版本原则上冻结。
-
-除以下情况外，不重新修改：
-
-* 明确事实错误
-* 错误版本号或日期
-* 明显分类错误
-* 损坏链接
-* 会导致用户误解的重大表述错误
-
-不得为了匹配当前目录、模块名称或实现方式，改写当时真实的历史事实。
+已发布版本原则上冻结。除明确事实、版本号 / 日期、分类、损坏链接或重大误导错误外，不为匹配当前结构重写历史。
 
 ## 文档同步
 
-以下变更必须同步检查文档：
+以下变化必须同步检查文档：
 
-* 顶层目录变化
-* 模块职责变化
-* 开发流程变化
-* CI 规则变化
-* Release 流程变化
-* 上游同步策略变化
-* 用户配置方式变化
-* `CHANGELOG.md` 维护规则变化
+- 三产品域范围；
+- 逻辑模块职责；
+- 顶层目录 / 依赖方向；
+- Runtime / Authority；
+- Python Worker / Rust Host 边界；
+- Skill / Learning 治理；
+- 模型协议；
+- CI / Release / dependency policy；
+- 用户配置方式。
 
-文档应随代码一起更新，不把明显过期内容留给后续处理。
+文档分类：
+
+- `DELTA_BLUEPRINT.md`：长期产品 / 能力；
+- `target-architecture.md`：长期系统目标；
+- `repository-layout.md`：当前物理结构；
+- `runtime-public-contract.md`：当前公共行为 contract；
+- ADR：架构决策与历史事实；
+- CHANGELOG：版本级变化。
+
+目标状态必须标明 Target / R6；当前事实不得提前写成已完成。
