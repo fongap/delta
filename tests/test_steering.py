@@ -12,9 +12,7 @@ Verifies:
 from __future__ import annotations
 
 import threading
-import time
 
-import pytest
 
 from core.steering import (
     FollowUpQueue,
@@ -65,6 +63,9 @@ def test_follow_up_queue_operations():
     a = q.add("Task A")
     b = q.add("Task B")
     c = q.add("Task C")
+    assert a.content == "Task A"
+    assert b.content == "Task B"
+    assert c.content == "Task C"
     assert [i.content for i in q.list()] == ["Task A", "Task B", "Task C"]
 
     # Reorder: move C to position 0
@@ -158,7 +159,7 @@ def test_steer_thread_safe():
 
     def worker():
         barrier.wait()
-        s = ch.steer(f"steer from thread")
+        s = ch.steer("steer from thread")
         with lock:
             steers.append(s)
 
@@ -231,7 +232,7 @@ def test_steer_injected_into_engine_at_safe_point(tmp_path):
         finally:
             reset(token)
 
-    events = asyncio.run(run_under_scope())
+    asyncio.run(run_under_scope())
 
     # The steer should have been injected as a user message with source steer.
     injected = [
