@@ -204,13 +204,14 @@ impl LedgerReader {
     /// AF-03 fix: a run that went `started → interrupted → resumed` is
     /// open again because `resumed` is the latest lifecycle event, not
     /// `interrupted`. The old query excluded any run that EVER had an
-    /// `interrupted` event — now we exclude only runs whose LATEST
-    /// terminal event is truly terminal.
+    /// `interrupted` event — now we use the LATEST lifecycle state.
     ///
     /// Terminal events: completed, failed, skipped, cancelled,
     /// validation.failed.
-    /// Recoverable interruption: `interrupted` is NOT terminal —
-    /// `resumed` after it means the run is open again.
+    /// Recoverable-open: running, resumed. A run whose latest state is
+    /// `interrupted` (crash detected, not yet resumed) is NOT re-listed:
+    /// recover_stale marks it once and idempotency holds; it re-opens
+    /// only after an explicit `resumed` event.
     pub fn open_runs(&self) -> Result<Vec<String>, ShadowReadError> {
         // Get all run_ids that have at least one event.
         let mut stmt = self
@@ -226,15 +227,11 @@ impl LedgerReader {
         let mut open = Vec::new();
         for run_id in &all_ids {
             let status = run_status_from_conn(&self.conn, run_id)?;
-            // Terminal statuses: ok, error, skipped, cancelled, validation_failed.
-            // Non-terminal: running, resumed, interrupted, unknown.
-            // `interrupted` is recoverable — the run is open for recovery.
-            let is_terminal = matches!(
-                status.as_str(),
-                "ok" | "error" | "skipped" | "cancelled" | "validation_failed"
-            );
-            if !is_terminal {
-                open.push(run_id.clone());
+            // Recoverable-open states: running, resumed.
+            // Terminal/interrupted states close the run.
+            match status.as_str() {
+                "running" | "resumed" => open.push(run_id.clone()),
+                _ => {}
             }
         }
         Ok(open)

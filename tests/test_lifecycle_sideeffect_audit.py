@@ -76,9 +76,11 @@ def test_resumed_then_crash_is_recoverable(client, tmp_path):
     assert status["status"] == "resumed"
 
 
-def test_interrupted_only_is_open_and_recoverable(client, tmp_path):
-    """AF-03: a run that is only 'interrupted' (not yet resumed) is also
-    open — it represents a crash that recovery hasn't processed yet."""
+def test_interrupted_only_not_recovered_then_resumed_is_open(client, tmp_path):
+    """AF-03: `interrupted` alone (crash detected, not resumed) is NOT
+    re-listed by open_runs — recover_stale marks it once and idempotency
+    holds. After an explicit `resumed`, the run is open again so a second
+    crash is still recoverable."""
     db = str(tmp_path / "ledger.db")
     client.command({
         "cmd": "ledger.append", "db": db, "run_id": "r_int",
@@ -90,8 +92,27 @@ def test_interrupted_only_is_open_and_recoverable(client, tmp_path):
         "type": "run.interrupted", "actor": "system", "ts": 2.0,
         "payload": {"reason": "crashed"}, "workspace": "ws",
     })
+    # Not resumed yet — not open (recover_stale won't re-sweep it).
     open_ids = client.command({"cmd": "ledger.open_runs", "db": db})
-    assert "r_int" in open_ids
+    assert "r_int" not in open_ids
+
+    # Now resumed — the run is open again and a second crash is recoverable.
+    client.command({
+        "cmd": "ledger.append", "db": db, "run_id": "r_int",
+        "type": "run.resumed", "actor": "system", "ts": 3.0,
+        "payload": {}, "workspace": "ws",
+    })
+    open_after_resume = client.command({"cmd": "ledger.open_runs", "db": db})
+    assert "r_int" in open_after_resume, (
+        f"resumed run must be open for recovery, got: {open_after_resume}"
+    )
+
+    # recover_stale sweeps it once — idempotent thereafter.
+    recovered = client.command({"cmd": "ledger.recover_stale", "db": db})
+    assert recovered is not None
+    open_after_recover = client.command({"cmd": "ledger.open_runs", "db": db})
+    assert "r_int" not in open_after_recover
+    assert client.command({"cmd": "ledger.recover_stale", "db": db}) is not None
 
 
 def test_completed_run_is_not_open(client, tmp_path):

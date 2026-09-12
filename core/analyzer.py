@@ -447,10 +447,11 @@ def _norm_workspace(workspace: str | Path) -> str:
 # is the floor; missing > out_of_bounds > content_changed > valid.
 _VALIDITY_RANK = {
     "valid": 0,
-    "content_changed": 1,
-    "out_of_bounds": 2,
-    "file_missing": 3,
-    "source_gone": 4,
+    "range_unverified": 1,
+    "content_changed": 2,
+    "out_of_bounds": 3,
+    "file_missing": 4,
+    "source_gone": 5,
 }
 
 
