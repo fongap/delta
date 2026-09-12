@@ -495,7 +495,10 @@ enum Command {
     #[serde(rename = "stream.echo")]
     StreamEcho { chunks: u32, delay_ms: Option<u64> },
     /// R5.1 v16: cancel an in-flight stream by request_id.
+    /// Handled in `main()` via raw JSON before Command parsing, so the
+    /// enum field is intentionally unused.
     #[serde(rename = "request.cancel")]
+    #[allow(dead_code)]
     RequestCancel { target_request_id: u64 },
     /// R5 / ADR-047 Phase 1: non-streaming provider completion.
     #[serde(rename = "provider.complete")]
@@ -2262,7 +2265,7 @@ fn main() -> std::process::ExitCode {
                 .and_then(|v| v.as_u64())
                 .unwrap_or(0);
             let cancelled = {
-                let mut map = active.lock().unwrap();
+                let map = active.lock().unwrap();
                 if let Some(flag) = map.get(&target) {
                     flag.store(true, Ordering::Relaxed);
                     true

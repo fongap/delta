@@ -326,6 +326,7 @@ impl TaskStore {
     /// function stays in Python) and passed in. Rust is the sole persistor.
     ///
     /// Returns the updated task data JSON (for Python to update its cache).
+    #[allow(clippy::too_many_arguments)]
     pub fn complete_run(
         &mut self,
         run_id: &str,
