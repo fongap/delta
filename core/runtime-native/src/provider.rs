@@ -313,11 +313,89 @@ fn anthropic_headers(req: &ProviderRequest) -> Vec<(&str, String)> {
 }
 
 fn build_anthropic_body(req: &ProviderRequest, stream: bool) -> Value {
+    let mut system = Vec::new();
+    let mapped = req
+        .messages
+        .as_array()
+        .map(|messages| {
+            messages
+                .iter()
+                .filter_map(|message| {
+                    if message.get("role").and_then(Value::as_str) == Some("system") {
+                        if let Some(text) = message.get("content").and_then(Value::as_str) {
+                            system.push(text.to_string());
+                        }
+                        None
+                    } else if message.get("role").and_then(Value::as_str) == Some("tool") {
+                        Some(json!({
+                            "role": "user",
+                            "content": [{
+                                "type": "tool_result",
+                                "tool_use_id": message.get("tool_call_id").cloned().unwrap_or(Value::Null),
+                                "content": message.get("content").and_then(Value::as_str)
+                                    .map(str::to_string)
+                                    .unwrap_or_else(|| serde_json::to_string(message.get("content").unwrap_or(&Value::Null)).unwrap_or_default()),
+                            }]
+                        }))
+                    } else if message.get("role").and_then(Value::as_str) == Some("assistant")
+                        && message.get("tool_calls").and_then(Value::as_array).is_some_and(|calls| !calls.is_empty())
+                    {
+                        let mut content = Vec::new();
+                        if let Some(text) = message.get("content").and_then(Value::as_str).filter(|text| !text.is_empty()) {
+                            content.push(json!({"type": "text", "text": text}));
+                        }
+                        for call in message.get("tool_calls").and_then(Value::as_array).into_iter().flatten() {
+                            let function = call.get("function").unwrap_or(&Value::Null);
+                            let input = function.get("arguments").and_then(Value::as_str)
+                                .and_then(|arguments| serde_json::from_str::<Value>(arguments).ok())
+                                .unwrap_or_else(|| json!({}));
+                            content.push(json!({
+                                "type": "tool_use",
+                                "id": call.get("id").cloned().unwrap_or(Value::Null),
+                                "name": function.get("name").cloned().unwrap_or(Value::Null),
+                                "input": input,
+                            }));
+                        }
+                        Some(json!({"role": "assistant", "content": content}))
+                    } else {
+                        Some(message.clone())
+                    }
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let mut messages: Vec<Value> = Vec::new();
+    for message in mapped {
+        let same_role = messages.last().is_some_and(|previous| {
+            previous.get("role") == message.get("role")
+                && previous.get("content").is_some_and(Value::is_array)
+                && message.get("content").is_some_and(Value::is_array)
+        });
+        if same_role {
+            let extra = message
+                .get("content")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            if let Some(content) = messages
+                .last_mut()
+                .and_then(|previous| previous.get_mut("content"))
+                .and_then(Value::as_array_mut)
+            {
+                content.extend(extra);
+            }
+        } else {
+            messages.push(message);
+        }
+    }
     let mut body = json!({
         "model": req.model,
-        "messages": req.messages,
+        "messages": messages,
         "max_tokens": 4096,
     });
+    if !system.is_empty() {
+        body["system"] = Value::String(system.join("\n\n"));
+    }
     if stream {
         body["stream"] = json!(true);
     }
@@ -331,7 +409,19 @@ fn build_anthropic_body(req: &ProviderRequest, stream: bool) -> Value {
         }
     }
     if let Some(tools) = &req.tools {
-        body["tools"] = tools.clone();
+        body["tools"] = Value::Array(
+            tools
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|tool| tool.get("function"))
+                .map(|function| json!({
+                    "name": function.get("name").cloned().unwrap_or(Value::Null),
+                    "description": function.get("description").cloned().unwrap_or(Value::Null),
+                    "input_schema": function.get("parameters").cloned().unwrap_or_else(|| json!({"type": "object"})),
+                }))
+                .collect(),
+        );
     }
     body
 }
@@ -619,7 +709,21 @@ fn build_openai_responses_body(req: &ProviderRequest, stream: bool) -> Value {
         body["stream"] = json!(true);
     }
     if let Some(tools) = &req.tools {
-        body["tools"] = tools.clone();
+        body["tools"] = Value::Array(
+            tools
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|tool| tool.get("function"))
+                .map(|function| json!({
+                    "type": "function",
+                    "name": function.get("name").cloned().unwrap_or(Value::Null),
+                    "description": function.get("description").cloned().unwrap_or(Value::Null),
+                    "parameters": function.get("parameters").cloned().unwrap_or_else(|| json!({"type": "object"})),
+                    "strict": false,
+                }))
+                .collect(),
+        );
     }
     if let Some(settings) = &req.settings {
         if let Some(obj) = settings.as_object() {

@@ -1,4 +1,6 @@
 import type { GroupedQuestion, QuestionOption, SessionInfo, WsEvent } from "./types";
+import { openPath, revealItemInDir } from "@tauri-apps/plugin-opener";
+import pdfWorkerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
 import {
   RuntimeContractError,
   type ArtifactDto,
@@ -11,22 +13,46 @@ import {
   directAddModel,
   directCancel,
   directApproval,
+  directCreateAutomation,
+  directDeleteAutomation,
   directFetchProviderModels,
   directFollowUp,
   directGetProtocols,
   directGetProviders,
   directGetSettings,
+  directGetUnattended,
+  directGetMemorySettings,
+  directGetAutomation,
+  directHealth,
   directListenSession,
+  directListenApp,
   directListSessions,
+  directListInbox,
+  directListArtifacts,
+  directListMemory,
+  directListAutomations,
+  directOpenWorkspace,
+  directPickFolder,
   directRecentWorkspaces,
   directRemoveModel,
   directRemoveProvider,
+  directDeleteMemory,
+  directDeleteAllMemory,
+  directResolveInbox,
+  directReadArtifact,
+  directResolveArtifactPath,
+  directPrepareAutomationRun,
   directRetry,
   directRun,
   directSessionDelete,
   directSessionMessages,
+  directSessionAddRoot,
   directSessionRename,
+  directSessionRemoveRoot,
+  directSessionRevert,
+  directSessionRoots,
   directSessionSetFlags,
+  directSessionSetReasoning,
   directSetCompactionSettings,
   directSetContextBar,
   directSetDefaultModel,
@@ -39,8 +65,57 @@ import {
   directSetScratchBase,
   directSetSessionsPeek,
   directSetSurfaces,
+  directSetUnattended,
+  directSetMemorySettings,
+  directMarkAutomationSeen,
   directSteer,
   directSwitchModel,
+  directSetWorkspaceTrusted,
+  directTrustedWorkspaces,
+  directUpdateMemory,
+  directUpdateAutomation,
+  directFinalizeAutomationRun,
+  directListAudit,
+  directListMcp,
+  directPutMcp,
+  directPatchMcp,
+  directDeleteMcp,
+  directMcpTools,
+  directReloadMcp,
+  directConnectMcp,
+  directSignoutMcp,
+  directListSkills,
+  directCreateSkill,
+  directUpdateSkill,
+  directDeleteSkill,
+  directMoveSkill,
+  directResolveSkillFolder,
+  directStageSkillUpload,
+  directConfirmSkillUpload,
+  directSessionSkills,
+  directSetSessionSkill,
+  directSetMode,
+  directDirectoryResponse,
+  directPlanResponse,
+  directQuestionResponse,
+  directListConnectors,
+  directConnectConnector,
+  directDisconnectConnector,
+  directUpdateConnectorTools,
+  directSessionConnections,
+  directSetSessionConnection,
+  directListSubscriptions,
+  directAddSubscription,
+  directRemoveSubscription,
+  directListInboxRouting,
+  directSetInboxRouting,
+  directListUnrouted,
+  directRecentChannels,
+  directGetDmRoute,
+  directSetDmRoute,
+  directBrowserState,
+  directBrowserScreenshot,
+  directBrowserClose,
   directVerifyProvider,
 } from "./runtimeTransport";
 
@@ -255,8 +330,9 @@ export interface WorkspaceCommandTrust {
 }
 
 export async function getHealth(): Promise<Health> {
-  const res = await fetch(`${httpBase()}/v1/health`);
-  const raw: unknown = await res.json();
+  const raw: unknown = canUseDirectIpc()
+    ? await directHealth()
+    : await (await fetch(`${httpBase()}/v1/health`)).json();
   if (!isRecord(raw)) throw new RuntimeContractError("health response must be an object");
   const body = raw;
   if (
@@ -310,6 +386,10 @@ export async function getRecentWorkspaces(): Promise<RecentWorkspace[]> {
 /** Ask the LOCAL sidecar to open the OS folder picker — the browser GUI can't obtain absolute
  * paths from web file dialogs. Blocks until the user picks or cancels; null on cancel/unavailable. */
 export async function pickFolderViaServer(): Promise<string | null> {
+  if (canUseDirectIpc()) {
+    const path = await directPickFolder();
+    return typeof path === "string" && path ? path : null;
+  }
   try {
     const res = await fetch(`${httpBase()}/v1/workspaces/pick`, { method: "POST" });
     const d = await res.json();
@@ -329,6 +409,9 @@ export async function openWorkspace(
   git_branch?: string | null;
   command_trust?: WorkspaceCommandTrust;
 }> {
+  if (canUseDirectIpc()) {
+    return await directOpenWorkspace(path, create);
+  }
   const res = await fetch(`${httpBase()}/v1/workspaces/open`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -338,6 +421,10 @@ export async function openWorkspace(
 }
 
 export async function getTrustedWorkspaces(): Promise<WorkspaceCommandTrust[]> {
+  if (canUseDirectIpc()) {
+    const out = await directTrustedWorkspaces();
+    return out.workspaces ?? [];
+  }
   const res = await fetch(`${httpBase()}/v1/workspaces/trusted`);
   return (await res.json()).workspaces ?? [];
 }
@@ -346,6 +433,9 @@ export async function setWorkspaceTrusted(
   path: string,
   trusted: boolean,
 ): Promise<{ ok: boolean; error?: string } & WorkspaceCommandTrust> {
+  if (canUseDirectIpc()) {
+    return await directSetWorkspaceTrusted(path, trusted);
+  }
   const res = await fetch(`${httpBase()}/v1/workspaces/trust`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -358,6 +448,9 @@ export async function revertSession(
   sessionId: string,
   index: number,
 ): Promise<{ ok: boolean; error?: string; text?: string }> {
+  if (canUseDirectIpc()) {
+    return await directSessionRevert(sessionId, index);
+  }
   const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/revert`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -370,6 +463,9 @@ export async function setReasoningEffort(
   sessionId: string,
   effort: string,
 ): Promise<{ ok: boolean; error?: string; reasoning_effort?: string }> {
+  if (canUseDirectIpc()) {
+    return await directSessionSetReasoning(sessionId, effort);
+  }
   const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -460,11 +556,18 @@ export interface ArtifactContent {
 }
 
 export async function getArtifacts(sessionId: string): Promise<ArtifactInfo[]> {
+  if (canUseDirectIpc()) {
+    const out = await directListArtifacts(sessionId);
+    return out.artifacts ?? [];
+  }
   const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/artifacts`);
   return (await res.json()).artifacts ?? [];
 }
 
 export async function readArtifact(sessionId: string, path: string): Promise<ArtifactContent> {
+  if (canUseDirectIpc()) {
+    return await directReadArtifact(sessionId, path);
+  }
   const q = new URLSearchParams({ path });
   const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/artifacts/read?${q.toString()}`);
   return res.json();
@@ -476,6 +579,19 @@ export async function revealArtifact(
   path: string,
   mode: "reveal" | "open" = "reveal",
 ): Promise<{ ok: boolean; error?: string }> {
+  if (canUseDirectIpc()) {
+    const resolved = await directResolveArtifactPath(sessionId, path);
+    if (!resolved.ok || typeof resolved.path !== "string") {
+      return { ok: false, error: resolved.error || "Artifact is unavailable" };
+    }
+    try {
+      if (mode === "open") await openPath(resolved.path);
+      else await revealItemInDir(resolved.path);
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: String(error) };
+    }
+  }
   const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/artifacts/reveal`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -494,6 +610,10 @@ export interface RootInfo {
 }
 
 export async function getRoots(sessionId: string): Promise<RootInfo[]> {
+  if (canUseDirectIpc()) {
+    const out = await directSessionRoots(sessionId);
+    return out.roots ?? [];
+  }
   const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/roots`);
   return (await res.json()).roots ?? [];
 }
@@ -503,6 +623,9 @@ export async function addRoot(
   path: string,
   writable: boolean,
 ): Promise<{ ok: boolean; error?: string; roots?: RootInfo[] }> {
+  if (canUseDirectIpc()) {
+    return await directSessionAddRoot(sessionId, path, writable);
+  }
   const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/roots`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -515,6 +638,9 @@ export async function removeRoot(
   sessionId: string,
   path: string,
 ): Promise<{ ok: boolean; error?: string; roots?: RootInfo[] }> {
+  if (canUseDirectIpc()) {
+    return await directSessionRemoveRoot(sessionId, path);
+  }
   const q = new URLSearchParams({ path });
   const res = await fetch(
     `${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/roots?${q.toString()}`,
@@ -539,11 +665,13 @@ export interface McpServer {
 }
 
 export async function getMcpServers(): Promise<McpServer[]> {
+  if (canUseDirectIpc()) return (await directListMcp()).servers ?? [];
   const res = await fetch(`${httpBase()}/v1/mcp`);
   return (await res.json()).servers ?? [];
 }
 
 export async function addMcpServer(name: string, config: Record<string, any>) {
+  if (canUseDirectIpc()) return await directPutMcp(name, config);
   const res = await fetch(`${httpBase()}/v1/mcp`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -553,6 +681,7 @@ export async function addMcpServer(name: string, config: Record<string, any>) {
 }
 
 export async function patchMcpServer(name: string, changes: Record<string, any>) {
+  if (canUseDirectIpc()) return await directPatchMcp(name, changes);
   const res = await fetch(`${httpBase()}/v1/mcp/${encodeURIComponent(name)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -562,6 +691,7 @@ export async function patchMcpServer(name: string, changes: Record<string, any>)
 }
 
 export async function deleteMcpServer(name: string) {
+  if (canUseDirectIpc()) return await directDeleteMcp(name);
   const res = await fetch(`${httpBase()}/v1/mcp/${encodeURIComponent(name)}`, { method: "DELETE" });
   return res.json();
 }
@@ -569,11 +699,13 @@ export async function deleteMcpServer(name: string) {
 export async function getMcpTools(
   name: string,
 ): Promise<{ ok: boolean; error?: string; tools: { name: string; description: string }[] }> {
+  if (canUseDirectIpc()) return await directMcpTools(name);
   const res = await fetch(`${httpBase()}/v1/mcp/${encodeURIComponent(name)}/tools`);
   return res.json();
 }
 
 export async function reloadMcp() {
+  if (canUseDirectIpc()) return await directReloadMcp();
   const res = await fetch(`${httpBase()}/v1/mcp/reload`, { method: "POST" });
   return res.json();
 }
@@ -581,6 +713,7 @@ export async function reloadMcp() {
 /** Connect one MCP server now. For OAuth servers this opens the system browser;
  * poll getMcpServers() for the status flip (authorizing → connected / needs_auth). */
 export async function connectMcp(name: string): Promise<{ ok: boolean; started?: boolean }> {
+  if (canUseDirectIpc()) return await directConnectMcp(name);
   const res = await fetch(`${httpBase()}/v1/mcp/${encodeURIComponent(name)}/connect`, {
     method: "POST",
   });
@@ -589,6 +722,7 @@ export async function connectMcp(name: string): Promise<{ ok: boolean; started?:
 
 /** Drop the connection and forget the stored OAuth tokens. */
 export async function signoutMcp(name: string): Promise<{ ok: boolean }> {
+  if (canUseDirectIpc()) return await directSignoutMcp(name);
   const res = await fetch(`${httpBase()}/v1/mcp/${encodeURIComponent(name)}/signout`, {
     method: "POST",
   });
@@ -747,6 +881,7 @@ export interface Connector {
  * opens the vendor's sign-in in the browser (local OAuth, no cloud account needed);
  * poll getConnectors until the card flips to connected. */
 export async function connectMcpBacked(name: string): Promise<{ ok: boolean; error?: string }> {
+  if (canUseDirectIpc()) return await directConnectMcp(name);
   const res = await fetch(
     `${httpBase()}/v1/connectors/${encodeURIComponent(name)}/mcp-connect`,
     { method: "POST" },
@@ -764,6 +899,7 @@ export interface ConnectorTool {
 }
 
 export async function getConnectors(): Promise<Connector[]> {
+  if (canUseDirectIpc()) return (await directListConnectors()).connectors ?? [];
   const res = await fetch(`${httpBase()}/v1/connectors`);
   return (await res.json()).connectors ?? [];
 }
@@ -772,6 +908,7 @@ export async function connectConnector(
   name: string,
   fields: Record<string, string>,
 ): Promise<{ ok: boolean; account?: string; error?: string }> {
+  if (canUseDirectIpc()) return await directConnectConnector(name, fields);
   const res = await fetch(`${httpBase()}/v1/connectors/${encodeURIComponent(name)}/connect`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -781,6 +918,7 @@ export async function connectConnector(
 }
 
 export async function disconnectConnector(name: string): Promise<{ ok: boolean }> {
+  if (canUseDirectIpc()) return await directDisconnectConnector(name);
   const res = await fetch(`${httpBase()}/v1/connectors/${encodeURIComponent(name)}/disconnect`, {
     method: "POST",
   });
@@ -791,6 +929,7 @@ export async function updateConnectorTools(
   name: string,
   enabled: Record<string, boolean>,
 ): Promise<{ ok: boolean; error?: string; tools?: Record<string, boolean> }> {
+  if (canUseDirectIpc()) return await directUpdateConnectorTools(name, enabled);
   const res = await fetch(`${httpBase()}/v1/connectors/${encodeURIComponent(name)}/tools`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -822,6 +961,15 @@ export async function getAudit(params: {
   connector?: string;
   tool?: string;
 } = {}): Promise<AuditEvent[]> {
+  if (canUseDirectIpc()) {
+    const out = await directListAudit({
+      limit: params.limit,
+      sessionId: params.session_id,
+      connector: params.connector,
+      tool: params.tool,
+    });
+    return out.events ?? [];
+  }
   const q = new URLSearchParams();
   if (params.limit) q.set("limit", String(params.limit));
   if (params.session_id) q.set("session_id", params.session_id);
@@ -845,16 +993,19 @@ export interface BrowserState {
 }
 
 export async function getBrowserState(): Promise<BrowserState> {
+  if (canUseDirectIpc()) return await directBrowserState();
   const res = await fetch(`${httpBase()}/v1/browser/state`);
   return res.json();
 }
 
 export async function takeBrowserScreenshot(): Promise<BrowserState & { ok?: boolean; error?: string }> {
+  if (canUseDirectIpc()) return await directBrowserScreenshot();
   const res = await fetch(`${httpBase()}/v1/browser/screenshot`, { method: "POST" });
   return res.json();
 }
 
 export async function closeBrowser(): Promise<{ ok?: boolean; error?: string }> {
+  if (canUseDirectIpc()) return await directBrowserClose();
   const res = await fetch(`${httpBase()}/v1/browser/close`, { method: "POST" });
   return res.json();
 }
@@ -941,6 +1092,22 @@ export async function setCompactionSettings(
 export async function inspectPdf(
   dataUrl: string,
 ): Promise<{ ok: boolean; pages?: number; bytes?: number; error?: string }> {
+  if (canUseDirectIpc()) {
+    try {
+      const encoded = dataUrl.split(",", 2)[1] || "";
+      const binary = atob(encoded);
+      const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+      const pdfjs = await import("pdfjs-dist");
+      pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+      const loading = pdfjs.getDocument({ data: bytes });
+      const document = await loading.promise;
+      const pages = document.numPages;
+      await loading.destroy();
+      return { ok: true, pages, bytes: bytes.byteLength };
+    } catch (error) {
+      return { ok: false, error: String(error) };
+    }
+  }
   const res = await fetch(`${httpBase()}/v1/attachments/inspect-pdf`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1163,6 +1330,7 @@ export async function getSessionConnections(
   sessionId: string,
   persona?: string,
 ): Promise<SessionConnections> {
+  if (canUseDirectIpc()) return await directSessionConnections(sessionId);
   const q = persona ? `?persona=${encodeURIComponent(persona)}` : "";
   const res = await fetch(
     `${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/connections${q}`,
@@ -1180,6 +1348,9 @@ export async function setSessionConnection(
   enabled: boolean,
   clear = false,
 ): Promise<{ ok: boolean; error?: string }> {
+  if (canUseDirectIpc()) {
+    return await directSetSessionConnection(sessionId, connector, enabled, clear);
+  }
   const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/connections`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1228,6 +1399,7 @@ const jsonPost = (body: unknown, method = "POST") => ({
 });
 
 export async function listSkills(workspace?: string): Promise<SkillRow[]> {
+  if (canUseDirectIpc()) return (await directListSkills(workspace)).skills ?? [];
   const qs = workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
   const res = await fetch(skillUrl(qs));
   return (await res.json()).skills ?? [];
@@ -1240,6 +1412,7 @@ export async function createSkill(body: {
   scope?: "global" | "project";
   workspace?: string;
 }): Promise<{ ok: boolean; error?: string }> {
+  if (canUseDirectIpc()) return await directCreateSkill(body);
   const res = await fetch(skillUrl(), jsonPost(body));
   return res.json();
 }
@@ -1248,11 +1421,24 @@ export async function updateSkill(
   name: string,
   patch: { description?: string; instructions?: string; enabled?: boolean; workspace?: string },
 ): Promise<{ ok: boolean; error?: string }> {
+  if (canUseDirectIpc()) return await directUpdateSkill(name, patch);
   const res = await fetch(skillUrl(`/${encodeURIComponent(name)}`), jsonPost(patch, "PATCH"));
   return res.json();
 }
 
 export async function revealSkill(name: string): Promise<{ ok: boolean; error?: string }> {
+  if (canUseDirectIpc()) {
+    const resolved = await directResolveSkillFolder(name);
+    if (!resolved.ok || typeof resolved.path !== "string") {
+      return { ok: false, error: resolved.error || "Skill is unavailable" };
+    }
+    try {
+      await revealItemInDir(resolved.path);
+      return { ok: true };
+    } catch (error) {
+      return { ok: false, error: String(error) };
+    }
+  }
   // §6 "Show folder": the backend opens the skill's folder in the OS file manager.
   const res = await fetch(skillUrl(`/${encodeURIComponent(name)}/reveal`), jsonPost({}));
   return res.json();
@@ -1262,6 +1448,7 @@ export async function deleteSkill(
   name: string,
   workspace?: string,
 ): Promise<{ ok: boolean; error?: string }> {
+  if (canUseDirectIpc()) return await directDeleteSkill(name, workspace);
   const qs = workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
   const res = await fetch(skillUrl(`/${encodeURIComponent(name)}${qs}`), { method: "DELETE" });
   return res.json();
@@ -1272,6 +1459,7 @@ export async function moveSkill(
   scope: "global" | "project",
   workspace?: string,
 ): Promise<{ ok: boolean; error?: string }> {
+  if (canUseDirectIpc()) return await directMoveSkill(name, scope, workspace);
   const res = await fetch(skillUrl(`/${encodeURIComponent(name)}/move`), jsonPost({ scope, workspace }));
   return res.json();
 }
@@ -1280,6 +1468,7 @@ export async function stageSkillUpload(
   dataB64: string,
   filename = "",
 ): Promise<SkillUploadPreview> {
+  if (canUseDirectIpc()) return await directStageSkillUpload(dataB64, filename);
   const res = await fetch(skillUrl("/upload"), jsonPost({ data_b64: dataB64, filename }));
   return res.json();
 }
@@ -1289,6 +1478,7 @@ export async function confirmSkillUpload(
   scope: "global" | "project" = "global",
   workspace?: string,
 ): Promise<{ ok: boolean; error?: string }> {
+  if (canUseDirectIpc()) return await directConfirmSkillUpload(token, scope, workspace);
   const res = await fetch(skillUrl("/upload/confirm"), jsonPost({ token, scope, workspace }));
   return res.json();
 }
@@ -1298,6 +1488,7 @@ export async function sessionSkills(
   sessionId: string,
   workspace?: string,
 ): Promise<SessionSkillRow[]> {
+  if (canUseDirectIpc()) return (await directSessionSkills(sessionId, workspace)).skills ?? [];
   const qs = workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
   const res = await fetch(
     `${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/skills${qs}`,
@@ -1311,6 +1502,9 @@ export async function setSessionSkill(
   enabled: boolean,
   opts: { clear?: boolean; workspace?: string } = {},
 ): Promise<{ skills?: SessionSkillRow[]; ok?: boolean; error?: string }> {
+  if (canUseDirectIpc()) {
+    return await directSetSessionSkill(sessionId, skill, enabled, !!opts.clear, opts.workspace);
+  }
   const res = await fetch(
     `${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/skills`,
     jsonPost({
@@ -1354,6 +1548,10 @@ export interface InboxItem {
 }
 
 export async function getInbox(sessionId?: string, state?: string): Promise<InboxItem[]> {
+  if (canUseDirectIpc()) {
+    const out = await directListInbox(sessionId, state);
+    return out.items ?? [];
+  }
   const q = new URLSearchParams();
   if (sessionId) q.set("session_id", sessionId);
   if (state) q.set("state", state);
@@ -1365,6 +1563,9 @@ export async function resolveInboxItem(
   id: string,
   resolution: string,
 ): Promise<{ ok: boolean }> {
+  if (canUseDirectIpc()) {
+    return await directResolveInbox(id, resolution);
+  }
   const res = await fetch(`${httpBase()}/v1/inbox/${encodeURIComponent(id)}/resolve`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1392,6 +1593,7 @@ export interface RecentChannel {
 }
 
 export async function getSubscriptions(): Promise<Subscription[]> {
+  if (canUseDirectIpc()) return (await directListSubscriptions()).subscriptions ?? [];
   const res = await fetch(`${httpBase()}/v1/subscriptions`);
   return (await res.json()).subscriptions ?? [];
 }
@@ -1404,6 +1606,7 @@ export interface InboxBinding {
 }
 
 export async function getInboxRouting(): Promise<InboxBinding[]> {
+  if (canUseDirectIpc()) return (await directListInboxRouting()).bindings ?? [];
   const res = await fetch(`${httpBase()}/v1/inbox/routing`);
   return (await res.json()).bindings ?? [];
 }
@@ -1413,6 +1616,7 @@ export async function setInboxBinding(
   channel: string | null,
   target: string,
 ): Promise<{ ok: boolean; bindings?: InboxBinding[]; error?: string }> {
+  if (canUseDirectIpc()) return await directSetInboxRouting(name, channel, target);
   const res = await fetch(`${httpBase()}/v1/inbox/routing/binding`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1430,11 +1634,13 @@ export interface UnroutedItem {
 }
 
 export async function getUnrouted(): Promise<UnroutedItem[]> {
+  if (canUseDirectIpc()) return (await directListUnrouted()).items ?? [];
   const res = await fetch(`${httpBase()}/v1/unrouted`);
   return (await res.json()).items ?? [];
 }
 
 export async function getRecentChannels(): Promise<RecentChannel[]> {
+  if (canUseDirectIpc()) return (await directRecentChannels()).channels ?? [];
   const res = await fetch(`${httpBase()}/v1/channels/recent`);
   return (await res.json()).channels ?? [];
 }
@@ -1443,6 +1649,7 @@ export async function subscribeChannel(
   sessionId: string,
   channel: string,
 ): Promise<{ ok: boolean; channel?: string; error?: string }> {
+  if (canUseDirectIpc()) return await directAddSubscription(sessionId, channel);
   const res = await fetch(`${httpBase()}/v1/subscriptions`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1455,6 +1662,7 @@ export async function unsubscribeChannel(
   sessionId: string,
   channel: string,
 ): Promise<{ ok: boolean; removed?: boolean }> {
+  if (canUseDirectIpc()) return await directRemoveSubscription(sessionId, channel);
   const res = await fetch(`${httpBase()}/v1/subscriptions/remove`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1464,6 +1672,9 @@ export async function unsubscribeChannel(
 }
 
 export async function getUnattended(sessionId: string): Promise<boolean> {
+  if (canUseDirectIpc()) {
+    return !!(await directGetUnattended(sessionId)).unattended;
+  }
   const res = await fetch(
     `${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/unattended`,
   );
@@ -1474,6 +1685,9 @@ export async function setUnattended(
   sessionId: string,
   unattended: boolean,
 ): Promise<{ ok: boolean; unattended: boolean }> {
+  if (canUseDirectIpc()) {
+    return await directSetUnattended(sessionId, unattended);
+  }
   const res = await fetch(
     `${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/unattended`,
     {
@@ -1545,6 +1759,7 @@ export function announceMemoryChanged() {
 }
 
 export async function getMemory(): Promise<MemoryEntry[]> {
+  if (canUseDirectIpc()) return (await directListMemory()).memory ?? [];
   const res = await fetch(`${httpBase()}/v1/memory`);
   return (await res.json()).memory ?? [];
 }
@@ -1553,6 +1768,7 @@ export async function updateMemory(
   id: number,
   content: string,
 ): Promise<{ ok: boolean; error?: string }> {
+  if (canUseDirectIpc()) return await directUpdateMemory(id, content);
   const res = await fetch(`${httpBase()}/v1/memory/${id}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -1562,16 +1778,19 @@ export async function updateMemory(
 }
 
 export async function deleteMemory(id: number): Promise<{ ok: boolean; error?: string }> {
+  if (canUseDirectIpc()) return await directDeleteMemory(id);
   const res = await fetch(`${httpBase()}/v1/memory/${id}`, { method: "DELETE" });
   return res.json();
 }
 
 export async function deleteAllMemory(): Promise<{ ok: boolean; deleted: number }> {
+  if (canUseDirectIpc()) return await directDeleteAllMemory();
   const res = await fetch(`${httpBase()}/v1/memory`, { method: "DELETE" });
   return res.json();
 }
 
 export async function getMemorySettings(): Promise<MemorySettings> {
+  if (canUseDirectIpc()) return await directGetMemorySettings();
   const res = await fetch(`${httpBase()}/v1/memory/settings`);
   return res.json();
 }
@@ -1579,6 +1798,7 @@ export async function getMemorySettings(): Promise<MemorySettings> {
 export async function setMemorySettings(
   patch: Partial<MemorySettings>,
 ): Promise<MemorySettings> {
+  if (canUseDirectIpc()) return await directSetMemorySettings(patch);
   const res = await fetch(`${httpBase()}/v1/memory/settings`, {
     method: "PUT",
     headers: { "Content-Type": "application/json" },
@@ -1729,11 +1949,13 @@ export interface RecentSender {
 
 // -- direct-message routing ---------------------------------------------------
 export async function getDmRoute(): Promise<string | null> {
+  if (canUseDirectIpc()) return (await directGetDmRoute()).dm_session ?? null;
   const res = await fetch(`${httpBase()}/v1/messaging/dm-route`);
   return (await res.json()).dm_session ?? null;
 }
 
 export async function setDmRoute(sessionId: string): Promise<{ ok: boolean; dm_session: string | null }> {
+  if (canUseDirectIpc()) return await directSetDmRoute(sessionId);
   const res = await fetch(`${httpBase()}/v1/messaging/dm-route`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1782,6 +2004,7 @@ export interface AutomationRun {
 }
 
 export async function getAutomations(): Promise<Automation[]> {
+  if (canUseDirectIpc()) return (await directListAutomations()).tasks ?? [];
   const res = await fetch(`${httpBase()}/v1/automations`);
   return (await res.json()).tasks ?? [];
 }
@@ -1805,6 +2028,12 @@ export function connectEvents(
     payload: Record<string, unknown>;
   }) => void
 ): () => void {
+  if (canUseDirectIpc()) {
+    const sequenceGate = new RuntimeEventSequenceGate("app events");
+    return directListenApp((event) => {
+      if (APP_EVENT_TYPES.has(event.type) && sequenceGate.accept(event)) onEvent(event);
+    });
+  }
   let ws: WebSocket | null = null;
   let timer: number | null = null;
   let closed = false;
@@ -1830,6 +2059,7 @@ export function connectEvents(
 
 /** Advance the automation's seen mark — clears its unseen-runs badge (UX-023). */
 export async function markAutomationSeen(id: string): Promise<{ ok: boolean }> {
+  if (canUseDirectIpc()) return await directMarkAutomationSeen(id);
   const res = await fetch(`${httpBase()}/v1/automations/${id}/seen`, { method: "POST" });
   return res.json();
 }
@@ -1844,6 +2074,7 @@ export async function createAutomation(payload: {
   // Only target-bound write entries survive server-side validation.
   permissions?: { tool: string; target: string; access: "read" | "write" }[];
 }): Promise<{ ok: boolean; error?: string; task?: Automation }> {
+  if (canUseDirectIpc()) return await directCreateAutomation(payload);
   const res = await fetch(`${httpBase()}/v1/automations`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -1853,11 +2084,13 @@ export async function createAutomation(payload: {
 }
 
 export async function getAutomation(id: string): Promise<{ task: Automation; runs: AutomationRun[] }> {
+  if (canUseDirectIpc()) return await directGetAutomation(id);
   const res = await fetch(`${httpBase()}/v1/automations/${encodeURIComponent(id)}`);
   return res.json();
 }
 
 export async function updateAutomation(id: string, changes: Record<string, any>) {
+  if (canUseDirectIpc()) return await directUpdateAutomation(id, changes);
   const res = await fetch(`${httpBase()}/v1/automations/${encodeURIComponent(id)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -1867,6 +2100,7 @@ export async function updateAutomation(id: string, changes: Record<string, any>)
 }
 
 export async function deleteAutomation(id: string) {
+  if (canUseDirectIpc()) return await directDeleteAutomation(id);
   const res = await fetch(`${httpBase()}/v1/automations/${encodeURIComponent(id)}`, { method: "DELETE" });
   return res.json();
 }
@@ -1883,12 +2117,14 @@ export interface PreparedRun {
 
 /** Prepare a live manual run: returns the session to open + the opening prompt to send. */
 export async function runAutomation(id: string): Promise<PreparedRun> {
+  if (canUseDirectIpc()) return await directPrepareAutomationRun(id);
   const res = await fetch(`${httpBase()}/v1/automations/${encodeURIComponent(id)}/run`, { method: "POST" });
   return res.json();
 }
 
 /** Mark a manual run complete after its first turn finished. */
 export async function finalizeAutomationRun(id: string, runId: string) {
+  if (canUseDirectIpc()) return await directFinalizeAutomationRun(id, runId);
   const res = await fetch(
     `${httpBase()}/v1/automations/${encodeURIComponent(id)}/runs/${encodeURIComponent(runId)}/finalize`,
     { method: "POST" },
@@ -2164,10 +2400,11 @@ export class Session {
   private readonly direct = canUseDirectIpc();
   /** For direct IPC, the current model selected by the composer (carried per run). */
   private model: string;
+  private mode = "interactive";
 
   constructor(
     private readonly sessionId: string,
-    workspace: string,
+    private readonly workspace: string,
     agent: string,
     private readonly handlers: Handlers,
   ) {
@@ -2265,7 +2502,10 @@ export class Session {
         sessionId: this.sessionId,
         modelId: model || this.model,
         userInput: text,
-        workspace: "",
+        workspace: this.workspace,
+        attachments,
+        skill,
+        mode: this.mode,
         onEvent: (ev) => {
           if (this.stopped) return;
           const event = ev as unknown as WsEvent;
@@ -2295,11 +2535,19 @@ export class Session {
 
   // Reply to a `request_directory` prompt: grant a folder (with access level) or decline.
   respondDirectory(granted: boolean, path?: string, writable?: boolean) {
+    if (this.direct) {
+      void directDirectoryResponse(this.sessionId, granted, path, !!writable);
+      return;
+    }
     this.send({ type: "directory_response", granted, ...(path ? { path } : {}), writable: !!writable });
   }
 
   // Reply to a `propose_plan` prompt: approve (choosing the execution mode) or reject with feedback.
   respondPlan(approved: boolean, mode?: string, feedback?: string) {
+    if (this.direct) {
+      void directPlanResponse(this.sessionId, approved, mode, feedback);
+      return;
+    }
     this.send({
       type: "plan_response",
       approved,
@@ -2310,6 +2558,10 @@ export class Session {
 
   // Answer a live `ask_user` prompt (attended sessions; unattended ones answer via the Inbox).
   respondQuestion(answer: string) {
+    if (this.direct) {
+      void directQuestionResponse(this.sessionId, answer);
+      return;
+    }
     this.send({ type: "question_response", answer });
   }
 
@@ -2351,6 +2603,11 @@ export class Session {
   }
 
   setMode(mode: string) {
+    this.mode = mode;
+    if (this.direct) {
+      void directSetMode(this.sessionId, mode);
+      return;
+    }
     this.send({ type: "set_mode", mode });
   }
 

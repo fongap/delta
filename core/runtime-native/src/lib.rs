@@ -14,23 +14,30 @@
 //!   - docs/architecture/runtime-public-contract.md
 //!   - docs/governance/rust-core-migration.md
 
+pub mod application;
 pub mod approval;
 pub mod artifact;
+pub mod automation;
 pub mod capability;
 pub mod checkpoint;
 pub mod control_plane;
 pub mod idemlog;
+pub mod inbox;
 pub mod ledger;
+pub mod mcp;
+pub mod memory;
 pub mod model_authority;
 pub mod policy;
 pub mod provider;
 pub mod retry;
 pub mod runtime;
+pub mod skills;
 pub mod source_citation;
 pub mod taskstore;
 pub mod tool_lifecycle;
 pub mod validation;
 
+pub use application::ApplicationStore;
 pub use approval::{
     ApprovalController, ApprovalDecision, ApprovalRecordInput, ApprovalRecordOutput,
     ApprovalWriter, APPROVAL_SCHEMA_VERSION,
@@ -39,6 +46,7 @@ pub use artifact::{
     ArtifactInput, ArtifactMismatch, ArtifactReader, ArtifactRecord, ArtifactRegistrationResult,
     ArtifactRegistryWriter,
 };
+pub use automation::AutomationStore;
 pub use capability::{
     CapabilityArtifact, CapabilityControl, CapabilityDiagnostics, CapabilityExitState,
     CapabilityGrants, CapabilityHost, CapabilityInputFile, CapabilityJob, CapabilityProgress,
@@ -58,6 +66,8 @@ pub use idemlog::{
     SideEffectState,
 };
 pub use ledger::{LedgerEvent, LedgerReader, LedgerWriter};
+pub use mcp::McpStore;
+pub use memory::MemoryStore;
 pub use model_authority::ModelAuthority;
 pub use policy::{
     classify, enforce_level, enforce_scope, evaluate, restrict_grants, Decision,
@@ -67,6 +77,7 @@ pub use provider::ProviderRequest;
 pub use retry::{
     classify_error, ErrorClass as RetryErrorClass, RetryClassifyInput, RetryClassifyOutput,
 };
+pub use skills::SkillStore;
 pub use source_citation::{
     validate_all, validate_citation, validate_source_citation, CitationValidationResult,
     CitationValidity, SourceCitationReader, SourceCitationWriter, SourceRecord,
@@ -83,6 +94,7 @@ pub use validation::{
     ValidationResult, ValidationWriter,
 };
 
+pub use inbox::{InboxItem, InboxStore};
 pub use runtime::{
     AssistantTurn, EventSink, NullSink, RuntimeAuthorities, RuntimeConfig, RuntimeEvent,
     RuntimeEventEnvelopeV1, RuntimeHandle, RuntimeHost, RuntimeState, StagedArtifact, StdoutSink,

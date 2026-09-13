@@ -9,7 +9,15 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: listenMock }));
 vi.mock("./tauri", () => ({ isTauri: () => true }));
 
-import { directApproval, directFollowUp, directRun, directSteer } from "./runtimeTransport";
+import {
+  directApproval,
+  directDirectoryResponse,
+  directFollowUp,
+  directPlanResponse,
+  directQuestionResponse,
+  directRun,
+  directSteer,
+} from "./runtimeTransport";
 
 describe("direct runtime IPC contract", () => {
   beforeEach(() => {
@@ -30,6 +38,10 @@ describe("direct runtime IPC contract", () => {
         sessionId: "session-1",
         modelId: "test-model",
         userInput: "hello",
+        workspace: "C:/work",
+        attachments: [{ kind: "text", name: "notes.txt", text: "facts" }],
+        skill: "research",
+        mode: "plan",
         onEvent: vi.fn(),
       }),
     ).resolves.toEqual({
@@ -46,6 +58,13 @@ describe("direct runtime IPC contract", () => {
     expect(invokeMock.mock.calls[0][1]).not.toHaveProperty("baseUrl");
     expect(invokeMock.mock.calls[0][1]).not.toHaveProperty("protocol");
     expect(invokeMock.mock.calls[0][1]).not.toHaveProperty("tools");
+    expect(invokeMock.mock.calls[0][1]).not.toHaveProperty("messages");
+    expect(invokeMock.mock.calls[0][1]).toEqual(expect.objectContaining({
+      workspace: "C:/work",
+      attachments: [{ kind: "text", name: "notes.txt", text: "facts" }],
+      skill: "research",
+      mode: "plan",
+    }));
   });
 
   it("keeps steering and queued follow-up as distinct commands", async () => {
@@ -80,5 +99,17 @@ describe("direct runtime IPC contract", () => {
       decision: "once",
       toolCallId: undefined,
     });
+  });
+
+  it("uses explicit Rust commands for every attended interaction", async () => {
+    invokeMock.mockResolvedValue({ ok: true });
+    await directDirectoryResponse("session-1", true, "C:/work", true);
+    await directPlanResponse("session-1", true, "interactive", undefined);
+    await directQuestionResponse("session-1", "Use option A");
+    expect(invokeMock.mock.calls.map(([command]) => command)).toEqual([
+      "runtime_directory_response",
+      "runtime_plan_response",
+      "runtime_question_response",
+    ]);
   });
 });

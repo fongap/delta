@@ -34,9 +34,10 @@ export async function directRun(args: {
   sessionId: string;
   modelId: string;
   userInput: string;
-  systemPrompt?: string;
   workspace?: string;
-  messages?: unknown;
+  attachments?: unknown[];
+  skill?: string;
+  mode?: string;
   maxIterations?: number;
   maxRetries?: number;
   source?: unknown;
@@ -45,12 +46,12 @@ export async function directRun(args: {
 }): Promise<DirectRuntimeAcceptance> {
   const {
     sessionId, modelId, userInput,
-    systemPrompt, workspace, messages, maxIterations, maxRetries, source,
+    workspace, attachments, skill, mode, maxIterations, maxRetries, source,
   } = args;
   try {
     const out = await invoke("runtime_run", {
       sessionId, modelId, userInput,
-      systemPrompt, workspace, messages, maxIterations, maxRetries, source,
+      workspace, attachments, skill, mode, maxIterations, maxRetries, source,
     });
     if (out && (out as any).error) {
       args.onError?.((out as any).error);
@@ -209,6 +210,23 @@ export async function directApproval(
     return { ok: false, error: String(error) };
   }
 }
+
+export const directSetMode = (sessionId: string, mode: string) =>
+  invokeAuthority("runtime_set_mode", { sessionId, mode });
+export const directDirectoryResponse = (
+  sessionId: string,
+  granted: boolean,
+  path?: string,
+  writable = false,
+) => invokeAuthority("runtime_directory_response", { sessionId, granted, path, writable });
+export const directPlanResponse = (
+  sessionId: string,
+  approved: boolean,
+  mode?: string,
+  feedback?: string,
+) => invokeAuthority("runtime_plan_response", { sessionId, approved, mode, feedback });
+export const directQuestionResponse = (sessionId: string, answer: string) =>
+  invokeAuthority("runtime_question_response", { sessionId, answer });
 
 async function invokeAuthority(command: string, args: Record<string, unknown> = {}): Promise<any> {
   try {
@@ -379,3 +397,145 @@ export async function directRecentWorkspaces(): Promise<unknown> {
     return { workspaces: [], error: String(e) };
   }
 }
+
+export function directListenApp(
+  onEvent: (event: WsEventEnvelope) => void,
+): () => void {
+  let disposed = false;
+  let unlisten: (() => void) | undefined;
+  listen<WsEventEnvelope>(RUNTIME_EVENT_CHANNEL, (event) => {
+    if (disposed) return;
+    const payload = event.payload as WsEventEnvelope;
+    if (payload && payload.sessionId === null) onEvent(payload);
+  }).then((fn) => {
+    if (disposed && fn) fn();
+    else if (fn) unlisten = fn;
+  });
+  return () => {
+    disposed = true;
+    unlisten?.();
+  };
+}
+
+export const directPickFolder = () => invokeAuthority("pick_folder");
+export const directOpenWorkspace = (path: string, create: boolean) =>
+  invokeAuthority("workspace_open", { path, create });
+export const directTrustedWorkspaces = () => invokeAuthority("workspaces_trusted");
+export const directSetWorkspaceTrusted = (path: string, trusted: boolean) =>
+  invokeAuthority("workspace_set_trusted", { path, trusted });
+export const directSessionRevert = (sessionId: string, index: number) =>
+  invokeAuthority("session_revert", { sessionId, index });
+export const directSessionSetReasoning = (sessionId: string, effort: string) =>
+  invokeAuthority("session_set_reasoning", { sessionId, effort });
+export const directSessionRoots = (sessionId: string) =>
+  invokeAuthority("session_roots", { sessionId });
+export const directSessionAddRoot = (sessionId: string, path: string, writable: boolean) =>
+  invokeAuthority("session_add_root", { sessionId, path, writable });
+export const directSessionRemoveRoot = (sessionId: string, path: string) =>
+  invokeAuthority("session_remove_root", { sessionId, path });
+export const directGetUnattended = (sessionId: string) =>
+  invokeAuthority("session_get_unattended", { sessionId });
+export const directSetUnattended = (sessionId: string, unattended: boolean) =>
+  invokeAuthority("session_set_unattended", { sessionId, unattended });
+export const directListInbox = (sessionId?: string, itemState?: string) =>
+  invokeAuthority("inbox_list", { sessionId, itemState });
+export const directResolveInbox = (id: string, resolution: string) =>
+  invokeAuthority("inbox_resolve", { id, resolution });
+export const directListArtifacts = (sessionId: string) =>
+  invokeAuthority("artifacts_list", { sessionId });
+export const directReadArtifact = (sessionId: string, path: string) =>
+  invokeAuthority("artifact_read", { sessionId, path });
+export const directResolveArtifactPath = (sessionId: string, path: string) =>
+  invokeAuthority("artifact_resolve_path", { sessionId, path });
+export const directListMemory = () => invokeAuthority("memory_list");
+export const directUpdateMemory = (id: number, content: string) =>
+  invokeAuthority("memory_update", { id, content });
+export const directDeleteMemory = (id: number) =>
+  invokeAuthority("memory_delete", { id });
+export const directDeleteAllMemory = () => invokeAuthority("memory_delete_all");
+export const directGetMemorySettings = () => invokeAuthority("memory_settings");
+export const directSetMemorySettings = (patch: Record<string, unknown>) =>
+  invokeAuthority("memory_set_settings", { patch });
+export const directListAutomations = () => invokeAuthority("automations_list");
+export const directCreateAutomation = (payload: Record<string, unknown>) =>
+  invokeAuthority("automation_create", { payload });
+export const directGetAutomation = (id: string) =>
+  invokeAuthority("automation_get", { id });
+export const directUpdateAutomation = (id: string, changes: Record<string, unknown>) =>
+  invokeAuthority("automation_update", { id, changes });
+export const directDeleteAutomation = (id: string) =>
+  invokeAuthority("automation_delete", { id });
+export const directMarkAutomationSeen = (id: string) =>
+  invokeAuthority("automation_mark_seen", { id });
+export const directPrepareAutomationRun = (id: string) =>
+  invokeAuthority("automation_prepare_run", { id });
+export const directFinalizeAutomationRun = (id: string, runId: string) =>
+  invokeAuthority("automation_finalize_run", { id, runId });
+export const directListMcp = () => invokeAuthority("mcp_list");
+export const directPutMcp = (name: string, config: Record<string, unknown>) =>
+  invokeAuthority("mcp_put", { name, config });
+export const directPatchMcp = (name: string, changes: Record<string, unknown>) =>
+  invokeAuthority("mcp_patch", { name, changes });
+export const directDeleteMcp = (name: string) => invokeAuthority("mcp_delete", { name });
+export const directMcpTools = (name: string) => invokeAuthority("mcp_tools", { name });
+export const directReloadMcp = () => invokeAuthority("mcp_reload");
+export const directConnectMcp = (name: string) => invokeAuthority("mcp_connect", { name });
+export const directSignoutMcp = (name: string) => invokeAuthority("mcp_signout", { name });
+export const directListAudit = (params: Record<string, unknown>) =>
+  invokeAuthority("audit_list", params);
+export const directListSkills = (workspace?: string) =>
+  invokeAuthority("skills_list", { workspace });
+export const directCreateSkill = (body: Record<string, unknown>) =>
+  invokeAuthority("skill_create", { body });
+export const directUpdateSkill = (name: string, patch: Record<string, unknown>) =>
+  invokeAuthority("skill_update", { name, patch });
+export const directDeleteSkill = (name: string, workspace?: string) =>
+  invokeAuthority("skill_delete", { name, workspace });
+export const directMoveSkill = (name: string, scope: string, workspace?: string) =>
+  invokeAuthority("skill_move", { name, scope, workspace });
+export const directResolveSkillFolder = (name: string, workspace?: string) =>
+  invokeAuthority("skill_resolve_folder", { name, workspace });
+export const directStageSkillUpload = (dataB64: string, filename: string) =>
+  invokeAuthority("skill_stage_upload", { dataB64, filename });
+export const directConfirmSkillUpload = (token: string, scope: string, workspace?: string) =>
+  invokeAuthority("skill_confirm_upload", { token, scope, workspace });
+export const directSessionSkills = (sessionId: string, workspace?: string) =>
+  invokeAuthority("session_skills", { sessionId, workspace });
+export const directSetSessionSkill = (
+  sessionId: string,
+  skill: string,
+  enabled: boolean,
+  clear: boolean,
+  workspace?: string,
+) => invokeAuthority("session_set_skill", { sessionId, skill, enabled, clear, workspace });
+export const directListConnectors = () => invokeAuthority("connectors_list");
+export const directConnectConnector = (name: string, fields: Record<string, string>) =>
+  invokeAuthority("connector_connect", { name, fields });
+export const directDisconnectConnector = (name: string) =>
+  invokeAuthority("connector_disconnect", { name });
+export const directUpdateConnectorTools = (name: string, enabled: Record<string, boolean>) =>
+  invokeAuthority("connector_update_tools", { name, enabled });
+export const directSessionConnections = (sessionId: string) =>
+  invokeAuthority("session_connections", { sessionId });
+export const directSetSessionConnection = (
+  sessionId: string,
+  connector: string,
+  enabled: boolean,
+  clear: boolean,
+) => invokeAuthority("session_set_connection", { sessionId, connector, enabled, clear });
+export const directListSubscriptions = () => invokeAuthority("subscriptions_list");
+export const directAddSubscription = (sessionId: string, channel: string) =>
+  invokeAuthority("subscription_add", { sessionId, channel });
+export const directRemoveSubscription = (sessionId: string, channel: string) =>
+  invokeAuthority("subscription_remove", { sessionId, channel });
+export const directListInboxRouting = () => invokeAuthority("inbox_routing_list");
+export const directSetInboxRouting = (name: string, channel: string | null, target: string) =>
+  invokeAuthority("inbox_routing_set", { name, channel, target });
+export const directListUnrouted = () => invokeAuthority("unrouted_list");
+export const directRecentChannels = () => invokeAuthority("recent_channels");
+export const directGetDmRoute = () => invokeAuthority("dm_route_get");
+export const directSetDmRoute = (sessionId: string) =>
+  invokeAuthority("dm_route_set", { sessionId });
+export const directBrowserState = () => invokeAuthority("browser_state");
+export const directBrowserScreenshot = () => invokeAuthority("browser_screenshot");
+export const directBrowserClose = () => invokeAuthority("browser_close");

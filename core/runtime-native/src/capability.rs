@@ -430,6 +430,29 @@ impl CapabilityHost {
         let host = Self::new();
         host.register(native_read_registration())?;
         host.register(native_write_registration())?;
+        host.register(interaction_registration(
+            "request_directory",
+            "Request access to an additional directory.",
+            serde_json::json!({
+                "type": "object", "required": ["reason"],
+                "properties": {"reason": {"type": "string"}, "path": {"type": "string"}, "writable": {"type": "boolean"}}
+            }),
+        ))?;
+        host.register(interaction_registration(
+            "ask_user",
+            "Ask the user a focused question before continuing.",
+            serde_json::json!({
+                "type": "object", "required": ["question"],
+                "properties": {"question": {"type": "string"}, "options": {"type": "array"}, "allow_text": {"type": "boolean"}}
+            }),
+        ))?;
+        host.register(interaction_registration(
+            "propose_plan",
+            "Present a plan and wait for user approval.",
+            serde_json::json!({
+                "type": "object", "required": ["plan"], "properties": {"plan": {"type": "string"}}
+            }),
+        ))?;
         Ok(host)
     }
 
@@ -1068,6 +1091,32 @@ fn native_write_registration() -> CapabilityRegistration {
     }
 }
 
+fn interaction_registration(
+    tool_name: &str,
+    description: &str,
+    parameters: Value,
+) -> CapabilityRegistration {
+    CapabilityRegistration {
+        capability_id: format!("interaction.{tool_name}"),
+        tool_name: tool_name.to_string(),
+        description: description.to_string(),
+        parameters,
+        metadata: serde_json::json!({
+            "risk_level": "low", "requires_approval": false,
+            "category": "interaction", "capabilities": ["user.interaction"]
+        }),
+        grants: CapabilityGrants::read_only(),
+        workspace_write: false,
+        runner: Arc::new(NativeCapabilityRunner::new(|job, _| {
+            CapabilityResult::failed(
+                &job.job_id,
+                "interaction capabilities must be executed by RuntimeHost",
+                Some("runtime_boundary"),
+            )
+        })),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1192,7 +1241,16 @@ mod tests {
             .iter()
             .map(|schema| schema["function"]["name"].as_str().unwrap())
             .collect::<Vec<_>>();
-        assert_eq!(names, vec!["read_file", "write_file"]);
+        assert_eq!(
+            names,
+            vec![
+                "ask_user",
+                "propose_plan",
+                "read_file",
+                "request_directory",
+                "write_file"
+            ]
+        );
     }
 
     #[test]

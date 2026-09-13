@@ -15,7 +15,7 @@
 //! - `follow_up()` — queue a follow-up turn for after completion
 //! - `cancel()` — interrupt from any state
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::fs;
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
@@ -32,6 +32,7 @@ use crate::artifact::{ArtifactInput, ArtifactRegistryWriter};
 use crate::capability::CapabilityProgress;
 use crate::checkpoint::{CheckpointRegisterInput, CheckpointWriter};
 use crate::idemlog::IdempotencyWriter;
+use crate::inbox::InboxStore;
 use crate::policy::{self, Decision, PolicyEvaluateInput, RiskLevel, RootEntry, ToolMetadata};
 use crate::provider::{self, ProviderRequest};
 use crate::tool_lifecycle::{self, PlanAction, ToolLifecyclePlanInput};
@@ -82,6 +83,7 @@ pub struct AssistantTurn {
 pub enum RuntimeEvent {
     TurnStart {
         input: Value,
+        attachments: Vec<Value>,
         source: Option<Value>,
         run_id: Option<String>,
     },
@@ -92,6 +94,7 @@ pub enum RuntimeEvent {
         text: String,
     },
     AssistantMessage {
+        message: Value,
         text: Option<String>,
         tool_calls: Vec<String>,
         reasoning: Option<String>,
@@ -118,6 +121,20 @@ pub enum RuntimeEvent {
         name: String,
         arguments: Value,
         reason: String,
+    },
+    DirectoryRequested {
+        tool_call_id: String,
+        reason: String,
+        path: String,
+        writable: bool,
+    },
+    QuestionRequested {
+        tool_call_id: String,
+        arguments: Value,
+    },
+    PlanProposed {
+        tool_call_id: String,
+        plan: String,
     },
     IterationEnd {
         iteration: usize,
@@ -185,22 +202,24 @@ impl RuntimeEvent {
         let (event_type, payload) = match self {
             Self::TurnStart {
                 input,
+                attachments,
                 source,
                 run_id,
             } => (
                 "turn_start",
-                json!({"input": input, "source": source, "run_id": run_id}),
+                json!({"input": input, "attachments": attachments, "source": source, "run_id": run_id}),
             ),
             Self::AssistantDelta { text } => ("assistant_delta", json!({"text": text})),
             Self::ReasoningDelta { text } => ("reasoning_delta", json!({"text": text})),
             Self::AssistantMessage {
+                message,
                 text,
                 tool_calls,
                 reasoning,
                 usage,
             } => (
                 "assistant_message",
-                json!({"text": text, "tool_calls": tool_calls, "reasoning": reasoning, "usage": usage}),
+                json!({"message": message, "text": text, "tool_calls": tool_calls, "reasoning": reasoning, "usage": usage}),
             ),
             Self::ToolProposed {
                 tool_call_id,
@@ -232,6 +251,27 @@ impl RuntimeEvent {
             } => (
                 "permission_required",
                 json!({"tool_call_id": tool_call_id, "name": name, "arguments": arguments, "reason": reason}),
+            ),
+            Self::DirectoryRequested {
+                tool_call_id,
+                reason,
+                path,
+                writable,
+            } => (
+                "directory_requested",
+                json!({"tool_call_id": tool_call_id, "reason": reason, "path": path, "writable": writable}),
+            ),
+            Self::QuestionRequested {
+                tool_call_id,
+                arguments,
+            } => {
+                let mut payload = arguments.clone();
+                payload["tool_call_id"] = Value::String(tool_call_id.clone());
+                ("question_requested", payload)
+            }
+            Self::PlanProposed { tool_call_id, plan } => (
+                "plan_proposed",
+                json!({"tool_call_id": tool_call_id, "plan": plan}),
             ),
             Self::IterationEnd { iteration } => ("iteration_end", json!({"iteration": iteration})),
             Self::TurnEnd { status, iterations } => (
@@ -342,6 +382,7 @@ pub struct RuntimeAuthorities {
     ledger: Arc<Mutex<LedgerWriter>>,
     idempotency: Arc<Mutex<IdempotencyWriter>>,
     approvals: Arc<Mutex<ApprovalWriter>>,
+    inbox: Arc<InboxStore>,
 }
 
 impl RuntimeAuthorities {
@@ -361,11 +402,19 @@ impl RuntimeAuthorities {
                 ApprovalWriter::open(state_dir.join("audit_events.db").to_string_lossy().as_ref())
                     .map_err(|error| error.to_string())?,
             )),
+            inbox: Arc::new(
+                InboxStore::open(state_dir.join("inbox.json"))
+                    .map_err(|error| error.to_string())?,
+            ),
         })
     }
 
     pub fn ledger(&self) -> Arc<Mutex<LedgerWriter>> {
         self.ledger.clone()
+    }
+
+    pub fn inbox(&self) -> Arc<InboxStore> {
+        self.inbox.clone()
     }
 }
 
@@ -422,6 +471,7 @@ pub struct RuntimeHost {
     tools: Option<Value>,
     tool_executor: Arc<dyn ToolExecutor>,
     approvals: Arc<ApprovalController>,
+    interactions: Arc<InteractionController>,
     runtime_state: Option<Arc<Mutex<RuntimeState>>>,
     run_id: Option<String>,
     sink: Arc<dyn EventSink>,
@@ -431,9 +481,55 @@ pub struct RuntimeHost {
 type SteeringItem = (String, Option<Value>);
 type SteeringQueue = Mutex<Vec<SteeringItem>>;
 
+#[derive(Default)]
+struct InteractionController {
+    pending: Mutex<HashMap<String, (String, mpsc::Sender<Value>)>>,
+}
+
+impl InteractionController {
+    fn begin(&self, id: &str, kind: &str) -> Result<mpsc::Receiver<Value>, String> {
+        let (sender, receiver) = mpsc::channel();
+        let mut pending = self.pending.lock().unwrap();
+        if pending.contains_key(id) {
+            return Err(format!("interaction is already pending: {id}"));
+        }
+        pending.insert(id.to_string(), (kind.to_string(), sender));
+        Ok(receiver)
+    }
+
+    fn resolve(&self, kind: &str, id: Option<&str>, value: Value) -> Result<String, String> {
+        let mut pending = self.pending.lock().unwrap();
+        let key = if let Some(id) = id {
+            id.to_string()
+        } else {
+            pending
+                .iter()
+                .find(|(_, (pending_kind, _))| pending_kind == kind)
+                .map(|(id, _)| id.clone())
+                .ok_or_else(|| format!("no pending {kind} interaction"))?
+        };
+        let (pending_kind, sender) = pending
+            .remove(&key)
+            .ok_or_else(|| format!("interaction not found: {key}"))?;
+        if pending_kind != kind {
+            pending.insert(key.clone(), (pending_kind, sender));
+            return Err(format!("interaction {key} is not a {kind} request"));
+        }
+        sender
+            .send(value)
+            .map_err(|_| format!("interaction {key} is no longer active"))?;
+        Ok(key)
+    }
+
+    fn cancel(&self, id: &str) {
+        self.pending.lock().unwrap().remove(id);
+    }
+}
+
 #[derive(Debug)]
 struct QueuedRun {
     input: String,
+    attachments: Vec<Value>,
     source: Option<Value>,
     run_id: String,
 }
@@ -477,6 +573,7 @@ pub struct RuntimeHandle {
     state: Arc<Mutex<RuntimeState>>,
     messages: Arc<RwLock<Vec<Value>>>,
     approvals: Arc<ApprovalController>,
+    interactions: Arc<InteractionController>,
 }
 
 fn now_ts() -> f64 {
@@ -514,6 +611,108 @@ fn classify_transient_error(e: &str) -> String {
     } else {
         "Unknown".to_string()
     }
+}
+
+fn split_data_url(value: &str) -> Option<(&str, &str)> {
+    let rest = value.strip_prefix("data:")?;
+    let (metadata, data) = rest.split_once(',')?;
+    metadata
+        .strip_suffix(";base64")
+        .map(|media_type| (media_type, data))
+}
+
+/// Convert the canonical transcript attachment shape at the provider boundary.
+/// The transcript remains provider-neutral and therefore survives model changes.
+fn provider_user_content(protocol: &str, text: &str, attachments: &[Value]) -> Value {
+    if protocol == "anthropic" {
+        let mut blocks = Vec::new();
+        if !text.is_empty() {
+            blocks.push(json!({"type": "text", "text": text}));
+        }
+        for attachment in attachments {
+            let kind = attachment
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let name = attachment
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("attachment");
+            if kind == "text" {
+                if let Some(value) = attachment.get("text").and_then(Value::as_str) {
+                    blocks.push(json!({"type": "text", "text": format!("<file name=\"{name}\">\n{value}\n</file>")}));
+                }
+            } else if let Some((media_type, data)) = attachment
+                .get("data_url")
+                .and_then(Value::as_str)
+                .and_then(split_data_url)
+            {
+                let block_type = if kind == "pdf" { "document" } else { "image" };
+                blocks.push(json!({"type": block_type, "source": {
+                    "type": "base64", "media_type": media_type, "data": data
+                }}));
+            }
+        }
+        return Value::Array(blocks);
+    }
+
+    if protocol == "openai_responses" {
+        let mut parts = Vec::new();
+        if !text.is_empty() {
+            parts.push(json!({"type": "input_text", "text": text}));
+        }
+        for attachment in attachments {
+            let kind = attachment
+                .get("kind")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            let name = attachment
+                .get("name")
+                .and_then(Value::as_str)
+                .unwrap_or("attachment");
+            if kind == "text" {
+                if let Some(value) = attachment.get("text").and_then(Value::as_str) {
+                    parts.push(json!({"type": "input_text", "text": format!("<file name=\"{name}\">\n{value}\n</file>")}));
+                }
+            } else if let Some(data_url) = attachment.get("data_url").and_then(Value::as_str) {
+                if kind == "pdf" {
+                    parts.push(
+                        json!({"type": "input_file", "filename": name, "file_data": data_url}),
+                    );
+                } else {
+                    parts.push(json!({"type": "input_image", "image_url": data_url}));
+                }
+            }
+        }
+        return Value::Array(parts);
+    }
+
+    let mut parts = Vec::new();
+    if !text.is_empty() {
+        parts.push(json!({"type": "text", "text": text}));
+    }
+    for attachment in attachments {
+        let kind = attachment
+            .get("kind")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let name = attachment
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("attachment");
+        if kind == "text" {
+            if let Some(value) = attachment.get("text").and_then(Value::as_str) {
+                parts.push(json!({"type": "text", "text": format!("<file name=\"{name}\">\n{value}\n</file>")}));
+            }
+        } else if kind == "image" {
+            if let Some(data_url) = attachment.get("data_url").and_then(Value::as_str) {
+                parts.push(json!({"type": "image_url", "image_url": {"url": data_url}}));
+            }
+        } else {
+            parts.push(json!({"type": "text", "text": format!("[Attached PDF: {name}; select an OpenAI Responses or Anthropic model for native PDF input]")}));
+        }
+    }
+    Value::Array(parts)
 }
 
 #[derive(Clone)]
@@ -685,6 +884,7 @@ impl RuntimeHost {
             tools: None,
             tool_executor: Arc::new(UnavailableToolExecutor),
             approvals: Arc::new(ApprovalController::default()),
+            interactions: Arc::new(InteractionController::default()),
             runtime_state: None,
             run_id: None,
             sink: Arc::new(NullSink),
@@ -845,13 +1045,21 @@ impl RuntimeHost {
     }
 
     fn outbound_messages(&self) -> Vec<Value> {
-        let sidecars = ["source", "_display", "ts", "reasoning", "usage"];
+        let sidecars = [
+            "source",
+            "_display",
+            "ts",
+            "reasoning",
+            "usage",
+            "attachments",
+            "run_id",
+        ];
         self.messages
             .iter()
             .filter(|m| m.get("role").and_then(|r| r.as_str()) != Some("notice"))
             .map(|m| {
                 let has_sidecar = sidecars.iter().any(|s| m.get(*s).is_some());
-                if has_sidecar {
+                let mut message = if has_sidecar {
                     let mut out = serde_json::Map::new();
                     if let Some(obj) = m.as_object() {
                         for (k, v) in obj {
@@ -863,7 +1071,19 @@ impl RuntimeHost {
                     Value::Object(out)
                 } else {
                     m.clone()
+                };
+                if m.get("role").and_then(Value::as_str) == Some("user") {
+                    if let Some(attachments) = m.get("attachments").and_then(Value::as_array) {
+                        if !attachments.is_empty() {
+                            message["content"] = provider_user_content(
+                                &self.config.protocol,
+                                m.get("content").and_then(Value::as_str).unwrap_or_default(),
+                                attachments,
+                            );
+                        }
+                    }
                 }
+                message
             })
             .collect()
     }
@@ -1194,6 +1414,7 @@ impl RuntimeHost {
         &self,
         phase: &str,
         pending_tool_call: Option<Value>,
+        pending_inbox_item_id: Option<String>,
         artifacts: Vec<Value>,
         error: Option<String>,
     ) -> Result<(), String> {
@@ -1211,7 +1432,7 @@ impl RuntimeHost {
                     session_id: self.session_id.clone(),
                     phase: phase.to_string(),
                     pending_tool_call,
-                    pending_inbox_item_id: None,
+                    pending_inbox_item_id,
                     last_event_seq: Some(*self.sequence.lock().unwrap() as i64),
                     todo_summary: Vec::new(),
                     recent_artifacts: artifacts,
@@ -1242,9 +1463,29 @@ impl RuntimeHost {
             json!({"tool_call_id": call.id, "tool": call.name, "reason": reason, "level": format!("{level:?}")}),
         )?;
         self.record_approval(call, "approval_required", "pending", None, reason, level)?;
+        let pending_inbox_item_id = if self.config.unattended {
+            Some(
+                self.authorities
+                    .as_ref()
+                    .ok_or_else(|| "inbox authority is unavailable".to_string())?
+                    .inbox
+                    .add_approval(
+                        &self.session_id,
+                        &call.id,
+                        &call.name,
+                        &call.arguments,
+                        reason,
+                    )
+                    .map_err(|error| error.to_string())?
+                    .id,
+            )
+        } else {
+            None
+        };
         self.register_checkpoint(
             "awaiting_approval",
             Some(json!({"id": call.id, "name": call.name, "arguments": call.arguments})),
+            pending_inbox_item_id,
             Vec::new(),
             None,
         )?;
@@ -1435,6 +1676,117 @@ impl RuntimeHost {
         serde_json::to_value(result).map_err(|error| error.to_string())
     }
 
+    fn execute_interaction(&self, call: &ToolCall) -> Option<ToolResult> {
+        let kind = match call.name.as_str() {
+            "request_directory" => "directory",
+            "ask_user" => "question",
+            "propose_plan" => "plan",
+            _ => return None,
+        };
+        let receiver = match self.interactions.begin(&call.id, kind) {
+            Ok(receiver) => receiver,
+            Err(error) => return Some(ToolResult::failure(&call.id, error)),
+        };
+        match kind {
+            "directory" => self.emit_event(RuntimeEvent::DirectoryRequested {
+                tool_call_id: call.id.clone(),
+                reason: call
+                    .arguments
+                    .get("reason")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                path: call
+                    .arguments
+                    .get("path")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+                writable: call
+                    .arguments
+                    .get("writable")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false),
+            }),
+            "question" => self.emit_event(RuntimeEvent::QuestionRequested {
+                tool_call_id: call.id.clone(),
+                arguments: call.arguments.clone(),
+            }),
+            "plan" => self.emit_event(RuntimeEvent::PlanProposed {
+                tool_call_id: call.id.clone(),
+                plan: call
+                    .arguments
+                    .get("plan")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string(),
+            }),
+            _ => unreachable!(),
+        }
+        let inbox_id = if self.config.unattended {
+            match self.authorities.as_ref().and_then(|authorities| {
+                authorities
+                    .inbox
+                    .add_interaction(&self.session_id, &call.id, kind, &call.arguments)
+                    .ok()
+            }) {
+                Some(item) => Some(item.id),
+                None => {
+                    self.interactions.cancel(&call.id);
+                    return Some(ToolResult::failure(
+                        &call.id,
+                        "inbox authority is unavailable",
+                    ));
+                }
+            }
+        } else {
+            None
+        };
+        if let Err(error) = self.register_checkpoint(
+            "awaiting_user",
+            Some(json!({"id": call.id, "name": call.name, "arguments": call.arguments})),
+            inbox_id,
+            Vec::new(),
+            None,
+        ) {
+            self.interactions.cancel(&call.id);
+            return Some(ToolResult::failure(&call.id, error));
+        }
+        self.set_runtime_state(RuntimeState::WaitingUser);
+        loop {
+            if self.cancel.load(Ordering::Acquire) {
+                self.interactions.cancel(&call.id);
+                let _ = self.ledger_append(
+                    "interaction.cancelled",
+                    "user",
+                    json!({"tool_call_id": call.id, "kind": kind}),
+                );
+                return Some(ToolResult::failure(
+                    &call.id,
+                    "run cancelled while user input was pending",
+                ));
+            }
+            match receiver.recv_timeout(Duration::from_millis(25)) {
+                Ok(value) => {
+                    self.set_runtime_state(RuntimeState::Running);
+                    let _ = self.ledger_append(
+                        "interaction.resolved",
+                        "user",
+                        json!({"tool_call_id": call.id, "kind": kind, "response": value}),
+                    );
+                    return Some(ToolResult::success(&call.id, value));
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Some(ToolResult::failure(
+                        &call.id,
+                        "user interaction was abandoned",
+                    ));
+                }
+            }
+        }
+    }
+
     fn execute_tool_call(&self, call: &ToolCall) -> ToolResult {
         let (_schema, metadata) = match self.tool_contract(call) {
             Ok(contract) => contract,
@@ -1532,6 +1884,10 @@ impl RuntimeHost {
             json!({"tool_call_id": call.id, "tool": call.name, "level": format!("{level:?}")}),
         ) {
             return ToolResult::failure(&call.id, error);
+        }
+
+        if let Some(result) = self.execute_interaction(call) {
+            return result;
         }
 
         let Some(authorities) = &self.authorities else {
@@ -1738,7 +2094,8 @@ impl RuntimeHost {
         ) {
             return ToolResult::failure(&call.id, error);
         }
-        if let Err(error) = self.register_checkpoint("tool_completed", None, artifacts, None) {
+        if let Err(error) = self.register_checkpoint("tool_completed", None, None, artifacts, None)
+        {
             return ToolResult::failure(&call.id, error);
         }
         result
@@ -1791,7 +2148,14 @@ impl RuntimeHost {
                             partial_reasoning.as_deref(),
                             &[],
                         );
-                        self.messages.push(partial);
+                        self.messages.push(partial.clone());
+                        self.emit_event(RuntimeEvent::AssistantMessage {
+                            message: partial,
+                            text: partial_text,
+                            tool_calls: Vec::new(),
+                            reasoning: partial_reasoning,
+                            usage: None,
+                        });
                     }
                     if self.cancel.load(Ordering::Relaxed) {
                         self.messages
@@ -1824,11 +2188,21 @@ impl RuntimeHost {
                         continue;
                     }
                     if !streamed_text.is_empty() || !streamed_reasoning.is_empty() {
-                        self.messages.push(self.assistant_message(
-                            Some(&streamed_text.join("")),
-                            Some(&streamed_reasoning.join("")),
+                        let partial_text = streamed_text.join("");
+                        let partial_reasoning = streamed_reasoning.join("");
+                        let partial = self.assistant_message(
+                            Some(&partial_text),
+                            Some(&partial_reasoning),
                             &[],
-                        ));
+                        );
+                        self.messages.push(partial.clone());
+                        self.emit_event(RuntimeEvent::AssistantMessage {
+                            message: partial,
+                            text: Some(partial_text),
+                            tool_calls: Vec::new(),
+                            reasoning: Some(partial_reasoning),
+                            usage: None,
+                        });
                     }
                     self.messages.push(
                         json!({"role": "notice", "kind": "error", "text": &e, "ts": now_ts()}),
@@ -1842,11 +2216,18 @@ impl RuntimeHost {
             }
             if self.cancel.load(Ordering::Relaxed) && turn.is_none() {
                 if !streamed_text.is_empty() || !streamed_reasoning.is_empty() {
-                    self.messages.push(self.assistant_message(
-                        Some(&streamed_text.join("")),
-                        Some(&streamed_reasoning.join("")),
-                        &[],
-                    ));
+                    let partial_text = streamed_text.join("");
+                    let partial_reasoning = streamed_reasoning.join("");
+                    let partial =
+                        self.assistant_message(Some(&partial_text), Some(&partial_reasoning), &[]);
+                    self.messages.push(partial.clone());
+                    self.emit_event(RuntimeEvent::AssistantMessage {
+                        message: partial,
+                        text: Some(partial_text),
+                        tool_calls: Vec::new(),
+                        reasoning: Some(partial_reasoning),
+                        usage: None,
+                    });
                 }
                 self.messages
                     .push(json!({"role": "notice", "kind": "interrupted", "ts": now_ts()}));
@@ -1854,14 +2235,16 @@ impl RuntimeHost {
                 return Ok("interrupted".to_string());
             }
             let turn = turn.unwrap_or_default();
-            self.messages.push(self.assistant_message(
+            let assistant_message = self.assistant_message(
                 turn.text.as_deref(),
                 turn.reasoning.as_deref(),
                 &turn.tool_calls,
-            ));
+            );
+            self.messages.push(assistant_message.clone());
             let tool_call_names: Vec<String> =
                 turn.tool_calls.iter().map(|tc| tc.name.clone()).collect();
             self.emit_event(RuntimeEvent::AssistantMessage {
+                message: assistant_message,
                 text: turn.text.clone(),
                 tool_calls: tool_call_names,
                 reasoning: turn.reasoning.clone(),
@@ -1906,18 +2289,37 @@ impl RuntimeHost {
     }
 
     pub fn run(&mut self, user_input: &str, source: Option<Value>) -> Result<Value, String> {
+        self.run_with_attachments(user_input, &[], source)
+    }
+
+    pub fn run_with_attachments(
+        &mut self,
+        user_input: &str,
+        attachments: &[Value],
+        source: Option<Value>,
+    ) -> Result<Value, String> {
         self.emit_event(RuntimeEvent::TurnStart {
             input: Value::String(user_input.to_string()),
+            attachments: attachments.to_vec(),
             source: source.clone(),
             run_id: self.run_id.clone(),
         });
         let mut message = json!({"role": "user", "content": user_input, "ts": now_ts()});
+        if !attachments.is_empty() {
+            message["attachments"] = Value::Array(attachments.to_vec());
+        }
         if let Some(src) = &source {
             message["source"] = src.clone();
         }
         self.messages.push(message);
         self.ledger_transition("run.started", "user", json!({"kind": "run"}))?;
         let result = self.loop_turn();
+        if result.is_err() {
+            self.emit_event(RuntimeEvent::TurnEnd {
+                status: "failed".to_string(),
+                iterations: 0,
+            });
+        }
         self.finish_run_ledger(&result)?;
         result.map(|s| json!({"status": s}))
     }
@@ -1925,11 +2327,18 @@ impl RuntimeHost {
     pub fn resume(&mut self) -> Result<Value, String> {
         self.emit_event(RuntimeEvent::TurnStart {
             input: Value::String("(resumed)".to_string()),
+            attachments: Vec::new(),
             source: None,
             run_id: self.run_id.clone(),
         });
         self.ledger_transition("run.started", "system", json!({"kind": "resume"}))?;
         let result = self.loop_turn();
+        if result.is_err() {
+            self.emit_event(RuntimeEvent::TurnEnd {
+                status: "failed".to_string(),
+                iterations: 0,
+            });
+        }
         self.finish_run_ledger(&result)?;
         result.map(|status| json!({"status": status}))
     }
@@ -1950,11 +2359,18 @@ impl RuntimeHost {
         }
         self.emit_event(RuntimeEvent::TurnStart {
             input: Value::String(String::new()),
+            attachments: Vec::new(),
             source: None,
             run_id: self.run_id.clone(),
         });
         self.ledger_transition("run.started", "system", json!({"kind": "retry"}))?;
         let result = self.loop_turn();
+        if result.is_err() {
+            self.emit_event(RuntimeEvent::TurnEnd {
+                status: "failed".to_string(),
+                iterations: 0,
+            });
+        }
         self.finish_run_ledger(&result)?;
         result.map(|status| json!({"status": status}))
     }
@@ -1971,6 +2387,7 @@ impl RuntimeHandle {
         let state = Arc::new(Mutex::new(RuntimeState::Idle));
         host.runtime_state = Some(state.clone());
         let approvals = host.approvals.clone();
+        let interactions = host.interactions.clone();
         let follow_ups = Arc::new(Mutex::new(VecDeque::new()));
         let messages = Arc::new(RwLock::new(host.messages.clone()));
         let (command_tx, command_rx) = mpsc::channel();
@@ -2005,6 +2422,7 @@ impl RuntimeHandle {
             state,
             messages,
             approvals,
+            interactions,
         })
     }
 
@@ -2033,10 +2451,29 @@ impl RuntimeHandle {
         self.approvals.pending_ids()
     }
 
+    pub fn resolve_interaction(
+        &self,
+        kind: &str,
+        tool_call_id: Option<&str>,
+        response: Value,
+    ) -> Result<String, String> {
+        self.interactions.resolve(kind, tool_call_id, response)
+    }
+
     pub fn run(&self, input: String, source: Option<Value>) -> Result<String, String> {
+        self.run_with_attachments(input, Vec::new(), source)
+    }
+
+    pub fn run_with_attachments(
+        &self,
+        input: String,
+        attachments: Vec<Value>,
+        source: Option<Value>,
+    ) -> Result<String, String> {
         let run_id = uuid_v4();
         self.enqueue_operation(RuntimeOperation::Run(QueuedRun {
             input,
+            attachments,
             source,
             run_id: run_id.clone(),
         }))?;
@@ -2123,6 +2560,7 @@ impl RuntimeHandle {
         let run_id = uuid_v4();
         self.follow_ups.lock().unwrap().push_back(QueuedRun {
             input: text.to_string(),
+            attachments: Vec::new(),
             source,
             run_id: run_id.clone(),
         });
@@ -2251,7 +2689,7 @@ fn execute_operation_chain(
         let result = match operation {
             RuntimeOperation::Run(run) => {
                 host.set_run_id(run.run_id);
-                host.run(&run.input, run.source)
+                host.run_with_attachments(&run.input, &run.attachments, run.source)
             }
             RuntimeOperation::Resume { run_id } => {
                 host.set_run_id(run_id);
@@ -2327,6 +2765,7 @@ mod tests {
     fn test_event_to_frame() {
         let event = RuntimeEvent::TurnStart {
             input: Value::String("hello".to_string()),
+            attachments: Vec::new(),
             source: None,
             run_id: Some("run-1".to_string()),
         };
@@ -2411,6 +2850,41 @@ mod tests {
         assert!(outbound[0].get("ts").is_none());
         assert!(outbound[0].get("source").is_none());
         assert!(outbound[1].get("ts").is_none());
+    }
+
+    #[test]
+    fn canonical_attachments_convert_only_at_provider_boundary() {
+        let host = RuntimeHost::new(
+            "s1",
+            RuntimeConfig {
+                protocol: "anthropic".to_string(),
+                ..Default::default()
+            },
+        )
+        .with_messages(vec![json!({
+            "role": "user", "content": "Review",
+            "attachments": [{"kind": "text", "name": "facts.txt", "text": "one"}]
+        })]);
+        let outbound = host.outbound_messages();
+        assert!(outbound[0].get("attachments").is_none());
+        assert_eq!(outbound[0]["content"][0]["text"], "Review");
+        assert!(outbound[0]["content"][1]["text"]
+            .as_str()
+            .unwrap()
+            .contains("facts.txt"));
+    }
+
+    #[test]
+    fn interaction_controller_delivers_one_typed_response() {
+        let controller = InteractionController::default();
+        let receiver = controller.begin("call-1", "question").unwrap();
+        controller
+            .resolve("question", Some("call-1"), json!({"answer": "A"}))
+            .unwrap();
+        assert_eq!(receiver.recv().unwrap()["answer"], "A");
+        assert!(controller
+            .resolve("question", Some("call-1"), json!({"answer": "B"}))
+            .is_err());
     }
 
     #[test]
