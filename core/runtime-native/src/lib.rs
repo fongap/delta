@@ -22,6 +22,7 @@ pub mod ledger;
 pub mod policy;
 pub mod provider;
 pub mod retry;
+pub mod runtime;
 pub mod source_citation;
 pub mod taskstore;
 pub mod tool_lifecycle;
@@ -65,6 +66,11 @@ pub use tool_lifecycle::{
 pub use validation::{
     run_validation, ValidationCheck, ValidationReader, ValidationRecord, ValidationRegisterInput,
     ValidationResult, ValidationWriter,
+};
+
+pub use runtime::{
+    AssistantTurn, Approver, DenyAll, EventSink, NullSink, RuntimeConfig, RuntimeEvent,
+    RuntimeHost, StdoutSink, ToolCall, ToolExecutor, ToolResult,
 };
 
 pub use thiserror::Error;

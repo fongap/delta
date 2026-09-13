@@ -756,6 +756,26 @@ jobs:
           # UPSTREAM.md are exempt by the script's directory filter.
           python3 scripts/check_legacy_branding.py
 
+      - name: R6 Architecture Hard-Cut guard
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          # R6: the core product is Rust + TypeScript. This gate fails CI if a
+          # Python application backend authority (FastAPI server, delta-server,
+          # Python TurnEngine/SessionManager, aisuite runtime) is re-introduced.
+          #
+          # The guard is enforced once the R6 Python-backend removal has landed.
+          # Until then it runs in WARN mode: the script still runs (it doubles as
+          # a structural audit), but its failure does not block the merge. Flip
+          # DELTA_R6_ENFORCE to "1" permanently once core/engine.py, services/
+          # server/ and the FastAPI surface are deleted (see docs/architecture/).
+          if [ "${DELTA_R6_ENFORCE:-0}" = "1" ]; then
+            python3 scripts/check_r6_architecture.py
+          else
+            python3 scripts/check_r6_architecture.py || echo "R6 guard: WARN (not yet enforced — Python backend removal pending)"
+          fi
+
 
   ci-required:
     name: ci-required

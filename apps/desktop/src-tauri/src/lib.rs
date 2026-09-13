@@ -16,7 +16,7 @@
 //! comes from the SecretStore (Settings tab), see `providers.resolve_api_key`.
 
 use std::path::PathBuf;
-use std::process::{Child, Command, Stdio};
+use std::process::Command;
 #[cfg(target_os = "windows")]
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -29,72 +29,17 @@ use tauri::{
     Emitter, LogicalSize, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder, WindowEvent,
 };
 use tauri_plugin_autostart::ManagerExt;
-use uuid::Uuid;
 
 mod proxy;
+mod runtime_ipc;
 
 /// Integration-test hook (`tests/proxy_smoke.rs`): drive the proxy directly without an app.
 #[doc(hidden)]
 pub use proxy::start_proxy as proxy_start_for_tests;
 
-/// The sidecar server child — killed on exit (orphaned servers have bitten us before).
-struct ServerProcess(Mutex<Option<Child>>);
 /// The active keep-awake guard while keep-awake is on (None when off). Dropping the guard
 /// releases the hold (kills `caffeinate` on macOS, clears the execution state on Windows).
 struct KeepAwake(Mutex<Option<KeepAwakeGuard>>);
-
-fn free_port() -> std::io::Result<u16> {
-    Ok(std::net::TcpListener::bind("127.0.0.1:0")?
-        .local_addr()?
-        .port())
-}
-
-fn launch_token() -> String {
-    format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple())
-}
-
-/// Path to the server entrypoint. Resolution order:
-///   1. `DELTA_SERVER_BIN` env override.
-///   2. The bundled onedir sidecar shipped via Tauri `resources` (production): the
-///      `sidecar/` folder lands in Contents/Resources on macOS and in the install dir
-///      (next to the app exe) on Windows.
-///   3. Legacy onefile slot: `delta-server[.exe]` next to the app binary (pre-onedir
-///      builds used Tauri externalBin).
-///   4. Dev fallback: the repo venv, relative to this crate (`src-tauri` → repo-root `.venv`;
-///      `bin/` on POSIX, `Scripts\` on Windows).
-fn server_bin() -> PathBuf {
-    if let Ok(p) = std::env::var("DELTA_SERVER_BIN") {
-        return PathBuf::from(p);
-    }
-    let exe_name = if cfg!(windows) {
-        "delta-server.exe"
-    } else {
-        "delta-server"
-    };
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            // macOS: Contents/MacOS/<app> → Contents/Resources/sidecar/; Windows: resources
-            // unpack next to the exe, so <install>/sidecar/.
-            let mut candidates = vec![dir.join("sidecar").join(exe_name)];
-            if let Some(contents) = dir.parent() {
-                candidates.push(contents.join("Resources").join("sidecar").join(exe_name));
-            }
-            candidates.push(dir.join(exe_name)); // legacy onefile externalBin slot
-            for c in candidates {
-                if c.exists() {
-                    return c;
-                }
-            }
-        }
-    }
-    let mut p = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    if cfg!(windows) {
-        p.push("../../../.venv/Scripts/delta-server.exe");
-    } else {
-        p.push("../../../.venv/bin/delta-server");
-    }
-    p
-}
 
 /// Mirror of `delta.secrets.state_dir()` so the shell and server agree on `desktop.json`.
 /// Windows: `%APPDATA%\delta`; POSIX: `~/.config/delta`. `DELTA_STATE_DIR` overrides.
@@ -114,19 +59,6 @@ fn state_dir() -> PathBuf {
 
 fn desktop_prefs_path() -> PathBuf {
     state_dir().join("desktop.json")
-}
-
-/// The sidecar's log file: `<state_dir>/logs/delta-server.log`, fresh per
-/// launch with the previous run kept as `.old`. None (→ /dev/null) only if the
-/// directory can't be created — logging must never block startup.
-fn server_log_file() -> Option<std::fs::File> {
-    let dir = state_dir().join("logs");
-    std::fs::create_dir_all(&dir).ok()?;
-    let path = dir.join("delta-server.log");
-    if path.exists() {
-        let _ = std::fs::rename(&path, dir.join("delta-server.log.old"));
-    }
-    std::fs::File::create(&path).ok()
 }
 
 fn read_keep_awake_pref() -> bool {
@@ -690,31 +622,11 @@ async fn install_update(
 }
 
 pub fn run() {
-    // No fixed-port fallback: if no free port can be allocated the shell cannot host the
-    // sidecar at all, so exit with a clear message instead of colliding on 8765.
-    let port = match free_port() {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("[delta] failed to allocate a local port for the sidecar server: {e}");
-            return;
-        }
-    };
-    let api_token = launch_token();
-    // P0-A2: the sidecar token stays in the Rust shell. The WebView talks to the LOCAL
-    // PROXY (which validates Origin and injects the auth header/subprotocol), never to
-    // the sidecar directly, so the token is never injected into renderer JavaScript.
-    let proxy_port = match proxy::start_proxy(port, api_token.clone()) {
-        Ok(p) => p,
-        Err(e) => {
-            eprintln!("[delta] failed to start the local sidecar proxy: {e}");
-            return;
-        }
-    };
-    let http = format!("http://127.0.0.1:{proxy_port}");
-    let ws = format!("ws://127.0.0.1:{proxy_port}");
-    // Debug-format yields a quoted JS string literal.
+    // R6: no more Python sidecar or localhost proxy. The Rust Runtime
+    // is embedded directly in the Tauri shell. The frontend talks via
+    // Tauri IPC (invoke/listen) — no HTTP, no WebSocket, no delta-server.
     let inject = format!(
-        "window.__DELTA_HTTP__={http:?};window.__DELTA_WS__={ws:?};window.__OCW_PLATFORM__={:?};",
+        "window.__OCW_PLATFORM__={:?};",
         std::env::consts::OS
     );
 
@@ -755,76 +667,22 @@ pub fn run() {
             check_for_update,
             download_update,
             clear_pending_update,
-            install_update
+            install_update,
+            runtime_ipc::health,
+            runtime_ipc::runtime_run,
+            runtime_ipc::runtime_resume,
+            runtime_ipc::runtime_retry,
+            runtime_ipc::runtime_steer,
+            runtime_ipc::runtime_follow_up,
+            runtime_ipc::runtime_cancel,
+            runtime_ipc::runtime_messages,
+            runtime_ipc::runtime_switch_model,
+            runtime_ipc::runtime_truncate
         ])
         .setup(move |app| {
-            // Start the Python server sidecar on the chosen port (inherits our env).
-            let mut server_cmd = Command::new(server_bin());
-            server_cmd
-                .args(["--host", "127.0.0.1", "--port", &port.to_string()])
-                // Portable mode (the root Delta.exe launcher sets DELTA_PORTABLE + the data
-                // env): seed the default workspace inside the portable Data dir so the Code
-                // persona opens <ROOT>\Data\workspace instead of a dev/home path. state_dir()
-                // already resolves to <ROOT>\Data via DELTA_STATE_DIR, so this is recomputed
-                // from the current location on every launch — never a persisted absolute path.
-                // DELTA_PORTABLE / DELTA_STATE_DIR are forwarded explicitly rather than
-                // assumed inherited: the sidecar and the GUI may resolve different app-data
-                // dirs in edge cases, and the sidecar also needs DELTA_PORTABLE + DELTA_DATA_DIR
-                // (server scratch) even when the GUI env is passed through. Both vars are
-                // runtime-only — never persisted, always recomputed from the current location.
-                .env(
-                    "DELTA_PORTABLE",
-                    std::env::var("DELTA_PORTABLE").unwrap_or_default(),
-                )
-                .env(
-                    "DELTA_DATA_DIR",
-                    std::env::var("DELTA_DATA_DIR").unwrap_or_default(),
-                )
-                .env("DELTA_STATE_DIR", state_dir())
-                // The sidecar self-exits if we die abruptly (dev-watcher restart, crash) —
-                // belt-and-suspenders alongside the RunEvent::ExitRequested kill below.
-                // The explicit PID matters: under PyInstaller onefile the python process is a
-                // *grandchild* (bootloader in between), so getppid() never points at us and a
-                // reparenting check alone leaks both processes on quit.
-                .env("DELTA_EXIT_WITH_PARENT", "1")
-                .env("DELTA_PARENT_PID", std::process::id().to_string())
-                .env("DELTA_API_TOKEN", &api_token)
-                // This GUI app has no console, so a console-subsystem child would inherit
-                // invalid std handles and crash a few seconds in when uvicorn writes its logs
-                // (the "Starting delta…" freeze on Windows). Hand it real handles: the
-                // server's output goes to a log file so field issues are debuggable at all
-                // ("relay off, no messages" was undiagnosable with everything on /dev/null).
-                // One file per launch, previous run kept as .old.
-                .stdin(Stdio::null());
-            match server_log_file() {
-                Some(log) => {
-                    if let Ok(err_clone) = log.try_clone() {
-                        server_cmd
-                            .stdout(Stdio::from(log))
-                            .stderr(Stdio::from(err_clone));
-                    } else {
-                        server_cmd.stdout(Stdio::from(log)).stderr(Stdio::null());
-                    }
-                }
-                None => {
-                    server_cmd.stdout(Stdio::null()).stderr(Stdio::null());
-                }
-            }
-            // CREATE_NO_WINDOW: the sidecar is a console binary; without this a console window
-            // would flash when the GUI app spawns it on Windows.
-            #[cfg(windows)]
-            {
-                use std::os::windows::process::CommandExt;
-                server_cmd.creation_flags(0x0800_0000);
-            }
-            let child = match server_cmd.spawn() {
-                Ok(child) => Some(child),
-                Err(e) => {
-                    eprintln!("[delta] failed to start server sidecar: {e}");
-                    None
-                }
-            };
-            app.manage(ServerProcess(Mutex::new(child)));
+            // R6: the Rust Runtime is embedded — no Python sidecar to spawn.
+            // Manage the session registry so runtime commands can access hosts.
+            app.manage(runtime_ipc::init());
 
             // Restore keep-awake from the last session.
             let ka = if read_keep_awake_pref() {
@@ -937,17 +795,8 @@ pub fn run() {
         .build(tauri::generate_context!())
         .expect("error while building the Delta desktop app")
         .run(|app, event| {
-            // Also on Exit: belt-and-suspenders in case a quit path reaches teardown without
-            // a preceding ExitRequested (observed with macOS Cmd+Q under the tray setup).
             if matches!(event, RunEvent::ExitRequested { .. } | RunEvent::Exit) {
-                if let Some(state) = app.try_state::<ServerProcess>() {
-                    if let Some(mut child) = state.0.lock().unwrap().take() {
-                        let _ = child.kill();
-                    }
-                }
                 if let Some(state) = app.try_state::<KeepAwake>() {
-                    // Taking the guard out lets it drop at the statement's end, which
-                    // releases the hold (caffeinate kill / execution-state clear).
                     state.0.lock().unwrap().take();
                 }
             }

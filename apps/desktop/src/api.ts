@@ -6,6 +6,16 @@ import {
   type MessageSourceDto,
   type RuntimeEventEnvelopeV1,
 } from "./runtime-contract";
+import {
+  canUseDirectIpc,
+  directCancel,
+  directFollowUp,
+  directListenSession,
+  directRetry,
+  directRun,
+  directSteer,
+  directSwitchModel,
+} from "./runtimeTransport";
 
 declare const __DELTA_DEV_TOKEN__: string;
 
@@ -2183,6 +2193,7 @@ export type Handlers = {
 
 export class Session {
   private ws: WebSocket | null = null;
+  private unlisten: (() => void) | null = null;
   private reconnectTimer: number | null = null;
   private stopped = false;
   private readonly sequenceGate = new RuntimeEventSequenceGate("session events");
@@ -2191,6 +2202,9 @@ export class Session {
   private outbox: object[] = [];
 
   private readonly url: string;
+  private readonly direct = canUseDirectIpc();
+  /** For direct IPC, the current model selected by the composer (carried per run). */
+  private model: string;
 
   constructor(
     private readonly sessionId: string,
@@ -2200,11 +2214,35 @@ export class Session {
   ) {
     const q = `?workspace=${encodeURIComponent(workspace)}&agent=${encodeURIComponent(agent)}`;
     this.url = `${wsBase()}/ws/session/${sessionId}${q}`;
+    this.model = "";
     this.connect();
   }
 
   private connect() {
     if (this.stopped) return;
+    // R6 direct IPC: the Tauri shell embeds the Rust runtime and emits runtime events
+    // via Tauri events. Browser dev keeps the WebSocket path.
+    if (this.direct) {
+      this.unlisten = directListenSession(this.sessionId, (raw) => {
+        if (this.stopped) return;
+        const event = raw as unknown as WsEvent;
+        if (event?.sessionId === null) {
+          reportContractDiagnostic(
+            "session events:null-session",
+            "session events rejected an envelope with a null sessionId",
+          );
+        } else if (event && event.sessionId !== this.sessionId) {
+          reportContractDiagnostic(
+            `session events:mismatched-session:${event?.sessionId}`,
+            `session events rejected an envelope for session ${event?.sessionId}`,
+          );
+        } else if (event && this.sequenceGate.accept(event)) {
+          this.handlers.onEvent(event);
+        }
+      });
+      this.handlers.onOpen?.();
+      return;
+    }
     const socket = openWebSocket(this.url);
     this.ws = socket;
     socket.onmessage = (e) => {
@@ -2248,6 +2286,11 @@ export class Session {
   }
 
   private send(payload: object) {
+    if (this.direct) {
+      // Direct IPC has no per-socket outbox; userMessage/interrupt/etc handle
+      // their own invoke calls. Unknown inbound payloads are ignored.
+      return;
+    }
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(payload));
     // Queue while connecting or waiting to reconnect; already-sent commands are never replayed.
     else if (!this.stopped) this.outbox.push(payload);
@@ -2258,6 +2301,24 @@ export class Session {
    * session always reconnects once to adopt its scratch dir, which could drop a queued
    * set_model and leave the engine on a stale/resumed model; found 2026-07-04). */
   userMessage(text: string, attachments?: unknown[], model?: string, skill?: string) {
+    if (this.direct) {
+      void directRun({
+        sessionId: this.sessionId,
+        model: model || this.model,
+        protocol: "openai_chat",
+        apiKey: "",
+        baseUrl: "https://api.openai.com/v1",
+        userInput: text,
+        settings: {},
+        workspace: "",
+        onEvent: (ev) => {
+          if (this.stopped) return;
+          const event = ev as unknown as WsEvent;
+          if (event && this.sequenceGate.accept(event)) this.handlers.onEvent(event);
+        },
+      });
+      return;
+    }
     this.send({
       type: "user_message",
       text,
@@ -2294,12 +2355,39 @@ export class Session {
   }
 
   interrupt() {
+    if (this.direct) {
+      void directCancel(this.sessionId);
+      return;
+    }
     this.send({ type: "interrupt" });
+  }
+
+  // R6 Active-Run Steering: modify the CURRENT turn's direction mid-execution.
+  // Differs from follow-up — steering applies to the live run, not after it ends.
+  steer(text: string, source?: unknown) {
+    if (this.direct) {
+      void directSteer(this.sessionId, text, source);
+      return;
+    }
+    this.send({ type: "steering", text, ...(source ? { source } : {}) });
+  }
+
+  // R6 Follow-up: queue a turn that runs AFTER the current one completes.
+  followUp(text: string, source?: unknown) {
+    if (this.direct) {
+      void directFollowUp(this.sessionId, text, source);
+      return;
+    }
+    this.send({ type: "follow_up", text, ...(source ? { source } : {}) });
   }
 
   // Re-run a turn that ended in a provider error — no new user message; the server
   // guards on the history tail so a stray frame is a no-op.
   retry() {
+    if (this.direct) {
+      void directRetry(this.sessionId);
+      return;
+    }
     this.send({ type: "retry" });
   }
 
@@ -2308,11 +2396,22 @@ export class Session {
   }
 
   setModel(model: string) {
+    this.model = model;
+    if (this.direct) {
+      void directSwitchModel(this.sessionId, model);
+      return;
+    }
     this.send({ type: "set_model", model });
   }
 
   close() {
     this.stopped = true;
+    if (this.unlisten) {
+      this.unlisten();
+      this.unlisten = null;
+      this.handlers.onClose?.();
+      return;
+    }
     if (this.reconnectTimer !== null) {
       window.clearTimeout(this.reconnectTimer);
       this.reconnectTimer = null;

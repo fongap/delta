@@ -50,12 +50,12 @@ use delta_runtime_native::{
     ApprovalRecordInput, ApprovalWriter, ArtifactInput, ArtifactRegistryWriter, CheckpointReader,
     CheckpointRegisterInput, CheckpointWriter, CitationValidationResult, CitationValidity,
     IdempotencyWriter, LedgerWriter, PolicyEvaluateInput, ProviderRequest, RetryClassifyInput,
-    SideEffectEntry, SideEffectState, SourceCitationReader, SourceCitationWriter,
-    SourceRegisterInput, TaskStore, ToolLifecycleCancelInput, ToolLifecyclePlanInput,
-    ValidationReader, ValidationRegisterInput, ValidationWriter,
+    RuntimeConfig, RuntimeHost, SideEffectEntry, SideEffectState, SourceCitationReader,
+    SourceCitationWriter, SourceRegisterInput, TaskStore, ToolLifecycleCancelInput,
+    ToolLifecyclePlanInput, ValidationReader, ValidationRegisterInput, ValidationWriter,
 };
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 use time::OffsetDateTime;
 
 /// Delta Core wire-protocol version.
@@ -494,6 +494,66 @@ enum Command {
     /// Sends N delta frames with optional delay, then a done frame.
     #[serde(rename = "stream.echo")]
     StreamEcho { chunks: u32, delay_ms: Option<u64> },
+    /// R6: Start a new turn (streaming). Emits runtime events on stdout.
+    #[serde(rename = "runtime.run")]
+    RuntimeRun {
+        session_id: String,
+        model: String,
+        protocol: String,
+        api_key: String,
+        base_url: String,
+        user_input: String,
+        #[serde(default)]
+        tools: Option<Value>,
+        #[serde(default)]
+        settings: Option<Value>,
+        #[serde(default)]
+        system_prompt: Option<String>,
+        #[serde(default)]
+        workspace: Option<String>,
+        #[serde(default)]
+        messages: Option<Value>,
+        #[serde(default)]
+        max_iterations: Option<usize>,
+        #[serde(default)]
+        max_retries: Option<u32>,
+        #[serde(default)]
+        source: Option<Value>,
+    },
+    /// R6: Resume a suspended turn (streaming).
+    #[serde(rename = "runtime.resume")]
+    RuntimeResume { session_id: String },
+    /// R6: Retry the failed turn (streaming).
+    #[serde(rename = "runtime.retry")]
+    RuntimeRetry { session_id: String },
+    /// R6: Steer the live turn.
+    #[serde(rename = "runtime.steer")]
+    RuntimeSteer {
+        session_id: String,
+        text: String,
+        #[serde(default)]
+        source: Option<Value>,
+    },
+    /// R6: Queue a follow-up turn.
+    #[serde(rename = "runtime.follow_up")]
+    RuntimeFollowUp {
+        session_id: String,
+        text: String,
+        #[serde(default)]
+        source: Option<Value>,
+    },
+    /// R6: Cancel the live turn.
+    #[serde(rename = "runtime.cancel")]
+    RuntimeCancel { session_id: String },
+    /// R6: Get session messages.
+    #[serde(rename = "runtime.messages")]
+    RuntimeMessages { session_id: String },
+    /// R6: Switch model mid-session.
+    #[serde(rename = "runtime.switch_model")]
+    RuntimeSwitchModel { session_id: String, model: String },
+    /// R6: Truncate messages from index (revert).
+    #[serde(rename = "runtime.truncate")]
+    RuntimeTruncate { session_id: String, index: usize },
     /// R5.1 v16: cancel an in-flight stream by request_id.
     /// Handled in `main()` via raw JSON before Command parsing, so the
     /// enum field is intentionally unused.
@@ -718,7 +778,11 @@ impl Command {
     fn is_streaming(&self) -> bool {
         matches!(
             self,
-            Command::StreamEcho { .. } | Command::ProviderStream { .. }
+            Command::StreamEcho { .. }
+                | Command::ProviderStream { .. }
+                | Command::RuntimeRun { .. }
+                | Command::RuntimeResume { .. }
+                | Command::RuntimeRetry { .. }
         )
     }
 }
@@ -858,7 +922,9 @@ fn handle_stream(cmd: Command, ctx: StreamCtx) {
                 }
             }
         }
-        _ => unreachable!(),
+        _ => {
+            handle_runtime_stream(cmd, StreamCtx { request_id, cancel, out, cache });
+        }
     }
 }
 
@@ -2128,6 +2194,72 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
             }
         }
         Command::StreamEcho { .. } => Err("streaming commands handled in handle_stream".into()),
+        Command::RuntimeRun { .. }
+        | Command::RuntimeResume { .. }
+        | Command::RuntimeRetry { .. } => Err("streaming runtime commands handled in handle_stream".into()),
+        Command::RuntimeSteer { session_id, text, source } => {
+            let registry = runtime_registry();
+            let reg = registry.lock().unwrap();
+            match reg.get(&session_id) {
+                Some(h) => {
+                    h.steer(&text, source);
+                    Ok(json!({"ok": true}))
+                }
+                None => Err(format!("session not found: {session_id}")),
+            }
+        }
+        Command::RuntimeFollowUp { session_id, text, source } => {
+            let registry = runtime_registry();
+            let reg = registry.lock().unwrap();
+            match reg.get(&session_id) {
+                Some(h) => {
+                    h.follow_up(&text, source);
+                    Ok(json!({"ok": true}))
+                }
+                None => Err(format!("session not found: {session_id}")),
+            }
+        }
+        Command::RuntimeCancel { session_id } => {
+            let registry = runtime_registry();
+            let reg = registry.lock().unwrap();
+            match reg.get(&session_id) {
+                Some(h) => {
+                    h.cancel();
+                    Ok(json!({"ok": true}))
+                }
+                None => Err(format!("session not found: {session_id}")),
+            }
+        }
+        Command::RuntimeMessages { session_id } => {
+            let registry = runtime_registry();
+            let reg = registry.lock().unwrap();
+            match reg.get(&session_id) {
+                Some(h) => Ok(json!({"messages": h.messages()})),
+                None => Err(format!("session not found: {session_id}")),
+            }
+        }
+        Command::RuntimeSwitchModel { session_id, model } => {
+            let registry = runtime_registry();
+            let mut reg = registry.lock().unwrap();
+            match reg.get_mut(&session_id) {
+                Some(h) => match h.switch_model(&model) {
+                    Some(notice) => Ok(json!({"ok": true, "notice": notice})),
+                    None => Ok(json!({"ok": true, "notice": Value::Null})),
+                },
+                None => Err(format!("session not found: {session_id}")),
+            }
+        }
+        Command::RuntimeTruncate { session_id, index } => {
+            let registry = runtime_registry();
+            let mut reg = registry.lock().unwrap();
+            match reg.get_mut(&session_id) {
+                Some(h) => {
+                    h.truncate_messages(index);
+                    Ok(json!({"ok": true, "len": h.messages().len()}))
+                }
+                None => Err(format!("session not found: {session_id}")),
+            }
+        }
         Command::RequestCancel {
             target_request_id: _,
         } => Ok(serde_json::json!({"handled_in_main": true})),
@@ -2210,6 +2342,170 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
         Ok(v) => serde_json::json!({"ok": true, "result": v}),
         Err(e) => serde_json::json!({"ok": false, "error": e}),
     }
+}
+
+/// R6: Session registry — holds RuntimeHost instances keyed by session_id.
+/// The host owns conversation messages, cancel flag, steering queue, etc.
+/// Streaming commands (run/resume/retry) drive the host in a background thread;
+/// non-streaming commands (steer/cancel/messages) access it through this registry.
+struct RuntimeRegistry {
+    hosts: HashMap<String, RuntimeHost>,
+}
+
+impl RuntimeRegistry {
+    fn new() -> Self {
+        Self {
+            hosts: HashMap::new(),
+        }
+    }
+
+    fn get(&self, session_id: &str) -> Option<&RuntimeHost> {
+        self.hosts.get(session_id)
+    }
+
+    fn get_mut(&mut self, session_id: &str) -> Option<&mut RuntimeHost> {
+        self.hosts.get_mut(session_id)
+    }
+
+    fn insert(&mut self, session_id: String, host: RuntimeHost) {
+        self.hosts.insert(session_id, host);
+    }
+
+    fn remove(&mut self, session_id: &str) {
+        self.hosts.remove(session_id);
+    }
+}
+
+static RUNTIME_REGISTRY: std::sync::OnceLock<Mutex<RuntimeRegistry>> = std::sync::OnceLock::new();
+
+fn runtime_registry() -> &'static Mutex<RuntimeRegistry> {
+    RUNTIME_REGISTRY.get_or_init(|| Mutex::new(RuntimeRegistry::new()))
+}
+
+fn handle_runtime_stream(cmd: Command, ctx: StreamCtx) {
+    let StreamCtx {
+        request_id,
+        cancel: _,
+        out,
+        cache: _,
+    } = ctx;
+
+    emit(
+        &out,
+        json!({"ok": true, "request_id": request_id, "stream": "start"}),
+    );
+
+    match cmd {
+        Command::RuntimeRun {
+            session_id,
+            model,
+            protocol,
+            api_key,
+            base_url,
+            user_input,
+            tools,
+            settings,
+            system_prompt,
+            workspace,
+            messages,
+            max_iterations,
+            max_retries,
+            source,
+        } => {
+            let config = RuntimeConfig {
+                model,
+                protocol,
+                api_key,
+                base_url,
+                max_iterations: max_iterations.unwrap_or(12),
+                max_retries: max_retries.unwrap_or(2),
+                ttft_timeout: None,
+                tool_timeout: None,
+                model_settings: settings.unwrap_or(json!({})),
+                system_prompt,
+                workspace,
+            };
+            let mut host = RuntimeHost::new(&session_id, config);
+            if let Some(t) = tools {
+                host = host.with_tools(t);
+            }
+            if let Some(msgs) = messages.and_then(|v| v.as_array().cloned()) {
+                host = host.with_messages(msgs);
+            }
+            host = host.with_run_id(uuid_v4_simple());
+
+            let result = host.run(&user_input, source);
+            let _ = runtime_registry();
+            runtime_registry().lock().unwrap().insert(session_id, host);
+
+            match result {
+                Ok(v) => {
+                    emit(&out, json!({
+                        "ok": true, "request_id": request_id, "stream": "done", "result": v
+                    }));
+                }
+                Err(e) => {
+                    emit(&out, json!({
+                        "ok": false, "request_id": request_id, "stream": "error", "error": e
+                    }));
+                }
+            }
+        }
+        Command::RuntimeResume { session_id } => {
+            let registry = runtime_registry();
+            let result = {
+                let mut reg = registry.lock().unwrap();
+                match reg.get_mut(&session_id) {
+                    Some(host) => host.resume(),
+                    None => Err(format!("session not found: {session_id}")),
+                }
+            };
+            match result {
+                Ok(v) => {
+                    emit(&out, json!({
+                        "ok": true, "request_id": request_id, "stream": "done", "result": v
+                    }));
+                }
+                Err(e) => {
+                    emit(&out, json!({
+                        "ok": false, "request_id": request_id, "stream": "error", "error": e
+                    }));
+                }
+            }
+        }
+        Command::RuntimeRetry { session_id } => {
+            let registry = runtime_registry();
+            let result = {
+                let mut reg = registry.lock().unwrap();
+                match reg.get_mut(&session_id) {
+                    Some(host) => host.retry(),
+                    None => Err(format!("session not found: {session_id}")),
+                }
+            };
+            match result {
+                Ok(v) => {
+                    emit(&out, json!({
+                        "ok": true, "request_id": request_id, "stream": "done", "result": v
+                    }));
+                }
+                Err(e) => {
+                    emit(&out, json!({
+                        "ok": false, "request_id": request_id, "stream": "error", "error": e
+                    }));
+                }
+            }
+        }
+        _ => {
+            emit(&out, json!({
+                "ok": false, "request_id": request_id, "stream": "error",
+                "error": "non-streaming runtime command in handle_runtime_stream"
+            }));
+        }
+    }
+}
+
+fn uuid_v4_simple() -> String {
+    uuid::Uuid::new_v4().to_string()
 }
 
 fn main() -> std::process::ExitCode {
