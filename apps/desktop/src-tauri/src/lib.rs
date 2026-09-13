@@ -668,6 +668,7 @@ pub fn run() {
             runtime_ipc::runtime_steer,
             runtime_ipc::runtime_follow_up,
             runtime_ipc::runtime_cancel,
+            runtime_ipc::runtime_approval,
             runtime_ipc::runtime_messages,
             runtime_ipc::runtime_switch_model,
             runtime_ipc::runtime_truncate,

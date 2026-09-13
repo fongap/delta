@@ -1,14 +1,16 @@
 //! Approval Authority (R2, ADR-031).
 //!
-//! This module provides the sole trusted authority for approval audit recording.
-//! The approval decision itself (interactive user consent) remains in Python;
-//! only the audit persistence is Rust-authoritative.
+//! This module provides the sole trusted authority for live approval decisions
+//! and approval audit recording. Runtime workers register a pending request;
+//! Tauri IPC resolves it through [`ApprovalController`]. No worker or provider
+//! can mint its own approval.
 //!
 //! Contract: docs/architecture/adr/ADR-031-r2-approval-hard-cut.md
 //! and core/audit.py (Python facade mirrors this).
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
+use std::sync::{mpsc, Mutex};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -17,6 +19,161 @@ use crate::ShadowReadError;
 
 /// Current approval schema version.
 pub const APPROVAL_SCHEMA_VERSION: i64 = 1;
+
+/// Product decisions accepted by the Rust approval authority.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApprovalDecision {
+    Once,
+    AlwaysTool,
+    AlwaysCommand,
+    AlwaysTask,
+    Deny,
+}
+
+impl ApprovalDecision {
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "once" => Ok(Self::Once),
+            "always_tool" => Ok(Self::AlwaysTool),
+            "always_command" => Ok(Self::AlwaysCommand),
+            "always_task" => Ok(Self::AlwaysTask),
+            "deny" => Ok(Self::Deny),
+            _ => Err(format!("unknown approval decision: {value}")),
+        }
+    }
+
+    pub fn is_approved(self) -> bool {
+        !matches!(self, Self::Deny)
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Once => "once",
+            Self::AlwaysTool => "always_tool",
+            Self::AlwaysCommand => "always_command",
+            Self::AlwaysTask => "always_task",
+            Self::Deny => "deny",
+        }
+    }
+}
+
+struct PendingApproval {
+    tool_call_id: String,
+    sender: mpsc::Sender<ApprovalDecision>,
+}
+
+/// Thread-safe approval rendezvous shared by a session's runtime worker and
+/// short-lived IPC commands. At most one request is normally pending, but the
+/// queue shape makes resolution deterministic if a provider proposes a batch.
+pub struct ApprovalController {
+    pending: Mutex<Vec<PendingApproval>>,
+    tool_grants: Mutex<HashSet<String>>,
+    command_grants: Mutex<HashSet<String>>,
+}
+
+impl Default for ApprovalController {
+    fn default() -> Self {
+        Self {
+            pending: Mutex::new(Vec::new()),
+            tool_grants: Mutex::new(HashSet::new()),
+            command_grants: Mutex::new(HashSet::new()),
+        }
+    }
+}
+
+impl ApprovalController {
+    pub fn begin(&self, tool_call_id: &str) -> Result<mpsc::Receiver<ApprovalDecision>, String> {
+        let mut pending = self.pending.lock().unwrap();
+        if pending.iter().any(|item| item.tool_call_id == tool_call_id) {
+            return Err(format!("approval already pending: {tool_call_id}"));
+        }
+        let (sender, receiver) = mpsc::channel();
+        pending.push(PendingApproval {
+            tool_call_id: tool_call_id.to_string(),
+            sender,
+        });
+        Ok(receiver)
+    }
+
+    pub fn resolve(
+        &self,
+        tool_call_id: Option<&str>,
+        decision: ApprovalDecision,
+    ) -> Result<String, String> {
+        let mut pending = self.pending.lock().unwrap();
+        let index = match tool_call_id {
+            Some(id) => pending
+                .iter()
+                .position(|item| item.tool_call_id == id)
+                .ok_or_else(|| format!("approval not found: {id}"))?,
+            None => {
+                if pending.is_empty() {
+                    return Err("no approval is pending".to_string());
+                }
+                0
+            }
+        };
+        let item = pending.remove(index);
+        item.sender
+            .send(decision)
+            .map_err(|_| "approval request is no longer active".to_string())?;
+        Ok(item.tool_call_id)
+    }
+
+    pub fn cancel(&self, tool_call_id: &str) -> bool {
+        let mut pending = self.pending.lock().unwrap();
+        if let Some(index) = pending
+            .iter()
+            .position(|item| item.tool_call_id == tool_call_id)
+        {
+            pending.remove(index);
+            true
+        } else {
+            false
+        }
+    }
+
+    pub fn pending_ids(&self) -> Vec<String> {
+        self.pending
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|item| item.tool_call_id.clone())
+            .collect()
+    }
+
+    pub fn remember(&self, decision: ApprovalDecision, tool: &str, arguments: &Value) {
+        match decision {
+            ApprovalDecision::AlwaysTool | ApprovalDecision::AlwaysTask => {
+                self.tool_grants.lock().unwrap().insert(tool.to_string());
+            }
+            ApprovalDecision::AlwaysCommand => {
+                if let Some(command) = arguments.get("command").and_then(Value::as_str) {
+                    self.command_grants
+                        .lock()
+                        .unwrap()
+                        .insert(format!("{tool}\0{command}"));
+                }
+            }
+            ApprovalDecision::Once | ApprovalDecision::Deny => {}
+        }
+    }
+
+    pub fn has_standing_grant(&self, tool: &str, arguments: &Value) -> bool {
+        if self.tool_grants.lock().unwrap().contains(tool) {
+            return true;
+        }
+        arguments
+            .get("command")
+            .and_then(Value::as_str)
+            .is_some_and(|command| {
+                self.command_grants
+                    .lock()
+                    .unwrap()
+                    .contains(&format!("{tool}\0{command}"))
+            })
+    }
+}
 
 /// Input for recording an approval audit event.
 #[derive(Debug, Clone, Deserialize)]
@@ -271,5 +428,47 @@ mod tests {
     #[test]
     fn test_approval_schema_version_constant() {
         assert_eq!(APPROVAL_SCHEMA_VERSION, 1);
+    }
+
+    #[test]
+    fn controller_resolves_the_requested_tool_call() {
+        let controller = ApprovalController::default();
+        let first = controller.begin("call-1").unwrap();
+        let second = controller.begin("call-2").unwrap();
+        assert_eq!(controller.pending_ids(), vec!["call-1", "call-2"]);
+        controller
+            .resolve(Some("call-2"), ApprovalDecision::Once)
+            .unwrap();
+        assert_eq!(second.recv().unwrap(), ApprovalDecision::Once);
+        assert_eq!(controller.pending_ids(), vec!["call-1"]);
+        assert!(controller.cancel("call-1"));
+        assert!(first.recv().is_err());
+    }
+
+    #[test]
+    fn controller_rejects_unknown_decisions_and_empty_resolution() {
+        let controller = ApprovalController::default();
+        assert!(ApprovalDecision::parse("approve-everything").is_err());
+        assert!(controller.resolve(None, ApprovalDecision::Deny).is_err());
+    }
+
+    #[test]
+    fn controller_scopes_standing_grants() {
+        let controller = ApprovalController::default();
+        controller.remember(
+            ApprovalDecision::AlwaysCommand,
+            "run_shell",
+            &serde_json::json!({"command": "git status"}),
+        );
+        assert!(controller
+            .has_standing_grant("run_shell", &serde_json::json!({"command": "git status"})));
+        assert!(!controller
+            .has_standing_grant("run_shell", &serde_json::json!({"command": "git push"})));
+        controller.remember(
+            ApprovalDecision::AlwaysTool,
+            "write_file",
+            &serde_json::json!({}),
+        );
+        assert!(controller.has_standing_grant("write_file", &serde_json::json!({})));
     }
 }

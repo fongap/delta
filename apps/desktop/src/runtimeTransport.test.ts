@@ -9,7 +9,7 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke: invokeMock }));
 vi.mock("@tauri-apps/api/event", () => ({ listen: listenMock }));
 vi.mock("./tauri", () => ({ isTauri: () => true }));
 
-import { directFollowUp, directRun, directSteer } from "./runtimeTransport";
+import { directApproval, directFollowUp, directRun, directSteer } from "./runtimeTransport";
 
 describe("direct runtime IPC contract", () => {
   beforeEach(() => {
@@ -66,5 +66,18 @@ describe("direct runtime IPC contract", () => {
       "runtime_steer",
       "runtime_follow_up",
     ]);
+  });
+
+  it("resolves live approval through an explicit Rust command", async () => {
+    invokeMock.mockResolvedValue({ ok: true, toolCallId: "call-1" });
+    await expect(directApproval("session-1", "once")).resolves.toEqual({
+      ok: true,
+      toolCallId: "call-1",
+    });
+    expect(invokeMock).toHaveBeenCalledWith("runtime_approval", {
+      sessionId: "session-1",
+      decision: "once",
+      toolCallId: undefined,
+    });
   });
 });

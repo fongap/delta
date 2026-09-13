@@ -194,6 +194,23 @@ export async function directHealth(): Promise<unknown> {
   }
 }
 
+export async function directApproval(
+  sessionId: string,
+  decision: string,
+  toolCallId?: string,
+): Promise<{ ok: boolean; error?: string; toolCallId?: string }> {
+  try {
+    const out = await invoke("runtime_approval", { sessionId, decision, toolCallId });
+    if (out && (out as any).error) return { ok: false, error: (out as any).error };
+    return {
+      ok: true,
+      toolCallId: typeof (out as any).toolCallId === "string" ? (out as any).toolCallId : undefined,
+    };
+  } catch (error) {
+    return { ok: false, error: String(error) };
+  }
+}
+
 async function invokeAuthority(command: string, args: Record<string, unknown> = {}): Promise<any> {
   try {
     return await invoke(command, args);

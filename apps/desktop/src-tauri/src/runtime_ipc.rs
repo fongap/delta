@@ -15,7 +15,9 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, State};
 
-use delta_runtime_native::{EventSink, ModelAuthority, RuntimeConfig, RuntimeHandle, RuntimeHost};
+use delta_runtime_native::{
+    EventSink, ModelAuthority, RuntimeAuthorities, RuntimeConfig, RuntimeHandle, RuntimeHost,
+};
 
 struct TauriEventSink {
     app: AppHandle,
@@ -30,6 +32,7 @@ impl EventSink for TauriEventSink {
 pub struct RuntimeRegistry {
     hosts: Mutex<HashMap<String, Arc<RuntimeHandle>>>,
     models: Mutex<ModelAuthority>,
+    authorities: RuntimeAuthorities,
 }
 
 impl RuntimeRegistry {
@@ -37,6 +40,8 @@ impl RuntimeRegistry {
         Self {
             hosts: Mutex::new(HashMap::new()),
             models: Mutex::new(ModelAuthority::new(state_dir())),
+            authorities: RuntimeAuthorities::open(state_dir())
+                .expect("initialize Rust runtime authorities"),
         }
     }
 }
@@ -102,7 +107,9 @@ pub fn runtime_run(
         existing
     } else {
         let sink = Arc::new(TauriEventSink { app: app.clone() });
-        let mut host = RuntimeHost::new(&session_id, config).with_event_sink(sink);
+        let mut host = RuntimeHost::new(&session_id, config)
+            .with_authorities(state.authorities.clone())
+            .with_event_sink(sink);
         if let Some(tools) = tools {
             host = host.with_tools(tools);
         }
@@ -195,6 +202,23 @@ pub fn runtime_cancel(state: State<'_, RuntimeRegistry>, session_id: String) -> 
     let handle = state.hosts.lock().unwrap().get(&session_id).cloned();
     match handle {
         Some(handle) => json!({"ok": true, "cancelled": handle.cancel()}),
+        None => json!({"ok": false, "error": format!("session not found: {session_id}")}),
+    }
+}
+
+#[tauri::command]
+pub fn runtime_approval(
+    state: State<'_, RuntimeRegistry>,
+    session_id: String,
+    decision: String,
+    tool_call_id: Option<String>,
+) -> Value {
+    let handle = state.hosts.lock().unwrap().get(&session_id).cloned();
+    match handle {
+        Some(handle) => match handle.resolve_approval(tool_call_id.as_deref(), &decision) {
+            Ok(resolved) => json!({"ok": true, "toolCallId": resolved, "decision": decision}),
+            Err(error) => json!({"ok": false, "error": error}),
+        },
         None => json!({"ok": false, "error": format!("session not found: {session_id}")}),
     }
 }

@@ -16,15 +16,25 @@
 //! - `cancel()` — interrupt from any state
 
 use std::collections::VecDeque;
+use std::fs;
 use std::io::Write;
+use std::path::{Component, Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc, Mutex, RwLock};
 use std::time::Duration;
 
 use serde::Serialize;
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 
+use crate::approval::{ApprovalController, ApprovalDecision, ApprovalRecordInput, ApprovalWriter};
+use crate::artifact::{ArtifactInput, ArtifactRegistryWriter};
+use crate::checkpoint::{CheckpointRegisterInput, CheckpointWriter};
+use crate::idemlog::IdempotencyWriter;
+use crate::policy::{self, Decision, PolicyEvaluateInput, RiskLevel, RootEntry, ToolMetadata};
 use crate::provider::{self, ProviderRequest};
+use crate::tool_lifecycle::{self, PlanAction, ToolLifecyclePlanInput};
+use crate::validation::ValidationWriter;
 use crate::LedgerWriter;
 
 const DEFAULT_MAX_ITERATIONS: usize = 12;
@@ -250,21 +260,90 @@ pub trait ToolExecutor: Send + Sync {
     fn execute(&self, call: &ToolCall) -> ToolResult;
 }
 
+/// A worker-created file that is not visible as a product artifact until the
+/// Rust Runtime validates, promotes, hashes and registers it.
+#[derive(Debug, Clone)]
+pub struct StagedArtifact {
+    pub staging_path: PathBuf,
+    pub relative_path: String,
+    pub kind: String,
+    pub incomplete: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct ToolResult {
     pub tool_call_id: String,
     pub output: Value,
     pub error: Option<String>,
+    pub staged_artifacts: Vec<StagedArtifact>,
+    pub validation_criteria: Option<Value>,
 }
 
-pub trait Approver: Send + Sync {
-    fn approve(&self, tool_call_id: &str, name: &str, arguments: &Value, reason: &str) -> bool;
+impl ToolResult {
+    pub fn success(tool_call_id: &str, output: Value) -> Self {
+        Self {
+            tool_call_id: tool_call_id.to_string(),
+            output,
+            error: None,
+            staged_artifacts: Vec::new(),
+            validation_criteria: None,
+        }
+    }
+
+    pub fn failure(tool_call_id: &str, error: impl Into<String>) -> Self {
+        let error = error.into();
+        Self {
+            tool_call_id: tool_call_id.to_string(),
+            output: json!({"ok": false, "error": error}),
+            error: Some(error),
+            staged_artifacts: Vec::new(),
+            validation_criteria: None,
+        }
+    }
 }
 
-pub struct DenyAll;
-impl Approver for DenyAll {
-    fn approve(&self, _: &str, _: &str, _: &Value, _: &str) -> bool {
-        false
+struct UnavailableToolExecutor;
+impl ToolExecutor for UnavailableToolExecutor {
+    fn execute(&self, call: &ToolCall) -> ToolResult {
+        ToolResult::failure(
+            &call.id,
+            format!("capability is not registered: {}", call.name),
+        )
+    }
+}
+
+/// Shared Rust authorities used by every active session. The contained SQLite
+/// writers are serialized per authority, while provider streaming and runtime
+/// controls remain independent.
+#[derive(Clone)]
+pub struct RuntimeAuthorities {
+    ledger: Arc<Mutex<LedgerWriter>>,
+    idempotency: Arc<Mutex<IdempotencyWriter>>,
+    approvals: Arc<Mutex<ApprovalWriter>>,
+}
+
+impl RuntimeAuthorities {
+    pub fn open(state_dir: impl AsRef<Path>) -> Result<Self, String> {
+        let state_dir = state_dir.as_ref();
+        fs::create_dir_all(state_dir).map_err(|error| error.to_string())?;
+        Ok(Self {
+            ledger: Arc::new(Mutex::new(
+                LedgerWriter::open(state_dir.join("run_events.db"))
+                    .map_err(|error| error.to_string())?,
+            )),
+            idempotency: Arc::new(Mutex::new(
+                IdempotencyWriter::open(state_dir.join("side_effects.db"))
+                    .map_err(|error| error.to_string())?,
+            )),
+            approvals: Arc::new(Mutex::new(
+                ApprovalWriter::open(state_dir.join("audit_events.db").to_string_lossy().as_ref())
+                    .map_err(|error| error.to_string())?,
+            )),
+        })
+    }
+
+    pub fn ledger(&self) -> Arc<Mutex<LedgerWriter>> {
+        self.ledger.clone()
     }
 }
 
@@ -284,6 +363,9 @@ pub struct RuntimeConfig {
     pub model_settings: Value,
     pub system_prompt: Option<String>,
     pub workspace: Option<String>,
+    /// Unattended runs park approval requests in the Inbox authority instead
+    /// of waiting on an in-composer response.
+    pub unattended: bool,
 }
 
 impl Default for RuntimeConfig {
@@ -301,6 +383,7 @@ impl Default for RuntimeConfig {
             model_settings: json!({}),
             system_prompt: None,
             workspace: None,
+            unattended: false,
         }
     }
 }
@@ -313,10 +396,11 @@ pub struct RuntimeHost {
     steering: Arc<SteeringQueue>,
     sequence: Arc<Mutex<u64>>,
     session_id: String,
-    ledger: Option<Arc<Mutex<LedgerWriter>>>,
+    authorities: Option<RuntimeAuthorities>,
     tools: Option<Value>,
-    tool_executor: Option<Arc<dyn ToolExecutor>>,
-    approver: Arc<dyn Approver>,
+    tool_executor: Arc<dyn ToolExecutor>,
+    approvals: Arc<ApprovalController>,
+    runtime_state: Option<Arc<Mutex<RuntimeState>>>,
     run_id: Option<String>,
     sink: Arc<dyn EventSink>,
 }
@@ -370,6 +454,7 @@ pub struct RuntimeHandle {
     follow_ups: Arc<Mutex<VecDeque<QueuedRun>>>,
     state: Arc<Mutex<RuntimeState>>,
     messages: Arc<RwLock<Vec<Value>>>,
+    approvals: Arc<ApprovalController>,
 }
 
 fn now_ts() -> f64 {
@@ -500,6 +585,60 @@ impl Write for ProviderEventWriter {
     }
 }
 
+fn validate_schema_value(value: &Value, schema: &Value, path: &str) -> Result<(), String> {
+    if let Some(allowed) = schema.get("enum").and_then(Value::as_array) {
+        if !allowed.iter().any(|candidate| candidate == value) {
+            return Err(format!(
+                "tool schema validation failed at {path}: value is not allowed"
+            ));
+        }
+    }
+    if let Some(expected) = schema.get("type").and_then(Value::as_str) {
+        let matches = match expected {
+            "object" => value.is_object(),
+            "array" => value.is_array(),
+            "string" => value.is_string(),
+            "number" => value.is_number(),
+            "integer" => value.as_i64().is_some() || value.as_u64().is_some(),
+            "boolean" => value.is_boolean(),
+            "null" => value.is_null(),
+            _ => false,
+        };
+        if !matches {
+            return Err(format!(
+                "tool schema validation failed at {path}: expected {expected}"
+            ));
+        }
+    }
+    if let Some(object) = value.as_object() {
+        if let Some(required) = schema.get("required").and_then(Value::as_array) {
+            for key in required.iter().filter_map(Value::as_str) {
+                if !object.contains_key(key) {
+                    return Err(format!(
+                        "tool schema validation failed at {path}: missing {key}"
+                    ));
+                }
+            }
+        }
+        if let Some(properties) = schema.get("properties").and_then(Value::as_object) {
+            for (key, item) in object {
+                if let Some(property_schema) = properties.get(key) {
+                    validate_schema_value(item, property_schema, &format!("{path}.{key}"))?;
+                }
+            }
+        }
+    }
+    if let (Some(items), Some(item_schema)) = (
+        value.as_array(),
+        schema.get("items").filter(|item| item.is_object()),
+    ) {
+        for (index, item) in items.iter().enumerate() {
+            validate_schema_value(item, item_schema, &format!("{path}[{index}]"))?;
+        }
+    }
+    Ok(())
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum ProviderStreamOutcome {
     Completed,
@@ -520,10 +659,11 @@ impl RuntimeHost {
             steering: Arc::new(Mutex::new(Vec::new())),
             sequence: Arc::new(Mutex::new(0)),
             session_id: session_id.to_string(),
-            ledger: None,
+            authorities: None,
             tools: None,
-            tool_executor: None,
-            approver: Arc::new(DenyAll),
+            tool_executor: Arc::new(UnavailableToolExecutor),
+            approvals: Arc::new(ApprovalController::default()),
+            runtime_state: None,
             run_id: None,
             sink: Arc::new(NullSink),
         }
@@ -534,15 +674,11 @@ impl RuntimeHost {
         self
     }
     pub fn with_tool_executor(mut self, executor: Arc<dyn ToolExecutor>) -> Self {
-        self.tool_executor = Some(executor);
+        self.tool_executor = executor;
         self
     }
-    pub fn with_approver(mut self, approver: Arc<dyn Approver>) -> Self {
-        self.approver = approver;
-        self
-    }
-    pub fn with_ledger(mut self, writer: Arc<Mutex<LedgerWriter>>) -> Self {
-        self.ledger = Some(writer);
+    pub fn with_authorities(mut self, authorities: RuntimeAuthorities) -> Self {
+        self.authorities = Some(authorities);
         self
     }
     pub fn with_messages(mut self, messages: Vec<Value>) -> Self {
@@ -636,6 +772,31 @@ impl RuntimeHost {
         self.config.api_key = config.api_key;
         self.config.base_url = config.base_url;
         self.config.model_settings = config.model_settings;
+        self.config.max_iterations = config.max_iterations;
+        self.config.max_retries = config.max_retries;
+        self.config.ttft_timeout = config.ttft_timeout;
+        self.config.tool_timeout = config.tool_timeout;
+        self.config.workspace = config.workspace;
+        self.config.unattended = config.unattended;
+        if self.config.system_prompt != config.system_prompt {
+            self.config.system_prompt = config.system_prompt.clone();
+            if let Some(prompt) = config.system_prompt {
+                if let Some(system) = self
+                    .messages
+                    .iter_mut()
+                    .find(|message| message.get("role").and_then(Value::as_str) == Some("system"))
+                {
+                    *system = json!({"role": "system", "content": prompt});
+                } else {
+                    self.messages
+                        .insert(0, json!({"role": "system", "content": prompt}));
+                }
+            } else {
+                self.messages.retain(|message| {
+                    message.get("role").and_then(Value::as_str) != Some("system")
+                });
+            }
+        }
         if changed && had_history {
             let notice = format!("Model switched to {model_id}");
             self.messages.push(json!({
@@ -697,13 +858,57 @@ impl RuntimeHost {
         }
     }
 
-    fn ledger_transition(&self, event_type: &str, actor: &str, payload: Value) {
-        if let Some(ref ledger) = self.ledger {
+    fn ledger_transition(
+        &self,
+        event_type: &str,
+        actor: &str,
+        payload: Value,
+    ) -> Result<(), String> {
+        if let Some(authorities) = &self.authorities {
             let run_id = self.run_id.clone().unwrap_or_else(uuid_v4);
             let ws = self.config.workspace.clone().unwrap_or_default();
-            if let Ok(w) = ledger.lock() {
-                let _ = w.transition(&run_id, event_type, actor, now_ts(), &payload, &ws);
+            authorities
+                .ledger
+                .lock()
+                .unwrap()
+                .transition(&run_id, event_type, actor, now_ts(), &payload, &ws)
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
+    fn ledger_append(&self, event_type: &str, actor: &str, payload: Value) -> Result<(), String> {
+        if let Some(authorities) = &self.authorities {
+            let run_id = self.run_id.clone().unwrap_or_else(uuid_v4);
+            let workspace = self.config.workspace.clone().unwrap_or_default();
+            authorities
+                .ledger
+                .lock()
+                .unwrap()
+                .append(&run_id, event_type, actor, now_ts(), &payload, &workspace)
+                .map_err(|error| error.to_string())?;
+        }
+        Ok(())
+    }
+
+    fn finish_run_ledger(&self, result: &Result<String, String>) -> Result<(), String> {
+        match result {
+            Ok(status) if status == "completed" => {
+                self.ledger_transition("run.completed", "system", json!({"kind": "run"}))
             }
+            Ok(status) if status == "interrupted" => {
+                self.ledger_transition("run.interrupted", "system", json!({"kind": "run"}))
+            }
+            Ok(status) => self.ledger_transition(
+                "run.failed",
+                "system",
+                json!({"kind": "run", "reason": status}),
+            ),
+            Err(error) => self.ledger_transition(
+                "run.failed",
+                "system",
+                json!({"reason": error, "kind": "run"}),
+            ),
         }
     }
 
@@ -822,6 +1027,653 @@ impl RuntimeHost {
             usage,
         });
         Ok(ProviderStreamOutcome::Completed)
+    }
+
+    fn tool_contract(&self, call: &ToolCall) -> Result<(Value, Option<ToolMetadata>), String> {
+        let definitions = self
+            .tools
+            .as_ref()
+            .and_then(Value::as_array)
+            .ok_or_else(|| "no capability contracts are registered".to_string())?;
+        let definition = definitions
+            .iter()
+            .find(|definition| {
+                definition.get("name").and_then(Value::as_str) == Some(call.name.as_str())
+                    || definition
+                        .get("function")
+                        .and_then(|function| function.get("name"))
+                        .and_then(Value::as_str)
+                        == Some(call.name.as_str())
+            })
+            .ok_or_else(|| format!("capability contract not found: {}", call.name))?;
+        let function = definition.get("function").unwrap_or(definition);
+        let schema = function
+            .get("parameters")
+            .or_else(|| definition.get("parameters"))
+            .cloned()
+            .unwrap_or_else(|| json!({"type": "object"}));
+        validate_schema_value(&call.arguments, &schema, "arguments")?;
+        let metadata = [
+            definition.get("metadata"),
+            definition.get("x-delta"),
+            definition.get("x_delta"),
+            function.get("metadata"),
+            function.get("x-delta"),
+            function.get("x_delta"),
+        ]
+        .into_iter()
+        .flatten()
+        .find_map(|value| serde_json::from_value::<ToolMetadata>(value.clone()).ok());
+        Ok((schema, metadata))
+    }
+
+    fn policy_for(
+        &self,
+        call: &ToolCall,
+        metadata: Option<ToolMetadata>,
+    ) -> Result<(RiskLevel, Decision), String> {
+        let level = policy::classify(&call.name, Some(&call.arguments), metadata.as_ref());
+        let explicitly_gated = metadata
+            .as_ref()
+            .and_then(|item| item.requires_approval)
+            .unwrap_or(true);
+        let auto_allowed = level <= RiskLevel::L1 && !explicitly_gated;
+        let workspace = self.config.workspace.clone().unwrap_or_default();
+        let roots = if workspace.is_empty() {
+            Vec::new()
+        } else {
+            vec![RootEntry {
+                path: workspace.clone(),
+                writable: true,
+            }]
+        };
+        let evaluated = policy::evaluate(PolicyEvaluateInput {
+            tool_name: call.name.clone(),
+            arguments: Some(call.arguments.clone()),
+            metadata,
+            decision: Decision {
+                allowed: auto_allowed,
+                reason: if auto_allowed {
+                    "auto-approved by Rust policy".to_string()
+                } else {
+                    format!("explicit approval required for {level:?}")
+                },
+                needs_user: !auto_allowed,
+                rule: if auto_allowed {
+                    "runtime.auto_low_risk".to_string()
+                } else {
+                    String::new()
+                },
+                grant: if auto_allowed {
+                    "policy".to_string()
+                } else {
+                    String::new()
+                },
+            },
+            level: level as i64,
+            workspace_root: workspace,
+            roots,
+        })
+        .map_err(|error| error.to_string())?;
+        let evaluated_level = RiskLevel::from_i64(evaluated.level)
+            .ok_or_else(|| "policy returned an invalid risk level".to_string())?;
+        Ok((evaluated_level, evaluated.decision))
+    }
+
+    fn set_runtime_state(&self, state: RuntimeState) {
+        if let Some(runtime_state) = &self.runtime_state {
+            *runtime_state.lock().unwrap() = state;
+        }
+    }
+
+    fn record_approval(
+        &self,
+        call: &ToolCall,
+        stage: &str,
+        status: &str,
+        approval: Option<&str>,
+        reason: &str,
+        level: RiskLevel,
+    ) -> Result<(), String> {
+        let Some(authorities) = &self.authorities else {
+            return Ok(());
+        };
+        let workspace = self.config.workspace.clone().unwrap_or_default();
+        authorities
+            .approvals
+            .lock()
+            .unwrap()
+            .record(
+                ApprovalRecordInput {
+                    session_id: self.session_id.clone(),
+                    agent: Some("delta".to_string()),
+                    workspace: Some(workspace.clone()),
+                    connector: None,
+                    tool: call.name.clone(),
+                    stage: stage.to_string(),
+                    status: Some(status.to_string()),
+                    approval: approval.map(str::to_string),
+                    arguments: Some(call.arguments.clone()),
+                    result_preview: None,
+                    reason: Some(reason.to_string()),
+                    resource: None,
+                    level: Some(format!("{level:?}")),
+                    isolation: Some("runtime".to_string()),
+                    ts: Some(now_ts()),
+                },
+                now_ts(),
+                &workspace,
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    fn register_checkpoint(
+        &self,
+        phase: &str,
+        pending_tool_call: Option<Value>,
+        artifacts: Vec<Value>,
+        error: Option<String>,
+    ) -> Result<(), String> {
+        let Some(authorities) = &self.authorities else {
+            return Ok(());
+        };
+        let run_id = self.run_id.clone().unwrap_or_else(uuid_v4);
+        let workspace = self.config.workspace.clone().unwrap_or_default();
+        let ledger = authorities.ledger.lock().unwrap();
+        CheckpointWriter::new(&ledger)
+            .register(
+                CheckpointRegisterInput {
+                    checkpoint_id: None,
+                    run_id,
+                    session_id: self.session_id.clone(),
+                    phase: phase.to_string(),
+                    pending_tool_call,
+                    pending_inbox_item_id: None,
+                    last_event_seq: Some(*self.sequence.lock().unwrap() as i64),
+                    todo_summary: Vec::new(),
+                    recent_artifacts: artifacts,
+                    error,
+                },
+                now_ts(),
+                &workspace,
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(())
+    }
+
+    fn require_approval(
+        &self,
+        call: &ToolCall,
+        reason: &str,
+        level: RiskLevel,
+    ) -> Result<ApprovalDecision, String> {
+        self.emit_event(RuntimeEvent::PermissionRequired {
+            tool_call_id: call.id.clone(),
+            name: call.name.clone(),
+            arguments: call.arguments.clone(),
+            reason: reason.to_string(),
+        });
+        self.ledger_append(
+            "approval.required",
+            "runtime",
+            json!({"tool_call_id": call.id, "tool": call.name, "reason": reason, "level": format!("{level:?}")}),
+        )?;
+        self.record_approval(call, "approval_required", "pending", None, reason, level)?;
+        self.register_checkpoint(
+            "awaiting_approval",
+            Some(json!({"id": call.id, "name": call.name, "arguments": call.arguments})),
+            Vec::new(),
+            None,
+        )?;
+        if self.config.unattended {
+            self.ledger_append(
+                "approval.inbox",
+                "runtime",
+                json!({"tool_call_id": call.id, "tool": call.name}),
+            )?;
+            self.record_approval(call, "approval_parked", "inbox", None, reason, level)?;
+        }
+
+        let receiver = self.approvals.begin(&call.id)?;
+        self.set_runtime_state(if self.config.unattended {
+            RuntimeState::WaitingUser
+        } else {
+            RuntimeState::WaitingApproval
+        });
+        loop {
+            if self.cancel.load(Ordering::Acquire) {
+                self.approvals.cancel(&call.id);
+                self.record_approval(
+                    call,
+                    "approval_resolved",
+                    "cancelled",
+                    None,
+                    "run cancelled while approval was pending",
+                    level,
+                )?;
+                self.ledger_append(
+                    "approval.cancelled",
+                    "user",
+                    json!({"tool_call_id": call.id, "tool": call.name}),
+                )?;
+                return Err("run cancelled while approval was pending".to_string());
+            }
+            match receiver.recv_timeout(Duration::from_millis(25)) {
+                Ok(decision) => {
+                    self.set_runtime_state(RuntimeState::Running);
+                    let status = if decision.is_approved() {
+                        "approved"
+                    } else {
+                        "denied"
+                    };
+                    self.record_approval(
+                        call,
+                        "approval_resolved",
+                        status,
+                        Some(decision.as_str()),
+                        reason,
+                        level,
+                    )?;
+                    self.ledger_append(
+                        if decision.is_approved() {
+                            "approval.approved"
+                        } else {
+                            "approval.denied"
+                        },
+                        "user",
+                        json!({"tool_call_id": call.id, "tool": call.name, "decision": decision.as_str()}),
+                    )?;
+                    if decision.is_approved() {
+                        self.approvals
+                            .remember(decision, &call.name, &call.arguments);
+                    }
+                    return Ok(decision);
+                }
+                Err(mpsc::RecvTimeoutError::Timeout) => {}
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    return Err("approval request was abandoned".to_string());
+                }
+            }
+        }
+    }
+
+    fn formalize_artifacts(&self, staged: &[StagedArtifact]) -> Result<Vec<Value>, String> {
+        if staged.is_empty() {
+            return Ok(Vec::new());
+        }
+        let authorities = self
+            .authorities
+            .as_ref()
+            .ok_or_else(|| "artifact authority is unavailable".to_string())?;
+        let workspace_text = self
+            .config
+            .workspace
+            .as_deref()
+            .filter(|value| !value.trim().is_empty())
+            .ok_or_else(|| "workspace is required for artifacts".to_string())?;
+        let workspace = PathBuf::from(workspace_text)
+            .canonicalize()
+            .map_err(|error| format!("workspace is unavailable: {error}"))?;
+        let run_id = self.run_id.clone().unwrap_or_else(uuid_v4);
+        let staging_root = workspace.join(".delta").join("staging").join(&run_id);
+        let mut formalized = Vec::new();
+
+        for candidate in staged {
+            let source = candidate
+                .staging_path
+                .canonicalize()
+                .map_err(|error| format!("staged artifact is unavailable: {error}"))?;
+            let canonical_staging = staging_root
+                .canonicalize()
+                .map_err(|error| format!("staging root is unavailable: {error}"))?;
+            if !source.starts_with(&canonical_staging) || !source.is_file() {
+                return Err("worker artifact escaped its staging root".to_string());
+            }
+            let relative = Path::new(&candidate.relative_path);
+            if relative.is_absolute()
+                || relative.components().any(|component| {
+                    matches!(
+                        component,
+                        Component::ParentDir | Component::RootDir | Component::Prefix(_)
+                    )
+                })
+            {
+                return Err("artifact destination must be workspace-relative".to_string());
+            }
+            let target = workspace.join(relative);
+            if !target.starts_with(&workspace) || target.starts_with(workspace.join(".delta")) {
+                return Err("artifact destination is reserved or outside workspace".to_string());
+            }
+            if let Some(parent) = target.parent() {
+                fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+            }
+            if target.exists() {
+                fs::remove_file(&target).map_err(|error| error.to_string())?;
+            }
+            if fs::rename(&source, &target).is_err() {
+                fs::copy(&source, &target).map_err(|error| error.to_string())?;
+                fs::remove_file(&source).map_err(|error| error.to_string())?;
+            }
+            let bytes = fs::read(&target).map_err(|error| error.to_string())?;
+            let sha256 = format!("{:x}", Sha256::digest(&bytes));
+            let relative_path = candidate.relative_path.replace('\\', "/");
+            let artifact = ArtifactInput {
+                path: relative_path.clone(),
+                name: target
+                    .file_name()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or(&relative_path)
+                    .to_string(),
+                kind: candidate.kind.clone(),
+                size: bytes.len() as i64,
+                modified_at: now_ts(),
+                run_id: run_id.clone(),
+                sha256: sha256.clone(),
+                incomplete: candidate.incomplete,
+                registered_at: now_ts(),
+            };
+            ArtifactRegistryWriter::new(&authorities.ledger.lock().unwrap())
+                .register(&artifact, now_ts(), workspace_text)
+                .map_err(|error| error.to_string())?;
+            formalized.push(artifact.registered_payload());
+        }
+        Ok(formalized)
+    }
+
+    fn validate_tool_artifacts(
+        &self,
+        artifacts: &[Value],
+        criteria: Option<&Value>,
+    ) -> Result<Value, String> {
+        let Some(authorities) = &self.authorities else {
+            if artifacts.is_empty() {
+                return Ok(json!({"ok": true, "checks": []}));
+            }
+            return Err("validation authority is unavailable".to_string());
+        };
+        let run_id = self.run_id.clone().unwrap_or_else(uuid_v4);
+        let workspace = self.config.workspace.clone().unwrap_or_default();
+        let default_criteria = json!({
+            "min_artifacts": 0,
+            "max_artifacts": 50,
+            "require_complete": true
+        });
+        let ledger = authorities.ledger.lock().unwrap();
+        let (_, result) = ValidationWriter::new(&ledger)
+            .evaluate_and_register(
+                &run_id,
+                criteria.unwrap_or(&default_criteria),
+                artifacts,
+                &workspace,
+                None,
+                now_ts(),
+            )
+            .map_err(|error| error.to_string())?;
+        serde_json::to_value(result).map_err(|error| error.to_string())
+    }
+
+    fn execute_tool_call(&self, call: &ToolCall) -> ToolResult {
+        let (_schema, metadata) = match self.tool_contract(call) {
+            Ok(contract) => contract,
+            Err(error) => {
+                let _ = self.ledger_append(
+                    "tool.failed",
+                    "runtime",
+                    json!({"tool_call_id": call.id, "tool": call.name, "stage": "schema", "error": error}),
+                );
+                return ToolResult::failure(&call.id, error);
+            }
+        };
+        let (level, decision) = match self.policy_for(call, metadata) {
+            Ok(outcome) => outcome,
+            Err(error) => return ToolResult::failure(&call.id, error),
+        };
+        self.emit_event(RuntimeEvent::ToolProposed {
+            tool_call_id: call.id.clone(),
+            name: call.name.clone(),
+            arguments: call.arguments.clone(),
+            risk_level: Some(format!("{level:?}")),
+        });
+        if let Err(error) = self.ledger_append(
+            "tool.proposed",
+            "model",
+            json!({"tool_call_id": call.id, "tool": call.name, "arguments": call.arguments, "level": format!("{level:?}")}),
+        ) {
+            return ToolResult::failure(&call.id, error);
+        }
+
+        if !decision.allowed
+            && self
+                .approvals
+                .has_standing_grant(&call.name, &call.arguments)
+        {
+            if let Err(error) = self.record_approval(
+                call,
+                "standing_policy_resolved",
+                "auto_approved",
+                Some("standing"),
+                "approved by a session-scoped standing grant",
+                level,
+            ) {
+                return ToolResult::failure(&call.id, error);
+            }
+        } else if !decision.allowed {
+            if !decision.needs_user {
+                let _ = self.record_approval(
+                    call,
+                    "policy_denied",
+                    "denied",
+                    None,
+                    &decision.reason,
+                    level,
+                );
+                let _ = self.ledger_append(
+                    "tool.failed",
+                    "runtime",
+                    json!({"tool_call_id": call.id, "tool": call.name, "stage": "policy", "error": &decision.reason}),
+                );
+                return ToolResult::failure(&call.id, decision.reason);
+            }
+            match self.require_approval(call, &decision.reason, level) {
+                Ok(approval) if approval.is_approved() => {}
+                Ok(_) => {
+                    let _ = self.ledger_append(
+                        "tool.cancelled",
+                        "user",
+                        json!({"tool_call_id": call.id, "tool": call.name, "reason": "denied"}),
+                    );
+                    return ToolResult::failure(&call.id, "tool call denied by user");
+                }
+                Err(error) => {
+                    let _ = self.ledger_append(
+                        "tool.cancelled",
+                        "runtime",
+                        json!({"tool_call_id": call.id, "tool": call.name, "reason": &error}),
+                    );
+                    return ToolResult::failure(&call.id, error);
+                }
+            }
+        } else if let Err(error) = self.record_approval(
+            call,
+            "policy_resolved",
+            "auto_approved",
+            Some("policy"),
+            &decision.reason,
+            level,
+        ) {
+            return ToolResult::failure(&call.id, error);
+        }
+        if let Err(error) = self.ledger_append(
+            "tool.approved",
+            "runtime",
+            json!({"tool_call_id": call.id, "tool": call.name, "level": format!("{level:?}")}),
+        ) {
+            return ToolResult::failure(&call.id, error);
+        }
+
+        let Some(authorities) = &self.authorities else {
+            return ToolResult::failure(&call.id, "runtime authorities are unavailable");
+        };
+        let run_id = self.run_id.clone().unwrap_or_else(uuid_v4);
+        let plan_input = ToolLifecyclePlanInput {
+            db: "side_effects.db".to_string(),
+            run_id: run_id.clone(),
+            tool_call_id: call.id.clone(),
+            tool_name: call.name.clone(),
+            args: call.arguments.clone(),
+        };
+        let plan = match tool_lifecycle::plan(&authorities.idempotency.lock().unwrap(), &plan_input)
+        {
+            Ok(plan) => plan,
+            Err(error) => return ToolResult::failure(&call.id, error.to_string()),
+        };
+        match plan.action {
+            PlanAction::Replay => {
+                let output = plan.result.unwrap_or_else(|| json!({"ok": true}));
+                let _ = self.ledger_append(
+                    "tool.replayed",
+                    "runtime",
+                    json!({"tool_call_id": call.id, "tool": call.name}),
+                );
+                return ToolResult::success(&call.id, output);
+            }
+            PlanAction::Uncertain => {
+                let _ = self.ledger_append(
+                    "tool.uncertain",
+                    "runtime",
+                    json!({"tool_call_id": call.id, "tool": call.name, "operation_id": plan.operation_id}),
+                );
+                return ToolResult::failure(
+                    &call.id,
+                    plan.error
+                        .and_then(|value| {
+                            value
+                                .get("error")
+                                .and_then(Value::as_str)
+                                .map(str::to_string)
+                        })
+                        .unwrap_or_else(|| "previous tool result is uncertain".to_string()),
+                );
+            }
+            PlanAction::Execute => {}
+        }
+
+        self.emit_event(RuntimeEvent::ToolStarted {
+            tool_call_id: call.id.clone(),
+            name: call.name.clone(),
+        });
+        if let Err(error) = self.ledger_append(
+            "tool.started",
+            "runtime",
+            json!({"tool_call_id": call.id, "tool": call.name}),
+        ) {
+            return ToolResult::failure(&call.id, error);
+        }
+        let mut result = self.tool_executor.execute(call);
+        if self.cancel.load(Ordering::Acquire) {
+            let _ = authorities
+                .idempotency
+                .lock()
+                .unwrap()
+                .mark_uncertain(&run_id, &call.id);
+            let _ = self.ledger_append(
+                "tool.cancelled",
+                "user",
+                json!({"tool_call_id": call.id, "tool": call.name, "state": "uncertain"}),
+            );
+            return ToolResult::failure(&call.id, "tool cancelled; side effect is uncertain");
+        }
+        if let Some(error) = result.error.clone() {
+            let _ = authorities
+                .idempotency
+                .lock()
+                .unwrap()
+                .mark_failed(&run_id, &call.id, &error);
+            let _ = self.ledger_append(
+                "tool.failed",
+                "runtime",
+                json!({"tool_call_id": call.id, "tool": call.name, "error": error}),
+            );
+            return result;
+        }
+
+        let artifacts = match self.formalize_artifacts(&result.staged_artifacts) {
+            Ok(artifacts) => artifacts,
+            Err(error) => {
+                let _ = authorities
+                    .idempotency
+                    .lock()
+                    .unwrap()
+                    .mark_failed(&run_id, &call.id, &error);
+                let _ = self.ledger_append(
+                    "tool.failed",
+                    "runtime",
+                    json!({"tool_call_id": call.id, "tool": call.name, "stage": "artifact", "error": &error}),
+                );
+                return ToolResult::failure(&call.id, error);
+            }
+        };
+        let validation = match self
+            .validate_tool_artifacts(&artifacts, result.validation_criteria.as_ref())
+        {
+            Ok(validation) if validation.get("ok").and_then(Value::as_bool) != Some(false) => {
+                validation
+            }
+            Ok(validation) => {
+                let error = "tool artifact validation failed".to_string();
+                let _ = authorities
+                    .idempotency
+                    .lock()
+                    .unwrap()
+                    .mark_failed(&run_id, &call.id, &error);
+                let _ = self.ledger_append(
+                    "tool.failed",
+                    "runtime",
+                    json!({"tool_call_id": call.id, "tool": call.name, "error": error, "validation": validation}),
+                );
+                return ToolResult::failure(&call.id, error);
+            }
+            Err(error) => {
+                let _ = authorities
+                    .idempotency
+                    .lock()
+                    .unwrap()
+                    .mark_failed(&run_id, &call.id, &error);
+                let _ = self.ledger_append(
+                    "tool.failed",
+                    "runtime",
+                    json!({"tool_call_id": call.id, "tool": call.name, "stage": "validation", "error": &error}),
+                );
+                return ToolResult::failure(&call.id, error);
+            }
+        };
+        if let Some(output) = result.output.as_object_mut() {
+            if !artifacts.is_empty() {
+                output.insert("artifacts".to_string(), Value::Array(artifacts.clone()));
+            }
+            output.insert("validation".to_string(), validation);
+        }
+        if let Err(error) = authorities.idempotency.lock().unwrap().commit(
+            &run_id,
+            &call.id,
+            &call.name,
+            &call.arguments,
+            &result.output,
+        ) {
+            return ToolResult::failure(&call.id, error.to_string());
+        }
+        if let Err(error) = self.ledger_append(
+            "tool.completed",
+            "runtime",
+            json!({"tool_call_id": call.id, "tool": call.name, "result": result.output}),
+        ) {
+            return ToolResult::failure(&call.id, error);
+        }
+        if let Err(error) = self.register_checkpoint("tool_completed", None, artifacts, None) {
+            return ToolResult::failure(&call.id, error);
+        }
+        result
     }
 
     fn loop_turn(&mut self) -> Result<String, String> {
@@ -958,30 +1810,10 @@ impl RuntimeHost {
                 return Ok("completed".to_string());
             }
             for tc in &turn.tool_calls {
-                self.emit_event(RuntimeEvent::ToolProposed {
-                    tool_call_id: tc.id.clone(),
-                    name: tc.name.clone(),
-                    arguments: tc.arguments.clone(),
-                    risk_level: None,
-                });
-            }
-            for tc in &turn.tool_calls {
                 if self.cancel.load(Ordering::Relaxed) {
                     break;
                 }
-                self.emit_event(RuntimeEvent::ToolStarted {
-                    tool_call_id: tc.id.clone(),
-                    name: tc.name.clone(),
-                });
-                let result = if let Some(ref executor) = self.tool_executor {
-                    executor.execute(tc)
-                } else {
-                    ToolResult {
-                        tool_call_id: tc.id.clone(),
-                        output: Value::String("Tool execution not available".to_string()),
-                        error: Some("no tool executor configured".to_string()),
-                    }
-                };
+                let result = self.execute_tool_call(tc);
                 self.messages.push(json!({
                     "role": "tool", "tool_call_id": &tc.id, "content": &result.output
                 }));
@@ -1016,22 +1848,9 @@ impl RuntimeHost {
             message["source"] = src.clone();
         }
         self.messages.push(message);
-        self.ledger_transition("run.started", "user", json!({"kind": "run"}));
+        self.ledger_transition("run.started", "user", json!({"kind": "run"}))?;
         let result = self.loop_turn();
-        match &result {
-            Ok(s) if s == "completed" => {
-                self.ledger_transition("run.completed", "system", json!({"kind": "run"}));
-            }
-            Ok(s) if s == "interrupted" => {
-                self.ledger_transition("run.interrupted", "system", json!({"kind": "run"}));
-            }
-            Ok(_) => {
-                self.ledger_transition("run.completed", "system", json!({"kind": "run"}));
-            }
-            Err(e) => {
-                self.ledger_transition("run.failed", "system", json!({"reason": e, "kind": "run"}));
-            }
-        }
+        self.finish_run_ledger(&result)?;
         result.map(|s| json!({"status": s}))
     }
 
@@ -1041,8 +1860,10 @@ impl RuntimeHost {
             source: None,
             run_id: self.run_id.clone(),
         });
-        self.ledger_transition("run.resumed", "system", json!({"kind": "resume"}));
-        self.loop_turn().map(|s| json!({"status": s}))
+        self.ledger_transition("run.started", "system", json!({"kind": "resume"}))?;
+        let result = self.loop_turn();
+        self.finish_run_ledger(&result)?;
+        result.map(|status| json!({"status": status}))
     }
 
     pub fn retry(&mut self) -> Result<Value, String> {
@@ -1064,19 +1885,24 @@ impl RuntimeHost {
             source: None,
             run_id: self.run_id.clone(),
         });
-        self.loop_turn().map(|s| json!({"status": s}))
+        self.ledger_transition("run.started", "system", json!({"kind": "retry"}))?;
+        let result = self.loop_turn();
+        self.finish_run_ledger(&result)?;
+        result.map(|status| json!({"status": status}))
     }
 }
 
 impl RuntimeHandle {
     /// Start a dedicated worker thread for `host`. The returned handle is idle;
     /// callers must register it before calling [`run`](Self::run).
-    pub fn spawn(host: RuntimeHost) -> Result<Self, String> {
+    pub fn spawn(mut host: RuntimeHost) -> Result<Self, String> {
         let session_id = host.session_id.clone();
         let cancel = host.cancel.clone();
         let provider_cancel = host.provider_cancel.clone();
         let steering = host.steering.clone();
         let state = Arc::new(Mutex::new(RuntimeState::Idle));
+        host.runtime_state = Some(state.clone());
+        let approvals = host.approvals.clone();
         let follow_ups = Arc::new(Mutex::new(VecDeque::new()));
         let messages = Arc::new(RwLock::new(host.messages.clone()));
         let (command_tx, command_rx) = mpsc::channel();
@@ -1110,6 +1936,7 @@ impl RuntimeHandle {
             follow_ups,
             state,
             messages,
+            approvals,
         })
     }
 
@@ -1123,6 +1950,19 @@ impl RuntimeHandle {
 
     pub fn messages(&self) -> Vec<Value> {
         self.messages.read().unwrap().clone()
+    }
+
+    pub fn resolve_approval(
+        &self,
+        tool_call_id: Option<&str>,
+        decision: &str,
+    ) -> Result<String, String> {
+        let decision = ApprovalDecision::parse(decision)?;
+        self.approvals.resolve(tool_call_id, decision)
+    }
+
+    pub fn pending_approvals(&self) -> Vec<String> {
+        self.approvals.pending_ids()
     }
 
     pub fn run(&self, input: String, source: Option<Value>) -> Result<String, String> {
@@ -1405,6 +2245,7 @@ mod tests {
     use super::*;
     use std::io::{BufRead, BufReader, Read};
     use std::net::{TcpListener, TcpStream};
+    use std::sync::atomic::AtomicUsize;
 
     #[test]
     fn test_runtime_config_default() {
@@ -1515,9 +2356,202 @@ mod tests {
     }
 
     #[test]
-    fn test_deny_all_approver() {
-        let approver = DenyAll;
-        assert!(!approver.approve("tc1", "shell", &json!({}), "test"));
+    fn tool_schema_validation_rejects_missing_required_arguments() {
+        let schema = json!({
+            "type": "object",
+            "required": ["path"],
+            "properties": {"path": {"type": "string"}}
+        });
+        assert!(validate_schema_value(&json!({}), &schema, "arguments").is_err());
+        assert!(validate_schema_value(&json!({"path": "out.txt"}), &schema, "arguments").is_ok());
+    }
+
+    struct CountingExecutor {
+        calls: Arc<AtomicUsize>,
+        staged: Option<StagedArtifact>,
+    }
+
+    impl ToolExecutor for CountingExecutor {
+        fn execute(&self, call: &ToolCall) -> ToolResult {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let mut result = ToolResult::success(&call.id, json!({"ok": true}));
+            if let Some(staged) = &self.staged {
+                result.staged_artifacts.push(staged.clone());
+            }
+            result
+        }
+    }
+
+    fn tool_contract(risk: &str, requires_approval: bool) -> Value {
+        json!([{
+            "type": "function",
+            "function": {
+                "name": "write_report",
+                "parameters": {
+                    "type": "object",
+                    "required": ["path"],
+                    "properties": {"path": {"type": "string"}}
+                },
+                "metadata": {
+                    "risk_level": risk,
+                    "requires_approval": requires_approval,
+                    "category": if risk == "low" { "read" } else { "filesystem" },
+                    "capabilities": []
+                }
+            }
+        }])
+    }
+
+    #[test]
+    fn tool_execution_composes_policy_lifecycle_validation_checkpoint_and_ledger() {
+        let temp = tempfile::tempdir().unwrap();
+        let authorities = RuntimeAuthorities::open(temp.path()).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut host = RuntimeHost::new("session-1", RuntimeConfig::default())
+            .with_authorities(authorities.clone())
+            .with_tools(tool_contract("low", false))
+            .with_tool_executor(Arc::new(CountingExecutor {
+                calls: calls.clone(),
+                staged: None,
+            }));
+        host.set_run_id("run-1".to_string());
+        let result = host.execute_tool_call(&ToolCall {
+            id: "call-1".to_string(),
+            name: "write_report".to_string(),
+            arguments: json!({"path": "report.md"}),
+        });
+        assert!(result.error.is_none(), "{:?}", result.error);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        let events = authorities
+            .ledger
+            .lock()
+            .unwrap()
+            .reader()
+            .unwrap()
+            .events("run-1")
+            .unwrap();
+        let event_types: Vec<&str> = events.iter().map(|event| event.r#type.as_str()).collect();
+        for expected in [
+            "tool.proposed",
+            "tool.approved",
+            "tool.started",
+            "validation.registered",
+            "tool.completed",
+            "checkpoint.registered",
+        ] {
+            assert!(
+                event_types.contains(&expected),
+                "missing {expected}: {event_types:?}"
+            );
+        }
+        let entry = authorities
+            .idempotency
+            .lock()
+            .unwrap()
+            .get("run-1", "call-1")
+            .unwrap()
+            .unwrap();
+        assert_eq!(entry.state, crate::idemlog::SideEffectState::Committed);
+        let approvals = authorities
+            .approvals
+            .lock()
+            .unwrap()
+            .list(10, Some("session-1"), None, Some("write_report"))
+            .unwrap();
+        assert_eq!(approvals[0]["status"], "auto_approved");
+    }
+
+    #[test]
+    fn approval_authority_blocks_execution_until_ipc_resolution() {
+        let temp = tempfile::tempdir().unwrap();
+        let authorities = RuntimeAuthorities::open(temp.path()).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut host = RuntimeHost::new("session-1", RuntimeConfig::default())
+            .with_authorities(authorities)
+            .with_tools(tool_contract("medium", true))
+            .with_tool_executor(Arc::new(CountingExecutor {
+                calls: calls.clone(),
+                staged: None,
+            }));
+        host.set_run_id("run-approval".to_string());
+        let host = Arc::new(host);
+        let worker_host = host.clone();
+        let worker = std::thread::spawn(move || {
+            worker_host.execute_tool_call(&ToolCall {
+                id: "call-approval".to_string(),
+                name: "write_report".to_string(),
+                arguments: json!({"path": "report.md"}),
+            })
+        });
+        for _ in 0..100 {
+            if host.approvals.pending_ids() == ["call-approval"] {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        host.approvals
+            .resolve(Some("call-approval"), ApprovalDecision::Once)
+            .unwrap();
+        let result = worker.join().unwrap();
+        assert!(result.error.is_none(), "{:?}", result.error);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn runtime_promotes_and_hashes_only_staged_worker_artifacts() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path().join("workspace");
+        let staging = workspace.join(".delta/staging/run-artifact");
+        fs::create_dir_all(&staging).unwrap();
+        let staged_path = staging.join("candidate.md");
+        fs::write(&staged_path, "authoritative artifact").unwrap();
+        let authorities = RuntimeAuthorities::open(temp.path().join("state")).unwrap();
+        let mut host = RuntimeHost::new(
+            "session-1",
+            RuntimeConfig {
+                workspace: Some(workspace.to_string_lossy().to_string()),
+                ..RuntimeConfig::default()
+            },
+        )
+        .with_authorities(authorities.clone())
+        .with_tools(tool_contract("low", false))
+        .with_tool_executor(Arc::new(CountingExecutor {
+            calls: Arc::new(AtomicUsize::new(0)),
+            staged: Some(StagedArtifact {
+                staging_path: staged_path.clone(),
+                relative_path: "reports/final.md".to_string(),
+                kind: "markdown".to_string(),
+                incomplete: false,
+            }),
+        }));
+        host.set_run_id("run-artifact".to_string());
+        let result = host.execute_tool_call(&ToolCall {
+            id: "call-artifact".to_string(),
+            name: "write_report".to_string(),
+            arguments: json!({"path": "reports/final.md"}),
+        });
+        assert!(result.error.is_none(), "{:?}", result.error);
+        assert!(!staged_path.exists());
+        assert_eq!(
+            fs::read_to_string(workspace.join("reports/final.md")).unwrap(),
+            "authoritative artifact"
+        );
+        let artifacts = authorities
+            .ledger
+            .lock()
+            .unwrap()
+            .reader()
+            .unwrap()
+            .events("run-artifact")
+            .unwrap();
+        assert!(artifacts
+            .iter()
+            .any(|event| event.r#type == "artifact.registered"));
+        assert!(result.output["artifacts"][0]["sha256"]
+            .as_str()
+            .is_some_and(|hash| hash.len() == 64));
     }
 
     #[derive(Default)]

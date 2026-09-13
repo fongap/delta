@@ -32,7 +32,8 @@ pub mod tool_lifecycle;
 pub mod validation;
 
 pub use approval::{
-    ApprovalRecordInput, ApprovalRecordOutput, ApprovalWriter, APPROVAL_SCHEMA_VERSION,
+    ApprovalController, ApprovalDecision, ApprovalRecordInput, ApprovalRecordOutput,
+    ApprovalWriter, APPROVAL_SCHEMA_VERSION,
 };
 pub use artifact::{
     ArtifactInput, ArtifactMismatch, ArtifactReader, ArtifactRecord, ArtifactRegistrationResult,
@@ -82,9 +83,9 @@ pub use validation::{
 };
 
 pub use runtime::{
-    Approver, AssistantTurn, DenyAll, EventSink, NullSink, RuntimeConfig, RuntimeEvent,
-    RuntimeEventEnvelopeV1, RuntimeHandle, RuntimeHost, RuntimeState, StdoutSink, ToolCall,
-    ToolExecutor, ToolResult,
+    AssistantTurn, EventSink, NullSink, RuntimeAuthorities, RuntimeConfig, RuntimeEvent,
+    RuntimeEventEnvelopeV1, RuntimeHandle, RuntimeHost, RuntimeState, StagedArtifact, StdoutSink,
+    ToolCall, ToolExecutor, ToolResult,
 };
 
 pub use thiserror::Error;

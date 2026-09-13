@@ -2423,6 +2423,7 @@ fn handle_runtime_stream(cmd: Command, ctx: StreamCtx) {
                 model_settings: settings.unwrap_or(json!({})),
                 system_prompt,
                 workspace,
+                unattended: false,
             };
             let mut host = RuntimeHost::new(&session_id, config);
             if let Some(t) = tools {

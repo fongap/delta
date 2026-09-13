@@ -10,6 +10,7 @@ import {
   canUseDirectIpc,
   directAddModel,
   directCancel,
+  directApproval,
   directFetchProviderModels,
   directFollowUp,
   directGetProtocols,
@@ -2285,6 +2286,10 @@ export class Session {
   }
 
   approve(decision: string) {
+    if (this.direct) {
+      void directApproval(this.sessionId, decision);
+      return;
+    }
     this.send({ type: "approval", decision });
   }
 
