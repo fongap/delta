@@ -10,11 +10,14 @@ requires-python = ">=3.11"
 dependencies = [
     "openai==3.8.0",
     "anthropic==1.3.0",  # native Claude Messages API provider
+    "textual==8.2.8",
+    "fastapi==0.141.1",
+    "uvicorn[standard]==0.52.4",
     # Pinned to a known aisuite commit; update only as a deliberate dependency change.
-    # R6: aisuite is restricted to controlled Worker/Capability tool helpers only —
-    # it no longer owns the Runtime/Authority (see docs/architecture/).
     "aisuite @ git+https://github.com/andrewyng/aisuite.git@1b4bbf303ec21968230b1ec869a144d054e9b3c4",
     "docstring_parser==0.18.0",
+    "pyyaml==6.0.3",  # persona manifest frontmatter (YAML)
+    "pydantic==2.13.4",
     "mcp==2.1.1",  # MCP client (stdio + streamable-http); 2.x renames streamablehttp_client and moves headers/auth onto a caller-owned httpx2 client
     "httpx==0.28.1",  # sync outbound senders for messaging connectors (send_message tool)
     "websockets==16.1.1",  # WS client (used by integrations/managed Capability Port tests)
@@ -41,9 +44,12 @@ dev = [
 messaging = ["python-telegram-bot==22.8", "slack-bolt==1.30.0", "aiohttp==3.14.3"]
 # Interactive Delta browser automation.
 browser = ["playwright>=1.62.0"]
+# Windows Portable build dependency.
+build = ["pyinstaller==6.22.2"]
 
 [project.scripts]
 delta = "core.cli:main"
+delta-server = "services.server.run:main"
 delta-connectors = "integrations.connectors.cli:main"
 
 [tool.setuptools.packages.find]
