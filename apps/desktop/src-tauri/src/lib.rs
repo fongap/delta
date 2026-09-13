@@ -26,12 +26,7 @@ use tauri::{
 };
 use tauri_plugin_autostart::ManagerExt;
 
-mod proxy;
 mod runtime_ipc;
-
-/// Integration-test hook (`tests/proxy_smoke.rs`): drive the proxy directly without an app.
-#[doc(hidden)]
-pub use proxy::start_proxy as proxy_start_for_tests;
 
 /// The active keep-awake guard while keep-awake is on (None when off). Dropping the guard
 /// releases the hold (kills `caffeinate` on macOS, clears the execution state on Windows).
@@ -266,7 +261,7 @@ fn follow_system_theme(window: tauri::WebviewWindow) -> bool {
 /// Pre-paint native theme (issue #8): the SPA's theme.ts only runs after the webview's JS has
 /// loaded — potentially after the first frame — which left a light Windows title-bar flash for
 /// dark users before setNativeTheme landed. This script runs at document-start (before the HTML
-/// is parsed or painted, via the same initialization_script channel as the sidecar endpoints)
+/// is parsed or painted, via a document-start initialization script)
 /// and mirrors theme.ts's resolution (localStorage pref "delta-theme", legacy "openwork-theme"
 /// read and migrated once, prefers-color-scheme fallback, absent/invalid = auto) so the native
 /// window chrome matches from the very first frame. `window.__TAURI__` is
@@ -612,8 +607,7 @@ async fn install_update(
             .map_err(|e| e.to_string())?,
     }
     // Installer-based Windows builds never reach here because the installer relaunches.
-    // macOS: the .app was swapped in place — restart into the new version. The tray
-    // Exit path's sidecar kill runs via RunEvent, so no orphaned delta-server.
+    // macOS: the .app was swapped in place — restart into the new version.
     app.restart();
 }
 
@@ -626,8 +620,7 @@ pub fn run() {
     tauri::Builder::default()
         // MUST be the first plugin: when a second launch happens (e.g. the user relaunches
         // while the window is closed-to-tray), this fires in the ALREADY-running instance to
-        // surface its healthy window, and the second process exits before it can spawn a
-        // duplicate sidecar — which previously left a window stuck on "Starting delta…".
+        // surface its healthy window, and the second process exits immediately.
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             show_main(app);
         }))
@@ -757,6 +750,7 @@ pub fn run() {
             runtime_ipc::connector_connect,
             runtime_ipc::connector_disconnect,
             runtime_ipc::connector_update_tools,
+            runtime_ipc::connector_action,
             runtime_ipc::session_connections,
             runtime_ipc::session_set_connection,
             runtime_ipc::subscriptions_list,
@@ -790,7 +784,7 @@ pub fn run() {
             // lives in the existing application state directory.
             app.manage(Arc::new(Dictation::new(state_dir().join("models"))));
 
-            // 2. Build the window, injecting the sidecar endpoints before the SPA loads.
+            // 2. Build the window and initialize native platform/theme state.
             //    Overlay title bar (macOS): traffic lights float over the edge-to-edge UI.
             //
             // Initial window = 65% of the primary monitor's work area (screen resolution minus
@@ -840,7 +834,7 @@ pub fn run() {
             }
             let win = builder.build()?;
 
-            // Close-to-tray: hide instead of quitting so the sidecar keeps running.
+            // Close-to-tray: hide instead of quitting so scheduled tasks keep running.
             let w = win.clone();
             win.on_window_event(move |event| {
                 if let WindowEvent::CloseRequested { api, .. } = event {

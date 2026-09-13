@@ -7,6 +7,14 @@ import { Composer } from "./Composer";
 import { I18nProvider } from "@delta/i18n/I18nContext";
 import type { JSX } from "react";
 
+const { sessionSkillsMock } = vi.hoisted(() => ({ sessionSkillsMock: vi.fn() }));
+
+vi.mock("../api", () => ({
+  getSettings: vi.fn(),
+  inspectPdf: vi.fn(),
+  sessionSkills: sessionSkillsMock,
+}));
+
 const MENU = {
   skills: [
     { name: "weekly-report", description: "Monday status report", scope: "global", enabled: true },
@@ -16,16 +24,7 @@ const MENU = {
 };
 
 function stubFetch() {
-  const calls: { url: string; method: string }[] = [];
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async (url: string, init?: RequestInit) => {
-      calls.push({ url, method: (init?.method || "GET").toUpperCase() });
-      if (url.includes("/skills")) return { ok: true, json: async () => MENU } as Response;
-      return { ok: true, json: async () => ({}) } as Response;
-    }),
-  );
-  return calls;
+  sessionSkillsMock.mockResolvedValue(MENU.skills);
 }
 
 const props = (extra: Partial<Parameters<typeof Composer>[0]> = {}) => ({
@@ -49,7 +48,7 @@ const box = () => screen.getByPlaceholderText(/Ask Delta/);
 
 afterEach(() => {
   cleanup();
-  vi.unstubAllGlobals();
+  sessionSkillsMock.mockReset();
 });
 
 describe("Composer / skills popup", () => {

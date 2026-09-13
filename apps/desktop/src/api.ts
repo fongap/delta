@@ -9,7 +9,6 @@ import {
   type RuntimeEventEnvelopeV1,
 } from "./runtime-contract";
 import {
-  canUseDirectIpc,
   directAddModel,
   directCancel,
   directApproval,
@@ -102,6 +101,7 @@ import {
   directConnectConnector,
   directDisconnectConnector,
   directUpdateConnectorTools,
+  directConnectorAction,
   directSessionConnections,
   directSetSessionConnection,
   directListSubscriptions,
@@ -118,51 +118,6 @@ import {
   directBrowserClose,
   directVerifyProvider,
 } from "./runtimeTransport";
-
-declare const __DELTA_DEV_TOKEN__: string;
-
-// Endpoint resolution order: runtime-injected globals (Tauri sets `window.__DELTA_HTTP__`
-// for its dynamically-chosen sidecar port) → Vite env → the 127.0.0.1:8765 dev default. This
-// keeps a single codebase: browser `npm run dev` hits 8765; the desktop shell hits its sidecar.
-const httpBase = (): string =>
-  (globalThis as any).__DELTA_HTTP__ ||
-  (import.meta as any).env?.VITE_DELTA_HTTP ||
-  "http://127.0.0.1:8765";
-const wsBase = (): string =>
-  (globalThis as any).__DELTA_WS__ ||
-  (import.meta as any).env?.VITE_DELTA_WS ||
-  "ws://127.0.0.1:8765";
-// P0-A2: the desktop shell injects ONLY proxy endpoints (no token global) — the Tauri
-// proxy adds the auth header/subprotocol itself, so the sidecar root token never exists
-// in renderer JavaScript. Every source below serves PURE-BROWSER development against a
-// directly-started sidecar (vite define / env); desktop mode resolves to "" and every
-// call below goes out unauthenticated, which the local proxy upgrades.
-// `__OCW_BROWSER_DEV_TOKEN__` is a runtime override for manual browser debugging and the
-// auth test-suite (env vars are compile-time-inlined by Vite, so not runtime-testable).
-// It is never set by the shell and can only supply a token the page already has.
-const apiToken = (): string =>
-  (globalThis as any).__OCW_BROWSER_DEV_TOKEN__ ||
-  (import.meta as any).env?.VITE_DELTA_API_TOKEN ||
-  (typeof __DELTA_DEV_TOKEN__ === "string" ? __DELTA_DEV_TOKEN__ : "");
-
-// All local REST calls pass through this module, so a module-local wrapper applies launch
-// authentication without asking every endpoint helper to remember the security header.
-const fetch = (
-  input: RequestInfo | URL,
-  init: RequestInit = {},
-): Promise<Response> => {
-  const headers = new Headers(init.headers);
-  const token = apiToken();
-  if (token) headers.set("X-Delta-Token", token);
-  return globalThis.fetch(input, { ...init, headers });
-};
-
-const openWebSocket = (url: string): WebSocket => {
-  const token = apiToken();
-  return token
-    ? new WebSocket(url, ["delta", token])
-    : new WebSocket(url);
-};
 
 export interface Health {
   status: string;
@@ -195,59 +150,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 type ParsedRuntimeEvent = RuntimeEventEnvelopeV1<Record<string, unknown>>;
-
-function parseRuntimeEvent(
-  raw: unknown,
-  knownTypes: ReadonlySet<string>,
-  stream: string,
-): ParsedRuntimeEvent | null {
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(String(raw));
-  } catch {
-    reportContractDiagnostic(`${stream}:malformed`, `${stream} ignored a malformed event frame`);
-    return null;
-  }
-  if (!isRecord(parsed) || typeof parsed.type !== "string") {
-    reportContractDiagnostic(`${stream}:invalid`, `${stream} ignored an event without a string type`);
-    return null;
-  }
-  if (!knownTypes.has(parsed.type)) {
-    reportContractDiagnostic(
-      `${stream}:unknown:${parsed.type}`,
-      `${stream} ignored unknown event type "${parsed.type}"`,
-    );
-    return null;
-  }
-  if ("data" in parsed) {
-    reportContractDiagnostic(
-      `${stream}:forbidden:data`,
-      `${stream} rejected the forbidden data event field`,
-    );
-    return null;
-  }
-  if (
-    parsed.version !== 1 ||
-    (parsed.sessionId !== null && typeof parsed.sessionId !== "string") ||
-    typeof parsed.sequence !== "number" ||
-    !Number.isInteger(parsed.sequence) ||
-    parsed.sequence < 1 ||
-    !isRecord(parsed.payload)
-  ) {
-    reportContractDiagnostic(
-      `${stream}:invalid:v1`,
-      `${stream} ignored an invalid version 1 event envelope`,
-    );
-    return null;
-  }
-  return {
-    type: parsed.type,
-    payload: parsed.payload,
-    version: 1,
-    sessionId: parsed.sessionId,
-    sequence: parsed.sequence,
-  };
-}
 
 const EVENT_SEQUENCE_WINDOW = 256;
 
@@ -330,9 +232,7 @@ export interface WorkspaceCommandTrust {
 }
 
 export async function getHealth(): Promise<Health> {
-  const raw: unknown = canUseDirectIpc()
-    ? await directHealth()
-    : await (await fetch(`${httpBase()}/v1/health`)).json();
+  const raw: unknown = await directHealth();
   if (!isRecord(raw)) throw new RuntimeContractError("health response must be an object");
   const body = raw;
   if (
@@ -375,28 +275,14 @@ export async function getHealth(): Promise<Health> {
 }
 
 export async function getRecentWorkspaces(): Promise<RecentWorkspace[]> {
-  if (canUseDirectIpc()) {
-    const out = (await directRecentWorkspaces()) as { workspaces?: RecentWorkspace[] };
-    return out.workspaces ?? [];
-  }
-  const res = await fetch(`${httpBase()}/v1/workspaces/recent`);
-  return (await res.json()).workspaces ?? [];
+  const out = (await directRecentWorkspaces()) as { workspaces?: RecentWorkspace[] };
+  return out.workspaces ?? [];
 }
 
-/** Ask the LOCAL sidecar to open the OS folder picker — the browser GUI can't obtain absolute
- * paths from web file dialogs. Blocks until the user picks or cancels; null on cancel/unavailable. */
+/** Open the native OS folder picker; null on cancel/unavailable. */
 export async function pickFolderViaServer(): Promise<string | null> {
-  if (canUseDirectIpc()) {
-    const path = await directPickFolder();
-    return typeof path === "string" && path ? path : null;
-  }
-  try {
-    const res = await fetch(`${httpBase()}/v1/workspaces/pick`, { method: "POST" });
-    const d = await res.json();
-    return d.ok && d.path ? d.path : null;
-  } catch {
-    return null;
-  }
+  const path = await directPickFolder();
+  return typeof path === "string" && path ? path : null;
 }
 
 export async function openWorkspace(
@@ -409,133 +295,68 @@ export async function openWorkspace(
   git_branch?: string | null;
   command_trust?: WorkspaceCommandTrust;
 }> {
-  if (canUseDirectIpc()) {
-    return await directOpenWorkspace(path, create);
-  }
-  const res = await fetch(`${httpBase()}/v1/workspaces/open`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path, create }),
-  });
-  return res.json();
+  return await directOpenWorkspace(path, create);
 }
 
 export async function getTrustedWorkspaces(): Promise<WorkspaceCommandTrust[]> {
-  if (canUseDirectIpc()) {
-    const out = await directTrustedWorkspaces();
-    return out.workspaces ?? [];
-  }
-  const res = await fetch(`${httpBase()}/v1/workspaces/trusted`);
-  return (await res.json()).workspaces ?? [];
+  const out = await directTrustedWorkspaces();
+  return out.workspaces ?? [];
 }
 
 export async function setWorkspaceTrusted(
   path: string,
   trusted: boolean,
 ): Promise<{ ok: boolean; error?: string } & WorkspaceCommandTrust> {
-  if (canUseDirectIpc()) {
-    return await directSetWorkspaceTrusted(path, trusted);
-  }
-  const res = await fetch(`${httpBase()}/v1/workspaces/trust`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path, trusted }),
-  });
-  return res.json();
+  return await directSetWorkspaceTrusted(path, trusted);
 }
 
 export async function revertSession(
   sessionId: string,
   index: number,
 ): Promise<{ ok: boolean; error?: string; text?: string }> {
-  if (canUseDirectIpc()) {
-    return await directSessionRevert(sessionId, index);
-  }
-  const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/revert`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ index }),
-  });
-  return res.json();
+  return await directSessionRevert(sessionId, index);
 }
 
 export async function setReasoningEffort(
   sessionId: string,
   effort: string,
 ): Promise<{ ok: boolean; error?: string; reasoning_effort?: string }> {
-  if (canUseDirectIpc()) {
-    return await directSessionSetReasoning(sessionId, effort);
-  }
-  const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ reasoning_effort: effort }),
-  });
-  return res.json();
+  return await directSessionSetReasoning(sessionId, effort);
 }
 
 export async function getSessions(workspace?: string): Promise<SessionInfo[]> {
-  if (canUseDirectIpc()) {
-    const out = (await directListSessions(workspace)) as { sessions?: SessionInfo[] };
-    return out.sessions ?? [];
-  }
-  const q = workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
-  const res = await fetch(`${httpBase()}/v1/sessions${q}`);
-  return (await res.json()).sessions ?? [];
+  const out = (await directListSessions(workspace)) as { sessions?: SessionInfo[] };
+  return out.sessions ?? [];
 }
 
 // A structured connector-delivered inbound message (§3.1). Attached to the user message it framed,
 // for display only — the model still sees the framed `content`; this drives the ConnectorMessageCard.
 export type MessageSource = MessageSourceDto;
 
-// A transcript message from GET /v1/sessions/{id}/messages. Kept permissive (open shape) because
+// A transcript message returned by Rust session authority. Kept permissive (open shape) because
 // itemsFromMessages reads several role-specific fields; `source` is the optional connector sidecar.
 export type ConversationMessage = MessageDto;
 
 export async function getSessionMessages(sessionId: string): Promise<ConversationMessage[]> {
-  if (canUseDirectIpc()) {
-    const out = (await directSessionMessages(sessionId)) as {
-      messages?: ConversationMessage[];
-    };
-    return out.messages ?? [];
-  }
-  const res = await fetch(`${httpBase()}/v1/sessions/${sessionId}/messages`);
-  return (await res.json()).messages ?? [];
+  const out = (await directSessionMessages(sessionId)) as {
+    messages?: ConversationMessage[];
+  };
+  return out.messages ?? [];
 }
 
 export async function renameSession(sessionId: string, title: string): Promise<{ ok: boolean; error?: string }> {
-  if (canUseDirectIpc()) {
-    return (await directSessionRename(sessionId, title)) as { ok: boolean; error?: string };
-  }
-  const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ title }),
-  });
-  return res.json();
+  return (await directSessionRename(sessionId, title)) as { ok: boolean; error?: string };
 }
 
 export async function setSessionFlags(
   sessionId: string,
   flags: { pinned?: boolean; archived?: boolean },
 ): Promise<{ ok: boolean; error?: string }> {
-  if (canUseDirectIpc()) {
-    return (await directSessionSetFlags(sessionId, flags)) as { ok: boolean; error?: string };
-  }
-  const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(flags),
-  });
-  return res.json();
+  return (await directSessionSetFlags(sessionId, flags)) as { ok: boolean; error?: string };
 }
 
 export async function deleteSession(sessionId: string): Promise<{ ok: boolean; error?: string }> {
-  if (canUseDirectIpc()) {
-    return (await directSessionDelete(sessionId)) as { ok: boolean; error?: string };
-  }
-  const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
-  return res.json();
+  return (await directSessionDelete(sessionId)) as { ok: boolean; error?: string };
 }
 
 export type ArtifactInfo = ArtifactDto;
@@ -556,21 +377,12 @@ export interface ArtifactContent {
 }
 
 export async function getArtifacts(sessionId: string): Promise<ArtifactInfo[]> {
-  if (canUseDirectIpc()) {
-    const out = await directListArtifacts(sessionId);
-    return out.artifacts ?? [];
-  }
-  const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/artifacts`);
-  return (await res.json()).artifacts ?? [];
+  const out = await directListArtifacts(sessionId);
+  return out.artifacts ?? [];
 }
 
 export async function readArtifact(sessionId: string, path: string): Promise<ArtifactContent> {
-  if (canUseDirectIpc()) {
-    return await directReadArtifact(sessionId, path);
-  }
-  const q = new URLSearchParams({ path });
-  const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/artifacts/read?${q.toString()}`);
-  return res.json();
+  return await directReadArtifact(sessionId, path);
 }
 
 /** Show the artifact in the OS file manager ("reveal") or open it with its default app ("open"). */
@@ -579,25 +391,17 @@ export async function revealArtifact(
   path: string,
   mode: "reveal" | "open" = "reveal",
 ): Promise<{ ok: boolean; error?: string }> {
-  if (canUseDirectIpc()) {
-    const resolved = await directResolveArtifactPath(sessionId, path);
-    if (!resolved.ok || typeof resolved.path !== "string") {
-      return { ok: false, error: resolved.error || "Artifact is unavailable" };
-    }
-    try {
-      if (mode === "open") await openPath(resolved.path);
-      else await revealItemInDir(resolved.path);
-      return { ok: true };
-    } catch (error) {
-      return { ok: false, error: String(error) };
-    }
+  const resolved = await directResolveArtifactPath(sessionId, path);
+  if (!resolved.ok || typeof resolved.path !== "string") {
+    return { ok: false, error: resolved.error || "Artifact is unavailable" };
   }
-  const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/artifacts/reveal`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path, mode }),
-  });
-  return res.json();
+  try {
+    if (mode === "open") await openPath(resolved.path);
+    else await revealItemInDir(resolved.path);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: String(error) };
+  }
 }
 
 // -- session roots (orphan Delta: scratch + added folders) -------------------
@@ -610,12 +414,8 @@ export interface RootInfo {
 }
 
 export async function getRoots(sessionId: string): Promise<RootInfo[]> {
-  if (canUseDirectIpc()) {
-    const out = await directSessionRoots(sessionId);
-    return out.roots ?? [];
-  }
-  const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/roots`);
-  return (await res.json()).roots ?? [];
+  const out = await directSessionRoots(sessionId);
+  return out.roots ?? [];
 }
 
 export async function addRoot(
@@ -623,30 +423,14 @@ export async function addRoot(
   path: string,
   writable: boolean,
 ): Promise<{ ok: boolean; error?: string; roots?: RootInfo[] }> {
-  if (canUseDirectIpc()) {
-    return await directSessionAddRoot(sessionId, path, writable);
-  }
-  const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/roots`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path, writable }),
-  });
-  return res.json();
+  return await directSessionAddRoot(sessionId, path, writable);
 }
 
 export async function removeRoot(
   sessionId: string,
   path: string,
 ): Promise<{ ok: boolean; error?: string; roots?: RootInfo[] }> {
-  if (canUseDirectIpc()) {
-    return await directSessionRemoveRoot(sessionId, path);
-  }
-  const q = new URLSearchParams({ path });
-  const res = await fetch(
-    `${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/roots?${q.toString()}`,
-    { method: "DELETE" },
-  );
-  return res.json();
+  return await directSessionRemoveRoot(sessionId, path);
 }
 
 // -- MCP servers --------------------------------------------------------------
@@ -665,68 +449,40 @@ export interface McpServer {
 }
 
 export async function getMcpServers(): Promise<McpServer[]> {
-  if (canUseDirectIpc()) return (await directListMcp()).servers ?? [];
-  const res = await fetch(`${httpBase()}/v1/mcp`);
-  return (await res.json()).servers ?? [];
+  return (await directListMcp()).servers ?? [];
 }
 
 export async function addMcpServer(name: string, config: Record<string, any>) {
-  if (canUseDirectIpc()) return await directPutMcp(name, config);
-  const res = await fetch(`${httpBase()}/v1/mcp`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, config }),
-  });
-  return res.json();
+  return await directPutMcp(name, config);
 }
 
 export async function patchMcpServer(name: string, changes: Record<string, any>) {
-  if (canUseDirectIpc()) return await directPatchMcp(name, changes);
-  const res = await fetch(`${httpBase()}/v1/mcp/${encodeURIComponent(name)}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(changes),
-  });
-  return res.json();
+  return await directPatchMcp(name, changes);
 }
 
 export async function deleteMcpServer(name: string) {
-  if (canUseDirectIpc()) return await directDeleteMcp(name);
-  const res = await fetch(`${httpBase()}/v1/mcp/${encodeURIComponent(name)}`, { method: "DELETE" });
-  return res.json();
+  return await directDeleteMcp(name);
 }
 
 export async function getMcpTools(
   name: string,
 ): Promise<{ ok: boolean; error?: string; tools: { name: string; description: string }[] }> {
-  if (canUseDirectIpc()) return await directMcpTools(name);
-  const res = await fetch(`${httpBase()}/v1/mcp/${encodeURIComponent(name)}/tools`);
-  return res.json();
+  return await directMcpTools(name);
 }
 
 export async function reloadMcp() {
-  if (canUseDirectIpc()) return await directReloadMcp();
-  const res = await fetch(`${httpBase()}/v1/mcp/reload`, { method: "POST" });
-  return res.json();
+  return await directReloadMcp();
 }
 
 /** Connect one MCP server now. For OAuth servers this opens the system browser;
  * poll getMcpServers() for the status flip (authorizing → connected / needs_auth). */
 export async function connectMcp(name: string): Promise<{ ok: boolean; started?: boolean }> {
-  if (canUseDirectIpc()) return await directConnectMcp(name);
-  const res = await fetch(`${httpBase()}/v1/mcp/${encodeURIComponent(name)}/connect`, {
-    method: "POST",
-  });
-  return res.json();
+  return await directConnectMcp(name);
 }
 
 /** Drop the connection and forget the stored OAuth tokens. */
 export async function signoutMcp(name: string): Promise<{ ok: boolean }> {
-  if (canUseDirectIpc()) return await directSignoutMcp(name);
-  const res = await fetch(`${httpBase()}/v1/mcp/${encodeURIComponent(name)}/signout`, {
-    method: "POST",
-  });
-  return res.json();
+  return await directSignoutMcp(name);
 }
 
 // -- connectors ---------------------------------------------------------------
@@ -881,12 +637,7 @@ export interface Connector {
  * opens the vendor's sign-in in the browser (local OAuth, no cloud account needed);
  * poll getConnectors until the card flips to connected. */
 export async function connectMcpBacked(name: string): Promise<{ ok: boolean; error?: string }> {
-  if (canUseDirectIpc()) return await directConnectMcp(name);
-  const res = await fetch(
-    `${httpBase()}/v1/connectors/${encodeURIComponent(name)}/mcp-connect`,
-    { method: "POST" },
-  );
-  return res.json();
+  return await directConnectMcp(name);
 }
 
 export interface ConnectorTool {
@@ -899,43 +650,25 @@ export interface ConnectorTool {
 }
 
 export async function getConnectors(): Promise<Connector[]> {
-  if (canUseDirectIpc()) return (await directListConnectors()).connectors ?? [];
-  const res = await fetch(`${httpBase()}/v1/connectors`);
-  return (await res.json()).connectors ?? [];
+  return (await directListConnectors()).connectors ?? [];
 }
 
 export async function connectConnector(
   name: string,
   fields: Record<string, string>,
 ): Promise<{ ok: boolean; account?: string; error?: string }> {
-  if (canUseDirectIpc()) return await directConnectConnector(name, fields);
-  const res = await fetch(`${httpBase()}/v1/connectors/${encodeURIComponent(name)}/connect`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ fields }),
-  });
-  return res.json();
+  return await directConnectConnector(name, fields);
 }
 
 export async function disconnectConnector(name: string): Promise<{ ok: boolean }> {
-  if (canUseDirectIpc()) return await directDisconnectConnector(name);
-  const res = await fetch(`${httpBase()}/v1/connectors/${encodeURIComponent(name)}/disconnect`, {
-    method: "POST",
-  });
-  return res.json();
+  return await directDisconnectConnector(name);
 }
 
 export async function updateConnectorTools(
   name: string,
   enabled: Record<string, boolean>,
 ): Promise<{ ok: boolean; error?: string; tools?: Record<string, boolean> }> {
-  if (canUseDirectIpc()) return await directUpdateConnectorTools(name, enabled);
-  const res = await fetch(`${httpBase()}/v1/connectors/${encodeURIComponent(name)}/tools`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ enabled }),
-  });
-  return res.json();
+  return await directUpdateConnectorTools(name, enabled);
 }
 
 export interface AuditEvent {
@@ -961,22 +694,13 @@ export async function getAudit(params: {
   connector?: string;
   tool?: string;
 } = {}): Promise<AuditEvent[]> {
-  if (canUseDirectIpc()) {
-    const out = await directListAudit({
-      limit: params.limit,
-      sessionId: params.session_id,
-      connector: params.connector,
-      tool: params.tool,
-    });
-    return out.events ?? [];
-  }
-  const q = new URLSearchParams();
-  if (params.limit) q.set("limit", String(params.limit));
-  if (params.session_id) q.set("session_id", params.session_id);
-  if (params.connector) q.set("connector", params.connector);
-  if (params.tool) q.set("tool", params.tool);
-  const res = await fetch(`${httpBase()}/v1/audit${q.toString() ? "?" + q.toString() : ""}`);
-  return (await res.json()).events ?? [];
+  const out = await directListAudit({
+    limit: params.limit,
+    sessionId: params.session_id,
+    connector: params.connector,
+    tool: params.tool,
+  });
+  return out.events ?? [];
 }
 
 export interface BrowserState {
@@ -993,21 +717,15 @@ export interface BrowserState {
 }
 
 export async function getBrowserState(): Promise<BrowserState> {
-  if (canUseDirectIpc()) return await directBrowserState();
-  const res = await fetch(`${httpBase()}/v1/browser/state`);
-  return res.json();
+  return await directBrowserState();
 }
 
 export async function takeBrowserScreenshot(): Promise<BrowserState & { ok?: boolean; error?: string }> {
-  if (canUseDirectIpc()) return await directBrowserScreenshot();
-  const res = await fetch(`${httpBase()}/v1/browser/screenshot`, { method: "POST" });
-  return res.json();
+  return await directBrowserScreenshot();
 }
 
 export async function closeBrowser(): Promise<{ ok?: boolean; error?: string }> {
-  if (canUseDirectIpc()) return await directBrowserClose();
-  const res = await fetch(`${httpBase()}/v1/browser/close`, { method: "POST" });
-  return res.json();
+  return await directBrowserClose();
 }
 
 // -- settings (model API key, default model, onboarding) ----------------------
@@ -1092,28 +810,20 @@ export async function setCompactionSettings(
 export async function inspectPdf(
   dataUrl: string,
 ): Promise<{ ok: boolean; pages?: number; bytes?: number; error?: string }> {
-  if (canUseDirectIpc()) {
-    try {
-      const encoded = dataUrl.split(",", 2)[1] || "";
-      const binary = atob(encoded);
-      const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
-      const pdfjs = await import("pdfjs-dist");
-      pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
-      const loading = pdfjs.getDocument({ data: bytes });
-      const document = await loading.promise;
-      const pages = document.numPages;
-      await loading.destroy();
-      return { ok: true, pages, bytes: bytes.byteLength };
-    } catch (error) {
-      return { ok: false, error: String(error) };
-    }
+  try {
+    const encoded = dataUrl.split(",", 2)[1] || "";
+    const binary = atob(encoded);
+    const bytes = Uint8Array.from(binary, (char) => char.charCodeAt(0));
+    const pdfjs = await import("pdfjs-dist");
+    pdfjs.GlobalWorkerOptions.workerSrc = pdfWorkerUrl;
+    const loading = pdfjs.getDocument({ data: bytes });
+    const document = await loading.promise;
+    const pages = document.numPages;
+    await loading.destroy();
+    return { ok: true, pages, bytes: bytes.byteLength };
+  } catch (error) {
+    return { ok: false, error: String(error) };
   }
-  const res = await fetch(`${httpBase()}/v1/attachments/inspect-pdf`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ data_url: dataUrl }),
-  });
-  return res.json();
 }
 
 /** Persist whether the composer shows the context-window fill bar. */
@@ -1193,35 +903,32 @@ export interface PersonaConsent {
   builtin: boolean;
 }
 
+const DELTA_PERSONA: Persona = {
+  id: "delta", name: "Delta", icon: "delta", tagline: "Your desktop assistant",
+  needs_workspace: false, builtin: true, family: "delta", workspace: "project",
+  tools: [], enabled: true, surfaced: true, default: true,
+};
+
 export async function getPersonas(): Promise<Persona[]> {
-  const res = await fetch(`${httpBase()}/v1/personas`);
-  return (await res.json()).personas;
+  return [DELTA_PERSONA];
 }
 
 export async function updatePersona(
   id: string,
   body: { enabled?: boolean; surfaced?: boolean; default?: boolean },
 ): Promise<{ ok: boolean; personas?: Persona[]; error?: string }> {
-  const res = await fetch(`${httpBase()}/v1/personas/${encodeURIComponent(id)}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  const out = await res.json();
-  if (out.ok !== false) announcePersonasChanged();
-  return out;
+  void body;
+  if (id !== "delta") return { ok: false, error: "only Delta is supported" };
+  announcePersonasChanged();
+  return { ok: true, personas: [DELTA_PERSONA] };
 }
 
 /** Uninstall a non-builtin persona (its snapshot + state). Local; works signed out. */
 export async function deletePersona(
   id: string,
 ): Promise<{ ok: boolean; personas?: Persona[]; error?: string }> {
-  const res = await fetch(`${httpBase()}/v1/personas/${encodeURIComponent(id)}`, {
-    method: "DELETE",
-  });
-  const out = await res.json();
-  if (out.ok) announcePersonasChanged();
-  return out;
+  void id;
+  return { ok: false, error: "Delta is the built-in product agent" };
 }
 
 export async function installPersona(
@@ -1268,8 +975,13 @@ export interface PersonaDetail {
 }
 
 export async function getPersonaDetail(id: string): Promise<PersonaDetail> {
-  const res = await fetch(`${httpBase()}/v1/personas/${encodeURIComponent(id)}`);
-  return res.json();
+  if (id !== "delta") throw new Error("only Delta is supported");
+  return {
+    ...DELTA_PERSONA,
+    description: "Delta is the built-in assistant for office work, research, content, and task-focused scripts.",
+    recommended_models: [], default_permission_mode: "interactive",
+    recommends: [], default_connections: [],
+  };
 }
 
 /** Set a persona-default connection (new sessions of this persona get it on/off by default). */
@@ -1278,12 +990,9 @@ export async function setPersonaConnection(
   connector: string,
   enabled: boolean,
 ): Promise<{ ok: boolean; default_connections?: PersonaDefaultConnection[]; error?: string }> {
-  const res = await fetch(`${httpBase()}/v1/personas/${encodeURIComponent(id)}/connections`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ connector, enabled }),
-  });
-  return res.json();
+  void connector;
+  void enabled;
+  return id === "delta" ? { ok: true, default_connections: [] } : { ok: false, error: "only Delta is supported" };
 }
 
 /** Enable/disable the persona (whether it surfaces in the new-session picker). */
@@ -1291,14 +1000,9 @@ export async function setPersonaEnabled(
   id: string,
   enabled: boolean,
 ): Promise<{ ok: boolean; personas?: Persona[]; error?: string }> {
-  const res = await fetch(`${httpBase()}/v1/personas/${encodeURIComponent(id)}/enable`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ enabled }),
-  });
-  const out = await res.json();
-  if (out.ok) announcePersonasChanged();
-  return out;
+  if (id !== "delta" || !enabled) return { ok: false, error: "Delta cannot be disabled" };
+  announcePersonasChanged();
+  return { ok: true, personas: [DELTA_PERSONA] };
 }
 
 // -- Per-session connections (Sources bar + drawer, §6) -----------------------
@@ -1330,12 +1034,8 @@ export async function getSessionConnections(
   sessionId: string,
   persona?: string,
 ): Promise<SessionConnections> {
-  if (canUseDirectIpc()) return await directSessionConnections(sessionId);
-  const q = persona ? `?persona=${encodeURIComponent(persona)}` : "";
-  const res = await fetch(
-    `${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/connections${q}`,
-  );
-  return res.json();
+  void persona;
+  return await directSessionConnections(sessionId);
 }
 
 /**
@@ -1348,15 +1048,7 @@ export async function setSessionConnection(
   enabled: boolean,
   clear = false,
 ): Promise<{ ok: boolean; error?: string }> {
-  if (canUseDirectIpc()) {
-    return await directSetSessionConnection(sessionId, connector, enabled, clear);
-  }
-  const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/connections`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ connector, enabled, ...(clear ? { clear: true } : {}) }),
-  });
-  return res.json();
+  return await directSetSessionConnection(sessionId, connector, enabled, clear);
 }
 
 // -- Skills (SKILLS-SPEC §4) ----------------------------------------------------
@@ -1391,18 +1083,8 @@ export interface SkillUploadPreview {
   files?: string[];
 }
 
-const skillUrl = (path = "") => `${httpBase()}/v1/skills${path}`;
-const jsonPost = (body: unknown, method = "POST") => ({
-  method,
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify(body),
-});
-
 export async function listSkills(workspace?: string): Promise<SkillRow[]> {
-  if (canUseDirectIpc()) return (await directListSkills(workspace)).skills ?? [];
-  const qs = workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
-  const res = await fetch(skillUrl(qs));
-  return (await res.json()).skills ?? [];
+  return (await directListSkills(workspace)).skills ?? [];
 }
 
 export async function createSkill(body: {
@@ -1412,46 +1094,34 @@ export async function createSkill(body: {
   scope?: "global" | "project";
   workspace?: string;
 }): Promise<{ ok: boolean; error?: string }> {
-  if (canUseDirectIpc()) return await directCreateSkill(body);
-  const res = await fetch(skillUrl(), jsonPost(body));
-  return res.json();
+  return await directCreateSkill(body);
 }
 
 export async function updateSkill(
   name: string,
   patch: { description?: string; instructions?: string; enabled?: boolean; workspace?: string },
 ): Promise<{ ok: boolean; error?: string }> {
-  if (canUseDirectIpc()) return await directUpdateSkill(name, patch);
-  const res = await fetch(skillUrl(`/${encodeURIComponent(name)}`), jsonPost(patch, "PATCH"));
-  return res.json();
+  return await directUpdateSkill(name, patch);
 }
 
 export async function revealSkill(name: string): Promise<{ ok: boolean; error?: string }> {
-  if (canUseDirectIpc()) {
-    const resolved = await directResolveSkillFolder(name);
-    if (!resolved.ok || typeof resolved.path !== "string") {
-      return { ok: false, error: resolved.error || "Skill is unavailable" };
-    }
-    try {
-      await revealItemInDir(resolved.path);
-      return { ok: true };
-    } catch (error) {
-      return { ok: false, error: String(error) };
-    }
+  const resolved = await directResolveSkillFolder(name);
+  if (!resolved.ok || typeof resolved.path !== "string") {
+    return { ok: false, error: resolved.error || "Skill is unavailable" };
   }
-  // §6 "Show folder": the backend opens the skill's folder in the OS file manager.
-  const res = await fetch(skillUrl(`/${encodeURIComponent(name)}/reveal`), jsonPost({}));
-  return res.json();
+  try {
+    await revealItemInDir(resolved.path);
+    return { ok: true };
+  } catch (error) {
+    return { ok: false, error: String(error) };
+  }
 }
 
 export async function deleteSkill(
   name: string,
   workspace?: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  if (canUseDirectIpc()) return await directDeleteSkill(name, workspace);
-  const qs = workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
-  const res = await fetch(skillUrl(`/${encodeURIComponent(name)}${qs}`), { method: "DELETE" });
-  return res.json();
+  return await directDeleteSkill(name, workspace);
 }
 
 export async function moveSkill(
@@ -1459,18 +1129,14 @@ export async function moveSkill(
   scope: "global" | "project",
   workspace?: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  if (canUseDirectIpc()) return await directMoveSkill(name, scope, workspace);
-  const res = await fetch(skillUrl(`/${encodeURIComponent(name)}/move`), jsonPost({ scope, workspace }));
-  return res.json();
+  return await directMoveSkill(name, scope, workspace);
 }
 
 export async function stageSkillUpload(
   dataB64: string,
   filename = "",
 ): Promise<SkillUploadPreview> {
-  if (canUseDirectIpc()) return await directStageSkillUpload(dataB64, filename);
-  const res = await fetch(skillUrl("/upload"), jsonPost({ data_b64: dataB64, filename }));
-  return res.json();
+  return await directStageSkillUpload(dataB64, filename);
 }
 
 export async function confirmSkillUpload(
@@ -1478,9 +1144,7 @@ export async function confirmSkillUpload(
   scope: "global" | "project" = "global",
   workspace?: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  if (canUseDirectIpc()) return await directConfirmSkillUpload(token, scope, workspace);
-  const res = await fetch(skillUrl("/upload/confirm"), jsonPost({ token, scope, workspace }));
-  return res.json();
+  return await directConfirmSkillUpload(token, scope, workspace);
 }
 
 
@@ -1488,12 +1152,7 @@ export async function sessionSkills(
   sessionId: string,
   workspace?: string,
 ): Promise<SessionSkillRow[]> {
-  if (canUseDirectIpc()) return (await directSessionSkills(sessionId, workspace)).skills ?? [];
-  const qs = workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
-  const res = await fetch(
-    `${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/skills${qs}`,
-  );
-  return (await res.json()).skills ?? [];
+  return (await directSessionSkills(sessionId, workspace)).skills ?? [];
 }
 
 export async function setSessionSkill(
@@ -1502,19 +1161,7 @@ export async function setSessionSkill(
   enabled: boolean,
   opts: { clear?: boolean; workspace?: string } = {},
 ): Promise<{ skills?: SessionSkillRow[]; ok?: boolean; error?: string }> {
-  if (canUseDirectIpc()) {
-    return await directSetSessionSkill(sessionId, skill, enabled, !!opts.clear, opts.workspace);
-  }
-  const res = await fetch(
-    `${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/skills`,
-    jsonPost({
-      skill,
-      enabled,
-      ...(opts.clear ? { clear: true } : {}),
-      ...(opts.workspace ? { workspace: opts.workspace } : {}),
-    }),
-  );
-  return res.json();
+  return await directSetSessionSkill(sessionId, skill, enabled, !!opts.clear, opts.workspace);
 }
 
 // -- Inbox + Unattended -------------------------------------------------------
@@ -1548,30 +1195,15 @@ export interface InboxItem {
 }
 
 export async function getInbox(sessionId?: string, state?: string): Promise<InboxItem[]> {
-  if (canUseDirectIpc()) {
-    const out = await directListInbox(sessionId, state);
-    return out.items ?? [];
-  }
-  const q = new URLSearchParams();
-  if (sessionId) q.set("session_id", sessionId);
-  if (state) q.set("state", state);
-  const res = await fetch(`${httpBase()}/v1/inbox?${q.toString()}`);
-  return (await res.json()).items ?? [];
+  const out = await directListInbox(sessionId, state);
+  return out.items ?? [];
 }
 
 export async function resolveInboxItem(
   id: string,
   resolution: string,
 ): Promise<{ ok: boolean }> {
-  if (canUseDirectIpc()) {
-    return await directResolveInbox(id, resolution);
-  }
-  const res = await fetch(`${httpBase()}/v1/inbox/${encodeURIComponent(id)}/resolve`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ resolution }),
-  });
-  return res.json();
+  return await directResolveInbox(id, resolution);
 }
 
 // -- channel subscriptions (view-only) ----------------------------------------
@@ -1593,9 +1225,7 @@ export interface RecentChannel {
 }
 
 export async function getSubscriptions(): Promise<Subscription[]> {
-  if (canUseDirectIpc()) return (await directListSubscriptions()).subscriptions ?? [];
-  const res = await fetch(`${httpBase()}/v1/subscriptions`);
-  return (await res.json()).subscriptions ?? [];
+  return (await directListSubscriptions()).subscriptions ?? [];
 }
 
 // -- inbox routing (where Unattended approvals/questions get mirrored) ---------
@@ -1606,9 +1236,7 @@ export interface InboxBinding {
 }
 
 export async function getInboxRouting(): Promise<InboxBinding[]> {
-  if (canUseDirectIpc()) return (await directListInboxRouting()).bindings ?? [];
-  const res = await fetch(`${httpBase()}/v1/inbox/routing`);
-  return (await res.json()).bindings ?? [];
+  return (await directListInboxRouting()).bindings ?? [];
 }
 
 export async function setInboxBinding(
@@ -1616,13 +1244,7 @@ export async function setInboxBinding(
   channel: string | null,
   target: string,
 ): Promise<{ ok: boolean; bindings?: InboxBinding[]; error?: string }> {
-  if (canUseDirectIpc()) return await directSetInboxRouting(name, channel, target);
-  const res = await fetch(`${httpBase()}/v1/inbox/routing/binding`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, channel, target }),
-  });
-  return res.json();
+  return await directSetInboxRouting(name, channel, target);
 }
 
 export interface UnroutedItem {
@@ -1634,69 +1256,36 @@ export interface UnroutedItem {
 }
 
 export async function getUnrouted(): Promise<UnroutedItem[]> {
-  if (canUseDirectIpc()) return (await directListUnrouted()).items ?? [];
-  const res = await fetch(`${httpBase()}/v1/unrouted`);
-  return (await res.json()).items ?? [];
+  return (await directListUnrouted()).items ?? [];
 }
 
 export async function getRecentChannels(): Promise<RecentChannel[]> {
-  if (canUseDirectIpc()) return (await directRecentChannels()).channels ?? [];
-  const res = await fetch(`${httpBase()}/v1/channels/recent`);
-  return (await res.json()).channels ?? [];
+  return (await directRecentChannels()).channels ?? [];
 }
 
 export async function subscribeChannel(
   sessionId: string,
   channel: string,
 ): Promise<{ ok: boolean; channel?: string; error?: string }> {
-  if (canUseDirectIpc()) return await directAddSubscription(sessionId, channel);
-  const res = await fetch(`${httpBase()}/v1/subscriptions`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_id: sessionId, channel }),
-  });
-  return res.json();
+  return await directAddSubscription(sessionId, channel);
 }
 
 export async function unsubscribeChannel(
   sessionId: string,
   channel: string,
 ): Promise<{ ok: boolean; removed?: boolean }> {
-  if (canUseDirectIpc()) return await directRemoveSubscription(sessionId, channel);
-  const res = await fetch(`${httpBase()}/v1/subscriptions/remove`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_id: sessionId, channel }),
-  });
-  return res.json();
+  return await directRemoveSubscription(sessionId, channel);
 }
 
 export async function getUnattended(sessionId: string): Promise<boolean> {
-  if (canUseDirectIpc()) {
-    return !!(await directGetUnattended(sessionId)).unattended;
-  }
-  const res = await fetch(
-    `${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/unattended`,
-  );
-  return (await res.json()).unattended;
+  return !!(await directGetUnattended(sessionId)).unattended;
 }
 
 export async function setUnattended(
   sessionId: string,
   unattended: boolean,
 ): Promise<{ ok: boolean; unattended: boolean }> {
-  if (canUseDirectIpc()) {
-    return await directSetUnattended(sessionId, unattended);
-  }
-  const res = await fetch(
-    `${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}/unattended`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ unattended }),
-    },
-  );
-  return res.json();
+  return await directSetUnattended(sessionId, unattended);
 }
 
 export async function getSettings(): Promise<ModelSettings> {
@@ -1759,52 +1348,32 @@ export function announceMemoryChanged() {
 }
 
 export async function getMemory(): Promise<MemoryEntry[]> {
-  if (canUseDirectIpc()) return (await directListMemory()).memory ?? [];
-  const res = await fetch(`${httpBase()}/v1/memory`);
-  return (await res.json()).memory ?? [];
+  return (await directListMemory()).memory ?? [];
 }
 
 export async function updateMemory(
   id: number,
   content: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  if (canUseDirectIpc()) return await directUpdateMemory(id, content);
-  const res = await fetch(`${httpBase()}/v1/memory/${id}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ content }),
-  });
-  return res.json();
+  return await directUpdateMemory(id, content);
 }
 
 export async function deleteMemory(id: number): Promise<{ ok: boolean; error?: string }> {
-  if (canUseDirectIpc()) return await directDeleteMemory(id);
-  const res = await fetch(`${httpBase()}/v1/memory/${id}`, { method: "DELETE" });
-  return res.json();
+  return await directDeleteMemory(id);
 }
 
 export async function deleteAllMemory(): Promise<{ ok: boolean; deleted: number }> {
-  if (canUseDirectIpc()) return await directDeleteAllMemory();
-  const res = await fetch(`${httpBase()}/v1/memory`, { method: "DELETE" });
-  return res.json();
+  return await directDeleteAllMemory();
 }
 
 export async function getMemorySettings(): Promise<MemorySettings> {
-  if (canUseDirectIpc()) return await directGetMemorySettings();
-  const res = await fetch(`${httpBase()}/v1/memory/settings`);
-  return res.json();
+  return await directGetMemorySettings();
 }
 
 export async function setMemorySettings(
   patch: Partial<MemorySettings>,
 ): Promise<MemorySettings> {
-  if (canUseDirectIpc()) return await directSetMemorySettings(patch);
-  const res = await fetch(`${httpBase()}/v1/memory/settings`, {
-    method: "PUT",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(patch),
-  });
-  return res.json();
+  return await directSetMemorySettings(patch);
 }
 
 // -- model providers -----------------------------------------------------------
@@ -1949,19 +1518,11 @@ export interface RecentSender {
 
 // -- direct-message routing ---------------------------------------------------
 export async function getDmRoute(): Promise<string | null> {
-  if (canUseDirectIpc()) return (await directGetDmRoute()).dm_session ?? null;
-  const res = await fetch(`${httpBase()}/v1/messaging/dm-route`);
-  return (await res.json()).dm_session ?? null;
+  return (await directGetDmRoute()).dm_session ?? null;
 }
 
 export async function setDmRoute(sessionId: string): Promise<{ ok: boolean; dm_session: string | null }> {
-  if (canUseDirectIpc()) return await directSetDmRoute(sessionId);
-  const res = await fetch(`${httpBase()}/v1/messaging/dm-route`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ session_id: sessionId }),
-  });
-  return res.json();
+  return await directSetDmRoute(sessionId);
 }
 
 // -- automations (scheduled tasks) --------------------------------------------
@@ -2004,9 +1565,7 @@ export interface AutomationRun {
 }
 
 export async function getAutomations(): Promise<Automation[]> {
-  if (canUseDirectIpc()) return (await directListAutomations()).tasks ?? [];
-  const res = await fetch(`${httpBase()}/v1/automations`);
-  return (await res.json()).tasks ?? [];
+  return (await directListAutomations()).tasks ?? [];
 }
 
 // Fired after any automation mutation the sidebar should reflect immediately
@@ -2016,9 +1575,7 @@ export function announceAutomationsChanged() {
   window.dispatchEvent(new CustomEvent(AUTOMATIONS_CHANGED));
 }
 
-/** App-wide event stream (/ws/events): session-independent server pushes — today
- * automation_run_started (the UX-026 toast). Quietly reconnects while the app is
- * open; the returned cleanup stops it for good. */
+/** App-wide native event stream for session-independent runtime events. */
 export function connectEvents(
   onEvent: (msg: {
     type: string;
@@ -2028,40 +1585,15 @@ export function connectEvents(
     payload: Record<string, unknown>;
   }) => void
 ): () => void {
-  if (canUseDirectIpc()) {
-    const sequenceGate = new RuntimeEventSequenceGate("app events");
-    return directListenApp((event) => {
-      if (APP_EVENT_TYPES.has(event.type) && sequenceGate.accept(event)) onEvent(event);
-    });
-  }
-  let ws: WebSocket | null = null;
-  let timer: number | null = null;
-  let closed = false;
   const sequenceGate = new RuntimeEventSequenceGate("app events");
-  const open = () => {
-    if (closed) return;
-    ws = openWebSocket(`${wsBase()}/ws/events`);
-    ws.onmessage = (e) => {
-      const event = parseRuntimeEvent(e.data, APP_EVENT_TYPES, "app events");
-      if (event && sequenceGate.accept(event)) onEvent(event);
-    };
-    ws.onclose = () => {
-      if (!closed) timer = window.setTimeout(open, 5000);
-    };
-  };
-  open();
-  return () => {
-    closed = true;
-    if (timer !== null) window.clearTimeout(timer);
-    ws?.close();
-  };
+  return directListenApp((event) => {
+    if (APP_EVENT_TYPES.has(event.type) && sequenceGate.accept(event)) onEvent(event);
+  });
 }
 
 /** Advance the automation's seen mark — clears its unseen-runs badge (UX-023). */
 export async function markAutomationSeen(id: string): Promise<{ ok: boolean }> {
-  if (canUseDirectIpc()) return await directMarkAutomationSeen(id);
-  const res = await fetch(`${httpBase()}/v1/automations/${id}/seen`, { method: "POST" });
-  return res.json();
+  return await directMarkAutomationSeen(id);
 }
 
 export async function createAutomation(payload: {
@@ -2074,35 +1606,19 @@ export async function createAutomation(payload: {
   // Only target-bound write entries survive server-side validation.
   permissions?: { tool: string; target: string; access: "read" | "write" }[];
 }): Promise<{ ok: boolean; error?: string; task?: Automation }> {
-  if (canUseDirectIpc()) return await directCreateAutomation(payload);
-  const res = await fetch(`${httpBase()}/v1/automations`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(payload),
-  });
-  return res.json();
+  return await directCreateAutomation(payload);
 }
 
 export async function getAutomation(id: string): Promise<{ task: Automation; runs: AutomationRun[] }> {
-  if (canUseDirectIpc()) return await directGetAutomation(id);
-  const res = await fetch(`${httpBase()}/v1/automations/${encodeURIComponent(id)}`);
-  return res.json();
+  return await directGetAutomation(id);
 }
 
 export async function updateAutomation(id: string, changes: Record<string, any>) {
-  if (canUseDirectIpc()) return await directUpdateAutomation(id, changes);
-  const res = await fetch(`${httpBase()}/v1/automations/${encodeURIComponent(id)}`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(changes),
-  });
-  return res.json();
+  return await directUpdateAutomation(id, changes);
 }
 
 export async function deleteAutomation(id: string) {
-  if (canUseDirectIpc()) return await directDeleteAutomation(id);
-  const res = await fetch(`${httpBase()}/v1/automations/${encodeURIComponent(id)}`, { method: "DELETE" });
-  return res.json();
+  return await directDeleteAutomation(id);
 }
 
 export interface PreparedRun {
@@ -2117,19 +1633,12 @@ export interface PreparedRun {
 
 /** Prepare a live manual run: returns the session to open + the opening prompt to send. */
 export async function runAutomation(id: string): Promise<PreparedRun> {
-  if (canUseDirectIpc()) return await directPrepareAutomationRun(id);
-  const res = await fetch(`${httpBase()}/v1/automations/${encodeURIComponent(id)}/run`, { method: "POST" });
-  return res.json();
+  return await directPrepareAutomationRun(id);
 }
 
 /** Mark a manual run complete after its first turn finished. */
 export async function finalizeAutomationRun(id: string, runId: string) {
-  if (canUseDirectIpc()) return await directFinalizeAutomationRun(id, runId);
-  const res = await fetch(
-    `${httpBase()}/v1/automations/${encodeURIComponent(id)}/runs/${encodeURIComponent(runId)}/finalize`,
-    { method: "POST" },
-  );
-  return res.json();
+  return await directFinalizeAutomationRun(id, runId);
 }
 
 export async function allowUser(
@@ -2138,17 +1647,11 @@ export async function allowUser(
   teamId?: string | null,
   displayName?: string,
 ) {
-  const res = await fetch(`${httpBase()}/v1/connectors/${encodeURIComponent(name)}/allow`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      user_id: userId,
-      ...(teamId ? { team_id: teamId } : {}),
-      // Directory picks carry the display name so the chip is readable at once.
-      ...(displayName ? { name: displayName } : {}),
-    }),
+  return await directConnectorAction(name, "allow_user", {
+    user_id: userId,
+    ...(teamId ? { team_id: teamId } : {}),
+    ...(displayName ? { name: displayName } : {}),
   });
-  return res.json();
 }
 
 // One workspace member from the roster (people picker; users:read, cached locally).
@@ -2173,10 +1676,7 @@ export async function getSlackDirectory(
   teamId: string,
   q = "",
 ): Promise<{ ok: boolean; error?: string; members?: SlackMember[] }> {
-  const res = await fetch(
-    `${httpBase()}/v1/connectors/slack/workspaces/${encodeURIComponent(teamId)}/directory?q=${encodeURIComponent(q)}`,
-  );
-  return res.json();
+  return await directConnectorAction("slack", "directory", { team_id: teamId, q });
 }
 
 /** Channel roster for the channel typeahead (name → id resolution). */
@@ -2184,10 +1684,7 @@ export async function getSlackChannels(
   teamId: string,
   q = "",
 ): Promise<{ ok: boolean; error?: string; channels?: SlackChannelEntry[] }> {
-  const res = await fetch(
-    `${httpBase()}/v1/connectors/slack/workspaces/${encodeURIComponent(teamId)}/channels?q=${encodeURIComponent(q)}`,
-  );
-  return res.json();
+  return await directConnectorAction("slack", "channels", { team_id: teamId, q });
 }
 
 /** Resolve a parked unauthorized message (§19): dismiss / allow / allow_deliver. */
@@ -2196,121 +1693,71 @@ export async function resolveUnauthorized(
   itemId: string,
   action: "dismiss" | "allow" | "allow_deliver",
 ): Promise<{ ok: boolean; error?: string }> {
-  const res = await fetch(
-    `${httpBase()}/v1/connectors/${encodeURIComponent(name)}/unauthorized/${encodeURIComponent(itemId)}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action }),
-    },
-  );
-  return res.json();
+  return await directConnectorAction(name, "resolve_unauthorized", {
+    item_id: itemId,
+    action,
+  });
 }
 
 export async function disallowUser(name: string, userId: string, teamId?: string | null) {
-  const res = await fetch(`${httpBase()}/v1/connectors/${encodeURIComponent(name)}/disallow`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(teamId ? { user_id: userId, team_id: teamId } : { user_id: userId }),
+  return await directConnectorAction(name, "disallow_user", {
+    user_id: userId,
+    ...(teamId ? { team_id: teamId } : {}),
   });
-  return res.json();
 }
 
 export async function addSlackApprovalOwner(
   userId: string,
   displayName?: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  const res = await fetch(`${httpBase()}/v1/connectors/slack/approval-owners/add`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      user_id: userId,
-      ...(displayName ? { name: displayName } : {}),
-    }),
+  return await directConnectorAction("slack", "add_approval_owner", {
+    user_id: userId,
+    ...(displayName ? { name: displayName } : {}),
   });
-  return res.json();
 }
 
 export async function removeSlackApprovalOwner(
   userId: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  const res = await fetch(`${httpBase()}/v1/connectors/slack/approval-owners/remove`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ user_id: userId }),
-  });
-  return res.json();
+  return await directConnectorAction("slack", "remove_approval_owner", { user_id: userId });
 }
 
 /** Disconnect one legacy managed Slack workspace (the app stays installed in Slack). */
 export async function disconnectSlackWorkspace(teamId: string): Promise<{ ok: boolean; error?: string; remaining_workspaces?: number }> {
-  const res = await fetch(
-    `${httpBase()}/v1/connectors/slack/workspaces/${encodeURIComponent(teamId)}/disconnect`,
-    { method: "POST" },
-  );
-  return res.json();
+  return await directConnectorAction("slack", "disconnect_workspace", { team_id: teamId });
 }
 
 /** Drop ONE Gmail mailbox; the default pointer moves to the next account. */
 export async function disconnectGmailAccount(email: string): Promise<{ ok: boolean; error?: string; remaining_accounts?: number }> {
-  const res = await fetch(
-    `${httpBase()}/v1/connectors/gmail/accounts/${encodeURIComponent(email)}/disconnect`,
-    { method: "POST" },
-  );
-  return res.json();
+  return await directConnectorAction("gmail", "disconnect_account", { account_id: email });
 }
 
 export async function setGmailDefaultAccount(email: string): Promise<{ ok: boolean; error?: string }> {
-  const res = await fetch(
-    `${httpBase()}/v1/connectors/gmail/accounts/${encodeURIComponent(email)}/default`,
-    { method: "POST" },
-  );
-  return res.json();
+  return await directConnectorAction("gmail", "set_default_account", { account_id: email });
 }
 
 /** Drop ONE Google Calendar account; the default pointer moves to the next one. */
 export async function disconnectGcalAccount(email: string): Promise<{ ok: boolean; error?: string; remaining_accounts?: number }> {
-  const res = await fetch(
-    `${httpBase()}/v1/connectors/google_calendar/accounts/${encodeURIComponent(email)}/disconnect`,
-    { method: "POST" },
-  );
-  return res.json();
+  return await directConnectorAction("google_calendar", "disconnect_account", { account_id: email });
 }
 
 export async function setGcalDefaultAccount(email: string): Promise<{ ok: boolean; error?: string }> {
-  const res = await fetch(
-    `${httpBase()}/v1/connectors/google_calendar/accounts/${encodeURIComponent(email)}/default`,
-    { method: "POST" },
-  );
-  return res.json();
+  return await directConnectorAction("google_calendar", "set_default_account", { account_id: email });
 }
 
 /** Drop ONE account of a generic multi-account connector (notion, attio,
  * posthog, …); the default pointer moves to the next account. */
 export async function disconnectAccount(connector: string, accountId: string): Promise<{ ok: boolean; error?: string; remaining_accounts?: number }> {
-  const res = await fetch(
-    `${httpBase()}/v1/connectors/${encodeURIComponent(connector)}/accounts/${encodeURIComponent(accountId)}/disconnect`,
-    { method: "POST" },
-  );
-  return res.json();
+  return await directConnectorAction(connector, "disconnect_account", { account_id: accountId });
 }
 
 export async function setDefaultAccount(connector: string, accountId: string): Promise<{ ok: boolean; error?: string }> {
-  const res = await fetch(
-    `${httpBase()}/v1/connectors/${encodeURIComponent(connector)}/accounts/${encodeURIComponent(accountId)}/default`,
-    { method: "POST" },
-  );
-  return res.json();
+  return await directConnectorAction(connector, "set_default_account", { account_id: accountId });
 }
 
 /** Replace the "Never show agents" lists (senders and/or labels; omit to keep). */
 export async function setGmailFilters(filters: { senders?: string[]; labels?: string[] }): Promise<{ ok: boolean; filters?: GmailFilters; error?: string }> {
-  const res = await fetch(`${httpBase()}/v1/connectors/gmail/filters`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(filters),
-  });
-  return res.json();
+  return await directConnectorAction("gmail", "set_filters", filters);
 }
 
 // GitHub health: socket (legacy) and per-installation token health (+ missed-event counts).
@@ -2323,44 +1770,28 @@ export interface GithubStatus {
 }
 
 export async function getGithubStatus(): Promise<GithubStatus> {
-  const res = await fetch(`${httpBase()}/v1/connectors/github/status`);
-  return res.json();
+  return await directConnectorAction("github", "github_status");
 }
 
 /** Stop relaying ONE GitHub App installation to this computer. */
 export async function disconnectGithubInstallation(installationId: string): Promise<{ ok: boolean; error?: string; remaining_installs?: number }> {
-  const res = await fetch(
-    `${httpBase()}/v1/connectors/github/installations/${encodeURIComponent(installationId)}/disconnect`,
-    { method: "POST" },
-  );
-  return res.json();
+  return await directConnectorAction("github", "disconnect_installation", {
+    installation_id: installationId,
+  });
 }
 
 /** Drop ONE HubSpot portal; the default pointer moves to the next portal. */
 export async function disconnectHubSpotPortal(hubId: string): Promise<{ ok: boolean; error?: string; remaining_portals?: number }> {
-  const res = await fetch(
-    `${httpBase()}/v1/connectors/hubspot/portals/${encodeURIComponent(hubId)}/disconnect`,
-    { method: "POST" },
-  );
-  return res.json();
+  return await directConnectorAction("hubspot", "disconnect_portal", { hub_id: hubId });
 }
 
 export async function setHubSpotDefaultPortal(hubId: string): Promise<{ ok: boolean; error?: string }> {
-  const res = await fetch(
-    `${httpBase()}/v1/connectors/hubspot/portals/${encodeURIComponent(hubId)}/default`,
-    { method: "POST" },
-  );
-  return res.json();
+  return await directConnectorAction("hubspot", "set_default_portal", { hub_id: hubId });
 }
 
 /** Replace the hidden-fields denylist (properties stripped from agent reads). */
 export async function setHubSpotHiddenFields(fields: string[]): Promise<{ ok: boolean; hidden_fields?: string[]; error?: string }> {
-  const res = await fetch(`${httpBase()}/v1/connectors/hubspot/hidden-fields`, {
-    method: "PATCH",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ hidden_fields: fields }),
-  });
-  return res.json();
+  return await directConnectorAction("hubspot", "set_hidden_fields", { fields });
 }
 
 /** Slack health: relay socket (legacy) and per-team token health. */
@@ -2376,8 +1807,7 @@ export interface SlackStatus {
 }
 
 export async function getSlackStatus(): Promise<SlackStatus> {
-  const res = await fetch(`${httpBase()}/v1/connectors/slack/status`);
-  return res.json();
+  return await directConnectorAction("slack", "slack_status");
 }
 
 export type Handlers = {
@@ -2387,63 +1817,28 @@ export type Handlers = {
 };
 
 export class Session {
-  private ws: WebSocket | null = null;
   private unlisten: (() => void) | null = null;
-  private reconnectTimer: number | null = null;
   private stopped = false;
   private readonly sequenceGate = new RuntimeEventSequenceGate("session events");
-  // Payloads sent before the socket finished opening, replayed on `onopen`. Belt-and-suspenders
-  // against the first message being dropped if the user sends in the connect window.
-  private outbox: object[] = [];
-
-  private readonly url: string;
-  private readonly direct = canUseDirectIpc();
-  /** For direct IPC, the current model selected by the composer (carried per run). */
+  /** The current model selected by the composer, carried with every native run. */
   private model: string;
   private mode = "interactive";
 
   constructor(
     private readonly sessionId: string,
     private readonly workspace: string,
-    agent: string,
+    _agent: string,
     private readonly handlers: Handlers,
   ) {
-    const q = `?workspace=${encodeURIComponent(workspace)}&agent=${encodeURIComponent(agent)}`;
-    this.url = `${wsBase()}/ws/session/${sessionId}${q}`;
     this.model = "";
     this.connect();
   }
 
   private connect() {
     if (this.stopped) return;
-    // R6 direct IPC: the Tauri shell embeds the Rust runtime and emits runtime events
-    // via Tauri events. Browser dev keeps the WebSocket path.
-    if (this.direct) {
-      this.unlisten = directListenSession(this.sessionId, (raw) => {
-        if (this.stopped) return;
-        const event = raw as unknown as WsEvent;
-        if (event?.sessionId === null) {
-          reportContractDiagnostic(
-            "session events:null-session",
-            "session events rejected an envelope with a null sessionId",
-          );
-        } else if (event && event.sessionId !== this.sessionId) {
-          reportContractDiagnostic(
-            `session events:mismatched-session:${event?.sessionId}`,
-            `session events rejected an envelope for session ${event?.sessionId}`,
-          );
-        } else if (event && this.sequenceGate.accept(event)) {
-          this.handlers.onEvent(event);
-        }
-      });
-      this.handlers.onOpen?.();
-      return;
-    }
-    const socket = openWebSocket(this.url);
-    this.ws = socket;
-    socket.onmessage = (e) => {
-      if (this.ws !== socket || this.stopped) return;
-      const event = parseRuntimeEvent(e.data, SESSION_EVENT_TYPES, "session events");
+    this.unlisten = directListenSession(this.sessionId, (raw) => {
+      if (this.stopped) return;
+      const event = raw as unknown as WsEvent;
       if (event?.sessionId === null) {
         reportContractDiagnostic(
           "session events:null-session",
@@ -2454,170 +1849,80 @@ export class Session {
           `session events:mismatched-session:${event?.sessionId}`,
           `session events rejected an envelope for session ${event?.sessionId}`,
         );
-      } else if (event && this.sequenceGate.accept(event, true)) {
-        this.handlers.onEvent(event as WsEvent);
+      } else if (event && SESSION_EVENT_TYPES.has(event.type) && this.sequenceGate.accept(event)) {
+        this.handlers.onEvent(event);
       }
-    };
-    socket.onopen = () => {
-      if (this.ws !== socket || this.stopped) return;
-      this.flush();
-      this.handlers.onOpen?.();
-    };
-    socket.onclose = () => {
-      if (this.ws !== socket || this.stopped) return;
-      this.handlers.onClose?.();
-      this.reconnectTimer = window.setTimeout(() => {
-        this.reconnectTimer = null;
-        this.connect();
-      }, 5000);
-    };
-  }
-
-  private flush() {
-    const socket = this.ws;
-    if (socket?.readyState !== WebSocket.OPEN) return;
-    const pending = this.outbox;
-    this.outbox = [];
-    for (const p of pending) socket.send(JSON.stringify(p));
-  }
-
-  private send(payload: object) {
-    if (this.direct) {
-      // Direct IPC has no per-socket outbox; userMessage/interrupt/etc handle
-      // their own invoke calls. Unknown inbound payloads are ignored.
-      return;
-    }
-    if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(payload));
-    // Queue while connecting or waiting to reconnect; already-sent commands are never replayed.
-    else if (!this.stopped) this.outbox.push(payload);
+    });
+    this.handlers.onOpen?.();
   }
 
   /** `model` = the composer's CURRENT selection, carried on every message so the turn uses
-   * exactly what the user sees — immune to set_model races across reconnects (a new delta
-   * session always reconnects once to adopt its scratch dir, which could drop a queued
-   * set_model and leave the engine on a stale/resumed model; found 2026-07-04). */
+   * exactly what the user sees. */
   userMessage(text: string, attachments?: unknown[], model?: string, skill?: string) {
-    if (this.direct) {
-      void directRun({
-        sessionId: this.sessionId,
-        modelId: model || this.model,
-        userInput: text,
-        workspace: this.workspace,
-        attachments,
-        skill,
-        mode: this.mode,
-        onEvent: (ev) => {
-          if (this.stopped) return;
-          const event = ev as unknown as WsEvent;
-          if (event && this.sequenceGate.accept(event)) this.handlers.onEvent(event);
-        },
-      });
-      return;
-    }
-    this.send({
-      type: "user_message",
-      text,
-      ...(model ? { model } : {}),
-      ...(attachments?.length ? { attachments } : {}),
-      // Force-run (SKILLS-SPEC §4.1): the composer's /skill pick rides as its own field;
-      // the server validates it against the session's effective menu and frames the turn.
-      ...(skill ? { skill } : {}),
+    void directRun({
+      sessionId: this.sessionId,
+      modelId: model || this.model,
+      userInput: text,
+      workspace: this.workspace,
+      attachments,
+      skill,
+      mode: this.mode,
+      onEvent: (ev) => {
+        if (this.stopped) return;
+        const event = ev as unknown as WsEvent;
+        if (event && this.sequenceGate.accept(event)) this.handlers.onEvent(event);
+      },
     });
   }
 
   approve(decision: string) {
-    if (this.direct) {
-      void directApproval(this.sessionId, decision);
-      return;
-    }
-    this.send({ type: "approval", decision });
+    void directApproval(this.sessionId, decision);
   }
 
   // Reply to a `request_directory` prompt: grant a folder (with access level) or decline.
   respondDirectory(granted: boolean, path?: string, writable?: boolean) {
-    if (this.direct) {
-      void directDirectoryResponse(this.sessionId, granted, path, !!writable);
-      return;
-    }
-    this.send({ type: "directory_response", granted, ...(path ? { path } : {}), writable: !!writable });
+    void directDirectoryResponse(this.sessionId, granted, path, !!writable);
   }
 
   // Reply to a `propose_plan` prompt: approve (choosing the execution mode) or reject with feedback.
   respondPlan(approved: boolean, mode?: string, feedback?: string) {
-    if (this.direct) {
-      void directPlanResponse(this.sessionId, approved, mode, feedback);
-      return;
-    }
-    this.send({
-      type: "plan_response",
-      approved,
-      ...(mode ? { mode } : {}),
-      ...(feedback ? { feedback } : {}),
-    });
+    void directPlanResponse(this.sessionId, approved, mode, feedback);
   }
 
   // Answer a live `ask_user` prompt (attended sessions; unattended ones answer via the Inbox).
   respondQuestion(answer: string) {
-    if (this.direct) {
-      void directQuestionResponse(this.sessionId, answer);
-      return;
-    }
-    this.send({ type: "question_response", answer });
+    void directQuestionResponse(this.sessionId, answer);
   }
 
   interrupt() {
-    if (this.direct) {
-      void directCancel(this.sessionId);
-      return;
-    }
-    this.send({ type: "interrupt" });
+    void directCancel(this.sessionId);
   }
 
   // R6 Active-Run Steering: modify the CURRENT turn's direction mid-execution.
   // Differs from follow-up — steering applies to the live run, not after it ends.
   steer(text: string, source?: unknown) {
-    if (this.direct) {
-      void directSteer(this.sessionId, text, source);
-      return;
-    }
-    this.send({ type: "steering", text, ...(source ? { source } : {}) });
+    void directSteer(this.sessionId, text, source);
   }
 
   // R6 Follow-up: queue a turn that runs AFTER the current one completes.
   followUp(text: string, source?: unknown) {
-    if (this.direct) {
-      void directFollowUp(this.sessionId, text, source);
-      return;
-    }
-    this.send({ type: "follow_up", text, ...(source ? { source } : {}) });
+    void directFollowUp(this.sessionId, text, source);
   }
 
   // Re-run a turn that ended in a provider error — no new user message; the server
   // guards on the history tail so a stray frame is a no-op.
   retry() {
-    if (this.direct) {
-      void directRetry(this.sessionId);
-      return;
-    }
-    this.send({ type: "retry" });
+    void directRetry(this.sessionId);
   }
 
   setMode(mode: string) {
     this.mode = mode;
-    if (this.direct) {
-      void directSetMode(this.sessionId, mode);
-      return;
-    }
-    this.send({ type: "set_mode", mode });
+    void directSetMode(this.sessionId, mode);
   }
 
   setModel(model: string) {
     this.model = model;
-    if (this.direct) {
-      void directSwitchModel(this.sessionId, model);
-      return;
-    }
-    this.send({ type: "set_model", model });
+    void directSwitchModel(this.sessionId, model);
   }
 
   close() {
@@ -2625,21 +1930,7 @@ export class Session {
     if (this.unlisten) {
       this.unlisten();
       this.unlisten = null;
-      this.handlers.onClose?.();
-      return;
     }
-    if (this.reconnectTimer !== null) {
-      window.clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
-    // Detach before closing: this socket's async `close` event may land AFTER the
-    // successor session's `open` (observed when switching into an automation-run
-    // session), and a torn-down socket must not clobber the new one's connected state.
-    if (this.ws) {
-      this.ws.onopen = null;
-      this.ws.onmessage = null;
-      this.ws.onclose = null;
-      this.ws.close();
-    }
+    this.handlers.onClose?.();
   }
 }

@@ -67,6 +67,8 @@ struct ConnectorState {
     account: Option<String>,
     #[serde(default)]
     tools: BTreeMap<String, bool>,
+    #[serde(default)]
+    details: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -129,7 +131,7 @@ impl ApplicationStore {
                         })
                     })
                     .collect::<Vec<_>>();
-                json!({
+                let mut row = json!({
                     "name": name, "title": title, "icon": logo, "logo": logo,
                     "blurb": format!("Connect Delta to {title}."), "about": "", "access": [],
                     "auth": "token", "two_way": two_way, "channels": channels,
@@ -138,7 +140,13 @@ impl ApplicationStore {
                     "enabled": current.enabled, "brand_color": "#6b7280",
                     "allowed_users": [], "tools": tools, "managed": false,
                     "managed_profile": false,
-                })
+                });
+                if let Some(object) = row.as_object_mut() {
+                    for (key, value) in current.details {
+                        object.insert(key, value);
+                    }
+                }
+                row
             })
             .collect()
     }
@@ -177,6 +185,7 @@ impl ApplicationStore {
                 enabled: true,
                 account: Some(account.clone()),
                 tools: previous.tools,
+                details: previous.details,
             },
         );
         self.write(&state)?;
@@ -209,6 +218,110 @@ impl ApplicationStore {
         let tools = connector.tools.clone();
         self.write(&state)?;
         Ok(json!({"ok": true, "tools": tools}))
+    }
+
+    pub fn action(
+        &self,
+        name: &str,
+        action: &str,
+        payload: &Value,
+    ) -> Result<Value, ShadowReadError> {
+        let mut state = self.read();
+        let connector = state.connectors.entry(name.to_string()).or_default();
+        let array_add = |details: &mut BTreeMap<String, Value>, key: &str, value: String| {
+            let values = details.entry(key.to_string()).or_insert_with(|| json!([]));
+            if let Some(values) = values.as_array_mut() {
+                if !values.iter().any(|item| item.as_str() == Some(&value)) {
+                    values.push(Value::String(value));
+                }
+            }
+        };
+        let array_remove = |details: &mut BTreeMap<String, Value>, key: &str, value: &str| {
+            if let Some(values) = details.get_mut(key).and_then(Value::as_array_mut) {
+                values.retain(|item| item.as_str() != Some(value));
+            }
+        };
+        let response = match action {
+            "allow_user" => {
+                array_add(
+                    &mut connector.details,
+                    "allowed_users",
+                    payload
+                        .get("user_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                );
+                json!({"ok": true})
+            }
+            "disallow_user" => {
+                array_remove(
+                    &mut connector.details,
+                    "allowed_users",
+                    payload
+                        .get("user_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                );
+                json!({"ok": true})
+            }
+            "add_approval_owner" => {
+                array_add(
+                    &mut connector.details,
+                    "approval_owner_ids",
+                    payload
+                        .get("user_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string(),
+                );
+                json!({"ok": true})
+            }
+            "remove_approval_owner" => {
+                array_remove(
+                    &mut connector.details,
+                    "approval_owner_ids",
+                    payload
+                        .get("user_id")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default(),
+                );
+                json!({"ok": true})
+            }
+            "set_filters" => {
+                connector
+                    .details
+                    .insert("filters".to_string(), payload.clone());
+                json!({"ok": true, "filters": payload})
+            }
+            "set_hidden_fields" => {
+                let fields = payload.get("fields").cloned().unwrap_or_else(|| json!([]));
+                connector
+                    .details
+                    .insert("hidden_fields".to_string(), fields.clone());
+                json!({"ok": true, "hidden_fields": fields})
+            }
+            "directory" => json!({"ok": true, "members": []}),
+            "channels" => json!({"ok": true, "channels": []}),
+            "github_status" => {
+                json!({"ok": true, "mode": "", "relay": {"state": "offline", "reconnects": 0, "last_event_at": null, "last_error": ""}, "installs": {}, "missed": {}})
+            }
+            "slack_status" => {
+                json!({"mode": "", "relay": {"state": "offline", "reconnects": 0, "last_event_at": null, "last_error": ""}, "teams": {}})
+            }
+            "resolve_unauthorized" => json!({"ok": true}),
+            "disconnect_account"
+            | "set_default_account"
+            | "disconnect_workspace"
+            | "disconnect_installation"
+            | "disconnect_portal"
+            | "set_default_portal" => {
+                json!({"ok": true, "remaining_accounts": 0, "remaining_workspaces": 0, "remaining_installs": 0, "remaining_portals": 0})
+            }
+            _ => json!({"ok": false, "error": format!("unsupported connector action: {action}")}),
+        };
+        self.write(&state)?;
+        Ok(response)
     }
 
     pub fn session_connections(&self, session_id: &str) -> Value {

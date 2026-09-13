@@ -2,7 +2,7 @@
 //!
 //! Replaces the Python sidecar + localhost proxy with direct Tauri
 //! commands. The React frontend calls `invoke("runtime_run", {...})`
-//! instead of `fetch("http://127.0.0.1:PORT/v1/sessions/.../ws")`.
+//! instead of routing through a localhost service.
 //!
 //! Runtime events (turn_start, assistant_delta, tool_finished, etc.)
 //! are emitted via `app.emit("delta-runtime-event", frame)` so the
@@ -1286,6 +1286,16 @@ pub fn connector_update_tools(
     enabled: BTreeMap<String, bool>,
 ) -> Value {
     authority_result(state.application.update_tools(&name, &enabled))
+}
+
+#[tauri::command]
+pub fn connector_action(
+    state: State<'_, RuntimeRegistry>,
+    name: String,
+    action: String,
+    payload: Value,
+) -> Value {
+    authority_result(state.application.action(&name, &action, &payload))
 }
 
 #[tauri::command]

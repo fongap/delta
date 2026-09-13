@@ -1,22 +1,12 @@
-// R6 direct IPC bridge: React -> Tauri invoke/listen -> Rust Runtime.
-//
-// This is the desktop transport. In the browser it is inert (isTauri() === false),
-// and api.ts falls back to the HTTP/WebSocket path. In the Tauri shell it replaces
-// the localhost FastAPI + proxy entirely: commands via `invoke`, runtime events
-// via `listen("delta-runtime-event")`.
-//
-// The event payloads match the existing RuntimeEventEnvelopeV1 contract so the
-// frontend's `parseRuntimeEvent` / sequence gate work unchanged.
+// R6 native bridge: React -> Tauri invoke/listen -> Rust Runtime.
+// Commands use `invoke`; runtime events use `listen("delta-runtime-event")`.
 
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import type { RuntimeEventEnvelopeV1 } from "./runtime-contract";
-import { isTauri } from "./tauri";
 
 /** The Tauri event name carrying runtime event frames. */
 const RUNTIME_EVENT_CHANNEL = "delta-runtime-event";
-
-export const canUseDirectIpc = (): boolean => isTauri();
 
 export interface DirectRuntimeAcceptance {
   ok: boolean;
@@ -515,6 +505,8 @@ export const directDisconnectConnector = (name: string) =>
   invokeAuthority("connector_disconnect", { name });
 export const directUpdateConnectorTools = (name: string, enabled: Record<string, boolean>) =>
   invokeAuthority("connector_update_tools", { name, enabled });
+export const directConnectorAction = (name: string, action: string, payload: unknown = {}) =>
+  invokeAuthority("connector_action", { name, action, payload });
 export const directSessionConnections = (sessionId: string) =>
   invokeAuthority("session_connections", { sessionId });
 export const directSetSessionConnection = (
