@@ -11,8 +11,14 @@ import {
   directCancel,
   directFollowUp,
   directListenSession,
+  directListSessions,
+  directRecentWorkspaces,
   directRetry,
   directRun,
+  directSessionDelete,
+  directSessionMessages,
+  directSessionRename,
+  directSessionSetFlags,
   directSteer,
   directSwitchModel,
 } from "./runtimeTransport";
@@ -272,6 +278,10 @@ export async function getHealth(): Promise<Health> {
 }
 
 export async function getRecentWorkspaces(): Promise<RecentWorkspace[]> {
+  if (canUseDirectIpc()) {
+    const out = (await directRecentWorkspaces()) as { workspaces?: RecentWorkspace[] };
+    return out.workspaces ?? [];
+  }
   const res = await fetch(`${httpBase()}/v1/workspaces/recent`);
   return (await res.json()).workspaces ?? [];
 }
@@ -348,6 +358,10 @@ export async function setReasoningEffort(
 }
 
 export async function getSessions(workspace?: string): Promise<SessionInfo[]> {
+  if (canUseDirectIpc()) {
+    const out = (await directListSessions(workspace)) as { sessions?: SessionInfo[] };
+    return out.sessions ?? [];
+  }
   const q = workspace ? `?workspace=${encodeURIComponent(workspace)}` : "";
   const res = await fetch(`${httpBase()}/v1/sessions${q}`);
   return (await res.json()).sessions ?? [];
@@ -362,11 +376,20 @@ export type MessageSource = MessageSourceDto;
 export type ConversationMessage = MessageDto;
 
 export async function getSessionMessages(sessionId: string): Promise<ConversationMessage[]> {
+  if (canUseDirectIpc()) {
+    const out = (await directSessionMessages(sessionId)) as {
+      messages?: ConversationMessage[];
+    };
+    return out.messages ?? [];
+  }
   const res = await fetch(`${httpBase()}/v1/sessions/${sessionId}/messages`);
   return (await res.json()).messages ?? [];
 }
 
 export async function renameSession(sessionId: string, title: string): Promise<{ ok: boolean; error?: string }> {
+  if (canUseDirectIpc()) {
+    return (await directSessionRename(sessionId, title)) as { ok: boolean; error?: string };
+  }
   const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -379,6 +402,9 @@ export async function setSessionFlags(
   sessionId: string,
   flags: { pinned?: boolean; archived?: boolean },
 ): Promise<{ ok: boolean; error?: string }> {
+  if (canUseDirectIpc()) {
+    return (await directSessionSetFlags(sessionId, flags)) as { ok: boolean; error?: string };
+  }
   const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}`, {
     method: "PATCH",
     headers: { "Content-Type": "application/json" },
@@ -388,6 +414,9 @@ export async function setSessionFlags(
 }
 
 export async function deleteSession(sessionId: string): Promise<{ ok: boolean; error?: string }> {
+  if (canUseDirectIpc()) {
+    return (await directSessionDelete(sessionId)) as { ok: boolean; error?: string };
+  }
   const res = await fetch(`${httpBase()}/v1/sessions/${encodeURIComponent(sessionId)}`, { method: "DELETE" });
   return res.json();
 }

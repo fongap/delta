@@ -253,3 +253,81 @@ pub fn runtime_truncate(
 fn uuid_v4() -> String {
     uuid::Uuid::new_v4().to_string()
 }
+
+// ---------------------------------------------------------------------------
+// R6 Application Control Plane — Session/Workspace commands.
+// Read/write the persisted Delta state (core.db + conversations/*.jsonl) via
+// delta_runtime_native::control_plane. Replaces the removed Python server.
+// ---------------------------------------------------------------------------
+
+/// Resolve the application state dir (mirrors the Tauri shell's `state_dir`).
+fn state_dir() -> std::path::PathBuf {
+    if let Ok(d) = std::env::var("DELTA_STATE_DIR") {
+        return std::path::PathBuf::from(d);
+    }
+    #[cfg(windows)]
+    {
+        if let Ok(appdata) = std::env::var("APPDATA") {
+            return std::path::PathBuf::from(appdata).join("delta");
+        }
+    }
+    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
+    std::path::PathBuf::from(home).join(".config").join("delta")
+}
+
+#[tauri::command]
+pub fn sessions_list(workspace: Option<String>) -> Value {
+    match delta_runtime_native::control_plane::list_sessions(&state_dir(), workspace.as_deref()) {
+        Ok(v) => v,
+        Err(e) => json!({"sessions": [], "error": e.to_string()}),
+    }
+}
+
+#[tauri::command]
+pub fn session_messages(session_id: String) -> Value {
+    match delta_runtime_native::control_plane::get_session_messages(&state_dir(), &session_id) {
+        Ok(v) => v,
+        Err(e) => json!({"messages": [], "error": e.to_string()}),
+    }
+}
+
+#[tauri::command]
+pub fn session_rename(session_id: String, title: String) -> Value {
+    match delta_runtime_native::control_plane::rename_session(&state_dir(), &session_id, &title) {
+        Ok(v) => v,
+        Err(e) => json!({"ok": false, "error": e.to_string()}),
+    }
+}
+
+#[tauri::command]
+pub fn session_set_flags(
+    session_id: String,
+    pinned: Option<bool>,
+    archived: Option<bool>,
+) -> Value {
+    match delta_runtime_native::control_plane::set_session_flags(
+        &state_dir(),
+        &session_id,
+        pinned,
+        archived,
+    ) {
+        Ok(v) => v,
+        Err(e) => json!({"ok": false, "error": e.to_string()}),
+    }
+}
+
+#[tauri::command]
+pub fn session_delete(session_id: String) -> Value {
+    match delta_runtime_native::control_plane::delete_session(&state_dir(), &session_id) {
+        Ok(v) => v,
+        Err(e) => json!({"ok": false, "error": e.to_string()}),
+    }
+}
+
+#[tauri::command]
+pub fn workspaces_recent() -> Value {
+    match delta_runtime_native::control_plane::list_recent_workspaces(&state_dir()) {
+        Ok(v) => v,
+        Err(e) => json!({"workspaces": [], "error": e.to_string()}),
+    }
+}

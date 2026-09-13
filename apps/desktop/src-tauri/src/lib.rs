@@ -670,7 +670,13 @@ pub fn run() {
             runtime_ipc::runtime_cancel,
             runtime_ipc::runtime_messages,
             runtime_ipc::runtime_switch_model,
-            runtime_ipc::runtime_truncate
+            runtime_ipc::runtime_truncate,
+            runtime_ipc::sessions_list,
+            runtime_ipc::session_messages,
+            runtime_ipc::session_rename,
+            runtime_ipc::session_set_flags,
+            runtime_ipc::session_delete,
+            runtime_ipc::workspaces_recent
         ])
         .setup(move |app| {
             // R6: the Rust Runtime is embedded — no Python sidecar to spawn.
