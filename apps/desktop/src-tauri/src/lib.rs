@@ -1,21 +1,17 @@
 //! Delta desktop shell.
 //!
-//! Tauri is a thin native window over the existing React SPA. It:
-//!   1. picks a free localhost port and starts the Python `delta-server` as a managed
-//!      sidecar on that port (so it never clashes with a hand-run server on 8765);
-//!   2. injects the sidecar HTTP/WS addresses via a localhost auth-injecting reverse proxy
-//!      (`proxy.rs`) before the SPA loads — the launch token stays in Rust and is never
-//!      exposed to the WebView (single codebase — the browser build still hits 8765);
-//!   3. lives in the system tray: closing the window hides it (keeps MyHelper + the scheduler
-//!      running); only tray → Quit stops the sidecar;
-//!   4. exposes native commands: folder picker, autostart (open-at-login), and keep-awake
-//!      (caffeinate, so scheduled tasks fire while the Mac is idle).
+//! Tauri is a thin native window over the React SPA. R6 onward it embeds the
+//! Rust Runtime (`delta-runtime-native`) in-process — there is no Python
+//! sidecar. The SPA talks to the runtime via Tauri IPC (`runtime_ipc.rs`):
+//! pass / stealth via `runtime_run`/`runtime_steer`/`runtime_cancel`, events
+//! via `listen("delta-runtime-event")`. No localhost HTTP/WebSocket hop.
 //!
-//! The sidecar inherits this process's environment, so a shell-launched `npm run tauri dev`
-//! passes `OPENAI_API_KEY` through. A Finder-launched app has no shell env — there the key
-//! comes from the SecretStore (Settings tab), see `providers.resolve_api_key`.
+//! The shell also lives in the system tray and exposes native commands:
+//! folder picker, autostart (open-at-login), keep-awake, dictation, and
+//! auto-update.
 
 use std::path::PathBuf;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 use std::process::Command;
 #[cfg(target_os = "windows")]
 use std::sync::atomic::{AtomicBool, Ordering};
