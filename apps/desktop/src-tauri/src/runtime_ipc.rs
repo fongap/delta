@@ -16,7 +16,8 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, State};
 
 use delta_runtime_native::{
-    EventSink, ModelAuthority, RuntimeAuthorities, RuntimeConfig, RuntimeHandle, RuntimeHost,
+    CapabilityHost, EventSink, ModelAuthority, RuntimeAuthorities, RuntimeConfig, RuntimeHandle,
+    RuntimeHost,
 };
 
 struct TauriEventSink {
@@ -33,6 +34,7 @@ pub struct RuntimeRegistry {
     hosts: Mutex<HashMap<String, Arc<RuntimeHandle>>>,
     models: Mutex<ModelAuthority>,
     authorities: RuntimeAuthorities,
+    capabilities: Arc<CapabilityHost>,
 }
 
 impl RuntimeRegistry {
@@ -42,6 +44,9 @@ impl RuntimeRegistry {
             models: Mutex::new(ModelAuthority::new(state_dir())),
             authorities: RuntimeAuthorities::open(state_dir())
                 .expect("initialize Rust runtime authorities"),
+            capabilities: Arc::new(
+                CapabilityHost::product_defaults().expect("initialize Rust capability host"),
+            ),
         }
     }
 }
@@ -69,7 +74,6 @@ pub fn runtime_run(
     session_id: String,
     model_id: String,
     user_input: String,
-    tools: Option<Value>,
     system_prompt: Option<String>,
     workspace: Option<String>,
     messages: Option<Value>,
@@ -109,10 +113,9 @@ pub fn runtime_run(
         let sink = Arc::new(TauriEventSink { app: app.clone() });
         let mut host = RuntimeHost::new(&session_id, config)
             .with_authorities(state.authorities.clone())
+            .with_tools(state.capabilities.tool_schemas())
+            .with_tool_executor(state.capabilities.clone())
             .with_event_sink(sink);
-        if let Some(tools) = tools {
-            host = host.with_tools(tools);
-        }
         if let Some(messages) = messages.and_then(|value| value.as_array().cloned()) {
             host = host.with_messages(messages);
         }

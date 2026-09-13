@@ -29,6 +29,7 @@ use sha2::{Digest, Sha256};
 
 use crate::approval::{ApprovalController, ApprovalDecision, ApprovalRecordInput, ApprovalWriter};
 use crate::artifact::{ArtifactInput, ArtifactRegistryWriter};
+use crate::capability::CapabilityProgress;
 use crate::checkpoint::{CheckpointRegisterInput, CheckpointWriter};
 use crate::idemlog::IdempotencyWriter;
 use crate::policy::{self, Decision, PolicyEvaluateInput, RiskLevel, RootEntry, ToolMetadata};
@@ -257,7 +258,17 @@ impl RuntimeEvent {
 }
 
 pub trait ToolExecutor: Send + Sync {
-    fn execute(&self, call: &ToolCall) -> ToolResult;
+    fn execute(&self, call: &ToolCall, context: &ToolExecutionContext) -> ToolResult;
+}
+
+#[derive(Clone)]
+pub struct ToolExecutionContext {
+    pub session_id: String,
+    pub run_id: String,
+    pub workspace: Option<String>,
+    pub timeout: Duration,
+    pub cancel: Arc<AtomicBool>,
+    pub progress: Arc<dyn Fn(CapabilityProgress) + Send + Sync>,
 }
 
 /// A worker-created file that is not visible as a product artifact until the
@@ -277,6 +288,15 @@ pub struct ToolResult {
     pub error: Option<String>,
     pub staged_artifacts: Vec<StagedArtifact>,
     pub validation_criteria: Option<Value>,
+    pub state: ToolExitState,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ToolExitState {
+    Completed,
+    Failed,
+    Cancelled,
+    TimedOut,
 }
 
 impl ToolResult {
@@ -287,6 +307,7 @@ impl ToolResult {
             error: None,
             staged_artifacts: Vec::new(),
             validation_criteria: None,
+            state: ToolExitState::Completed,
         }
     }
 
@@ -298,13 +319,14 @@ impl ToolResult {
             error: Some(error),
             staged_artifacts: Vec::new(),
             validation_criteria: None,
+            state: ToolExitState::Failed,
         }
     }
 }
 
 struct UnavailableToolExecutor;
 impl ToolExecutor for UnavailableToolExecutor {
-    fn execute(&self, call: &ToolCall) -> ToolResult {
+    fn execute(&self, call: &ToolCall, _context: &ToolExecutionContext) -> ToolResult {
         ToolResult::failure(
             &call.id,
             format!("capability is not registered: {}", call.name),
@@ -1570,7 +1592,37 @@ impl RuntimeHost {
         ) {
             return ToolResult::failure(&call.id, error);
         }
-        let mut result = self.tool_executor.execute(call);
+        let progress_authorities = authorities.clone();
+        let progress_run_id = run_id.clone();
+        let progress_workspace = self.config.workspace.clone().unwrap_or_default();
+        let progress_tool_call_id = call.id.clone();
+        let progress_tool = call.name.clone();
+        let progress = Arc::new(move |frame: CapabilityProgress| {
+            let _ = progress_authorities.ledger.lock().unwrap().append(
+                &progress_run_id,
+                "tool.progress",
+                "worker",
+                now_ts(),
+                &json!({
+                    "tool_call_id": progress_tool_call_id,
+                    "tool": progress_tool,
+                    "job_id": frame.job_id,
+                    "fraction": frame.fraction,
+                    "stage": frame.stage,
+                    "message": frame.message,
+                }),
+                &progress_workspace,
+            );
+        });
+        let context = ToolExecutionContext {
+            session_id: self.session_id.clone(),
+            run_id: run_id.clone(),
+            workspace: self.config.workspace.clone(),
+            timeout: Duration::from_secs_f64(self.config.tool_timeout.unwrap_or(120.0).max(0.1)),
+            cancel: self.cancel.clone(),
+            progress,
+        };
+        let mut result = self.tool_executor.execute(call, &context);
         if self.cancel.load(Ordering::Acquire) {
             let _ = authorities
                 .idempotency
@@ -1585,15 +1637,31 @@ impl RuntimeHost {
             return ToolResult::failure(&call.id, "tool cancelled; side effect is uncertain");
         }
         if let Some(error) = result.error.clone() {
-            let _ = authorities
-                .idempotency
-                .lock()
-                .unwrap()
-                .mark_failed(&run_id, &call.id, &error);
+            let event_type = match result.state {
+                ToolExitState::TimedOut => "tool.timed_out",
+                ToolExitState::Cancelled => "tool.cancelled",
+                ToolExitState::Completed | ToolExitState::Failed => "tool.failed",
+            };
+            if matches!(
+                result.state,
+                ToolExitState::TimedOut | ToolExitState::Cancelled
+            ) {
+                let _ = authorities
+                    .idempotency
+                    .lock()
+                    .unwrap()
+                    .mark_uncertain(&run_id, &call.id);
+            } else {
+                let _ = authorities
+                    .idempotency
+                    .lock()
+                    .unwrap()
+                    .mark_failed(&run_id, &call.id, &error);
+            }
             let _ = self.ledger_append(
-                "tool.failed",
+                event_type,
                 "runtime",
-                json!({"tool_call_id": call.id, "tool": call.name, "error": error}),
+                json!({"tool_call_id": call.id, "tool": call.name, "error": error, "state": format!("{:?}", result.state).to_lowercase()}),
             );
             return result;
         }
@@ -2372,7 +2440,7 @@ mod tests {
     }
 
     impl ToolExecutor for CountingExecutor {
-        fn execute(&self, call: &ToolCall) -> ToolResult {
+        fn execute(&self, call: &ToolCall, _context: &ToolExecutionContext) -> ToolResult {
             self.calls.fetch_add(1, Ordering::SeqCst);
             let mut result = ToolResult::success(&call.id, json!({"ok": true}));
             if let Some(staged) = &self.staged {

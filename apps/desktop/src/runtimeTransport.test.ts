@@ -45,6 +45,7 @@ describe("direct runtime IPC contract", () => {
     expect(invokeMock.mock.calls[0][1]).not.toHaveProperty("apiKey");
     expect(invokeMock.mock.calls[0][1]).not.toHaveProperty("baseUrl");
     expect(invokeMock.mock.calls[0][1]).not.toHaveProperty("protocol");
+    expect(invokeMock.mock.calls[0][1]).not.toHaveProperty("tools");
   });
 
   it("keeps steering and queued follow-up as distinct commands", async () => {

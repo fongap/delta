@@ -40,9 +40,10 @@ pub use artifact::{
     ArtifactRegistryWriter,
 };
 pub use capability::{
-    CapabilityArtifact, CapabilityDiagnostics, CapabilityExitState, CapabilityGrants,
-    CapabilityInputFile, CapabilityJob, CapabilityProgress, CapabilityResult, CapabilityRunner,
-    CAPABILITY_ABI_VERSION,
+    CapabilityArtifact, CapabilityControl, CapabilityDiagnostics, CapabilityExitState,
+    CapabilityGrants, CapabilityHost, CapabilityInputFile, CapabilityJob, CapabilityProgress,
+    CapabilityRegistration, CapabilityRegistry, CapabilityResult, CapabilityRunner,
+    McpCapabilityRunner, NativeCapabilityRunner, WorkerProcessRunner, CAPABILITY_ABI_VERSION,
 };
 pub use checkpoint::{
     CheckpointReader, CheckpointRegisterInput, CheckpointValidationResult, CheckpointWriter,
@@ -85,7 +86,7 @@ pub use validation::{
 pub use runtime::{
     AssistantTurn, EventSink, NullSink, RuntimeAuthorities, RuntimeConfig, RuntimeEvent,
     RuntimeEventEnvelopeV1, RuntimeHandle, RuntimeHost, RuntimeState, StagedArtifact, StdoutSink,
-    ToolCall, ToolExecutor, ToolResult,
+    ToolCall, ToolExecutionContext, ToolExecutor, ToolExitState, ToolResult,
 };
 
 pub use thiserror::Error;

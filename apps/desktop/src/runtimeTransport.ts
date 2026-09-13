@@ -34,7 +34,6 @@ export async function directRun(args: {
   sessionId: string;
   modelId: string;
   userInput: string;
-  tools?: unknown;
   systemPrompt?: string;
   workspace?: string;
   messages?: unknown;
@@ -46,12 +45,12 @@ export async function directRun(args: {
 }): Promise<DirectRuntimeAcceptance> {
   const {
     sessionId, modelId, userInput,
-    tools, systemPrompt, workspace, messages, maxIterations, maxRetries, source,
+    systemPrompt, workspace, messages, maxIterations, maxRetries, source,
   } = args;
   try {
     const out = await invoke("runtime_run", {
       sessionId, modelId, userInput,
-      tools, systemPrompt, workspace, messages, maxIterations, maxRetries, source,
+      systemPrompt, workspace, messages, maxIterations, maxRetries, source,
     });
     if (out && (out as any).error) {
       args.onError?.((out as any).error);
