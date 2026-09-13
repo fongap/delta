@@ -27,6 +27,7 @@ from __future__ import annotations
 import asyncio
 import json
 import concurrent.futures
+import time
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, AsyncIterator, Awaitable, Callable
@@ -38,11 +39,32 @@ from core.risk import WRITE_TOOLS as _WRITE_TOOLS
 from integrations.tools import ToolRegistry
 from providers import ToolCall
 
-from core.engine_format import (
-    _preview,
-    _tool_error_message,
-    _tool_result_message,
-)
+
+# -- stateless message-formatting helpers (R6: moved in from core/engine_format,
+# which the deleted Python TurnEngine owned). ------------------------------------
+def _preview(value: Any, max_chars: int = 300) -> str:
+    text = value if isinstance(value, str) else json.dumps(value, default=str)
+    text = text.replace("\n", "\\n")
+    return text if len(text) <= max_chars else text[: max_chars - 3] + "..."
+
+
+def _tool_result_message(tool_call: ToolCall, result: Any) -> dict[str, Any]:
+    content = result if isinstance(result, str) else json.dumps(result, default=str)
+    return {
+        "role": "tool",
+        "tool_call_id": tool_call.id,
+        "content": content,
+        "ts": time.time(),
+    }
+
+
+def _tool_error_message(tool_call: ToolCall, reason: str) -> dict[str, Any]:
+    return {
+        "role": "tool",
+        "tool_call_id": tool_call.id,
+        "content": json.dumps({"error": "tool call not executed", "reason": reason}),
+        "ts": time.time(),
+    }
 
 
 class ApprovalOutcome(str, Enum):
