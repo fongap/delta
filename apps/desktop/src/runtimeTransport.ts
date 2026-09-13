@@ -18,6 +18,14 @@ const RUNTIME_EVENT_CHANNEL = "delta-runtime-event";
 
 export const canUseDirectIpc = (): boolean => isTauri();
 
+export interface DirectRuntimeAcceptance {
+  ok: boolean;
+  accepted?: boolean;
+  runId?: string;
+  state?: string;
+  error?: string;
+}
+
 // -----------------------------------------------------------------------------
 // Runtime controls (agent loop verbs)
 // -----------------------------------------------------------------------------
@@ -39,7 +47,7 @@ export async function directRun(args: {
   source?: unknown;
   onEvent: (event: WsEventEnvelope) => void;
   onError?: (error: unknown) => void;
-}): Promise<{ ok: boolean; error?: string; result?: unknown }> {
+}): Promise<DirectRuntimeAcceptance> {
   const {
     sessionId, model, protocol, apiKey, baseUrl, userInput,
     tools, settings, systemPrompt, workspace, messages, maxIterations, maxRetries, source,
@@ -53,7 +61,12 @@ export async function directRun(args: {
       args.onError?.((out as any).error);
       return { ok: false, error: (out as any).error };
     }
-    return { ok: true, result: (out as any).result };
+    return {
+      ok: true,
+      accepted: (out as any).accepted === true,
+      runId: typeof (out as any).runId === "string" ? (out as any).runId : undefined,
+      state: typeof (out as any).state === "string" ? (out as any).state : undefined,
+    };
   } catch (e) {
     args.onError?.(e);
     return { ok: false, error: String(e) };
@@ -62,11 +75,15 @@ export async function directRun(args: {
 
 export async function directResume(
   sessionId: string,
-): Promise<{ ok: boolean; error?: string; result?: unknown }> {
+): Promise<DirectRuntimeAcceptance> {
   try {
     const out = await invoke("runtime_resume", { sessionId });
     if (out && (out as any).error) return { ok: false, error: (out as any).error };
-    return { ok: true, result: (out as any).result };
+    return {
+      ok: true,
+      accepted: (out as any).accepted === true,
+      runId: typeof (out as any).runId === "string" ? (out as any).runId : undefined,
+    };
   } catch (e) {
     return { ok: false, error: String(e) };
   }
@@ -74,11 +91,15 @@ export async function directResume(
 
 export async function directRetry(
   sessionId: string,
-): Promise<{ ok: boolean; error?: string; result?: unknown }> {
+): Promise<DirectRuntimeAcceptance> {
   try {
     const out = await invoke("runtime_retry", { sessionId });
     if (out && (out as any).error) return { ok: false, error: (out as any).error };
-    return { ok: true, result: (out as any).result };
+    return {
+      ok: true,
+      accepted: (out as any).accepted === true,
+      runId: typeof (out as any).runId === "string" ? (out as any).runId : undefined,
+    };
   } catch (e) {
     return { ok: false, error: String(e) };
   }
@@ -88,11 +109,15 @@ export async function directSteer(
   sessionId: string,
   text: string,
   source?: unknown,
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<DirectRuntimeAcceptance> {
   try {
     const out = await invoke("runtime_steer", { sessionId, text, source });
     if (out && (out as any).error) return { ok: false, error: (out as any).error };
-    return { ok: true };
+    return {
+      ok: true,
+      accepted: (out as any).accepted === true,
+      runId: typeof (out as any).runId === "string" ? (out as any).runId : undefined,
+    };
   } catch (e) {
     return { ok: false, error: String(e) };
   }
@@ -102,11 +127,15 @@ export async function directFollowUp(
   sessionId: string,
   text: string,
   source?: unknown,
-): Promise<{ ok: boolean; error?: string }> {
+): Promise<DirectRuntimeAcceptance> {
   try {
     const out = await invoke("runtime_follow_up", { sessionId, text, source });
     if (out && (out as any).error) return { ok: false, error: (out as any).error };
-    return { ok: true };
+    return {
+      ok: true,
+      accepted: (out as any).accepted === true,
+      runId: typeof (out as any).runId === "string" ? (out as any).runId : undefined,
+    };
   } catch (e) {
     return { ok: false, error: String(e) };
   }

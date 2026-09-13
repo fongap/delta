@@ -81,7 +81,8 @@ pub use validation::{
 
 pub use runtime::{
     Approver, AssistantTurn, DenyAll, EventSink, NullSink, RuntimeConfig, RuntimeEvent,
-    RuntimeHost, StdoutSink, ToolCall, ToolExecutor, ToolResult,
+    RuntimeEventEnvelopeV1, RuntimeHandle, RuntimeHost, RuntimeState, StdoutSink, ToolCall,
+    ToolExecutor, ToolResult,
 };
 
 pub use thiserror::Error;

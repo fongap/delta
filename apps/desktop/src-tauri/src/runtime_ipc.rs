@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, State};
 
-use delta_runtime_native::{EventSink, RuntimeConfig, RuntimeHost};
+use delta_runtime_native::{EventSink, RuntimeConfig, RuntimeHandle, RuntimeHost};
 
 struct TauriEventSink {
     app: AppHandle,
@@ -28,7 +28,7 @@ impl EventSink for TauriEventSink {
 }
 
 pub struct RuntimeRegistry {
-    hosts: Mutex<HashMap<String, RuntimeHost>>,
+    hosts: Mutex<HashMap<String, Arc<RuntimeHandle>>>,
 }
 
 impl RuntimeRegistry {
@@ -120,46 +120,58 @@ pub fn runtime_run(
     if let Some(msgs) = messages.and_then(|v| v.as_array().cloned()) {
         host = host.with_messages(msgs);
     }
-    host = host.with_run_id(uuid_v4());
-    let result = host.run(&user_input, source);
-    state.hosts.lock().unwrap().insert(session_id, host);
-    match result {
-        Ok(v) => json!({"ok": true, "result": v}),
-        Err(e) => json!({"ok": false, "error": e}),
+    let handle = match RuntimeHandle::spawn(host) {
+        Ok(handle) => Arc::new(handle),
+        Err(error) => return json!({"ok": false, "error": error}),
+    };
+
+    // Registration is authoritative and happens before the worker can begin a
+    // provider request. The registry lock protects only this short map update.
+    {
+        let mut hosts = state.hosts.lock().unwrap();
+        if let Some(existing) = hosts.get(&session_id) {
+            if existing.state().is_active() {
+                return json!({
+                    "ok": false,
+                    "error": format!("session {session_id} already has an active run")
+                });
+            }
+        }
+        hosts.insert(session_id.clone(), handle.clone());
+    }
+
+    match handle.run(user_input, source) {
+        Ok(run_id) => json!({
+            "ok": true,
+            "accepted": true,
+            "runId": run_id,
+            "state": handle.state(),
+        }),
+        Err(error) => json!({"ok": false, "error": error}),
     }
 }
 
 #[tauri::command]
 pub fn runtime_resume(state: State<'_, RuntimeRegistry>, session_id: String) -> Value {
-    let mut reg = state.hosts.lock().unwrap();
-    match reg.get_mut(&session_id) {
-        Some(host) => {
-            let result = host.resume();
-            drop(reg);
-            match result {
-                Ok(v) => json!({"ok": true, "result": v}),
-                Err(e) => json!({"ok": false, "error": e}),
-            }
-        }
+    let handle = state.hosts.lock().unwrap().get(&session_id).cloned();
+    match handle {
+        Some(handle) => match handle.resume() {
+            Ok(run_id) => json!({"ok": true, "accepted": true, "runId": run_id}),
+            Err(error) => json!({"ok": false, "error": error}),
+        },
         None => json!({"ok": false, "error": format!("session not found: {session_id}")}),
     }
 }
 
 #[tauri::command]
 pub fn runtime_retry(state: State<'_, RuntimeRegistry>, session_id: String) -> Value {
-    let mut reg = state.hosts.lock().unwrap();
-    let result = {
-        match reg.get_mut(&session_id) {
-            Some(host) => host.retry(),
-            None => {
-                return json!({"ok": false, "error": format!("session not found: {session_id}")})
-            }
-        }
-    };
-    drop(reg);
-    match result {
-        Ok(v) => json!({"ok": true, "result": v}),
-        Err(e) => json!({"ok": false, "error": e}),
+    let handle = state.hosts.lock().unwrap().get(&session_id).cloned();
+    match handle {
+        Some(handle) => match handle.retry() {
+            Ok(run_id) => json!({"ok": true, "accepted": true, "runId": run_id}),
+            Err(error) => json!({"ok": false, "error": error}),
+        },
+        None => json!({"ok": false, "error": format!("session not found: {session_id}")}),
     }
 }
 
@@ -170,12 +182,12 @@ pub fn runtime_steer(
     text: String,
     source: Option<Value>,
 ) -> Value {
-    let reg = state.hosts.lock().unwrap();
-    match reg.get(&session_id) {
-        Some(host) => {
-            host.steer(&text, source);
-            json!({"ok": true})
-        }
+    let handle = state.hosts.lock().unwrap().get(&session_id).cloned();
+    match handle {
+        Some(handle) => match handle.steer(&text, source) {
+            Ok(()) => json!({"ok": true, "accepted": true}),
+            Err(error) => json!({"ok": false, "error": error}),
+        },
         None => json!({"ok": false, "error": format!("session not found: {session_id}")}),
     }
 }
@@ -187,33 +199,30 @@ pub fn runtime_follow_up(
     text: String,
     source: Option<Value>,
 ) -> Value {
-    let reg = state.hosts.lock().unwrap();
-    match reg.get(&session_id) {
-        Some(host) => {
-            host.follow_up(&text, source);
-            json!({"ok": true})
-        }
+    let handle = state.hosts.lock().unwrap().get(&session_id).cloned();
+    match handle {
+        Some(handle) => match handle.follow_up(&text, source) {
+            Ok(run_id) => json!({"ok": true, "accepted": true, "runId": run_id}),
+            Err(error) => json!({"ok": false, "error": error}),
+        },
         None => json!({"ok": false, "error": format!("session not found: {session_id}")}),
     }
 }
 
 #[tauri::command]
 pub fn runtime_cancel(state: State<'_, RuntimeRegistry>, session_id: String) -> Value {
-    let reg = state.hosts.lock().unwrap();
-    match reg.get(&session_id) {
-        Some(host) => {
-            host.cancel();
-            json!({"ok": true})
-        }
+    let handle = state.hosts.lock().unwrap().get(&session_id).cloned();
+    match handle {
+        Some(handle) => json!({"ok": true, "cancelled": handle.cancel()}),
         None => json!({"ok": false, "error": format!("session not found: {session_id}")}),
     }
 }
 
 #[tauri::command]
 pub fn runtime_messages(state: State<'_, RuntimeRegistry>, session_id: String) -> Value {
-    let reg = state.hosts.lock().unwrap();
-    match reg.get(&session_id) {
-        Some(host) => json!({"messages": host.messages()}),
+    let handle = state.hosts.lock().unwrap().get(&session_id).cloned();
+    match handle {
+        Some(handle) => json!({"messages": handle.messages(), "state": handle.state()}),
         None => json!({"ok": false, "error": format!("session not found: {session_id}")}),
     }
 }
@@ -224,11 +233,12 @@ pub fn runtime_switch_model(
     session_id: String,
     model: String,
 ) -> Value {
-    let mut reg = state.hosts.lock().unwrap();
-    match reg.get_mut(&session_id) {
-        Some(host) => match host.switch_model(&model) {
-            Some(notice) => json!({"ok": true, "notice": notice}),
-            None => json!({"ok": true, "notice": Value::Null}),
+    let handle = state.hosts.lock().unwrap().get(&session_id).cloned();
+    match handle {
+        Some(handle) => match handle.switch_model(&model) {
+            Ok(Some(notice)) => json!({"ok": true, "notice": notice}),
+            Ok(None) => json!({"ok": true, "notice": Value::Null}),
+            Err(error) => json!({"ok": false, "error": error}),
         },
         None => json!({"ok": false, "error": format!("session not found: {session_id}")}),
     }
@@ -240,18 +250,14 @@ pub fn runtime_truncate(
     session_id: String,
     index: usize,
 ) -> Value {
-    let mut reg = state.hosts.lock().unwrap();
-    match reg.get_mut(&session_id) {
-        Some(host) => {
-            host.truncate_messages(index);
-            json!({"ok": true, "len": host.messages().len()})
-        }
+    let handle = state.hosts.lock().unwrap().get(&session_id).cloned();
+    match handle {
+        Some(handle) => match handle.truncate_messages(index) {
+            Ok(len) => json!({"ok": true, "len": len}),
+            Err(error) => json!({"ok": false, "error": error}),
+        },
         None => json!({"ok": false, "error": format!("session not found: {session_id}")}),
     }
-}
-
-fn uuid_v4() -> String {
-    uuid::Uuid::new_v4().to_string()
 }
 
 // ---------------------------------------------------------------------------
