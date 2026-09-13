@@ -66,9 +66,16 @@ pub struct AssistantTurn {
 
 #[derive(Debug, Clone)]
 pub enum RuntimeEvent {
-    TurnStart { input: Value, source: Option<Value> },
-    AssistantDelta { text: String },
-    ReasoningDelta { text: String },
+    TurnStart {
+        input: Value,
+        source: Option<Value>,
+    },
+    AssistantDelta {
+        text: String,
+    },
+    ReasoningDelta {
+        text: String,
+    },
     AssistantMessage {
         text: Option<String>,
         tool_calls: Vec<String>,
@@ -81,7 +88,10 @@ pub enum RuntimeEvent {
         arguments: Value,
         risk_level: Option<String>,
     },
-    ToolStarted { tool_call_id: String, name: String },
+    ToolStarted {
+        tool_call_id: String,
+        name: String,
+    },
     ToolFinished {
         tool_call_id: String,
         name: String,
@@ -94,13 +104,27 @@ pub enum RuntimeEvent {
         arguments: Value,
         reason: String,
     },
-    IterationEnd { iteration: usize },
-    TurnEnd { status: String, iterations: usize },
-    Error { error: String, error_type: String },
-    Interrupted { iterations: usize },
+    IterationEnd {
+        iteration: usize,
+    },
+    TurnEnd {
+        status: String,
+        iterations: usize,
+    },
+    Error {
+        error: String,
+        error_type: String,
+    },
+    Interrupted {
+        iterations: usize,
+    },
     Compacting,
-    Compacted { text: String },
-    ModelChanged { model: String },
+    Compacted {
+        text: String,
+    },
+    ModelChanged {
+        model: String,
+    },
 }
 
 impl RuntimeEvent {
@@ -109,17 +133,23 @@ impl RuntimeEvent {
             Self::TurnStart { input, source } => {
                 ("turn_start", json!({"input": input, "source": source}))
             }
-            Self::AssistantDelta { text } => {
-                ("assistant_delta", json!({"text": text}))
-            }
-            Self::ReasoningDelta { text } => {
-                ("reasoning_delta", json!({"text": text}))
-            }
-            Self::AssistantMessage { text, tool_calls, reasoning, usage } => (
+            Self::AssistantDelta { text } => ("assistant_delta", json!({"text": text})),
+            Self::ReasoningDelta { text } => ("reasoning_delta", json!({"text": text})),
+            Self::AssistantMessage {
+                text,
+                tool_calls,
+                reasoning,
+                usage,
+            } => (
                 "assistant_message",
                 json!({"text": text, "tool_calls": tool_calls, "reasoning": reasoning, "usage": usage}),
             ),
-            Self::ToolProposed { tool_call_id, name, arguments, risk_level } => (
+            Self::ToolProposed {
+                tool_call_id,
+                name,
+                arguments,
+                risk_level,
+            } => (
                 "tool_proposed",
                 json!({"tool_call_id": tool_call_id, "name": name, "arguments": arguments, "risk_level": risk_level}),
             ),
@@ -127,31 +157,36 @@ impl RuntimeEvent {
                 "tool_started",
                 json!({"tool_call_id": tool_call_id, "name": name}),
             ),
-            Self::ToolFinished { tool_call_id, name, result, error } => (
+            Self::ToolFinished {
+                tool_call_id,
+                name,
+                result,
+                error,
+            } => (
                 "tool_finished",
                 json!({"tool_call_id": tool_call_id, "name": name, "result": result, "error": error}),
             ),
-            Self::PermissionRequired { tool_call_id, name, arguments, reason } => (
+            Self::PermissionRequired {
+                tool_call_id,
+                name,
+                arguments,
+                reason,
+            } => (
                 "permission_required",
                 json!({"tool_call_id": tool_call_id, "name": name, "arguments": arguments, "reason": reason}),
             ),
-            Self::IterationEnd { iteration } => {
-                ("iteration_end", json!({"iteration": iteration}))
-            }
-            Self::TurnEnd { status, iterations } => {
-                ("turn_end", json!({"status": status, "iterations": iterations}))
-            }
+            Self::IterationEnd { iteration } => ("iteration_end", json!({"iteration": iteration})),
+            Self::TurnEnd { status, iterations } => (
+                "turn_end",
+                json!({"status": status, "iterations": iterations}),
+            ),
             Self::Error { error, error_type } => {
                 ("error", json!({"error": error, "error_type": error_type}))
             }
-            Self::Interrupted { iterations } => {
-                ("interrupted", json!({"iterations": iterations}))
-            }
+            Self::Interrupted { iterations } => ("interrupted", json!({"iterations": iterations})),
             Self::Compacting => ("compacting", json!({})),
             Self::Compacted { text } => ("compacted", json!({"text": text})),
-            Self::ModelChanged { model } => {
-                ("model_changed", json!({"model": model}))
-            }
+            Self::ModelChanged { model } => ("model_changed", json!({"model": model})),
         };
         json!({
             "type": event_type,
@@ -222,8 +257,8 @@ pub struct RuntimeHost {
     config: RuntimeConfig,
     messages: Vec<Value>,
     cancel: Arc<AtomicBool>,
-    steering: Arc<Mutex<Vec<(String, Option<Value>)>>>,
-    follow_ups: Arc<Mutex<Vec<(String, Option<Value>)>>>,
+    steering: Arc<SteeringQueue>,
+    follow_ups: Arc<SteeringQueue>,
     sequence: Arc<Mutex<u64>>,
     session_id: String,
     ledger: Option<Arc<Mutex<LedgerWriter>>>,
@@ -233,6 +268,10 @@ pub struct RuntimeHost {
     run_id: Option<String>,
     sink: Arc<dyn EventSink>,
 }
+
+/// A queued steering/follow-up instruction: (text, optional MessageSource sidecar).
+type SteeringItem = (String, Option<Value>);
+type SteeringQueue = Mutex<Vec<SteeringItem>>;
 
 fn now_ts() -> f64 {
     std::time::SystemTime::now()
@@ -355,10 +394,16 @@ impl RuntimeHost {
         self.cancel.store(true, Ordering::SeqCst);
     }
     pub fn steer(&self, text: &str, source: Option<Value>) {
-        self.steering.lock().unwrap().push((text.to_string(), source));
+        self.steering
+            .lock()
+            .unwrap()
+            .push((text.to_string(), source));
     }
     pub fn follow_up(&self, text: &str, source: Option<Value>) {
-        self.follow_ups.lock().unwrap().push((text.to_string(), source));
+        self.follow_ups
+            .lock()
+            .unwrap()
+            .push((text.to_string(), source));
     }
     pub fn drain_follow_ups(&self) -> Vec<(String, Option<Value>)> {
         std::mem::take(&mut *self.follow_ups.lock().unwrap())
@@ -508,12 +553,25 @@ impl RuntimeHost {
         let sink = self.sink.clone();
         let mut writer = SinkWriter { sink };
         let result = provider::stream(req, &mut writer, stream_id, cancel)?;
-        if result.get("cancelled").and_then(|v| v.as_bool()).unwrap_or(false) {
+        if result
+            .get("cancelled")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false)
+        {
             return Ok(());
         }
-        let text = result.get("text").and_then(|t| t.as_str()).map(String::from);
-        let reasoning = result.get("reasoning").and_then(|r| r.as_str()).map(String::from);
-        let finish_reason = result.get("finish_reason").and_then(|f| f.as_str()).map(String::from);
+        let text = result
+            .get("text")
+            .and_then(|t| t.as_str())
+            .map(String::from);
+        let reasoning = result
+            .get("reasoning")
+            .and_then(|r| r.as_str())
+            .map(String::from);
+        let finish_reason = result
+            .get("finish_reason")
+            .and_then(|f| f.as_str())
+            .map(String::from);
         let usage = result.get("usage").cloned();
         let tool_calls: Vec<ToolCall> = result
             .get("tool_calls")
@@ -521,8 +579,16 @@ impl RuntimeHost {
             .map(|tcs| {
                 tcs.iter()
                     .map(|tc| ToolCall {
-                        id: tc.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string(),
-                        name: tc.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+                        id: tc
+                            .get("id")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
+                        name: tc
+                            .get("name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string(),
                         arguments: tc.get("arguments").cloned().unwrap_or(json!({})),
                     })
                     .collect()
@@ -534,7 +600,13 @@ impl RuntimeHost {
         if let Some(ref r) = reasoning {
             streamed_reasoning.push(r.clone());
         }
-        *turn = Some(AssistantTurn { text, reasoning, tool_calls, finish_reason, usage });
+        *turn = Some(AssistantTurn {
+            text,
+            reasoning,
+            tool_calls,
+            finish_reason,
+            usage,
+        });
         Ok(())
     }
 
@@ -551,7 +623,8 @@ impl RuntimeHost {
             }
             iterations += 1;
             if self.cancel.load(Ordering::Relaxed) {
-                self.messages.push(json!({"role": "notice", "kind": "interrupted", "ts": now_ts()}));
+                self.messages
+                    .push(json!({"role": "notice", "kind": "interrupted", "ts": now_ts()}));
                 self.emit_event(RuntimeEvent::Interrupted { iterations });
                 return Ok("interrupted".to_string());
             }
@@ -561,7 +634,14 @@ impl RuntimeHost {
             let mut streamed_text: Vec<String> = Vec::new();
             let mut streamed_reasoning: Vec<String> = Vec::new();
             let stream_id = uuid_v4();
-            match self.stream_provider(&req, &stream_id, &cancel, &mut turn, &mut streamed_text, &mut streamed_reasoning) {
+            match self.stream_provider(
+                &req,
+                &stream_id,
+                &cancel,
+                &mut turn,
+                &mut streamed_text,
+                &mut streamed_reasoning,
+            ) {
                 Ok(()) => {}
                 Err(e) => {
                     if turn_retries < self.config.max_retries
@@ -589,7 +669,9 @@ impl RuntimeHost {
                             &[],
                         ));
                     }
-                    self.messages.push(json!({"role": "notice", "kind": "error", "text": &e, "ts": now_ts()}));
+                    self.messages.push(
+                        json!({"role": "notice", "kind": "error", "text": &e, "ts": now_ts()}),
+                    );
                     self.emit_event(RuntimeEvent::Error {
                         error: e.clone(),
                         error_type: classify_transient_error(&e),
@@ -605,7 +687,8 @@ impl RuntimeHost {
                         &[],
                     ));
                 }
-                self.messages.push(json!({"role": "notice", "kind": "interrupted", "ts": now_ts()}));
+                self.messages
+                    .push(json!({"role": "notice", "kind": "interrupted", "ts": now_ts()}));
                 self.emit_event(RuntimeEvent::Interrupted { iterations });
                 return Ok("interrupted".to_string());
             }
@@ -615,7 +698,8 @@ impl RuntimeHost {
                 turn.reasoning.as_deref(),
                 &turn.tool_calls,
             ));
-            let tool_call_names: Vec<String> = turn.tool_calls.iter().map(|tc| tc.name.clone()).collect();
+            let tool_call_names: Vec<String> =
+                turn.tool_calls.iter().map(|tc| tc.name.clone()).collect();
             self.emit_event(RuntimeEvent::AssistantMessage {
                 text: turn.text.clone(),
                 tool_calls: tool_call_names,
@@ -626,7 +710,10 @@ impl RuntimeHost {
                 if self.drain_steering() {
                     continue;
                 }
-                self.emit_event(RuntimeEvent::TurnEnd { status: "completed".to_string(), iterations });
+                self.emit_event(RuntimeEvent::TurnEnd {
+                    status: "completed".to_string(),
+                    iterations,
+                });
                 let follow_ups = self.drain_follow_ups();
                 if !follow_ups.is_empty() {
                     for (text, source) in follow_ups {
@@ -670,9 +757,12 @@ impl RuntimeHost {
                     error: result.error.clone(),
                 });
             }
-            self.emit_event(RuntimeEvent::IterationEnd { iteration: iterations });
+            self.emit_event(RuntimeEvent::IterationEnd {
+                iteration: iterations,
+            });
             if self.cancel.load(Ordering::Relaxed) {
-                self.messages.push(json!({"role": "notice", "kind": "interrupted", "ts": now_ts()}));
+                self.messages
+                    .push(json!({"role": "notice", "kind": "interrupted", "ts": now_ts()}));
                 self.emit_event(RuntimeEvent::Interrupted { iterations });
                 return Ok("interrupted".to_string());
             }
@@ -798,10 +888,13 @@ mod tests {
 
     #[test]
     fn test_switch_model() {
-        let mut host = RuntimeHost::new("s1", RuntimeConfig {
-            model: "gpt-5.5".to_string(),
-            ..Default::default()
-        });
+        let mut host = RuntimeHost::new(
+            "s1",
+            RuntimeConfig {
+                model: "gpt-5.5".to_string(),
+                ..Default::default()
+            },
+        );
         host.messages.push(json!({"role": "user", "content": "hi"}));
         let notice = host.switch_model("claude-sonnet-4-6");
         assert!(notice.is_some());
@@ -813,7 +906,8 @@ mod tests {
     fn test_truncate_messages() {
         let mut host = RuntimeHost::new("s1", RuntimeConfig::default());
         host.messages.push(json!({"role": "user", "content": "a"}));
-        host.messages.push(json!({"role": "assistant", "content": "b"}));
+        host.messages
+            .push(json!({"role": "assistant", "content": "b"}));
         host.messages.push(json!({"role": "user", "content": "c"}));
         host.truncate_messages(1);
         assert_eq!(host.messages().len(), 1);

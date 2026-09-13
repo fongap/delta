@@ -625,10 +625,7 @@ pub fn run() {
     // R6: no more Python sidecar or localhost proxy. The Rust Runtime
     // is embedded directly in the Tauri shell. The frontend talks via
     // Tauri IPC (invoke/listen) — no HTTP, no WebSocket, no delta-server.
-    let inject = format!(
-        "window.__OCW_PLATFORM__={:?};",
-        std::env::consts::OS
-    );
+    let inject = format!("window.__OCW_PLATFORM__={:?};", std::env::consts::OS);
 
     tauri::Builder::default()
         // MUST be the first plugin: when a second launch happens (e.g. the user relaunches

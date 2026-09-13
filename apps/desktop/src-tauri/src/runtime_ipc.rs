@@ -15,9 +15,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, State};
 
-use delta_runtime_native::{
-    EventSink, RuntimeConfig, RuntimeHost,
-};
+use delta_runtime_native::{EventSink, RuntimeConfig, RuntimeHost};
 
 struct TauriEventSink {
     app: AppHandle,
@@ -35,7 +33,9 @@ pub struct RuntimeRegistry {
 
 impl RuntimeRegistry {
     fn new() -> Self {
-        Self { hosts: Mutex::new(HashMap::new()) }
+        Self {
+            hosts: Mutex::new(HashMap::new()),
+        }
     }
 }
 
@@ -48,7 +48,6 @@ fn resolve_config(
     protocol: String,
     api_key: String,
     base_url: String,
-    tools: Option<Value>,
     settings: Option<Value>,
     system_prompt: Option<String>,
     workspace: Option<String>,
@@ -69,7 +68,7 @@ fn resolve_config(
 }
 
 #[tauri::command]
-pub fn health(state: State<'_, RuntimeRegistry>) -> Value {
+pub fn health() -> Value {
     json!({
         "status": "ok",
         "default_workspace": null,
@@ -80,6 +79,7 @@ pub fn health(state: State<'_, RuntimeRegistry>) -> Value {
 }
 
 #[tauri::command]
+#[allow(clippy::too_many_arguments)]
 pub fn runtime_run(
     app: AppHandle,
     state: State<'_, RuntimeRegistry>,
@@ -99,9 +99,13 @@ pub fn runtime_run(
     source: Option<Value>,
 ) -> Value {
     let config = resolve_config(
-        model, protocol, api_key, base_url,
-        tools.clone(), settings.clone(),
-        system_prompt.clone(), workspace.clone(),
+        model,
+        protocol,
+        api_key,
+        base_url,
+        settings.clone(),
+        system_prompt.clone(),
+        workspace.clone(),
     );
     let config = RuntimeConfig {
         max_iterations: max_iterations.unwrap_or(12),
@@ -109,8 +113,7 @@ pub fn runtime_run(
         ..config
     };
     let sink = Arc::new(TauriEventSink { app: app.clone() });
-    let mut host = RuntimeHost::new(&session_id, config)
-        .with_event_sink(sink);
+    let mut host = RuntimeHost::new(&session_id, config).with_event_sink(sink);
     if let Some(t) = tools {
         host = host.with_tools(t);
     }
@@ -127,11 +130,7 @@ pub fn runtime_run(
 }
 
 #[tauri::command]
-pub fn runtime_resume(
-    app: AppHandle,
-    state: State<'_, RuntimeRegistry>,
-    session_id: String,
-) -> Value {
+pub fn runtime_resume(state: State<'_, RuntimeRegistry>, session_id: String) -> Value {
     let mut reg = state.hosts.lock().unwrap();
     match reg.get_mut(&session_id) {
         Some(host) => {
@@ -147,15 +146,14 @@ pub fn runtime_resume(
 }
 
 #[tauri::command]
-pub fn runtime_retry(
-    state: State<'_, RuntimeRegistry>,
-    session_id: String,
-) -> Value {
+pub fn runtime_retry(state: State<'_, RuntimeRegistry>, session_id: String) -> Value {
     let mut reg = state.hosts.lock().unwrap();
     let result = {
         match reg.get_mut(&session_id) {
             Some(host) => host.retry(),
-            None => return json!({"ok": false, "error": format!("session not found: {session_id}")}),
+            None => {
+                return json!({"ok": false, "error": format!("session not found: {session_id}")})
+            }
         }
     };
     drop(reg);
@@ -172,7 +170,7 @@ pub fn runtime_steer(
     text: String,
     source: Option<Value>,
 ) -> Value {
-    let mut reg = state.hosts.lock().unwrap();
+    let reg = state.hosts.lock().unwrap();
     match reg.get(&session_id) {
         Some(host) => {
             host.steer(&text, source);
@@ -189,7 +187,7 @@ pub fn runtime_follow_up(
     text: String,
     source: Option<Value>,
 ) -> Value {
-    let mut reg = state.hosts.lock().unwrap();
+    let reg = state.hosts.lock().unwrap();
     match reg.get(&session_id) {
         Some(host) => {
             host.follow_up(&text, source);
@@ -200,11 +198,8 @@ pub fn runtime_follow_up(
 }
 
 #[tauri::command]
-pub fn runtime_cancel(
-    state: State<'_, RuntimeRegistry>,
-    session_id: String,
-) -> Value {
-    let mut reg = state.hosts.lock().unwrap();
+pub fn runtime_cancel(state: State<'_, RuntimeRegistry>, session_id: String) -> Value {
+    let reg = state.hosts.lock().unwrap();
     match reg.get(&session_id) {
         Some(host) => {
             host.cancel();
@@ -215,11 +210,8 @@ pub fn runtime_cancel(
 }
 
 #[tauri::command]
-pub fn runtime_messages(
-    state: State<'_, RuntimeRegistry>,
-    session_id: String,
-) -> Value {
-    let mut reg = state.hosts.lock().unwrap();
+pub fn runtime_messages(state: State<'_, RuntimeRegistry>, session_id: String) -> Value {
+    let reg = state.hosts.lock().unwrap();
     match reg.get(&session_id) {
         Some(host) => json!({"messages": host.messages()}),
         None => json!({"ok": false, "error": format!("session not found: {session_id}")}),

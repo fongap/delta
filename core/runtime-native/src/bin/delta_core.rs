@@ -923,7 +923,15 @@ fn handle_stream(cmd: Command, ctx: StreamCtx) {
             }
         }
         _ => {
-            handle_runtime_stream(cmd, StreamCtx { request_id, cancel, out, cache });
+            handle_runtime_stream(
+                cmd,
+                StreamCtx {
+                    request_id,
+                    cancel,
+                    out,
+                    cache,
+                },
+            );
         }
     }
 }
@@ -2196,8 +2204,14 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
         Command::StreamEcho { .. } => Err("streaming commands handled in handle_stream".into()),
         Command::RuntimeRun { .. }
         | Command::RuntimeResume { .. }
-        | Command::RuntimeRetry { .. } => Err("streaming runtime commands handled in handle_stream".into()),
-        Command::RuntimeSteer { session_id, text, source } => {
+        | Command::RuntimeRetry { .. } => {
+            Err("streaming runtime commands handled in handle_stream".into())
+        }
+        Command::RuntimeSteer {
+            session_id,
+            text,
+            source,
+        } => {
             let registry = runtime_registry();
             let reg = registry.lock().unwrap();
             match reg.get(&session_id) {
@@ -2208,7 +2222,11 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
                 None => Err(format!("session not found: {session_id}")),
             }
         }
-        Command::RuntimeFollowUp { session_id, text, source } => {
+        Command::RuntimeFollowUp {
+            session_id,
+            text,
+            source,
+        } => {
             let registry = runtime_registry();
             let reg = registry.lock().unwrap();
             match reg.get(&session_id) {
@@ -2370,10 +2388,6 @@ impl RuntimeRegistry {
     fn insert(&mut self, session_id: String, host: RuntimeHost) {
         self.hosts.insert(session_id, host);
     }
-
-    fn remove(&mut self, session_id: &str) {
-        self.hosts.remove(session_id);
-    }
 }
 
 static RUNTIME_REGISTRY: std::sync::OnceLock<Mutex<RuntimeRegistry>> = std::sync::OnceLock::new();
@@ -2440,14 +2454,20 @@ fn handle_runtime_stream(cmd: Command, ctx: StreamCtx) {
 
             match result {
                 Ok(v) => {
-                    emit(&out, json!({
-                        "ok": true, "request_id": request_id, "stream": "done", "result": v
-                    }));
+                    emit(
+                        &out,
+                        json!({
+                            "ok": true, "request_id": request_id, "stream": "done", "result": v
+                        }),
+                    );
                 }
                 Err(e) => {
-                    emit(&out, json!({
-                        "ok": false, "request_id": request_id, "stream": "error", "error": e
-                    }));
+                    emit(
+                        &out,
+                        json!({
+                            "ok": false, "request_id": request_id, "stream": "error", "error": e
+                        }),
+                    );
                 }
             }
         }
@@ -2462,14 +2482,20 @@ fn handle_runtime_stream(cmd: Command, ctx: StreamCtx) {
             };
             match result {
                 Ok(v) => {
-                    emit(&out, json!({
-                        "ok": true, "request_id": request_id, "stream": "done", "result": v
-                    }));
+                    emit(
+                        &out,
+                        json!({
+                            "ok": true, "request_id": request_id, "stream": "done", "result": v
+                        }),
+                    );
                 }
                 Err(e) => {
-                    emit(&out, json!({
-                        "ok": false, "request_id": request_id, "stream": "error", "error": e
-                    }));
+                    emit(
+                        &out,
+                        json!({
+                            "ok": false, "request_id": request_id, "stream": "error", "error": e
+                        }),
+                    );
                 }
             }
         }
@@ -2484,22 +2510,31 @@ fn handle_runtime_stream(cmd: Command, ctx: StreamCtx) {
             };
             match result {
                 Ok(v) => {
-                    emit(&out, json!({
-                        "ok": true, "request_id": request_id, "stream": "done", "result": v
-                    }));
+                    emit(
+                        &out,
+                        json!({
+                            "ok": true, "request_id": request_id, "stream": "done", "result": v
+                        }),
+                    );
                 }
                 Err(e) => {
-                    emit(&out, json!({
-                        "ok": false, "request_id": request_id, "stream": "error", "error": e
-                    }));
+                    emit(
+                        &out,
+                        json!({
+                            "ok": false, "request_id": request_id, "stream": "error", "error": e
+                        }),
+                    );
                 }
             }
         }
         _ => {
-            emit(&out, json!({
-                "ok": false, "request_id": request_id, "stream": "error",
-                "error": "non-streaming runtime command in handle_runtime_stream"
-            }));
+            emit(
+                &out,
+                json!({
+                    "ok": false, "request_id": request_id, "stream": "error",
+                    "error": "non-streaming runtime command in handle_runtime_stream"
+                }),
+            );
         }
     }
 }

@@ -69,7 +69,7 @@ pub use validation::{
 };
 
 pub use runtime::{
-    AssistantTurn, Approver, DenyAll, EventSink, NullSink, RuntimeConfig, RuntimeEvent,
+    Approver, AssistantTurn, DenyAll, EventSink, NullSink, RuntimeConfig, RuntimeEvent,
     RuntimeHost, StdoutSink, ToolCall, ToolExecutor, ToolResult,
 };
 
