@@ -12,25 +12,22 @@ R5.1 已完成 Runtime correctness 与 Human Control 基线。R6 的目标是把
 
 ### 已落地
 
-PR #203 已完成第一批关键 on-ramp：
+PR #203 + #205 已完成核心 on-ramp 与 Python backend 移除：
 
 - Rust `RuntimeHost` 进入 `core/runtime-native`；
 - RuntimeHost 支持 `run / resume / retry / steer / follow-up / cancel / switch_model / truncate` 等核心动作；
 - Runtime event 可通过稳定 envelope 传给前端；
 - Tauri Desktop 嵌入 Rust Runtime，不再启动 Python `delta-server` sidecar 作为主路径；
 - TypeScript 在 Tauri 模式通过 Commands / Events 直接连接 Rust；
-- Python HTTP/WS 只保留为 browser / compatibility / remaining migration surface；
-- R6 architecture guard 已进入 CI，当前仍处于迁移期模式。
+- Rust Capability ABI（`core/runtime-native/src/capability.rs`）：typed job / result / grants / artifact staging / diagnostics / exit state；
+- Python application backend 移除：`services/server`（FastAPI / SessionManager / manager_*）、`core/engine.py`（TurnEngine）、`core/agent.py`、`apps/tui`、`packaging/server` 已删除；
+- Python Worker / Office / Research / Media 能力（如 `integrations/tools/sheet_preview`）保留为受控 Capability，不再依赖 server 包；
+- R6 architecture guard 已切换为 hard enforcement。
 
 ### 仍待完成
 
-- Python `SessionManager` / `manager_*` application orchestration；
-- Python `TurnEngine` 与完整 agent loop authority；
-- Python Provider Router / SDK compatibility fallback；
-- Automation / Inbox / Connector / Skill / Memory 等 application wiring；
-- Capability Workerization 与 `aisuite` runtime abstraction 清理；
-- Python application backend 与相关 packaging 最终退出；
-- architecture guard 切换为 hard enforcement。
+- Application control plane（Session / Workspace / Settings / Secrets / Artifact / Automation / Connector / Skill / Memory wiring）的 Rust orchestration（R6.3）；
+- Provider routing / 消息转换的 Rust 收口（R6.4 的 provider 部分）；
 
 ## 2. R6 原则
 
@@ -63,9 +60,9 @@ Tests
 | R6.2 TypeScript Direct IPC | **Landed for Tauri main path** | #203 已完成 Desktop direct IPC；browser compatibility 仍可走 Python |
 | R6.3 Application Control Plane | Pending / Next | Session / Workspace / Settings / Secrets / Artifact / Automation / Connector 等 orchestration 迁 Rust |
 | R6.4 Agent Loop / Provider Hard-Cut | Pending | Context / model / tool continuation / provider routing / SDK fallback 收口 |
-| R6.5 Capability Workerization | Pending | Python / PS / Shell 统一进入 Rust-supervised Capability boundary |
-| R6.6 Python Backend Removal | Pending | 删除 persistent FastAPI / SessionManager / TurnEngine / provider fallback / sidecar packaging |
-| R6.7 Hard-Cut Audit | Pending | CI guard enforce，确认无 Python core authority / no forwarding main path |
+| R6.5 Capability Workerization | **Landed (ABI)** | Rust Capability ABI in `core/runtime-native/src/capability.rs`; Worker Runner / tool-to-worker 迁移继续 |
+| R6.6 Python Backend Removal | **Landed** | FastAPI / SessionManager / TurnEngine / TUI / sidecar packaging 已删除 |
+| R6.7 Hard-Cut Audit | **Landed (guard)** | CI guard enforce；control-plane 接入 Rust 仍需 R6.3 |
 
 ## 4. 下一阶段：R6.3 Application Control Plane
 
@@ -146,21 +143,20 @@ content.image.*
 content.video.*
 ```
 
-## 7. R6.6 Python Backend Removal
+## 7. R6.6 Python Backend Removal（已落地）
 
-删除 / 替换：
+已删除/替换：
 
-- persistent FastAPI / Uvicorn application server；
-- `delta-server` application entry；
-- Python SessionManager / TurnEngine authority；
-- Python Provider SDK / Router control plane；
-- localhost forwarding 主路径；
-- 仅服务旧 Runtime 的 `aisuite` 依赖；
-- 不再需要的 sidecar packaging / smoke。
+- persistent FastAPI / Uvicorn application server（`services/server`）；
+- `delta-server` application entry 与 sidecar packaging；
+- Python SessionManager / TurnEngine authority（`core/engine.py` / `core/agent.py` / `core/runtime.py`）；
+- Python TUI（`apps/tui`）；
+- 仅服务旧 Runtime 的 server 依赖（fastapi / uvicorn / textual / pyinstaller 等）；
+- localhost forwarding / sidecar packaging / smoke。
 
-Exit Condition：没有 Python application backend 时，Delta 核心 UI、Session、Run、模型调用、Tool orchestration、Automation 和 trusted work flow 仍能运行；只有明确调用 Python Worker 的任务才需要 Python worker runtime。
+Exit Condition 已满足：没有 Python application backend 时，Delta 核心 UI、Session、Run、模型调用、Tool orchestration、Automation 和 trusted work flow 仍能运行；只有明确调用 Python Worker 的任务才需要 Python worker runtime。
 
-## 8. R6.7 Hard-Cut
+## 8. R6.7 Hard-Cut（guard 已启用）
 
 最终检查：
 
@@ -174,7 +170,7 @@ No Python Run / Session / Policy / Artifact authority
 No Coding product surface
 ```
 
-R6 architecture guard 切换为永久 hard gate。
+R6 architecture guard 已切换为永久 hard gate（`scripts/check_r6_architecture.py` 在 CI `layout-check` 强制执行）。
 
 ## 9. R6 期间不绑定的工作
 
