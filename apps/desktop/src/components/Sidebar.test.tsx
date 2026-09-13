@@ -4,6 +4,17 @@ import { Sidebar } from "./Sidebar";
 import { I18nProvider } from "@delta/i18n/I18nContext";
 import type { SessionInfo } from "../types";
 
+const authority = vi.hoisted(() => ({
+  getSettings: vi.fn().mockResolvedValue({ nav_layout: "flat" }),
+  setNavLayout: vi.fn().mockResolvedValue({ ok: true, nav_layout: "grouped" }),
+}));
+
+vi.mock("../runtimeTransport", async () => ({
+  ...(await vi.importActual<typeof import("../runtimeTransport")>("../runtimeTransport")),
+  directGetSettings: authority.getSettings,
+  directSetNavLayout: authority.setNavLayout,
+}));
+
 // All Sidebar renders go through the provider so the sidebar's useI18n() calls resolve.
 function renderSidebar(ui: React.ReactElement) {
   return render(<I18nProvider locale="en-US">{ui}</I18nProvider>);
@@ -80,10 +91,8 @@ afterEach(() => {
 
 describe("Sidebar group/filter control", () => {
   it("choosing Persona persists via setNavLayout and switches to the per-persona accordion", async () => {
-    const calls = stubFetch([
+    stubFetch([
       { match: "/v1/personas", method: "GET", json: PERSONAS },
-      { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
-      { match: "/v1/settings/nav-layout", method: "POST", json: { ok: true, nav_layout: "grouped" } },
     ]);
     renderSidebar(<Sidebar {...baseProps} />);
 
@@ -92,9 +101,7 @@ describe("Sidebar group/filter control", () => {
     fireEvent.click(await screen.findByText("By persona"));
 
     await waitFor(() => {
-      const post = calls.find((c) => c.method === "POST" && c.url.includes("/v1/settings/nav-layout"));
-      expect(post).toBeTruthy();
-      expect(post!.body).toMatchObject({ nav_layout: "grouped" });
+      expect(authority.setNavLayout).toHaveBeenCalledWith("grouped");
     });
 
     fireEvent.click(control);
@@ -113,7 +120,6 @@ describe("Chronological list row actions (⋮ menu)", () => {
   it("rename / pin / archive / two-step delete all live behind the row's single kebab", async () => {
     stubFetch([
       { match: "/v1/personas", method: "GET", json: PERSONAS },
-      { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
     ]);
     renderSidebar(<Sidebar {...baseProps} />);
     await screen.findByText("DOE — factor screening");
@@ -144,7 +150,6 @@ describe("Chronological list row actions (⋮ menu)", () => {
   it("the kebab and its menu never select the row; Escape closes the menu", async () => {
     stubFetch([
       { match: "/v1/personas", method: "GET", json: PERSONAS },
-      { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
     ]);
     renderSidebar(<Sidebar {...baseProps} />);
     await screen.findByText("DOE — factor screening");
@@ -177,7 +182,6 @@ describe("From Slack group (§31)", () => {
   it("mention-spawned sessions list chronologically in Recent with the platform icon (no band)", async () => {
     stubFetch([
       { match: "/v1/personas", method: "GET", json: PERSONAS },
-      { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
     ]);
     renderSidebar(<Sidebar {...baseProps} sessions={[...SESSIONS, SLACK_SESSION]} />);
     await screen.findByText("DOE — factor screening");
@@ -195,7 +199,6 @@ describe("New-session button", () => {
   it("collapses to a plain button when only one persona is enabled (Delta-only)", async () => {
     stubFetch([
       { match: "/v1/personas", method: "GET", json: PERSONAS },
-      { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
     ]);
     const { container } = renderSidebar(<Sidebar {...baseProps} />);
     await screen.findByText("DOE — factor screening");
@@ -210,7 +213,6 @@ describe("New-session button", () => {
     localStorage.removeItem("delta.flag.personas");
     stubFetch([
       { match: "/v1/personas", method: "GET", json: PERSONAS },
-      { match: "/v1/settings", method: "GET", json: { nav_layout: "flat" } },
     ]);
     renderSidebar(<Sidebar {...baseProps} />);
     await screen.findByLabelText("Group and filter conversations");

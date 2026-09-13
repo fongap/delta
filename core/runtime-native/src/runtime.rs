@@ -270,6 +270,9 @@ impl Approver for DenyAll {
 
 #[derive(Clone)]
 pub struct RuntimeConfig {
+    /// Product-facing routed id (for example `anthropic:claude-sonnet-4-6`).
+    /// `model` below is the provider-facing bare id.
+    pub model_id: String,
     pub model: String,
     pub protocol: String,
     pub api_key: String,
@@ -286,6 +289,7 @@ pub struct RuntimeConfig {
 impl Default for RuntimeConfig {
     fn default() -> Self {
         Self {
+            model_id: String::new(),
             model: String::new(),
             protocol: "openai_chat".to_string(),
             api_key: String::new(),
@@ -337,13 +341,18 @@ enum RuntimeOperation {
 enum RuntimeCommand {
     Execute(RuntimeOperation),
     SwitchModel {
-        model: String,
+        change: ModelChange,
         reply: mpsc::Sender<Result<Option<String>, String>>,
     },
     Truncate {
         index: usize,
         reply: mpsc::Sender<Result<usize, String>>,
     },
+}
+
+enum ModelChange {
+    LegacyId(String),
+    Resolved(Box<RuntimeConfig>),
 }
 
 /// Cloneable control surface for a session-owned background runtime.
@@ -571,7 +580,11 @@ impl RuntimeHost {
         self.provider_cancel.store(true, Ordering::SeqCst);
     }
     pub fn model(&self) -> &str {
-        &self.config.model
+        if self.config.model_id.is_empty() {
+            &self.config.model
+        } else {
+            &self.config.model_id
+        }
     }
     pub fn messages(&self) -> &[Value] {
         &self.messages
@@ -583,7 +596,7 @@ impl RuntimeHost {
     }
 
     pub fn switch_model(&mut self, model: &str) -> Option<String> {
-        if model.is_empty() || model == self.config.model {
+        if model.is_empty() || model == self.model() {
             return None;
         }
         let had_history = self
@@ -591,11 +604,45 @@ impl RuntimeHost {
             .iter()
             .any(|m| m.get("role").and_then(|r| r.as_str()) != Some("system"));
         self.config.model = model.to_string();
+        self.config.model_id = model.to_string();
         if had_history {
             let notice = format!("Model switched to {model}");
             self.messages.push(json!({
                 "role": "notice", "kind": "model_switch", "text": &notice, "model": model, "ts": now_ts()
             }));
+            Some(notice)
+        } else {
+            None
+        }
+    }
+
+    pub fn switch_runtime_config(&mut self, config: RuntimeConfig) -> Option<String> {
+        let model_id = if config.model_id.is_empty() {
+            config.model.clone()
+        } else {
+            config.model_id.clone()
+        };
+        if model_id.is_empty() {
+            return None;
+        }
+        let changed = model_id != self.model();
+        let had_history = self
+            .messages
+            .iter()
+            .any(|message| message.get("role").and_then(Value::as_str) != Some("system"));
+        self.config.model_id = model_id.clone();
+        self.config.model = config.model;
+        self.config.protocol = config.protocol;
+        self.config.api_key = config.api_key;
+        self.config.base_url = config.base_url;
+        self.config.model_settings = config.model_settings;
+        if changed && had_history {
+            let notice = format!("Model switched to {model_id}");
+            self.messages.push(json!({
+                "role": "notice", "kind": "model_switch", "text": &notice,
+                "model": model_id, "ts": now_ts()
+            }));
+            self.emit_event(RuntimeEvent::ModelChanged { model: model_id });
             Some(notice)
         } else {
             None
@@ -1199,7 +1246,27 @@ impl RuntimeHandle {
         let (reply, response) = mpsc::channel();
         self.command_tx
             .send(RuntimeCommand::SwitchModel {
-                model: model.to_string(),
+                change: ModelChange::LegacyId(model.to_string()),
+                reply,
+            })
+            .map_err(|_| "runtime worker is unavailable".to_string())?;
+        response
+            .recv_timeout(Duration::from_secs(5))
+            .map_err(|_| "runtime worker did not acknowledge model switch".to_string())?
+    }
+
+    pub fn switch_runtime_config(&self, config: RuntimeConfig) -> Result<Option<String>, String> {
+        let state = self.state.lock().unwrap();
+        if state.is_active() {
+            return Err(format!(
+                "cannot switch model: session {} has an active run ({state:?})",
+                self.session_id
+            ));
+        }
+        let (reply, response) = mpsc::channel();
+        self.command_tx
+            .send(RuntimeCommand::SwitchModel {
+                change: ModelChange::Resolved(Box::new(config)),
                 reply,
             })
             .map_err(|_| "runtime worker is unavailable".to_string())?;
@@ -1246,8 +1313,11 @@ fn runtime_worker(
                 &cancel,
                 &provider_cancel,
             ),
-            RuntimeCommand::SwitchModel { model, reply } => {
-                let notice = host.switch_model(&model);
+            RuntimeCommand::SwitchModel { change, reply } => {
+                let notice = match change {
+                    ModelChange::LegacyId(model) => host.switch_model(&model),
+                    ModelChange::Resolved(config) => host.switch_runtime_config(*config),
+                };
                 sync_message_snapshot(&host, &messages);
                 let _ = reply.send(Ok(notice));
             }

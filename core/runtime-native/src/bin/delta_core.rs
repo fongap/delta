@@ -2411,6 +2411,7 @@ fn handle_runtime_stream(cmd: Command, ctx: StreamCtx) {
             source,
         } => {
             let config = RuntimeConfig {
+                model_id: model.clone(),
                 model,
                 protocol,
                 api_key,

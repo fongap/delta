@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, State};
 
-use delta_runtime_native::{EventSink, RuntimeConfig, RuntimeHandle, RuntimeHost};
+use delta_runtime_native::{EventSink, ModelAuthority, RuntimeConfig, RuntimeHandle, RuntimeHost};
 
 struct TauriEventSink {
     app: AppHandle,
@@ -29,42 +29,20 @@ impl EventSink for TauriEventSink {
 
 pub struct RuntimeRegistry {
     hosts: Mutex<HashMap<String, Arc<RuntimeHandle>>>,
+    models: Mutex<ModelAuthority>,
 }
 
 impl RuntimeRegistry {
     fn new() -> Self {
         Self {
             hosts: Mutex::new(HashMap::new()),
+            models: Mutex::new(ModelAuthority::new(state_dir())),
         }
     }
 }
 
 pub fn init() -> RuntimeRegistry {
     RuntimeRegistry::new()
-}
-
-fn resolve_config(
-    model: String,
-    protocol: String,
-    api_key: String,
-    base_url: String,
-    settings: Option<Value>,
-    system_prompt: Option<String>,
-    workspace: Option<String>,
-) -> RuntimeConfig {
-    RuntimeConfig {
-        model,
-        protocol,
-        api_key,
-        base_url,
-        max_iterations: 12,
-        max_retries: 2,
-        ttft_timeout: None,
-        tool_timeout: None,
-        model_settings: settings.unwrap_or(json!({})),
-        system_prompt,
-        workspace,
-    }
 }
 
 #[tauri::command]
@@ -84,13 +62,9 @@ pub fn runtime_run(
     app: AppHandle,
     state: State<'_, RuntimeRegistry>,
     session_id: String,
-    model: String,
-    protocol: String,
-    api_key: String,
-    base_url: String,
+    model_id: String,
     user_input: String,
     tools: Option<Value>,
-    settings: Option<Value>,
     system_prompt: Option<String>,
     workspace: Option<String>,
     messages: Option<Value>,
@@ -98,49 +72,56 @@ pub fn runtime_run(
     max_retries: Option<u32>,
     source: Option<Value>,
 ) -> Value {
-    let config = resolve_config(
-        model,
-        protocol,
-        api_key,
-        base_url,
-        settings.clone(),
-        system_prompt.clone(),
-        workspace.clone(),
-    );
+    let config = match state
+        .models
+        .lock()
+        .unwrap()
+        .resolve_runtime_config(&model_id)
+    {
+        Ok(config) => config,
+        Err(error) => return json!({"ok": false, "error": error}),
+    };
     let config = RuntimeConfig {
         max_iterations: max_iterations.unwrap_or(12),
         max_retries: max_retries.unwrap_or(2),
+        system_prompt,
+        workspace,
         ..config
     };
-    let sink = Arc::new(TauriEventSink { app: app.clone() });
-    let mut host = RuntimeHost::new(&session_id, config).with_event_sink(sink);
-    if let Some(t) = tools {
-        host = host.with_tools(t);
-    }
-    if let Some(msgs) = messages.and_then(|v| v.as_array().cloned()) {
-        host = host.with_messages(msgs);
-    }
-    let handle = match RuntimeHandle::spawn(host) {
-        Ok(handle) => Arc::new(handle),
-        Err(error) => return json!({"ok": false, "error": error}),
-    };
-
-    // Registration is authoritative and happens before the worker can begin a
-    // provider request. The registry lock protects only this short map update.
-    {
-        let mut hosts = state.hosts.lock().unwrap();
-        if let Some(existing) = hosts.get(&session_id) {
-            if existing.state().is_active() {
-                return json!({
-                    "ok": false,
-                    "error": format!("session {session_id} already has an active run")
-                });
-            }
+    let mut hosts = state.hosts.lock().unwrap();
+    let handle = if let Some(existing) = hosts.get(&session_id).cloned() {
+        if existing.state().is_active() {
+            return json!({
+                "ok": false,
+                "error": format!("session {session_id} already has an active run")
+            });
         }
+        if let Err(error) = existing.switch_runtime_config(config) {
+            return json!({"ok": false, "error": error});
+        }
+        existing
+    } else {
+        let sink = Arc::new(TauriEventSink { app: app.clone() });
+        let mut host = RuntimeHost::new(&session_id, config).with_event_sink(sink);
+        if let Some(tools) = tools {
+            host = host.with_tools(tools);
+        }
+        if let Some(messages) = messages.and_then(|value| value.as_array().cloned()) {
+            host = host.with_messages(messages);
+        }
+        let handle = match RuntimeHandle::spawn(host) {
+            Ok(handle) => Arc::new(handle),
+            Err(error) => return json!({"ok": false, "error": error}),
+        };
+        // Registration precedes `run()`, and the map lock stays held through
+        // acceptance so two simultaneous starts cannot create detached loops.
         hosts.insert(session_id.clone(), handle.clone());
-    }
+        handle
+    };
+    let accepted = handle.run(user_input, source);
+    drop(hosts);
 
-    match handle.run(user_input, source) {
+    match accepted {
         Ok(run_id) => json!({
             "ok": true,
             "accepted": true,
@@ -231,11 +212,20 @@ pub fn runtime_messages(state: State<'_, RuntimeRegistry>, session_id: String) -
 pub fn runtime_switch_model(
     state: State<'_, RuntimeRegistry>,
     session_id: String,
-    model: String,
+    model_id: String,
 ) -> Value {
+    let config = match state
+        .models
+        .lock()
+        .unwrap()
+        .resolve_runtime_config(&model_id)
+    {
+        Ok(config) => config,
+        Err(error) => return json!({"ok": false, "error": error}),
+    };
     let handle = state.hosts.lock().unwrap().get(&session_id).cloned();
     match handle {
-        Some(handle) => match handle.switch_model(&model) {
+        Some(handle) => match handle.switch_runtime_config(config) {
             Ok(Some(notice)) => json!({"ok": true, "notice": notice}),
             Ok(None) => json!({"ok": true, "notice": Value::Null}),
             Err(error) => json!({"ok": false, "error": error}),
@@ -258,6 +248,133 @@ pub fn runtime_truncate(
         },
         None => json!({"ok": false, "error": format!("session not found: {session_id}")}),
     }
+}
+
+// ---------------------------------------------------------------------------
+// R6 Provider / Model / Settings / Secrets authority.
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn settings_get(state: State<'_, RuntimeRegistry>) -> Value {
+    state.models.lock().unwrap().settings()
+}
+
+#[tauri::command]
+pub fn settings_set_model_key(state: State<'_, RuntimeRegistry>, api_key: String) -> Value {
+    authority_result(state.models.lock().unwrap().set_provider(
+        "openai",
+        None,
+        &json!({"api_key": api_key}),
+    ))
+}
+
+#[tauri::command]
+pub fn settings_set_default_model(state: State<'_, RuntimeRegistry>, model_id: String) -> Value {
+    authority_result(state.models.lock().unwrap().set_default_model(&model_id))
+}
+
+#[tauri::command]
+pub fn settings_add_model(state: State<'_, RuntimeRegistry>, model_id: String) -> Value {
+    authority_result(state.models.lock().unwrap().add_model(&model_id))
+}
+
+#[tauri::command]
+pub fn settings_remove_model(state: State<'_, RuntimeRegistry>, model_id: String) -> Value {
+    authority_result(state.models.lock().unwrap().remove_model(&model_id))
+}
+
+#[tauri::command]
+pub fn settings_set_onboarded(state: State<'_, RuntimeRegistry>, value: bool) -> Value {
+    authority_result(state.models.lock().unwrap().set_onboarded(value))
+}
+
+#[tauri::command]
+pub fn settings_set_language(state: State<'_, RuntimeRegistry>, language: String) -> Value {
+    authority_result(state.models.lock().unwrap().set_language(&language))
+}
+
+#[tauri::command]
+pub fn settings_set_context_bar(state: State<'_, RuntimeRegistry>, shown: bool) -> Value {
+    authority_result(state.models.lock().unwrap().set_context_bar(shown))
+}
+
+#[tauri::command]
+pub fn settings_set_sessions_peek(state: State<'_, RuntimeRegistry>, count: i64) -> Value {
+    authority_result(state.models.lock().unwrap().set_sessions_peek(count))
+}
+
+#[tauri::command]
+pub fn settings_set_scratch_base(state: State<'_, RuntimeRegistry>, path: String) -> Value {
+    authority_result(state.models.lock().unwrap().set_scratch_base(&path))
+}
+
+#[tauri::command]
+pub fn settings_set_nav_layout(state: State<'_, RuntimeRegistry>, layout: String) -> Value {
+    authority_result(state.models.lock().unwrap().set_nav_layout(&layout))
+}
+
+#[tauri::command]
+pub fn settings_set_pdf(state: State<'_, RuntimeRegistry>, patch: Value) -> Value {
+    authority_result(state.models.lock().unwrap().set_pdf_settings(&patch))
+}
+
+#[tauri::command]
+pub fn settings_set_compaction(state: State<'_, RuntimeRegistry>, patch: Value) -> Value {
+    authority_result(state.models.lock().unwrap().set_compaction_settings(&patch))
+}
+
+#[tauri::command]
+pub fn settings_set_surfaces() -> Value {
+    json!({"ok": true, "surfaces": {"delta": true}})
+}
+
+#[tauri::command]
+pub fn providers_list(state: State<'_, RuntimeRegistry>) -> Value {
+    state.models.lock().unwrap().providers()
+}
+
+#[tauri::command]
+pub fn provider_protocols(state: State<'_, RuntimeRegistry>) -> Value {
+    state.models.lock().unwrap().protocols()
+}
+
+#[tauri::command]
+pub fn provider_set(
+    state: State<'_, RuntimeRegistry>,
+    name: String,
+    protocol: Option<String>,
+    fields: Value,
+) -> Value {
+    authority_result(
+        state
+            .models
+            .lock()
+            .unwrap()
+            .set_provider(&name, protocol.as_deref(), &fields),
+    )
+}
+
+#[tauri::command]
+pub fn provider_remove(state: State<'_, RuntimeRegistry>, name: String) -> Value {
+    authority_result(state.models.lock().unwrap().remove_provider(&name))
+}
+
+#[tauri::command]
+pub fn provider_verify(state: State<'_, RuntimeRegistry>, name: String, fields: Value) -> Value {
+    state.models.lock().unwrap().verify_provider(&name, &fields)
+}
+
+#[tauri::command]
+pub fn provider_fetch_models(
+    state: State<'_, RuntimeRegistry>,
+    name: String,
+    fields: Value,
+) -> Value {
+    state.models.lock().unwrap().fetch_models(&name, &fields)
+}
+
+fn authority_result(result: Result<Value, String>) -> Value {
+    result.unwrap_or_else(|error| json!({"ok": false, "error": error}))
 }
 
 // ---------------------------------------------------------------------------

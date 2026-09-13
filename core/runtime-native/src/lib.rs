@@ -21,6 +21,7 @@ pub mod checkpoint;
 pub mod control_plane;
 pub mod idemlog;
 pub mod ledger;
+pub mod model_authority;
 pub mod policy;
 pub mod provider;
 pub mod retry;
@@ -55,6 +56,7 @@ pub use idemlog::{
     SideEffectState,
 };
 pub use ledger::{LedgerEvent, LedgerReader, LedgerWriter};
+pub use model_authority::ModelAuthority;
 pub use policy::{
     classify, enforce_level, enforce_scope, evaluate, restrict_grants, Decision,
     PolicyEvaluateInput, PolicyEvaluateOutput, RiskLevel, RootEntry, POLICY_SCHEMA_VERSION,

@@ -8,19 +8,39 @@ import {
 } from "./runtime-contract";
 import {
   canUseDirectIpc,
+  directAddModel,
   directCancel,
+  directFetchProviderModels,
   directFollowUp,
+  directGetProtocols,
+  directGetProviders,
+  directGetSettings,
   directListenSession,
   directListSessions,
   directRecentWorkspaces,
+  directRemoveModel,
+  directRemoveProvider,
   directRetry,
   directRun,
   directSessionDelete,
   directSessionMessages,
   directSessionRename,
   directSessionSetFlags,
+  directSetCompactionSettings,
+  directSetContextBar,
+  directSetDefaultModel,
+  directSetLanguage,
+  directSetModelKey,
+  directSetNavLayout,
+  directSetOnboarded,
+  directSetPdfSettings,
+  directSetProvider,
+  directSetScratchBase,
+  directSetSessionsPeek,
+  directSetSurfaces,
   directSteer,
   directSwitchModel,
+  directVerifyProvider,
 } from "./runtimeTransport";
 
 declare const __DELTA_DEV_TOKEN__: string;
@@ -898,12 +918,9 @@ export interface PdfSettings {
 export async function setPdfSettings(
   patch: Partial<PdfSettings>,
 ): Promise<{ ok: boolean; error?: string } & Partial<PdfSettings>> {
-  const res = await fetch(`${httpBase()}/v1/settings/pdf`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(patch),
-  });
-  return res.json();
+  return directSetPdfSettings(patch) as Promise<
+    { ok: boolean; error?: string } & Partial<PdfSettings>
+  >;
 }
 
 export interface CompactionSettings {
@@ -916,12 +933,7 @@ export interface CompactionSettings {
 export async function setCompactionSettings(
   patch: Partial<CompactionSettings>,
 ): Promise<{ ok: boolean; error?: string }> {
-  const res = await fetch(`${httpBase()}/v1/settings/compaction`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(patch),
-  });
-  return res.json();
+  return directSetCompactionSettings(patch) as Promise<{ ok: boolean; error?: string }>;
 }
 
 /** Local page/size probe for a PDF data URL — the composer's attach-time threshold check. */
@@ -940,58 +952,34 @@ export async function inspectPdf(
 export async function setContextBar(
   shown: boolean,
 ): Promise<{ ok: boolean; context_bar?: boolean; error?: string }> {
-  const res = await fetch(`${httpBase()}/v1/settings/context-bar`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ context_bar: shown }),
-  });
-  return res.json();
+  return directSetContextBar(shown);
 }
 
 /** Persist how many sessions a sidebar group shows before "Show more". */
 export async function setSessionsPeek(
   n: number,
 ): Promise<{ ok: boolean; sessions_peek?: number; error?: string }> {
-  const res = await fetch(`${httpBase()}/v1/settings/sessions-peek`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ sessions_peek: n }),
-  });
-  return res.json();
+  return directSetSessionsPeek(n);
 }
 
 export async function setScratchBase(
   path: string,
 ): Promise<{ ok: boolean; error?: string; scratch_base?: string }> {
-  const res = await fetch(`${httpBase()}/v1/settings/scratch-base`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ path }),
-  });
-  return res.json();
+  return directSetScratchBase(path);
 }
 
 export async function setSurfaces(
   flags: { chat?: boolean; code?: boolean },
 ): Promise<{ ok: boolean; surfaces: SurfaceVisibility }> {
-  const res = await fetch(`${httpBase()}/v1/settings/surfaces`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(flags),
-  });
-  return res.json();
+  void flags;
+  return directSetSurfaces();
 }
 
 /** Persist the sidebar layout preference (flat ↔ grouped-by-persona); read back from getSettings. */
 export async function setNavLayout(
   layout: "flat" | "grouped",
 ): Promise<{ ok: boolean; nav_layout?: "flat" | "grouped"; error?: string }> {
-  const res = await fetch(`${httpBase()}/v1/settings/nav-layout`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ nav_layout: layout }),
-  });
-  return res.json();
+  return directSetNavLayout(layout);
 }
 export const INBOX_UNLOCK = "delta:inbox-unlock";
 export function announceInboxUnlock() {
@@ -1497,69 +1485,38 @@ export async function setUnattended(
 }
 
 export async function getSettings(): Promise<ModelSettings> {
-  const res = await fetch(`${httpBase()}/v1/settings`);
-  return res.json();
+  return directGetSettings() as Promise<ModelSettings>;
 }
 
 export async function setModelKey(
   apiKey: string,
 ): Promise<{ ok: boolean; error?: string; has_key?: boolean; source?: string }> {
-  const res = await fetch(`${httpBase()}/v1/settings/model-key`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ api_key: apiKey }),
-  });
-  return res.json();
+  return directSetModelKey(apiKey);
 }
 
 export async function setDefaultModel(
   model: string,
 ): Promise<{ ok: boolean; error?: string; model?: string }> {
-  const res = await fetch(`${httpBase()}/v1/settings/default-model`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model }),
-  });
-  return res.json();
+  return directSetDefaultModel(model);
 }
 
 export async function addModel(model: string): Promise<ModelSettings & { ok: boolean; error?: string }> {
-  const res = await fetch(`${httpBase()}/v1/settings/models/add`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model }),
-  });
-  return res.json();
+  return directAddModel(model) as Promise<ModelSettings & { ok: boolean; error?: string }>;
 }
 
 export async function removeModel(model: string): Promise<ModelSettings & { ok: boolean }> {
-  const res = await fetch(`${httpBase()}/v1/settings/models/remove`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ model }),
-  });
-  return res.json();
+  return directRemoveModel(model) as Promise<ModelSettings & { ok: boolean }>;
 }
 
 export async function setOnboarded(value: boolean): Promise<{ ok: boolean; onboarded: boolean }> {
-  const res = await fetch(`${httpBase()}/v1/settings/onboarded`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ value }),
-  });
-  return res.json();
+  return directSetOnboarded(value);
 }
 
 /** Persist the UI/agent language (a Locale like `zh-CN` / `en-US`). */
 export async function setLanguage(
   language: string,
 ): Promise<{ ok: boolean; language?: string | null } & Partial<ModelSettings>> {
-  const res = await fetch(`${httpBase()}/v1/settings/language`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ language }),
-  });
-  return res.json();
+  return directSetLanguage(language);
 }
 
 // -- Memory (MEMORY-SPEC §5.3/§6: the memory screen, user rules, toast Undo) ----
@@ -1673,34 +1630,24 @@ export interface ProviderProtocol {
 }
 
 export async function getProviders(): Promise<ProviderInfo[]> {
-  const res = await fetch(`${httpBase()}/v1/providers`);
-  return res.json();
+  return directGetProviders() as Promise<ProviderInfo[]>;
 }
 
 /** The two protocol definitions for the custom-provider form's protocol dropdown. */
 export async function getProtocols(): Promise<ProviderProtocol[]> {
-  const res = await fetch(`${httpBase()}/v1/protocols`);
-  return res.json();
+  return directGetProtocols() as Promise<ProviderProtocol[]>;
 }
 
 export async function setProvider(
   name: string,
   fields: Record<string, string>,
 ): Promise<{ ok: boolean; error?: string; provider?: string; recommended_model?: string | null }> {
-  const res = await fetch(`${httpBase()}/v1/providers`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, fields }),
-  });
-  return res.json();
+  return directSetProvider(name, fields);
 }
 
 /** Forget a provider's stored config (Settings ▸ Models "Remove key…"). */
 export async function removeProvider(name: string): Promise<{ ok: boolean; error?: string }> {
-  const res = await fetch(`${httpBase()}/v1/providers/${encodeURIComponent(name)}`, {
-    method: "DELETE",
-  });
-  return res.json();
+  return directRemoveProvider(name);
 }
 
 /**
@@ -1718,12 +1665,7 @@ export async function createCustomProvider(
   protocol?: string;
   recommended_model?: string | null;
 }> {
-  const res = await fetch(`${httpBase()}/v1/providers`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name: alias, protocol, fields }),
-  });
-  return res.json();
+  return directSetProvider(alias, fields, protocol);
 }
 
 /**
@@ -1734,10 +1676,7 @@ export async function createCustomProvider(
 export async function removeCustomProvider(
   alias: string,
 ): Promise<{ ok: boolean; error?: string }> {
-  const res = await fetch(`${httpBase()}/v1/providers/${encodeURIComponent(alias)}`, {
-    method: "DELETE",
-  });
-  return res.json();
+  return directRemoveProvider(alias);
 }
 
 /**
@@ -1755,12 +1694,7 @@ export async function fetchModels(
   models?: string[];
   added?: string[];
 }> {
-  const res = await fetch(`${httpBase()}/v1/providers/fetch`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, fields }),
-  });
-  return res.json();
+  return directFetchProviderModels(name, fields);
 }
 
 /** Live read-only credential check (does NOT save the key). Triggered by the user's "Test" click. */
@@ -1768,12 +1702,7 @@ export async function verifyProvider(
   name: string,
   fields: Record<string, string>,
 ): Promise<{ ok: boolean; error?: string }> {
-  const res = await fetch(`${httpBase()}/v1/providers/verify`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name, fields }),
-  });
-  return res.json();
+  return directVerifyProvider(name, fields);
 }
 
 /** Client-side provider guess from an API key's shape (mirrors the server's detect_provider). */
@@ -2333,12 +2262,8 @@ export class Session {
     if (this.direct) {
       void directRun({
         sessionId: this.sessionId,
-        model: model || this.model,
-        protocol: "openai_chat",
-        apiKey: "",
-        baseUrl: "https://api.openai.com/v1",
+        modelId: model || this.model,
         userInput: text,
-        settings: {},
         workspace: "",
         onEvent: (ev) => {
           if (this.stopped) return;

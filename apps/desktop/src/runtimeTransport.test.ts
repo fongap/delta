@@ -28,10 +28,7 @@ describe("direct runtime IPC contract", () => {
     await expect(
       directRun({
         sessionId: "session-1",
-        model: "test-model",
-        protocol: "openai_chat",
-        apiKey: "secret",
-        baseUrl: "https://example.test/v1",
+        modelId: "test-model",
         userInput: "hello",
         onEvent: vi.fn(),
       }),
@@ -43,8 +40,11 @@ describe("direct runtime IPC contract", () => {
     });
     expect(invokeMock).toHaveBeenCalledWith(
       "runtime_run",
-      expect.objectContaining({ sessionId: "session-1", userInput: "hello" }),
+      expect.objectContaining({ sessionId: "session-1", modelId: "test-model", userInput: "hello" }),
     );
+    expect(invokeMock.mock.calls[0][1]).not.toHaveProperty("apiKey");
+    expect(invokeMock.mock.calls[0][1]).not.toHaveProperty("baseUrl");
+    expect(invokeMock.mock.calls[0][1]).not.toHaveProperty("protocol");
   });
 
   it("keeps steering and queued follow-up as distinct commands", async () => {

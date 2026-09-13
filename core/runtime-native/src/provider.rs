@@ -22,6 +22,15 @@ pub struct ProviderRequest {
     pub base_url: String,
 }
 
+fn versioned_endpoint(base_url: &str, endpoint: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    if base.ends_with("/v1") {
+        format!("{base}/{endpoint}")
+    } else {
+        format!("{base}/v1/{endpoint}")
+    }
+}
+
 #[derive(Default)]
 struct ToolCallAccum {
     id: String,
@@ -357,7 +366,7 @@ fn map_stop_reason(reason: &str) -> &str {
 }
 
 pub fn complete_anthropic(req: &ProviderRequest) -> Result<Value, String> {
-    let url = format!("{}/v1/messages", req.base_url.trim_end_matches('/'));
+    let url = versioned_endpoint(&req.base_url, "messages");
     let body = build_anthropic_body(req, false);
     let mut request = agent().post(&url);
     for (k, v) in anthropic_headers(req) {
@@ -441,7 +450,7 @@ pub fn stream_anthropic(
     stream_id: &str,
     cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<Value, String> {
-    let url = format!("{}/v1/messages", req.base_url.trim_end_matches('/'));
+    let url = versioned_endpoint(&req.base_url, "messages");
     let body = build_anthropic_body(req, true);
     let mut request = agent().post(&url);
     for (k, v) in anthropic_headers(req) {
@@ -625,7 +634,7 @@ fn build_openai_responses_body(req: &ProviderRequest, stream: bool) -> Value {
 }
 
 pub fn complete_openai_responses(req: &ProviderRequest) -> Result<Value, String> {
-    let url = format!("{}/v1/responses", req.base_url.trim_end_matches('/'));
+    let url = versioned_endpoint(&req.base_url, "responses");
     let body = build_openai_responses_body(req, false);
     let resp = send_json(
         agent()
@@ -749,7 +758,7 @@ pub fn stream_openai_responses(
     stream_id: &str,
     cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<Value, String> {
-    let url = format!("{}/v1/responses", req.base_url.trim_end_matches('/'));
+    let url = versioned_endpoint(&req.base_url, "responses");
     let body = build_openai_responses_body(req, true);
     let resp = send_json(
         agent()
@@ -1337,4 +1346,21 @@ pub fn friendly_model_error(model: &str, message: &str) -> Value {
         return json!({"message": no_access});
     }
     json!({"message": Value::Null})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::versioned_endpoint;
+
+    #[test]
+    fn versioned_endpoint_never_duplicates_v1() {
+        assert_eq!(
+            versioned_endpoint("https://api.example.test/v1", "responses"),
+            "https://api.example.test/v1/responses"
+        );
+        assert_eq!(
+            versioned_endpoint("https://api.example.test", "messages"),
+            "https://api.example.test/v1/messages"
+        );
+    }
 }

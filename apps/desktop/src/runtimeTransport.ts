@@ -32,13 +32,9 @@ export interface DirectRuntimeAcceptance {
 
 export async function directRun(args: {
   sessionId: string;
-  model: string;
-  protocol: string;
-  apiKey: string;
-  baseUrl: string;
+  modelId: string;
   userInput: string;
   tools?: unknown;
-  settings?: unknown;
   systemPrompt?: string;
   workspace?: string;
   messages?: unknown;
@@ -49,13 +45,13 @@ export async function directRun(args: {
   onError?: (error: unknown) => void;
 }): Promise<DirectRuntimeAcceptance> {
   const {
-    sessionId, model, protocol, apiKey, baseUrl, userInput,
-    tools, settings, systemPrompt, workspace, messages, maxIterations, maxRetries, source,
+    sessionId, modelId, userInput,
+    tools, systemPrompt, workspace, messages, maxIterations, maxRetries, source,
   } = args;
   try {
     const out = await invoke("runtime_run", {
-      sessionId, model, protocol, apiKey, baseUrl, userInput,
-      tools, settings, systemPrompt, workspace, messages, maxIterations, maxRetries, source,
+      sessionId, modelId, userInput,
+      tools, systemPrompt, workspace, messages, maxIterations, maxRetries, source,
     });
     if (out && (out as any).error) {
       args.onError?.((out as any).error);
@@ -166,10 +162,10 @@ export async function directMessages(
 
 export async function directSwitchModel(
   sessionId: string,
-  model: string,
+  modelId: string,
 ): Promise<{ ok: boolean; error?: string; notice?: unknown }> {
   try {
-    const out = await invoke("runtime_switch_model", { sessionId, model });
+    const out = await invoke("runtime_switch_model", { sessionId, modelId });
     if (out && (out as any).error) return { ok: false, error: (out as any).error };
     return { ok: true, notice: (out as any).notice };
   } catch (e) {
@@ -197,6 +193,54 @@ export async function directHealth(): Promise<unknown> {
     return { status: "error", error: String(e) };
   }
 }
+
+async function invokeAuthority(command: string, args: Record<string, unknown> = {}): Promise<any> {
+  try {
+    return await invoke(command, args);
+  } catch (error) {
+    return { ok: false, error: String(error) };
+  }
+}
+
+export const directGetSettings = () => invokeAuthority("settings_get");
+export const directSetModelKey = (apiKey: string) =>
+  invokeAuthority("settings_set_model_key", { apiKey });
+export const directSetDefaultModel = (modelId: string) =>
+  invokeAuthority("settings_set_default_model", { modelId });
+export const directAddModel = (modelId: string) =>
+  invokeAuthority("settings_add_model", { modelId });
+export const directRemoveModel = (modelId: string) =>
+  invokeAuthority("settings_remove_model", { modelId });
+export const directSetOnboarded = (value: boolean) =>
+  invokeAuthority("settings_set_onboarded", { value });
+export const directSetLanguage = (language: string) =>
+  invokeAuthority("settings_set_language", { language });
+export const directSetContextBar = (shown: boolean) =>
+  invokeAuthority("settings_set_context_bar", { shown });
+export const directSetSessionsPeek = (count: number) =>
+  invokeAuthority("settings_set_sessions_peek", { count });
+export const directSetScratchBase = (path: string) =>
+  invokeAuthority("settings_set_scratch_base", { path });
+export const directSetNavLayout = (layout: "flat" | "grouped") =>
+  invokeAuthority("settings_set_nav_layout", { layout });
+export const directSetPdfSettings = (patch: Record<string, unknown>) =>
+  invokeAuthority("settings_set_pdf", { patch });
+export const directSetCompactionSettings = (patch: Record<string, unknown>) =>
+  invokeAuthority("settings_set_compaction", { patch });
+export const directSetSurfaces = () => invokeAuthority("settings_set_surfaces");
+export const directGetProviders = () => invokeAuthority("providers_list");
+export const directGetProtocols = () => invokeAuthority("provider_protocols");
+export const directSetProvider = (
+  name: string,
+  fields: Record<string, string>,
+  protocol?: string,
+) => invokeAuthority("provider_set", { name, fields, protocol });
+export const directRemoveProvider = (name: string) =>
+  invokeAuthority("provider_remove", { name });
+export const directFetchProviderModels = (name: string, fields: Record<string, string>) =>
+  invokeAuthority("provider_fetch_models", { name, fields });
+export const directVerifyProvider = (name: string, fields: Record<string, string>) =>
+  invokeAuthority("provider_verify", { name, fields });
 
 // -----------------------------------------------------------------------------
 // Runtime event subscription

@@ -1,7 +1,7 @@
 // Provider logo registry (UX-DECISIONS §39): official brand marks for the onboarding
 // provider gallery, vendored from the MIT-licensed lobe-icons set (same
 // bundled-asset posture as the connector registry — no CDN at runtime). Keys are
-// /v1/providers names; unknown names get no mark (the gallery falls back to a
+// Rust provider-authority names; unknown names get no mark (the gallery falls back to a
 // neutral monogram). PROVIDER_ORDER is the gallery order — recognition first,
 // long tail behind the scroll fold.
 
