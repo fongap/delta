@@ -16,6 +16,7 @@
 
 pub mod approval;
 pub mod artifact;
+pub mod capability;
 pub mod checkpoint;
 pub mod idemlog;
 pub mod ledger;
@@ -34,6 +35,11 @@ pub use approval::{
 pub use artifact::{
     ArtifactInput, ArtifactMismatch, ArtifactReader, ArtifactRecord, ArtifactRegistrationResult,
     ArtifactRegistryWriter,
+};
+pub use capability::{
+    CapabilityArtifact, CapabilityDiagnostics, CapabilityExitState, CapabilityGrants,
+    CapabilityInputFile, CapabilityJob, CapabilityProgress, CapabilityResult, CapabilityRunner,
+    CAPABILITY_ABI_VERSION,
 };
 pub use checkpoint::{
     CheckpointReader, CheckpointRegisterInput, CheckpointValidationResult, CheckpointWriter,
