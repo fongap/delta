@@ -18,6 +18,7 @@ pub mod approval;
 pub mod artifact;
 pub mod capability;
 pub mod checkpoint;
+pub mod control_plane;
 pub mod idemlog;
 pub mod ledger;
 pub mod policy;
@@ -44,6 +45,10 @@ pub use capability::{
 pub use checkpoint::{
     CheckpointReader, CheckpointRegisterInput, CheckpointValidationResult, CheckpointWriter,
     CHECKPOINT_SCHEMA_VERSION,
+};
+pub use control_plane::{
+    delete_session, get_session_messages, list_recent_workspaces, list_sessions, rename_session,
+    set_session_flags,
 };
 pub use idemlog::{
     args_sha256, operation_id, IdempotencyReader, IdempotencyWriter, SideEffectEntry,
