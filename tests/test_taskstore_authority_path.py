@@ -47,13 +47,10 @@ def test_taskstore_facade_has_no_python_writer_or_switch():
 
 
 def test_production_constructs_taskstore_facade_directly():
-    """manager.py must construct TaskStore directly, not via maybe_wrap_taskstore."""
-    manager_py = REPO / "services" / "server" / "manager.py"
-    text = manager_py.read_text(encoding="utf-8")
-    assert not NO_MAYBE_WRAP.search(text), "manager.py uses maybe_wrap_taskstore"
-    assert not NO_STORE_DELEGATE_IMPORT.search(text), (
-        "manager.py imports from store_delegate"
-    )
+    """R6: the Python application backend (manager.py) is removed — no Python
+    layer constructs or wraps the Rust TaskStore facade."""
+    manager = REPO / "services" / "server" / "manager.py"
+    assert not manager.exists(), "services/server/manager.py must not exist (R6 backend removed)"
 
 
 def test_no_production_file_imports_deleted_taskstore_delegate():

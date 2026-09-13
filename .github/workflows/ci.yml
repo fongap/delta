@@ -509,8 +509,6 @@ jobs:
           providers
           integrations
           packages
-          services/server
-          apps/tui
           tests
           --select E9,F63,F7,F82
 
@@ -526,8 +524,6 @@ jobs:
             providers \
             integrations \
             packages \
-            services/server \
-            apps/tui \
             tests \
             --output-format=json \
             > ruff-report.json || true
@@ -560,9 +556,7 @@ jobs:
             core \
             providers \
             integrations \
-            packages \
-            services/server \
-            apps/tui
+            packages
 
 
   rust:
@@ -764,17 +758,8 @@ jobs:
           # R6: the core product is Rust + TypeScript. This gate fails CI if a
           # Python application backend authority (FastAPI server, delta-server,
           # Python TurnEngine/SessionManager, aisuite runtime) is re-introduced.
-          #
-          # The guard is enforced once the R6 Python-backend removal has landed.
-          # Until then it runs in WARN mode: the script still runs (it doubles as
-          # a structural audit), but its failure does not block the merge. Flip
-          # DELTA_R6_ENFORCE to "1" permanently once core/engine.py, services/
-          # server/ and the FastAPI surface are deleted (see docs/architecture/).
-          if [ "${DELTA_R6_ENFORCE:-0}" = "1" ]; then
-            python3 scripts/check_r6_architecture.py
-          else
-            python3 scripts/check_r6_architecture.py || echo "R6 guard: WARN (not yet enforced — Python backend removal pending)"
-          fi
+          # The Python backend was removed; this is now a hard (enforcing) gate.
+          python3 scripts/check_r6_architecture.py
 
 
   ci-required:

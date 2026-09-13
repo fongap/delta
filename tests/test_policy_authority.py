@@ -51,14 +51,15 @@ def test_gateway_is_thin_facade():
 def test_no_python_policy_implementation_in_production():
     """Production code must delegate to Rust via gateway facades."""
     # ADR-034: policy evaluation lives in the tool lifecycle orchestrator
-    # (core/tool_lifecycle.py), not directly in engine.py.
-    engine_source = (REPO / "core" / "engine.py").read_text(encoding="utf-8")
+    # (core/tool_lifecycle.py). The old TurnEngine (core/engine.py) that held
+    # a duplicate policy path was removed in R6.
+    engine = REPO / "core" / "engine.py"
+    assert not engine.exists(), "core/engine.py must not exist (R6 TurnEngine removed)"
     lifecycle_source = (REPO / "core" / "tool_lifecycle.py").read_text(encoding="utf-8")
-    # Old slice calls removed from both production modules
-    for source in (engine_source, lifecycle_source):
-        assert "gateway.enforce_level" not in source
-        assert "gateway.restrict_grants" not in source
-        assert "gateway.enforce_scope" not in source
+    # Old slice calls removed from the production module
+    assert "gateway.enforce_level" not in lifecycle_source
+    assert "gateway.restrict_grants" not in lifecycle_source
+    assert "gateway.enforce_scope" not in lifecycle_source
     # evaluate_policy (the Rust facade) is used by the orchestrator
     assert "gateway.evaluate_policy" in lifecycle_source
 
