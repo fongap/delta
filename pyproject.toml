@@ -48,8 +48,6 @@ browser = ["playwright>=1.62.0"]
 build = ["pyinstaller==6.22.2"]
 
 [project.scripts]
-delta = "core.cli:main"
-delta-server = "services.server.run:main"
 delta-connectors = "integrations.connectors.cli:main"
 
 [tool.setuptools.packages.find]

@@ -199,13 +199,8 @@ jobs:
           uv sync --locked --extra messaging --extra dev
           uv pip check --python .venv/bin/python
 
-      - name: Runtime contract schemas
-        run: uv run --locked pytest tests/test_ui_runtime_contracts.py -q
-
       - name: Test
-        # test_ui_runtime_contracts.py already ran above as an explicit contract gate,
-        # so it is excluded here to avoid running it twice.
-        run: uv run --locked pytest tests -q --ignore=tests/test_ui_runtime_contracts.py
+        run: uv run --locked pytest tests -q
         env:
           DELTA_CORE_BINARY: ${{ github.workspace }}/core/runtime-native/target/release/delta_core
 
