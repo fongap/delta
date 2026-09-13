@@ -230,3 +230,63 @@ const RUNTIME_SESSION_EVENT_TYPES = new Set<string>([
 ]);
 
 export { RUNTIME_SESSION_EVENT_TYPES };
+
+// -----------------------------------------------------------------------------
+// R6 Application Control Plane — Session/Workspace via direct IPC.
+// Mirrors the removed FastAPI /v1/sessions + /v1/workspaces read/write shapes so
+// api.ts callers can switch to IPC unchanged.
+// -----------------------------------------------------------------------------
+
+export async function directListSessions(workspace?: string): Promise<unknown> {
+  try {
+    return await invoke("sessions_list", workspace ? { workspace } : {});
+  } catch (e) {
+    return { sessions: [], error: String(e) };
+  }
+}
+
+export async function directSessionMessages(sessionId: string): Promise<unknown> {
+  try {
+    return await invoke("session_messages", { sessionId });
+  } catch (e) {
+    return { messages: [], error: String(e) };
+  }
+}
+
+export async function directSessionRename(
+  sessionId: string,
+  title: string,
+): Promise<unknown> {
+  try {
+    return await invoke("session_rename", { sessionId, title });
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
+export async function directSessionSetFlags(
+  sessionId: string,
+  flags: { pinned?: boolean; archived?: boolean },
+): Promise<unknown> {
+  try {
+    return await invoke("session_set_flags", { sessionId, ...flags });
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
+export async function directSessionDelete(sessionId: string): Promise<unknown> {
+  try {
+    return await invoke("session_delete", { sessionId });
+  } catch (e) {
+    return { ok: false, error: String(e) };
+  }
+}
+
+export async function directRecentWorkspaces(): Promise<unknown> {
+  try {
+    return await invoke("workspaces_recent");
+  } catch (e) {
+    return { workspaces: [], error: String(e) };
+  }
+}
