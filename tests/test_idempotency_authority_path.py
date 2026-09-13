@@ -18,10 +18,10 @@ def test_idempotency_facade_has_no_python_writer_or_switch():
 
 
 def test_production_constructs_rust_facade_directly():
-    source = (REPO / "services" / "server" / "manager.py").read_text(encoding="utf-8")
-    assert "from core.idemlog import IdempotencyLog" in source
-    assert 'self.idem_log = IdempotencyLog(base / "side-effects.db")' in source
-    assert "idemlog_delegate" not in source
+    """R6: the Python application backend (manager.py) is removed — no Python
+    layer constructs or wraps the Rust IdempotencyLog facade."""
+    manager = REPO / "services" / "server" / "manager.py"
+    assert not manager.exists(), "services/server/manager.py must not exist (R6 backend removed)"
 
 
 def test_no_production_file_imports_deleted_delegate():

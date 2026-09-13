@@ -426,7 +426,7 @@ def inbox_approver(store: InboxStore, session_id: str, *, inbox: str = "default"
     """An Approver that routes a permission request to the Inbox and suspends until resolved.
     Maps the resolution to an ApprovalOutcome (allow → ONCE, always → ALWAYS_TOOL, else DENY).
     """
-    from core.engine import ApprovalOutcome, PermissionRequest
+    from core.tool_lifecycle import ApprovalOutcome, PermissionRequest
 
     async def approve(request: PermissionRequest) -> ApprovalOutcome:
         item = store.add_approval(

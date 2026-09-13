@@ -50,6 +50,29 @@ if TYPE_CHECKING:
     from core.ledger import RunEventLedger
 
 
+def _artifact_kind(path: Path) -> str:
+    """Classify an artifact's kind by file suffix (R6: moved in from the
+    removed `services.server.manager_support` so core/ has no server coupling)."""
+    suffix = path.suffix.lower()
+    if suffix in {".md", ".markdown"}:
+        return "markdown"
+    if suffix in {".html", ".htm"}:
+        return "html"
+    if suffix in {".png", ".jpg", ".jpeg", ".webp", ".gif"}:
+        return "image"
+    if suffix == ".pdf":
+        return "pdf"
+    if suffix in {".xlsx", ".xls"}:
+        return "sheet"
+    if suffix in {".pptx", ".ppt", ".pptm", ".docx", ".doc", ".docm"}:
+        return "office"
+    if suffix in {".csv", ".tsv"}:
+        return "csv"
+    if suffix in {".py", ".js", ".ts", ".tsx", ".css", ".json"}:
+        return "code"
+    return "text"
+
+
 @dataclass
 class Artifact:
     """A run-produced output. Addressable by path+run_id; verifiable by sha256."""
@@ -163,8 +186,6 @@ def register_artifact(
     :class:`DeltaCoreError` if Rust registration fails.
     """
     if kind_classifier is None:
-        from services.server.manager_support import _artifact_kind
-
         kind_classifier = _artifact_kind
 
     root = Path(workspace)
@@ -210,8 +231,6 @@ def register_run_artifacts(
     "artifact present but not yet readable" instead of silently missing.
     """
     if kind_classifier is None:
-        from services.server.manager_support import _artifact_kind
-
         kind_classifier = _artifact_kind
 
     root = Path(workspace)

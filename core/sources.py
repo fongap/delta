@@ -865,17 +865,15 @@ def to_dto(ref: SourceRef) -> dict[str, Any]:
     ``ContractModel(extra="allow")`` and the optional / defaulted types
     above are forward-compatible.
     """
-    from services.server.contracts import SourceDTO
-
-    return SourceDTO(
-        id=ref.id,
-        origin=ref.origin,
-        name=Path(ref.location).name or ref.location,
-        fingerprint_prefix=ref.fingerprint[:12],
-        freshness=ref.status,
-        location=ref.location,
-        cited_ranges=list(ref.cited_ranges),
-    ).model_dump()
+    return {
+        "id": ref.id,
+        "origin": ref.origin,
+        "name": Path(ref.location).name or ref.location,
+        "fingerprint_prefix": ref.fingerprint[:12],
+        "freshness": ref.status,
+        "location": ref.location,
+        "cited_ranges": list(ref.cited_ranges),
+    }
 
 
 __all__ = [

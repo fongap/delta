@@ -63,11 +63,10 @@ def test_recovery_facade_has_no_python_writer_or_switch():
 
 
 def test_production_constructs_recovery_store_directly():
-    """manager.py must construct RecoveryStore directly, not via delegate."""
-    source = (REPO / "services" / "server" / "manager.py").read_text(encoding="utf-8")
-    assert "from core.recovery import RecoveryStore" in source
-    assert "recovery-snapshots.json" not in source
-    assert "run-events.db" in source
+    """R6: the Python application backend (manager.py) is removed — no Python
+    layer constructs or wraps the Rust RecoveryStore facade."""
+    manager = REPO / "services" / "server" / "manager.py"
+    assert not manager.exists(), "services/server/manager.py must not exist (R6 backend removed)"
 
 
 def test_no_production_file_imports_deleted_recovery_delegate():

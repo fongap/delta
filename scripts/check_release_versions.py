@@ -144,15 +144,6 @@ def main() -> None:
     package_lock = json.loads(
         (REPO / "apps/desktop/package-lock.json").read_text(encoding="utf-8")
     )
-    server_version_text = REPO / "packaging/server/delta-server-version.txt"
-    server_version_content = server_version_text.read_text(encoding="utf-8")
-    server_version_match = re.search(
-        r"StringStruct\('ProductVersion', '([^']+)'\)",
-        server_version_content,
-    )
-    if server_version_match is None:
-        raise SystemExit("packaging/server/delta-server-version.txt has no ProductVersion")
-
     versions = {
         "pyproject.toml": tomllib.loads((REPO / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"],
         "apps/desktop/package.json": json_version("apps/desktop/package.json"),
@@ -163,7 +154,6 @@ def main() -> None:
         "apps/desktop/src-tauri/Cargo.lock": cargo_lock_version("apps/desktop/src-tauri/Cargo.lock", "delta-desktop"),
         "packaging/portable/launcher/Cargo.toml": toml_version("packaging/portable/launcher/Cargo.toml"),
         "packaging/portable/launcher/Cargo.lock": cargo_lock_version("packaging/portable/launcher/Cargo.lock", "delta-portable-launcher"),
-        "packaging/server/delta-server-version.txt": server_version_match.group(1),
     }
 
     if not args.quiet:
@@ -190,20 +180,6 @@ def main() -> None:
         raise SystemExit(
             f"release gate requires a stable X.Y.Z version, got {versions['pyproject.toml']!r}"
         )
-
-    # The server-version file's filevers/prodvers numeric tuples must match.
-    version_tuple = (
-        version_identity.major,
-        version_identity.minor,
-        version_identity.patch,
-        0,
-    )
-    tuple_text = ", ".join(str(part) for part in version_tuple)
-    for field in ("filevers", "prodvers"):
-        if f"{field}=({tuple_text})" not in server_version_content:
-            raise SystemExit(
-                f"packaging/server/delta-server-version.txt {field} does not match {version_str}"
-            )
 
     changelog = (REPO / "CHANGELOG.md").read_text(encoding="utf-8")
     if "## [Unreleased]" not in changelog:

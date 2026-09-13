@@ -51,12 +51,10 @@ def test_ledger_facade_has_no_python_writer_or_switch():
 
 
 def test_production_constructs_ledger_facade_directly():
-    """manager.py must construct RunEventLedger directly, not via delegate."""
-    source = (REPO / "services" / "server" / "manager.py").read_text(encoding="utf-8")
-    assert "from core.ledger import RunEventLedger" in source
-    assert "idemlog_delegate" not in source
-    assert "ledger_delegate" not in source
-    assert "maybe_wrap_ledger" not in source
+    """R6: the Python application backend (manager.py) is removed — no Python
+    layer constructs or wraps the Rust RunEventLedger facade."""
+    manager = REPO / "services" / "server" / "manager.py"
+    assert not manager.exists(), "services/server/manager.py must not exist (R6 backend removed)"
 
 
 def test_no_production_file_imports_deleted_ledger_delegate():

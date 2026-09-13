@@ -124,7 +124,7 @@ def _read_xlsx(target: Path) -> list[dict[str, Any]]:
     agent enough to pick a sheet+range to read next.
     """
     # Reuse the preview module's limits / helpers; it is stdlib-only.
-    from services.server import sheet_preview
+    from integrations.tools import sheet_preview
 
     try:
         preview = sheet_preview.read_sheet_preview(target)
