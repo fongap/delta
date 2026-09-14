@@ -329,7 +329,7 @@ def test_send_attachment_must_live_inside_roots(tmp_path):
 def test_approval_gating(tmp_path):
     tools = _tools(_connected_secrets(tmp_path))
     gated = {
-        name: fn.__aisuite_tool_metadata__.requires_approval
+        name: fn.__delta_tool_metadata__.requires_approval
         for name, fn in tools.items()
     }
     assert gated == {

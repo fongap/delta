@@ -61,6 +61,7 @@ def test_each_structural_rule_is_enforced(repository: Path, relative_path: str) 
         path.write_text("retired", encoding="utf-8")
     else:
         path.mkdir(parents=True, exist_ok=True)
+        (path / "retired.py").write_text("retired", encoding="utf-8")
 
     violations, evaluated = guard.scan_repository(repository)
 

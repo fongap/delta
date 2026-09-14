@@ -501,7 +501,6 @@ jobs:
         run: >
           uv run --locked ruff check
           core
-          providers
           integrations
           packages
           tests
@@ -516,7 +515,6 @@ jobs:
 
           uv run --locked ruff check \
             core \
-            providers \
             integrations \
             packages \
             tests \
@@ -549,7 +547,6 @@ jobs:
         run: |
           uv run --locked pyright \
             core \
-            providers \
             integrations \
             packages
 
@@ -690,7 +687,6 @@ jobs:
               "openwork-theme\|openwork:theme-pref" \
               apps \
               core \
-              providers \
               integrations \
               packages \
               services \

@@ -29,7 +29,7 @@ TOOL_DEFS: tuple[ConnectorToolDef, ...] = (
         "browser",
         # web_fetch by another name: the URL is model-chosen, so this is egress —
         # a "read" kind here would bypass the gate entirely (network egress is not
-        # a pure read; see core.risk.EGRESS_TOOLS).
+        # a pure read; Rust policy classifies it as network egress).
         "browser_read_url",
         "Read public URL",
         "write",

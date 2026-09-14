@@ -159,11 +159,7 @@ RULES = (
         "aisuite used outside a controlled capability definition",
         re.compile(r"^\s*(?:from\s+aisuite\b|import\s+aisuite\b)", re.M),
         lambda rel: _python(rel)
-        and _under(rel, "apps", "providers", "services", "core")
-        and rel not in {
-            "core/automation/tools.py",
-            "core/memory/tools.py",
-        },
+        and _under(rel, "apps", "providers", "services", "core"),
     ),
     Rule(
         "persona-platform",
@@ -213,6 +209,7 @@ STRUCTURAL_BANS: dict[str, str] = {
     "services/server": "retired Python application backend directory",
     "packaging/server": "retired Python server packaging directory",
     "packaging/sidecar/delta-server": "retired Python application sidecar",
+    "providers": "retired Python provider authority package",
 }
 
 
@@ -244,7 +241,15 @@ def scan_repository(repo: Path) -> tuple[list[str], set[str]]:
 
     for rel, description in STRUCTURAL_BANS.items():
         evaluated.add(f"path:{rel}")
-        if (repo / rel).exists():
+        target = repo / rel
+        if target.is_file() or (
+            target.is_dir()
+            and any(
+                path.is_file()
+                and not SKIP_PARTS.intersection(path.relative_to(repo).parts)
+                for path in target.rglob("*")
+            )
+        ):
             violations.append(f"{rel}: {description}")
 
     for path, rel in _iter_files(repo):

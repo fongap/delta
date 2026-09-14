@@ -16,7 +16,7 @@ from integrations.connectors.adapters import SlackAdapter
 from integrations.connectors.base import InteractionEvent, MessageEvent
 from integrations.connectors.config import ConnectorSettings
 from integrations.connectors.gateway import Gateway
-from core.interactions import Button
+from types import SimpleNamespace
 
 
 def _allow_all() -> dict[str, ConnectorSettings]:
@@ -119,7 +119,9 @@ async def test_send_and_send_interactive_recorded(fake_slack):
 
     r2 = await _send_offloop(
         adapter.send_interactive(
-            "C1", "approve?", [Button("Approve", "v1"), Button("Deny", "v2")]
+            "C1",
+            "approve?",
+            [SimpleNamespace(label="Approve", value="v1"), SimpleNamespace(label="Deny", value="v2")],
         )
     )
     assert r2.ok is True and r2.message_id

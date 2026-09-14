@@ -28,7 +28,7 @@ from email.utils import formataddr, make_msgid
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-import aisuite as ai
+from integrations.tools import metadata as ai
 
 from core.roots import RootDir
 from integrations.tools.metadata import attach_tool_metadata
