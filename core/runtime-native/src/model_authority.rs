@@ -348,8 +348,6 @@ impl ModelAuthority {
             "source": if env_key { Value::String("env".to_string()) } else if stored_key { Value::String("store".to_string()) } else { Value::Null },
             "onboarded": prefs.get("onboarded").and_then(Value::as_bool).unwrap_or(false),
             "language": prefs.get("language").cloned().unwrap_or(Value::Null),
-            "surfaces": {"delta": true},
-            "nav_layout": if prefs.get("nav_layout").and_then(Value::as_str) == Some("grouped") { "grouped" } else { "flat" },
             "sessions_peek": bounded_i64(prefs.get("sessions_peek"), 5, 1, 50),
             "context_bar": prefs.get("context_bar").and_then(Value::as_bool).unwrap_or(false),
             "scratch_base": prefs.get("scratch_base").and_then(Value::as_str).unwrap_or("~/Delta"),
@@ -621,16 +619,6 @@ impl ModelAuthority {
         let value = path.trim();
         self.set_pref("scratch_base", json!(value))?;
         Ok(json!({"ok": true, "scratch_base": value}))
-    }
-
-    pub fn set_nav_layout(&self, layout: &str) -> Result<Value, String> {
-        let value = if layout == "grouped" {
-            "grouped"
-        } else {
-            "flat"
-        };
-        self.set_pref("nav_layout", json!(value))?;
-        Ok(json!({"ok": true, "nav_layout": value}))
     }
 
     pub fn set_pdf_settings(&self, patch: &Value) -> Result<Value, String> {

@@ -57,13 +57,11 @@ import {
   directSetDefaultModel,
   directSetLanguage,
   directSetModelKey,
-  directSetNavLayout,
   directSetOnboarded,
   directSetPdfSettings,
   directSetProvider,
   directSetScratchBase,
   directSetSessionsPeek,
-  directSetSurfaces,
   directSetUnattended,
   directSetMemorySettings,
   directMarkAutomationSeen,
@@ -729,14 +727,6 @@ export async function closeBrowser(): Promise<{ ok?: boolean; error?: string }> 
 }
 
 // -- settings (model API key, default model, onboarding) ----------------------
-// Delta is the only product surface (R6.0). chat/code keys are retained as optional for
-// backward-compat with older persisted settings reads, but the server only emits delta.
-export interface SurfaceVisibility {
-  delta: boolean; // always true
-  chat?: boolean;
-  code?: boolean;
-}
-
 export interface ModelSettings {
   provider: string;
   model: string;
@@ -748,13 +738,8 @@ export interface ModelSettings {
   // UI/agent language (a Locale like "zh-CN" / "en-US"). Absent → null: the GUI falls back
   // to its own default rather than the server guessing.
   language?: string | null;
-  surfaces: SurfaceVisibility;
   scratch_base: string;
   secrets_path: string;  // OS-native on-disk location the server reports (not hardcoded)
-  // Sidebar layout preference (§7): "flat" = the persona accordions / today's list; "grouped" =
-  // bounded per-persona cards. Defaults to "flat" (absent → flat) so the GUI is robust to an older
-  // backend that hasn't shipped the field yet.
-  nav_layout?: "flat" | "grouped";
   // Sidebar: sessions shown per group before "Show more" (default 5, 1–50).
   sessions_peek?: number;
   // Composer: show the context-window fill bar (default FALSE; absent → the chip shows
@@ -846,175 +831,21 @@ export async function setScratchBase(
   return directSetScratchBase(path);
 }
 
-export async function setSurfaces(
-  flags: { chat?: boolean; code?: boolean },
-): Promise<{ ok: boolean; surfaces: SurfaceVisibility }> {
-  void flags;
-  return directSetSurfaces();
-}
-
-/** Persist the sidebar layout preference (flat ↔ grouped-by-persona); read back from getSettings. */
-export async function setNavLayout(
-  layout: "flat" | "grouped",
-): Promise<{ ok: boolean; nav_layout?: "flat" | "grouped"; error?: string }> {
-  return directSetNavLayout(layout);
-}
 export const INBOX_UNLOCK = "delta:inbox-unlock";
 export function announceInboxUnlock() {
   window.dispatchEvent(new CustomEvent(INBOX_UNLOCK));
 }
 
-// -- Personas -----------------------------------------------------------------
-
-// Fired after any persona mutation (enable/disable/install/delete) so always-mounted
-// consumers (the sidebar's new-session picker) refetch instead of going stale.
-export const PERSONAS_CHANGED = "delta:personas-changed";
-function announcePersonasChanged() {
-  window.dispatchEvent(new CustomEvent(PERSONAS_CHANGED));
-}
-
-export interface Persona {
-  id: string;
-  name: string;
-  icon: string;
-  tagline: string;
-  needs_workspace: boolean;
-  builtin: boolean;
-  family: string;
-  workspace: string; // "git" | "project" | "deliverable" | "none" — drives project-scoping
-  tools: string[];
-  enabled: boolean;
-  surfaced: boolean;
-  default: boolean;
-}
-
-export interface PersonaConsent {
-  id: string;
-  name: string;
-  description: string;
-  tools: string[];
-  risk: string[];
-  connectors: boolean;
-  mcp: string[];
-  messaging: boolean;
-  recommended_mode: string;
-  recommended_models: string[];
-  source: string | null;
-  builtin: boolean;
-}
-
-const DELTA_PERSONA: Persona = {
-  id: "delta", name: "Delta", icon: "delta", tagline: "Your desktop assistant",
-  needs_workspace: false, builtin: true, family: "delta", workspace: "project",
-  tools: [], enabled: true, surfaced: true, default: true,
-};
-
-export async function getPersonas(): Promise<Persona[]> {
-  return [DELTA_PERSONA];
-}
-
-export async function updatePersona(
-  id: string,
-  body: { enabled?: boolean; surfaced?: boolean; default?: boolean },
-): Promise<{ ok: boolean; personas?: Persona[]; error?: string }> {
-  void body;
-  if (id !== "delta") return { ok: false, error: "only Delta is supported" };
-  announcePersonasChanged();
-  return { ok: true, personas: [DELTA_PERSONA] };
-}
-
-/** Uninstall a non-builtin persona (its snapshot + state). Local; works signed out. */
-export async function deletePersona(
-  id: string,
-): Promise<{ ok: boolean; personas?: Persona[]; error?: string }> {
-  void id;
-  return { ok: false, error: "Delta is the built-in product agent" };
-}
-
-export async function installPersona(
-  _body: { dir?: string; git_url?: string },
-): Promise<{ ok: boolean; consent?: PersonaConsent[]; personas?: Persona[]; error?: string }> {
-  // R6.0: the third-party persona install endpoint was removed. Kept as a stub so a stale
-  // caller can't crash — it always fails cleanly rather than 404ing mid-flow.
-  return { ok: false, error: "persona install is retired" };
-}
-
-// -- Persona detail + connection defaults (§5) --------------------------------
-// A persona's declared recommendation (manifest `recommends`): a connector or MCP server it works
-// best with, with a reason + tier (core/optional). `connected` is annotated server-side from the
-// connector list so the detail page can show connect state without a second round-trip.
-export interface PersonaRecommendation {
-  kind: string; // "connector" | "mcp" | …
-  ref: string; // connector id (e.g. "github") or mcp/server name
-  reason: string;
-  tier: string; // "core" | "optional"
-  connected: boolean;
-}
-
-// A persona-default connection (the middle of the §4 hierarchy): for a connected connector, whether
-// new sessions of this persona get it enabled by default.
-export interface PersonaDefaultConnection {
-  connector: string; // connector id
-  enabled: boolean; // persona-default on/off
-  connected: boolean; // is the account actually connected (else the toggle is disabled)
-}
-
-export interface PersonaDetail {
-  id: string;
-  name: string;
-  icon: string;
-  tagline: string;
-  description: string;
-  enabled: boolean; // persona on/off (shown in the picker)
-  tools: string[];
-  recommended_models: string[];
-  default_permission_mode: string;
-  workspace: string;
-  recommends: PersonaRecommendation[];
-  default_connections: PersonaDefaultConnection[];
-}
-
-export async function getPersonaDetail(id: string): Promise<PersonaDetail> {
-  if (id !== "delta") throw new Error("only Delta is supported");
-  return {
-    ...DELTA_PERSONA,
-    description: "Delta is the built-in assistant for office work, research, content, and task-focused scripts.",
-    recommended_models: [], default_permission_mode: "interactive",
-    recommends: [], default_connections: [],
-  };
-}
-
-/** Set a persona-default connection (new sessions of this persona get it on/off by default). */
-export async function setPersonaConnection(
-  id: string,
-  connector: string,
-  enabled: boolean,
-): Promise<{ ok: boolean; default_connections?: PersonaDefaultConnection[]; error?: string }> {
-  void connector;
-  void enabled;
-  return id === "delta" ? { ok: true, default_connections: [] } : { ok: false, error: "only Delta is supported" };
-}
-
-/** Enable/disable the persona (whether it surfaces in the new-session picker). */
-export async function setPersonaEnabled(
-  id: string,
-  enabled: boolean,
-): Promise<{ ok: boolean; personas?: Persona[]; error?: string }> {
-  if (id !== "delta" || !enabled) return { ok: false, error: "Delta cannot be disabled" };
-  announcePersonasChanged();
-  return { ok: true, personas: [DELTA_PERSONA] };
-}
-
 // -- Per-session connections (Sources bar + drawer, §6) -----------------------
 // An effective-enabled connector for a session, with a short human detail (e.g. "#delta-test · DMs").
-// `enabled` reflects the session override/persona default so the drawer toggle shows correct state.
+// `enabled` reflects the session override so the drawer toggle shows the authoritative state.
 export interface SessionConnectedConnector {
   connector: string;
   enabled: boolean;
   detail: string;
 }
 
-// A persona-recommended connector not yet connected (drives the `⚠ N` attention count).
+// A recommended connector not yet connected (drives the `⚠ N` attention count).
 export interface SessionRecommendedConnector {
   connector: string;
   reason: string;
@@ -1028,19 +859,13 @@ export interface SessionConnections {
   attention: number; // ⚠ count = recommended connectors not yet connected
 }
 
-/** `persona` = the active persona hint — required for brand-new sessions (no server-side
- * record yet), otherwise the view resolves to the default persona's defaults/recommends. */
-export async function getSessionConnections(
-  sessionId: string,
-  persona?: string,
-): Promise<SessionConnections> {
-  void persona;
+export async function getSessionConnections(sessionId: string): Promise<SessionConnections> {
   return await directSessionConnections(sessionId);
 }
 
 /**
  * Set a per-session connection override (mute/unmute a connector for THIS session). Pass
- * `clear: true` to drop the override and inherit the persona default again.
+ * `clear: true` to drop the session override.
  */
 export async function setSessionConnection(
   sessionId: string,
@@ -1533,7 +1358,6 @@ export interface Automation {
   schedule: string;
   schedule_raw?: { kind: string; cron?: string | null; fire_at?: string | null; timezone?: string };
   workspace: string;
-  agent: string;
   enabled: boolean;
   next_run: number | null;
   last_run: number | null;
@@ -1627,7 +1451,6 @@ export interface PreparedRun {
   run_id: string;
   session_id: string;
   workspace: string;
-  agent: string;
   prompt: string;
 }
 
@@ -1827,7 +1650,6 @@ export class Session {
   constructor(
     private readonly sessionId: string,
     private readonly workspace: string,
-    _agent: string,
     private readonly handlers: Handlers,
   ) {
     this.model = "";

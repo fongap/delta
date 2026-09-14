@@ -1,4 +1,4 @@
-"""Phase 3 gate — multi-inbox routing: named bindings, route resolution, delivery + reply."""
+"""Multi-inbox routing: named bindings, task overrides, delivery, and reply."""
 
 from __future__ import annotations
 
@@ -14,14 +14,10 @@ from core.inbox_routing import (
 def test_route_precedence(tmp_path):
     r = InboxRouting(tmp_path / "routing.json")
     r.set_binding("ops", channel="slack", target="#ops-delta")
-    r.set_persona_default("ops", "ops")
-    # Persona default applies...
-    assert r.route_for("s1", "ops") == "ops"
-    # ...unless a per-session override wins.
-    r.set_session_override("s1", DEFAULT_INBOX)
-    assert r.route_for("s1", "ops") == DEFAULT_INBOX
-    # Unbound persona/session → default.
-    assert r.route_for("s2", "delta") == DEFAULT_INBOX
+    assert r.route_for("s1") == DEFAULT_INBOX
+    r.set_session_override("s1", "ops")
+    assert r.route_for("s1") == "ops"
+    assert r.route_for("s2") == DEFAULT_INBOX
 
 
 def test_bindings_persist(tmp_path):

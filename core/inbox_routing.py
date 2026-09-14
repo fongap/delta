@@ -28,7 +28,6 @@ class InboxRouting:
         self._bindings: dict[str, InboxBinding] = {
             DEFAULT_INBOX: InboxBinding(DEFAULT_INBOX)
         }
-        self._persona_default: dict[str, str] = {}
         self._session_override: dict[str, str] = {}
         self._load()
 
@@ -38,7 +37,6 @@ class InboxRouting:
             for raw in data.get("bindings", []):
                 b = InboxBinding(**raw)
                 self._bindings[b.name] = b
-            self._persona_default = dict(data.get("persona_default", {}))
             self._session_override = dict(data.get("session_override", {}))
 
     def _save(self) -> None:
@@ -48,7 +46,6 @@ class InboxRouting:
             self.path,
             {
                 "bindings": [asdict(b) for b in self._bindings.values()],
-                "persona_default": self._persona_default,
                 "session_override": self._session_override,
             },
         )
@@ -63,22 +60,15 @@ class InboxRouting:
     def binding_for(self, name: str) -> InboxBinding:
         return self._bindings.get(name) or InboxBinding(name)
 
-    def set_persona_default(self, persona_id: str, inbox_name: str) -> None:
-        with self._lock:
-            self._persona_default[persona_id] = inbox_name
-            self._save()
-
     def set_session_override(self, session_id: str, inbox_name: str) -> None:
         with self._lock:
             self._session_override[session_id] = inbox_name
             self._save()
 
-    def route_for(self, session_id: str, persona_id: str | None = None) -> str:
-        """Per-session override > persona default > global default."""
+    def route_for(self, session_id: str) -> str:
+        """Resolve the per-task override, falling back to the global inbox."""
         if session_id in self._session_override:
             return self._session_override[session_id]
-        if persona_id and persona_id in self._persona_default:
-            return self._persona_default[persona_id]
         return DEFAULT_INBOX
 
     def bindings(self) -> list[dict]:

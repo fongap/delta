@@ -28,6 +28,7 @@ impl AutomationStore {
             .into_iter()
             .map(|entry| {
                 let mut data = object_or_empty(entry.data);
+                data.remove("agent");
                 data.insert("id".to_string(), Value::String(entry.id));
                 data.insert("enabled".to_string(), Value::Bool(entry.enabled));
                 data.insert(
@@ -69,7 +70,6 @@ impl AutomationStore {
             "schedule": cron.or(fire_at).unwrap_or("manual"),
             "schedule_raw": schedule_raw,
             "workspace": payload.get("workspace").and_then(Value::as_str).unwrap_or_default(),
-            "agent": "delta",
             "enabled": true,
             "next_run": next_run,
             "last_run": null,
@@ -91,6 +91,7 @@ impl AutomationStore {
             return Ok(json!({"task": null, "runs": []}));
         };
         let mut task = object_or_empty(entry.data);
+        task.remove("agent");
         task.insert("id".to_string(), Value::String(entry.id));
         task.insert("enabled".to_string(), Value::Bool(entry.enabled));
         task.insert(
@@ -117,7 +118,7 @@ impl AutomationStore {
             }
         }
         task.insert("id".to_string(), Value::String(id.to_string()));
-        task.insert("agent".to_string(), Value::String("delta".to_string()));
+        task.remove("agent");
         if let Some(cron) = changes.get("cron").and_then(Value::as_str) {
             task.insert("schedule".to_string(), Value::String(cron.to_string()));
             task.insert(
@@ -191,7 +192,7 @@ impl AutomationStore {
             .add_run(&run_id, id, now(), &serde_json::to_string(&run)?, workspace)?;
         Ok(json!({
             "ok": true, "run_id": run_id, "session_id": session_id,
-            "workspace": workspace, "agent": "delta", "prompt": prompt,
+            "workspace": workspace, "prompt": prompt,
             "task_id": id,
             "task_title": entry.data.get("title").and_then(Value::as_str).unwrap_or("Automation"),
         }))
@@ -204,6 +205,7 @@ impl AutomationStore {
             .into_iter()
             .map(|entry| {
                 let mut data = object_or_empty(entry.data);
+                data.remove("agent");
                 data.insert("id".to_string(), Value::String(entry.id));
                 Value::Object(data)
             })

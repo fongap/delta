@@ -69,7 +69,24 @@ fn open_conn(db_path: &Path) -> Result<Connection, ShadowReadError> {
             conn.execute(ddl, params![])?;
         }
     }
+    migrate_legacy_session_rows(&conn)?;
     Ok(conn)
+}
+
+/// One-time compatibility migration for sessions created by the retired
+/// multi-agent product. Only the binding and marker change; transcript,
+/// workspace, model, title, and user flags remain byte-for-byte untouched.
+fn migrate_legacy_session_rows(conn: &Connection) -> Result<usize, rusqlite::Error> {
+    conn.execute(
+        "UPDATE sessions
+         SET migration_marker = printf(
+               'r6-agent-migration:%s->delta',
+               COALESCE(NULLIF(TRIM(agent), ''), '<unset>')
+             ),
+             agent = 'delta'
+         WHERE COALESCE(TRIM(agent), '') <> 'delta'",
+        params![],
+    )
 }
 
 /// The conversations dir where `<session_id>.jsonl` lives.
@@ -143,7 +160,12 @@ pub fn ensure_session(
          ON CONFLICT(session_id) DO UPDATE SET
            workspace = CASE WHEN excluded.workspace = '' THEN sessions.workspace ELSE excluded.workspace END,
            model = excluded.model, agent = 'delta',
-           migration_marker = 'r6-rust-authority', updated_at = CURRENT_TIMESTAMP",
+           migration_marker = CASE
+             WHEN sessions.migration_marker LIKE 'r6-agent-migration:%'
+             THEN sessions.migration_marker
+             ELSE 'r6-rust-authority'
+           END,
+           updated_at = CURRENT_TIMESTAMP",
         params![session_id, workspace, model],
     )?;
     if !workspace.is_empty() {
@@ -941,6 +963,69 @@ mod tests {
         let msgs = v.get("messages").unwrap().as_array().unwrap();
         assert_eq!(msgs.len(), 1);
         assert_eq!(msgs[0]["role"], "user");
+    }
+
+    #[test]
+    fn legacy_agent_binding_migrates_once_without_touching_session_data() {
+        let tmp = tempfile::tempdir().unwrap();
+        let db = tmp.path().join("core.db");
+        let conn = Connection::open(&db).unwrap();
+        conn.execute_batch(SESSIONS_TABLE).unwrap();
+        conn.execute(
+            "INSERT INTO sessions
+             (session_id, workspace, model, mode, title, agent, n_msgs, messages, pinned)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, 1)",
+            params![
+                "legacy-1",
+                "C:/work/保留",
+                "legacy-model",
+                "interactive",
+                "Existing title",
+                "code",
+                1,
+                r#"[{"role":"user","content":"keep me"}]"#,
+            ],
+        )
+        .unwrap();
+        drop(conn);
+
+        let listed = list_sessions(tmp.path(), None).unwrap();
+        assert_eq!(listed["sessions"][0]["agent"], "delta");
+        assert_eq!(listed["sessions"][0]["workspace"], "C:/work/保留");
+
+        let conn = open_conn(&db).unwrap();
+        let row: (String, String, String, i64, String) = conn
+            .query_row(
+                "SELECT agent, workspace, messages, pinned, migration_marker
+                 FROM sessions WHERE session_id = 'legacy-1'",
+                params![],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(row.0, "delta");
+        assert_eq!(row.1, "C:/work/保留");
+        assert!(row.2.contains("keep me"));
+        assert_eq!(row.3, 1);
+        assert_eq!(row.4, "r6-agent-migration:code->delta");
+
+        assert_eq!(migrate_legacy_session_rows(&conn).unwrap(), 0);
+        ensure_session(tmp.path(), "legacy-1", None, "new-model").unwrap();
+        let marker: String = conn
+            .query_row(
+                "SELECT migration_marker FROM sessions WHERE session_id = 'legacy-1'",
+                params![],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(marker, "r6-agent-migration:code->delta");
     }
 
     #[test]

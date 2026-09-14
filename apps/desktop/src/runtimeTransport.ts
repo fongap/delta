@@ -245,13 +245,10 @@ export const directSetSessionsPeek = (count: number) =>
   invokeAuthority("settings_set_sessions_peek", { count });
 export const directSetScratchBase = (path: string) =>
   invokeAuthority("settings_set_scratch_base", { path });
-export const directSetNavLayout = (layout: "flat" | "grouped") =>
-  invokeAuthority("settings_set_nav_layout", { layout });
 export const directSetPdfSettings = (patch: Record<string, unknown>) =>
   invokeAuthority("settings_set_pdf", { patch });
 export const directSetCompactionSettings = (patch: Record<string, unknown>) =>
   invokeAuthority("settings_set_compaction", { patch });
-export const directSetSurfaces = () => invokeAuthority("settings_set_surfaces");
 export const directGetProviders = () => invokeAuthority("providers_list");
 export const directGetProtocols = () => invokeAuthority("provider_protocols");
 export const directSetProvider = (

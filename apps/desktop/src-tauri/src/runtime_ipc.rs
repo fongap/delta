@@ -22,8 +22,6 @@ use delta_runtime_native::{
     ModelAuthority, RuntimeAuthorities, RuntimeConfig, RuntimeHandle, RuntimeHost, SkillStore,
 };
 
-const DELTA_SYSTEM_PROMPT: &str = "You are Delta, a careful desktop assistant for office work, research analysis, content creation, and task-focused scripts. Use only the capabilities exposed by the Rust runtime. Treat the workspace and granted roots as the complete filesystem boundary. Ask for approval when required, cite sources when using research results, and describe created artifacts clearly.";
-
 struct TauriEventSink {
     app: AppHandle,
     state_dir: std::path::PathBuf,
@@ -155,7 +153,6 @@ pub fn start_scheduler(app: AppHandle) {
                                 "task_title": run.get("task_title"),
                                 "session_id": session_id,
                                 "workspace": run.get("workspace"),
-                                "agent": "delta",
                             }
                         }),
                     );
@@ -253,7 +250,7 @@ fn start_runtime(
     {
         config.model_settings["reasoning_effort"] = Value::String(effort);
     }
-    let mut prompt = DELTA_SYSTEM_PROMPT.to_string();
+    let mut prompt = delta_runtime_native::DELTA_AGENT.system_prompt.to_string();
     if mode.as_deref() == Some("plan") {
         prompt.push_str("\n\nPlan mode is active. Inspect and reason, but do not perform writes until the user explicitly approves the plan.");
     }
@@ -635,11 +632,6 @@ pub fn settings_set_scratch_base(state: State<'_, RuntimeRegistry>, path: String
 }
 
 #[tauri::command]
-pub fn settings_set_nav_layout(state: State<'_, RuntimeRegistry>, layout: String) -> Value {
-    authority_result(state.models.lock().unwrap().set_nav_layout(&layout))
-}
-
-#[tauri::command]
 pub fn settings_set_pdf(state: State<'_, RuntimeRegistry>, patch: Value) -> Value {
     authority_result(state.models.lock().unwrap().set_pdf_settings(&patch))
 }
@@ -647,11 +639,6 @@ pub fn settings_set_pdf(state: State<'_, RuntimeRegistry>, patch: Value) -> Valu
 #[tauri::command]
 pub fn settings_set_compaction(state: State<'_, RuntimeRegistry>, patch: Value) -> Value {
     authority_result(state.models.lock().unwrap().set_compaction_settings(&patch))
-}
-
-#[tauri::command]
-pub fn settings_set_surfaces() -> Value {
-    json!({"ok": true, "surfaces": {"delta": true}})
 }
 
 #[tauri::command]

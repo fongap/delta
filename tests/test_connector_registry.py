@@ -1,5 +1,5 @@
 """UI-Refresh Phase 1 — connector registry metadata (brand color + logo) and the
-not-yet-shipped placeholder descriptors that personas recommend.
+not-yet-shipped placeholder descriptors that built-in capabilities recommend.
 
 The frontend renders any connector by `logo` id + `brand_color` with a neutral fallback, so
 every descriptor must expose both and `/v1/connectors` (i.e. `connector_list`) must surface them.
@@ -32,7 +32,7 @@ _EXPECTED_BRAND = {
 
 # github/hubspot already ship as real connectors here, so only these three are placeholders.
 _PLACEHOLDERS = ("datadog", "salesforce", "pagerduty")
-# Everything a persona may recommend must at least have a descriptor + brand badge.
+# Every recommended connector must at least have a descriptor and brand badge.
 _RECOMMENDED = ("github", "datadog", "salesforce", "hubspot", "pagerduty")
 
 
@@ -82,7 +82,7 @@ def test_placeholder_connectors_listed(tmp_path):
     secrets = SecretStore(tmp_path / "secrets.json")
     listed = {c["name"]: c for c in connector_list(secrets)}
 
-    # Every persona-recommended connector has a descriptor + brand badge so the UI can render it.
+    # Every recommended connector has a descriptor and brand badge so the UI can render it.
     for name in _RECOMMENDED:
         d = get_descriptor(name)
         assert d is not None, name

@@ -20,7 +20,7 @@ import { useI18n } from "@delta/i18n/I18nContext";
 // "skills are things your worker knows everywhere". Creation-by-AI is a CONVERSATION (the
 // menu's third door starts one; the worker proposes via save_skill) — there is no
 // in-Settings drafting and no description box: the composer is where you describe it.
-// Persona-bundled skills arrive with personas (§10), managed on the persona page, not here.
+// Capability-owned skills are managed by their package rather than duplicated here.
 
 const CARD = "rounded-xl2 border border-line bg-panel";
 const FIELD_LABEL = "text-[12.5px] font-medium text-ink";

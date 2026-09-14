@@ -1026,7 +1026,7 @@ DESCRIPTORS: list[ConnectorDescriptor] = [
         validate=_validate_quickbooks,
     ),
     # -- placeholders (available=False) --------------------------------------------
-    # Not yet shipped, but referenced by persona `recommends` (e.g. Ops → datadog/pagerduty) so
+    # Not yet shipped, but reserved for future capability recommendations so
     # the GUI can render a brand badge + a "connect to enable" state. A placeholder has no fields,
     # no validate, and `available=False`, so there is no connect path (connect_connector rejects an
     # unavailable connector and _profile_connected reports it disconnected). github/hubspot are NOT

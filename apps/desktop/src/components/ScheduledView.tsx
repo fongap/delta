@@ -74,7 +74,6 @@ interface Props {
   onOpenRun: (
     sessionId: string,
     workspace: string,
-    agent: string,
     task?: { id: string; title: string },
   ) => void;
   onRunNow: (taskId: string, title?: string) => void;
@@ -302,7 +301,6 @@ function TaskDetail({
   onOpenRun: (
     sessionId: string,
     workspace: string,
-    agent: string,
     task?: { id: string; title: string },
   ) => void;
   onRunNow: (taskId: string, title?: string) => void;
@@ -499,7 +497,7 @@ function TaskDetail({
             key={r.run_id}
             onClick={() =>
               r.session_id &&
-              onOpenRun(r.session_id, task.workspace, task.agent, {
+              onOpenRun(r.session_id, task.workspace, {
                 id: task.id,
                 title: task.title,
               })

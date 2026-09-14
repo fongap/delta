@@ -218,8 +218,8 @@ def subscription_tools(
     default_platform: str = "slack",
     routing_targets: list[str] | None = None,
 ) -> list:
-    """The channel-subscription tools for a messaging persona's session: subscribe / unsubscribe /
-    list / catch up. The agent obtains a channel by asking the user (ask_user) or from a channel
+    """The channel-subscription tools for a Delta task: subscribe / unsubscribe / list / catch up.
+    Delta obtains a channel by asking the user (ask_user) or from a channel
     message it's reacting to."""
 
     def subscribe_channel(channel: str) -> dict:

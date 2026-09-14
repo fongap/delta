@@ -1,6 +1,6 @@
 // A small on/off switch (mock's `.tgl` / `.knob`) as an accessible button[role=switch]. Driven by
 // props so it's testable (query by role "switch", assert aria-checked, fireEvent.click to flip).
-// Reused by the persona detail page (default-connection + enable toggles) and the Sources drawer.
+// Shared compact switch used by settings and task access controls.
 
 export function Toggle({
   checked,

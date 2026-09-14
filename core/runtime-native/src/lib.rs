@@ -14,6 +14,7 @@
 //!   - docs/architecture/runtime-public-contract.md
 //!   - docs/governance/rust-core-migration.md
 
+pub mod agent;
 pub mod application;
 pub mod approval;
 pub mod artifact;
@@ -37,6 +38,7 @@ pub mod taskstore;
 pub mod tool_lifecycle;
 pub mod validation;
 
+pub use agent::{AgentDefinition, WorkspacePolicy, DELTA_AGENT};
 pub use application::ApplicationStore;
 pub use approval::{
     ApprovalController, ApprovalDecision, ApprovalRecordInput, ApprovalRecordOutput,

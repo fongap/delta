@@ -126,7 +126,7 @@ class SourceRef:
     size_bytes: int | None = None
     # Per-run citations ({run_id, ranges}) linking runs → this source.
     cited_ranges: list[dict[str, Any]] = field(default_factory=list)
-    # Which sessions/personas may cite it (optional, v1 free-form).
+    # Which tasks may cite it (optional, v1 free-form).
     permissions: dict[str, Any] = field(default_factory=dict)
 
 

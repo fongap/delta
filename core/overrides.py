@@ -4,9 +4,8 @@ Mainly to relax MCP's conservative default (every MCP tool defaults to ``externa
 who trusts a server can mark its read-only tools ``read`` so they stop gating. Rules match the
 tool name (e.g. ``mcp__notion__create_page``) by glob; the most specific rule wins.
 
-**Inviolable rule: this store is user-local and is NEVER written by a persona/package.** A
-persona can declare what tools it wants, but only the user decides how much to trust them — so
-the persona-loading path never touches this file (see ``PERMISSIONS-AND-INBOX.md``).
+**Inviolable rule: this store is user-local and is never written by a capability package.**
+Only the user decides how much to trust a tool (see ``PERMISSIONS-AND-INBOX.md``).
 """
 
 from __future__ import annotations
