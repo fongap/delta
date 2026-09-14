@@ -22,7 +22,7 @@ from typing import Any, Callable
 from integrations.connectors.tool_defs import approval_for_tool
 from integrations.web.guard import get_checked
 
-import aisuite as ai
+from integrations.tools import metadata as ai
 
 from integrations.tools.metadata import attach_tool_metadata
 

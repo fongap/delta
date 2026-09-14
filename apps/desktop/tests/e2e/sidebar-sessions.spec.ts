@@ -1,20 +1,20 @@
-import { test, expect } from "./fixtures";
+import { test, expect, patchMockState } from "./fixtures";
 
-// Sidebar session lifecycle (owner testing pass, 2026-07-03): the peek cap (sessions_peek=5 →
-// "Show more (2)" with 7 sessions), reversible archive with the Archived disclosure, and the
+// Sidebar session lifecycle: the R6 flat list keeps four recent tasks visible, with the rest
+// behind Show more; archive and delete remain explicit, reversible/two-step operations.
 // two-step delete (Delete arms → "Delete?" confirms). All row actions sit behind the per-row
 // ⋮ kebab (FB-011), so each flow goes hover → kebab → menu item.
 
 test("session list caps at the peek count with Show more", async ({ page }) => {
   await page.goto("/");
   // Boot resumes a delta session, so the Delta accordion body is expanded. The body holds
-  // 9 sessions (7 weekly plans + the infra triage + the Slack-origin one, §31 rev) against
-  // sessions_peek=5.
+  // 9 sessions (7 weekly plans + the infra triage + the Slack-origin one) against the
+  // R6 fixed four-row recent glance.
   await expect(page.getByTitle("Weekly plan 1")).toBeVisible();
-  await expect(page.getByTitle("Weekly plan 5")).toBeVisible();
-  await expect(page.getByTitle("Weekly plan 6")).toHaveCount(0);
+  await expect(page.getByTitle("Weekly plan 4")).toBeVisible();
+  await expect(page.getByTitle("Weekly plan 5")).toHaveCount(0);
 
-  await page.getByRole("button", { name: "Show more (4)" }).click();
+  await page.getByRole("button", { name: "Show 5 more" }).click();
   await expect(page.getByTitle("Weekly plan 6")).toBeVisible();
   await expect(page.getByTitle("Weekly plan 7")).toBeVisible();
 });
@@ -48,7 +48,7 @@ test("mention-spawned sessions list in Recent with the platform icon — no From
   page,
 }) => {
   // Flat chronological layout — the launch default (personas off).
-  await page.route("**/v1/settings", (r) => r.fulfill({ json: { nav_layout: "flat" } }));
+  await patchMockState(page, { settings: { nav_layout: "flat" } });
   await page.goto("/");
   await expect(page.getByTitle("Weekly plan 1")).toBeVisible();
 

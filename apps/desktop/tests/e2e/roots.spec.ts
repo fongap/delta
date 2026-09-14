@@ -18,7 +18,7 @@ test("working directories: add folders with the read-only / read-write gate", as
   await expect(dirs.getByText("Temporary space")).toBeVisible();
 
   // Add a folder — the gate defaults to read-only (Allow writes OFF). The Browse button works
-  // in the BROWSER too (sidecar-opened native picker; owner report 2026-07-04).
+  // in the browser harness too (mocked native picker).
   await dirs.getByRole("button", { name: "Give access to a folder" }).click();
   await dirs.getByRole("button", { name: "Choose location" }).click();
   await expect(dirs.getByPlaceholder(/Choose or paste a folder path/)).toHaveValue(

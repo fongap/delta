@@ -1,8 +1,7 @@
 import { defineConfig, devices } from "@playwright/test";
 
-// E2E harness for the GUI. Tests are hermetic: every /v1 request and the event WebSocket are mocked
-// at the network layer (see tests/e2e/fixtures.ts), so they run without the Python backend and
-// never mutate real state — safe for CI and for asserting regressions in the interaction flows.
+// E2E harness for the GUI. Tests are hermetic: Tauri invoke/listen is mocked in-page before the
+// SPA loads (see tests/e2e/fixtures.ts), so they run without native state or external services.
 const PORT = 5199;
 
 export default defineConfig({

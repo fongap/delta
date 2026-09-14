@@ -10,7 +10,7 @@ Contract:
 - A scanned page (no text) gets ``scanned: True`` and an ``image`` data URL.
 - A text-bearing page stays unchanged (no ``scanned`` field, no ``image``).
 - A mixed PDF (some text pages + some scanned) only rasterizes the empty pages.
-- The cite hook still records the page number for scanned pages.
+- The returned block still identifies the page number for Rust citation handling.
 - When ``pypdfium2`` is unavailable, scanned pages get empty text and no
   ``image`` field (graceful degradation).
 """
@@ -20,7 +20,6 @@ from __future__ import annotations
 from pathlib import Path
 
 
-from core.sources import KIND_PAGE, SourceStore
 from integrations.tools.documents import document_tools
 
 
@@ -71,10 +70,8 @@ def _write_mixed_pdf(target: Path) -> None:
         writer.write(fh)
 
 
-def _store_and_reader(tmp_path: Path, *, run_id: str | None = "run-scan"):
-    store = SourceStore(tmp_path / "sources.json", workspace=tmp_path)
-    tools = document_tools(str(tmp_path), source_store=store, run_id=run_id)
-    return store, tools[0]
+def _reader(tmp_path: Path):
+    return document_tools(str(tmp_path))[0]
 
 
 # -- scanned PDF: all pages are images -------------------------------------
@@ -82,7 +79,7 @@ def _store_and_reader(tmp_path: Path, *, run_id: str | None = "run-scan"):
 
 def test_scanned_pdf_pages_get_image_and_scanned_flag(tmp_path):
     _write_scanned_pdf(tmp_path / "scan.pdf", pages=3)
-    _store, read = _store_and_reader(tmp_path)
+    read = _reader(tmp_path)
     out = read(path="scan.pdf", block=0)
     block = out["block"]
     assert block.get("scanned") is True
@@ -93,21 +90,17 @@ def test_scanned_pdf_pages_get_image_and_scanned_flag(tmp_path):
 
 def test_scanned_pdf_summary_marks_scanned_pages(tmp_path):
     _write_scanned_pdf(tmp_path / "scan.pdf", pages=2)
-    _store, read = _store_and_reader(tmp_path)
+    read = _reader(tmp_path)
     out = read(path="scan.pdf")  # summary
     for b in out["blocks"]:
         assert b.get("scanned") is True
 
 
-def test_scanned_pdf_cite_still_records_page(tmp_path):
+def test_scanned_pdf_block_keeps_page_locator(tmp_path):
     _write_scanned_pdf(tmp_path / "scan.pdf", pages=3)
-    store, read = _store_and_reader(tmp_path)
-    read(path="scan.pdf", block=1)
-    refs = store.list()
-    assert len(refs) == 1
-    cited = refs[0].cited_ranges[0]["ranges"][0]
-    assert cited["kind"] == KIND_PAGE
-    assert cited["page"] == 2
+    read = _reader(tmp_path)
+    out = read(path="scan.pdf", block=1)
+    assert out["block"]["page"] == 2
 
 
 # -- mixed PDF: only scanned pages get image --------------------------------
@@ -115,7 +108,7 @@ def test_scanned_pdf_cite_still_records_page(tmp_path):
 
 def test_mixed_pdf_only_scanned_pages_get_image(tmp_path):
     _write_mixed_pdf(tmp_path / "mixed.pdf")
-    _store, read = _store_and_reader(tmp_path)
+    read = _reader(tmp_path)
     # Read each block individually to inspect text + image
     out0 = read(path="mixed.pdf", block=0)
     out1 = read(path="mixed.pdf", block=1)
@@ -134,16 +127,12 @@ def test_mixed_pdf_only_scanned_pages_get_image(tmp_path):
     assert "Page 3 content" in out2["block"]["text"]
 
 
-def test_mixed_pdf_reading_scanned_page_cites_page(tmp_path):
+def test_mixed_pdf_reading_scanned_page_keeps_page_locator(tmp_path):
     _write_mixed_pdf(tmp_path / "mixed.pdf")
-    store, read = _store_and_reader(tmp_path)
+    read = _reader(tmp_path)
     out = read(path="mixed.pdf", block=1)
     assert out["block"].get("scanned") is True
-    refs = store.list()
-    assert len(refs) == 1
-    cited = refs[0].cited_ranges[0]["ranges"][0]
-    assert cited["kind"] == KIND_PAGE
-    assert cited["page"] == 2
+    assert out["block"]["page"] == 2
 
 
 # -- pure text PDF: no change at all ----------------------------------------
@@ -182,7 +171,7 @@ def test_text_pdf_no_scanned_flag_or_image(tmp_path):
     with open(out_path, "wb") as fh:
         writer.write(fh)
 
-    _store, read = _store_and_reader(tmp_path)
+    read = _reader(tmp_path)
     out = read(path="text.pdf")
     for b in out["blocks"]:
         assert not b.get("scanned")

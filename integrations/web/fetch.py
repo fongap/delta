@@ -15,7 +15,7 @@ import re
 from html.parser import HTMLParser
 from typing import Any, Callable
 
-import aisuite as ai
+from integrations.tools import metadata as ai
 
 from integrations.web.guard import get_checked
 from integrations.tools.metadata import attach_tool_metadata

@@ -20,6 +20,17 @@ pub struct ProviderRequest {
     pub settings: Option<Value>,
     pub api_key: String,
     pub base_url: String,
+    #[serde(default)]
+    pub timeout_secs: Option<f64>,
+}
+
+fn versioned_endpoint(base_url: &str, endpoint: &str) -> String {
+    let base = base_url.trim_end_matches('/');
+    if base.ends_with("/v1") {
+        format!("{base}/{endpoint}")
+    } else {
+        format!("{base}/v1/{endpoint}")
+    }
 }
 
 #[derive(Default)]
@@ -29,9 +40,11 @@ struct ToolCallAccum {
     args: String,
 }
 
-fn agent() -> ureq::Agent {
+fn agent(timeout_secs: Option<f64>) -> ureq::Agent {
     ureq::AgentBuilder::new()
-        .timeout(std::time::Duration::from_secs(300))
+        .timeout(std::time::Duration::from_secs_f64(
+            timeout_secs.unwrap_or(300.0).max(0.05),
+        ))
         .build()
 }
 
@@ -106,7 +119,7 @@ pub fn complete_openai_chat(req: &ProviderRequest) -> Result<Value, String> {
     let url = format!("{}/chat/completions", req.base_url.trim_end_matches('/'));
     let body = build_openai_chat_body(req, false);
     let resp = send_json(
-        agent()
+        agent(req.timeout_secs)
             .post(&url)
             .set("Authorization", &format!("Bearer {}", req.api_key))
             .set("Content-Type", "application/json"),
@@ -181,7 +194,7 @@ pub fn stream_openai_chat(
     let url = format!("{}/chat/completions", req.base_url.trim_end_matches('/'));
     let body = build_openai_chat_body(req, true);
     let resp = send_json(
-        agent()
+        agent(req.timeout_secs)
             .post(&url)
             .set("Authorization", &format!("Bearer {}", req.api_key))
             .set("Content-Type", "application/json"),
@@ -194,6 +207,7 @@ pub fn stream_openai_chat(
     let mut tool_calls: Vec<ToolCallAccum> = Vec::new();
     let mut finish_reason: Option<String> = None;
     let mut usage: Option<Value> = None;
+    let mut saw_done = false;
     for line_res in buf.lines() {
         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
             return Ok(serde_json::json!({"cancelled": true}));
@@ -208,6 +222,7 @@ pub fn stream_openai_chat(
         }
         let payload = &trimmed[6..];
         if payload == "[DONE]" {
+            saw_done = true;
             break;
         }
         let chunk: Value = match serde_json::from_str(payload) {
@@ -270,6 +285,11 @@ pub fn stream_openai_chat(
             finish_reason = Some(fr.to_string());
         }
     }
+    if !saw_done && finish_reason.is_none() {
+        return Err(
+            "connection closed before the provider stream reached a terminal event".to_string(),
+        );
+    }
     let text = if text_parts.is_empty() {
         Value::Null
     } else {
@@ -304,11 +324,89 @@ fn anthropic_headers(req: &ProviderRequest) -> Vec<(&str, String)> {
 }
 
 fn build_anthropic_body(req: &ProviderRequest, stream: bool) -> Value {
+    let mut system = Vec::new();
+    let mapped = req
+        .messages
+        .as_array()
+        .map(|messages| {
+            messages
+                .iter()
+                .filter_map(|message| {
+                    if message.get("role").and_then(Value::as_str) == Some("system") {
+                        if let Some(text) = message.get("content").and_then(Value::as_str) {
+                            system.push(text.to_string());
+                        }
+                        None
+                    } else if message.get("role").and_then(Value::as_str) == Some("tool") {
+                        Some(json!({
+                            "role": "user",
+                            "content": [{
+                                "type": "tool_result",
+                                "tool_use_id": message.get("tool_call_id").cloned().unwrap_or(Value::Null),
+                                "content": message.get("content").and_then(Value::as_str)
+                                    .map(str::to_string)
+                                    .unwrap_or_else(|| serde_json::to_string(message.get("content").unwrap_or(&Value::Null)).unwrap_or_default()),
+                            }]
+                        }))
+                    } else if message.get("role").and_then(Value::as_str) == Some("assistant")
+                        && message.get("tool_calls").and_then(Value::as_array).is_some_and(|calls| !calls.is_empty())
+                    {
+                        let mut content = Vec::new();
+                        if let Some(text) = message.get("content").and_then(Value::as_str).filter(|text| !text.is_empty()) {
+                            content.push(json!({"type": "text", "text": text}));
+                        }
+                        for call in message.get("tool_calls").and_then(Value::as_array).into_iter().flatten() {
+                            let function = call.get("function").unwrap_or(&Value::Null);
+                            let input = function.get("arguments").and_then(Value::as_str)
+                                .and_then(|arguments| serde_json::from_str::<Value>(arguments).ok())
+                                .unwrap_or_else(|| json!({}));
+                            content.push(json!({
+                                "type": "tool_use",
+                                "id": call.get("id").cloned().unwrap_or(Value::Null),
+                                "name": function.get("name").cloned().unwrap_or(Value::Null),
+                                "input": input,
+                            }));
+                        }
+                        Some(json!({"role": "assistant", "content": content}))
+                    } else {
+                        Some(message.clone())
+                    }
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let mut messages: Vec<Value> = Vec::new();
+    for message in mapped {
+        let same_role = messages.last().is_some_and(|previous| {
+            previous.get("role") == message.get("role")
+                && previous.get("content").is_some_and(Value::is_array)
+                && message.get("content").is_some_and(Value::is_array)
+        });
+        if same_role {
+            let extra = message
+                .get("content")
+                .and_then(Value::as_array)
+                .cloned()
+                .unwrap_or_default();
+            if let Some(content) = messages
+                .last_mut()
+                .and_then(|previous| previous.get_mut("content"))
+                .and_then(Value::as_array_mut)
+            {
+                content.extend(extra);
+            }
+        } else {
+            messages.push(message);
+        }
+    }
     let mut body = json!({
         "model": req.model,
-        "messages": req.messages,
+        "messages": messages,
         "max_tokens": 4096,
     });
+    if !system.is_empty() {
+        body["system"] = Value::String(system.join("\n\n"));
+    }
     if stream {
         body["stream"] = json!(true);
     }
@@ -322,7 +420,19 @@ fn build_anthropic_body(req: &ProviderRequest, stream: bool) -> Value {
         }
     }
     if let Some(tools) = &req.tools {
-        body["tools"] = tools.clone();
+        body["tools"] = Value::Array(
+            tools
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|tool| tool.get("function"))
+                .map(|function| json!({
+                    "name": function.get("name").cloned().unwrap_or(Value::Null),
+                    "description": function.get("description").cloned().unwrap_or(Value::Null),
+                    "input_schema": function.get("parameters").cloned().unwrap_or_else(|| json!({"type": "object"})),
+                }))
+                .collect(),
+        );
     }
     body
 }
@@ -357,9 +467,9 @@ fn map_stop_reason(reason: &str) -> &str {
 }
 
 pub fn complete_anthropic(req: &ProviderRequest) -> Result<Value, String> {
-    let url = format!("{}/v1/messages", req.base_url.trim_end_matches('/'));
+    let url = versioned_endpoint(&req.base_url, "messages");
     let body = build_anthropic_body(req, false);
-    let mut request = agent().post(&url);
+    let mut request = agent(req.timeout_secs).post(&url);
     for (k, v) in anthropic_headers(req) {
         request = request.set(k, &v);
     }
@@ -441,9 +551,9 @@ pub fn stream_anthropic(
     stream_id: &str,
     cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<Value, String> {
-    let url = format!("{}/v1/messages", req.base_url.trim_end_matches('/'));
+    let url = versioned_endpoint(&req.base_url, "messages");
     let body = build_anthropic_body(req, true);
-    let mut request = agent().post(&url);
+    let mut request = agent(req.timeout_secs).post(&url);
     for (k, v) in anthropic_headers(req) {
         request = request.set(k, &v);
     }
@@ -610,7 +720,21 @@ fn build_openai_responses_body(req: &ProviderRequest, stream: bool) -> Value {
         body["stream"] = json!(true);
     }
     if let Some(tools) = &req.tools {
-        body["tools"] = tools.clone();
+        body["tools"] = Value::Array(
+            tools
+                .as_array()
+                .into_iter()
+                .flatten()
+                .filter_map(|tool| tool.get("function"))
+                .map(|function| json!({
+                    "type": "function",
+                    "name": function.get("name").cloned().unwrap_or(Value::Null),
+                    "description": function.get("description").cloned().unwrap_or(Value::Null),
+                    "parameters": function.get("parameters").cloned().unwrap_or_else(|| json!({"type": "object"})),
+                    "strict": false,
+                }))
+                .collect(),
+        );
     }
     if let Some(settings) = &req.settings {
         if let Some(obj) = settings.as_object() {
@@ -625,10 +749,10 @@ fn build_openai_responses_body(req: &ProviderRequest, stream: bool) -> Value {
 }
 
 pub fn complete_openai_responses(req: &ProviderRequest) -> Result<Value, String> {
-    let url = format!("{}/v1/responses", req.base_url.trim_end_matches('/'));
+    let url = versioned_endpoint(&req.base_url, "responses");
     let body = build_openai_responses_body(req, false);
     let resp = send_json(
-        agent()
+        agent(req.timeout_secs)
             .post(&url)
             .set("Authorization", &format!("Bearer {}", req.api_key))
             .set("Content-Type", "application/json"),
@@ -749,10 +873,10 @@ pub fn stream_openai_responses(
     stream_id: &str,
     cancel: &std::sync::atomic::AtomicBool,
 ) -> Result<Value, String> {
-    let url = format!("{}/v1/responses", req.base_url.trim_end_matches('/'));
+    let url = versioned_endpoint(&req.base_url, "responses");
     let body = build_openai_responses_body(req, true);
     let resp = send_json(
-        agent()
+        agent(req.timeout_secs)
             .post(&url)
             .set("Authorization", &format!("Bearer {}", req.api_key))
             .set("Content-Type", "application/json"),
@@ -1337,4 +1461,21 @@ pub fn friendly_model_error(model: &str, message: &str) -> Value {
         return json!({"message": no_access});
     }
     json!({"message": Value::Null})
+}
+
+#[cfg(test)]
+mod tests {
+    use super::versioned_endpoint;
+
+    #[test]
+    fn versioned_endpoint_never_duplicates_v1() {
+        assert_eq!(
+            versioned_endpoint("https://api.example.test/v1", "responses"),
+            "https://api.example.test/v1/responses"
+        );
+        assert_eq!(
+            versioned_endpoint("https://api.example.test", "messages"),
+            "https://api.example.test/v1/messages"
+        );
+    }
 }

@@ -1,28 +1,19 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
   getConnectors,
   getInbox,
   getInboxRouting,
-  getPersonas,
   getRecentChannels,
   getUnrouted,
   resolveInboxItem,
   type InboxItem,
-  type Persona,
   type RecentChannel,
 } from "../api";
 import { Icon } from "./Icon";
 import { InboxItemCard } from "./InboxItemCard";
 import { InboxConfigure } from "./InboxConfigure";
 import { PanelHead } from "./IntegrationsView";
-import { shortPersonaName } from "../personaScope";
 import { useI18n } from "@delta/i18n/I18nContext";
-
-const ICON_FOR: Record<string, "diamond" | "chat" | "code"> = {
-  delta: "diamond",
-  chat: "chat",
-  code: "code",
-};
 
 const KIND_TABS: { key: string; label: string }[] = [
   { key: "all", label: "inbox.kind.all" },
@@ -47,7 +38,7 @@ const TAB = (active: boolean) =>
 // unattended ones. Resolving here releases any agent suspended on the item. Each item links back
 // to its originating session so you can see the context before answering. Items whose session
 // was deleted are closed server-side (an orphaned prompt can never be answered), so everything
-// listed here is actionable. Filters: by kind and by persona (owner ask, 2026-07-03).
+// listed here is actionable. Filters are intentionally task-kind only.
 // Two page tabs (§28): Pending (the queue) and Configure (the former Connectors ▸ Messaging
 // routing page — mirror channel, DM route, subscriptions, Unrouted). Pending's routing status
 // is read-only and links to Configure; the old inline editor was the mirror setting's SECOND
@@ -55,18 +46,16 @@ const TAB = (active: boolean) =>
 export function InboxView({
   onOpenSession,
 }: {
-  onOpenSession: (sessionId: string, workspace: string, agent: string) => void;
+  onOpenSession: (sessionId: string, workspace: string) => void;
 }) {
   const { t } = useI18n();
   const [tab, setTab] = useState<"pending" | "configure">("pending");
   const [items, setItems] = useState<InboxItem[]>([]);
-  const [personas, setPersonas] = useState<Persona[] | null>(null);
   const [routing, setRouting] = useState<string | null>(null); // e.g. "slack:C0123" or null
   const [slackConnected, setSlackConnected] = useState(false);
   const [recent, setRecent] = useState<RecentChannel[]>([]);
   const [unroutedCount, setUnroutedCount] = useState(0);
   const [kind, setKind] = useState<string>("all");
-  const [personaFilter, setPersonaFilter] = useState<string>("all");
 
   const load = () => {
     getInbox(undefined, "pending").then(setItems).catch(() => {});
@@ -82,7 +71,6 @@ export function InboxView({
   useEffect(() => {
     load();
     loadRouting();
-    getPersonas().then(setPersonas).catch(() => {});
     getConnectors()
       .then((cs) => setSlackConnected(!!cs.find((c) => c.name === "slack" && c.connected)))
       .catch(() => {});
@@ -99,39 +87,23 @@ export function InboxView({
     load();
   };
 
-  // Personas that actually have pending items drive the filter chips (no empty chips).
-  const personasWithItems = useMemo(() => {
-    const ids = [...new Set(items.map((i) => i.session_agent).filter(Boolean))] as string[];
-    return ids.map((id) => ({
-      id,
-      label: shortPersonaName(personas?.find((p) => p.id === id)?.name, id),
-    }));
-  }, [items, personas]);
+  const visible = items.filter((it) => kind === "all" || it.kind === kind);
 
-  const visible = items.filter(
-    (it) =>
-      (kind === "all" || it.kind === kind) &&
-      (personaFilter === "all" || it.session_agent === personaFilter),
-  );
-
-  // The originating-session chip: persona icon + session title, clickable to open that session.
+  // The originating-session chip links back to the Delta task.
   const sessionChip = (it: InboxItem) => {
     const exists = it.session_exists !== false;
-    const p = personas?.find((x) => x.id === it.session_agent);
     const label = it.session_title || it.session_id;
-    const icon = (p && ICON_FOR[p.icon]) || "diamond";
-    const cls = `ico-${p?.icon || "delta"}`;
     return (
       <button
         className="inbox-session-chip"
         title={exists ? t("inbox.sessionChip.open", { label }) : t("inbox.sessionChip.unavailable")}
         disabled={!exists}
         onClick={() =>
-          exists && onOpenSession(it.session_id, it.session_workspace || "", it.session_agent || "delta")
+          exists && onOpenSession(it.session_id, it.session_workspace || "")
         }
       >
-        <span className={"inbox-chip-ico " + cls}>
-          <Icon name={icon} size={11} />
+        <span className="inbox-chip-ico ico-delta">
+          <Icon name="diamond" size={11} />
         </span>
         <span className="inbox-chip-label">{label}</span>
         {exists && <Icon name="chevronRight" size={13} className="inbox-chip-go" />}
@@ -217,26 +189,6 @@ export function InboxView({
                     {t(tab.label)}
                   </button>
                 ))}
-                {personasWithItems.length > 1 && (
-                  <>
-                    <span className="w-px h-4 bg-line mx-1" />
-                    <button
-                      className={CHIP(personaFilter === "all")}
-                      onClick={() => setPersonaFilter("all")}
-                    >
-                      {t("inbox.filter.allDeltas")}
-                    </button>
-                    {personasWithItems.map((p) => (
-                      <button
-                        key={p.id}
-                        className={CHIP(personaFilter === p.id)}
-                        onClick={() => setPersonaFilter(p.id)}
-                      >
-                        {p.label}
-                      </button>
-                    ))}
-                  </>
-                )}
               </div>
 
               {visible.length === 0 ? (

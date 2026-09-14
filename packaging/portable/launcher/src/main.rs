@@ -4,7 +4,7 @@
 //! location (`current_exe().parent()` — never CWD, never a hardcoded drive), validates the
 //! real app, initializes `Data` on first run, sets the portable-mode environment, and
 //! spawns `<ROOT>\App\Delta\Delta.exe` with the caller's arguments passed through intact,
-//! then exits. The GUI owns single-instance handling and the sidecar lifecycle.
+//! then exits. The GUI owns single-instance handling and the embedded Runtime.
 //!
 //! Everything in the whole portable is derived from ROOT at runtime, so the folder can be
 //! copied / moved / renamed / carried to another drive or machine and keeps working — no
@@ -50,9 +50,8 @@ fn run() -> Result<(), String> {
     cmd.env("DELTA_PORTABLE", "1")
         .env("DELTA_PORTABLE_ROOT", &root)
         .env("DELTA_DATA_DIR", &data_dir)
-        // The single source of truth override for BOTH the Rust shell (lib.rs) and the
-        // Python server (core/secrets.state_dir()) → every store, pref, log, DB and
-        // secret lands under Data, never %APPDATA%.
+        // Single source of truth for every Rust store, preference, log, database, and
+        // secret: all portable state lands under Data, never %APPDATA%.
         .env("DELTA_STATE_DIR", &data_dir)
         // Best-effort WebView2 profile redirect. wry may pin its own data folder (in which
         // case this is ignored and WebView2 stays in its default location — reported as a
@@ -75,8 +74,8 @@ fn run() -> Result<(), String> {
     cmd.spawn()
         .map_err(|e| format!("无法启动主程序：\n{}\n\n{e}", app_exe.display()))?;
     // Bootstrap only: the child inherits the complete environment and current directory at
-    // spawn time. Staying resident adds no cleanup or signalling guarantee — the Tauri GUI
-    // owns its sidecar and single-instance lifecycle — so return as soon as launch succeeds.
+    // spawn time. Staying resident adds no cleanup or signalling guarantee, so return as
+    // soon as launch succeeds.
     Ok(())
 }
 

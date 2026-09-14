@@ -46,7 +46,7 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
-import aisuite as ai
+from integrations.tools import metadata as ai
 
 from integrations.tools.metadata import attach_tool_metadata
 
@@ -211,7 +211,7 @@ class LocalExecutor(Executor):
         # early deadline, so the in-flight foreground command dies within one tick.
         self._abort = threading.Event()
         # Optional observer for background-process lifecycle (spawn/kill). The
-        # application layer attaches it post-construction (see SessionManager's
+        # capability host attaches it post-construction (see the Runtime's
         # runtime binding); the executor stays ledger-agnostic. Failures inside the
         # sink are swallowed by _emit_process_event — bookkeeping must never break
         # execution.

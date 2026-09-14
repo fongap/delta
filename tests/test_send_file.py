@@ -10,7 +10,6 @@ from pathlib import Path
 
 from integrations.connectors.base import SendResult
 from integrations.connectors.tools import make_send_file_tool
-from core.permissions import Mode, PermissionEngine
 from core.roots import RootDir
 from packages.secrets import SecretStore
 
@@ -130,28 +129,3 @@ def test_send_file_screenshot_is_html_only_and_renames_to_png(tmp_path):
     out = tool("slack:C9", "dash.html", as_screenshot=True)
     assert out["ok"] and out["filename"] == "dash.png"
     assert record[-1]["data"] == b"PNG-bytes-for-dash.html"
-
-
-def test_thread_send_message_grant_never_covers_send_file(tmp_path):
-    """The §31 mention-thread grant pre-approves send_message for its thread target — the
-    SAME target on send_file must still ask (task_rules key on the tool name)."""
-    engine = PermissionEngine(workspace_root=tmp_path, mode=Mode.INTERACTIVE)
-    target = "slack:T1/C9:1700.1"
-    engine.task_rules.setdefault("send_message", set()).add(target)
-
-    from integrations.connectors.tools import make_send_file_tool, make_send_message_tool
-
-    msg_meta = make_send_message_tool(_secrets(tmp_path)).__aisuite_tool_metadata__
-    file_meta = make_send_file_tool(
-        _secrets(tmp_path), workspace=tmp_path
-    ).__aisuite_tool_metadata__
-
-    allowed = engine.evaluate(
-        "send_message", {"target": target, "text": "hi"}, msg_meta
-    )
-    assert allowed.allowed and "standing rule" in allowed.reason
-
-    asked = engine.evaluate(
-        "send_file", {"target": target, "path": "report.pdf"}, file_meta
-    )
-    assert not asked.allowed and asked.needs_user

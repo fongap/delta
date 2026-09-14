@@ -2,7 +2,7 @@
 // pin POST through, and the "context compacted" divider renders inline mid-session
 // (driven by the fixtures' scripted `compacted` event) without touching the transcript.
 import { expect } from "@playwright/test";
-import { test } from "./fixtures";
+import { test, readMockState } from "./fixtures";
 
 test("Settings: Context compaction card edits threshold, cap, and summarizer model", async ({
   page,
@@ -21,30 +21,15 @@ test("Settings: Context compaction card edits threshold, cap, and summarizer mod
   await expect(card.getByTestId("compaction-model")).toHaveValue("");
 
   // Threshold edits POST as a fraction, clamped to 10–95%.
-  const [req] = await Promise.all([
-    page.waitForRequest(
-      (r) => r.url().endsWith("/v1/settings/compaction") && r.method() === "POST",
-    ),
-    card.getByTestId("compaction-threshold").fill("70"),
-  ]);
-  expect(req.postDataJSON()).toEqual({ compaction_threshold_pct: 0.7 });
+  await card.getByTestId("compaction-threshold").fill("70");
+  await expect.poll(async () => (await readMockState<any>(page)).settings.compaction_threshold_pct).toBe(0.7);
 
-  const [req2] = await Promise.all([
-    page.waitForRequest(
-      (r) => r.url().endsWith("/v1/settings/compaction") && r.method() === "POST",
-    ),
-    card.getByTestId("compaction-cap").fill("100000"),
-  ]);
-  expect(req2.postDataJSON()).toEqual({ compaction_cap_tokens: 100000 });
+  await card.getByTestId("compaction-cap").fill("100000");
+  await expect.poll(async () => (await readMockState<any>(page)).settings.compaction_cap_tokens).toBe(100000);
 
   // Summarizer pin: the picker offers the session-default plus the configured models.
-  const [req3] = await Promise.all([
-    page.waitForRequest(
-      (r) => r.url().endsWith("/v1/settings/compaction") && r.method() === "POST",
-    ),
-    card.getByTestId("compaction-model").selectOption("gpt-4o-mini"),
-  ]);
-  expect(req3.postDataJSON()).toEqual({ compaction_model: "gpt-4o-mini" });
+  await card.getByTestId("compaction-model").selectOption("gpt-4o-mini");
+  await expect.poll(async () => (await readMockState<any>(page)).settings.compaction_model).toBe("gpt-4o-mini");
 });
 
 test("the compacted divider renders mid-session and the transcript stays intact", async ({

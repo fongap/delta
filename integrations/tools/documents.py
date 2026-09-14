@@ -1,18 +1,14 @@
 """Multi-format document reader (P2 实用 — DELTA_BLUEPRINT §7.2).
 
-The single ``read_document`` tool handles the formats the blueprint lists
-first (PDF / Markdown / TXT / DOCX / XLSX) and emits a typed citation
-through :mod:`core.citation` so the run can be located back to the
-exact page / cell / paragraph / line that was read.
+The single ``read_document`` tool handles PDF / DOCX / XLSX and returns a
+typed block locator. The Rust Runtime owns authoritative source registration.
 
 The reader is intentionally strict:
 
   - every format produces a list of *blocks* (pages, sheets, paragraphs)
     so the agent can ask for a specific block by index;
-  - on success, the run is auto-cited with the matching :class:`CitationRange`
-    kind (``page`` / ``cells`` / ``message_id`` for paragraphs / ``lines``);
-  - on failure, the tool returns an ``{"error": ...}`` payload and
-    does NOT cite (a phantom citation would be worse than none).
+  - on success, the result identifies the page / sheet / paragraph read;
+  - on failure, the tool returns an ``{"error": ...}`` payload.
 
 Optional-dependency policy: ``pypdf`` is already a runtime dep
 (``core/pdf_support.py``). XLSX uses the stdlib zipfile + ElementTree
@@ -29,7 +25,7 @@ import zipfile
 from pathlib import Path
 from typing import Any
 
-import aisuite as ai
+from integrations.tools import metadata as ai
 
 from integrations.tools.metadata import attach_tool_metadata
 
@@ -227,20 +223,13 @@ def _detect_kind(path: Path) -> str:
 
 def document_tools(
     workspace: str,
-    *,
-    source_store: Any | None = None,
-    run_id: str | None = None,
 ) -> list:
     """Build the ``read_document`` tool bound to a workspace.
 
-    ``source_store`` + ``run_id`` are the same opt-in auto-cite hook as
-    ``read_file`` (P2 实用). Errors (unknown extension / parse failure /
-    path outside workspace) are returned as ``{"error": ...}`` payloads
-    and do NOT cite — a phantom citation is worse than none.
+    Errors (unknown extension / parse failure / path outside workspace) are
+    returned as ``{"error": ...}`` payloads. The returned block locator is
+    consumed by the Rust Runtime's source-citation authority.
     """
-    from core.citation import cite
-    from core.sources import KIND_CELLS, KIND_MESSAGE_ID, KIND_PAGE, CitationRange
-
     root = Path(workspace).resolve()
 
     def read_document(
@@ -277,7 +266,7 @@ def document_tools(
         if not blocks:
             return {"error": f"empty {kind} document: {path}"}
 
-        # block=None → summary; an int → the requested block + a typed citation.
+        # block=None → summary; an int → the requested block and locator.
         if block is None or block < 0 or block >= len(blocks):
             summary_blocks = [
                 {
@@ -297,27 +286,6 @@ def document_tools(
             }
 
         chosen = blocks[block]
-        # Build a typed citation from the chosen block. The kind matches
-        # the source's locator vocabulary (page for PDF, cells for XLSX,
-        # message_id for DOCX — fits the same hook).
-        if kind == "pdf":
-            range_obj = CitationRange(kind=KIND_PAGE, page=chosen["page"])
-        elif kind == "xlsx":
-            range_obj = CitationRange(
-                kind=KIND_CELLS,
-                sheet=chosen["sheet"],
-                row_start=1,
-                row_end=chosen.get("row_count", 0) or 0,
-            )
-        else:  # docx
-            # message_id kind fits a paragraph anchor (it's the only
-            # ordered, single-target hook in the schema); the descriptor
-            # carries the paragraph number for renderers that want it.
-            range_obj = CitationRange(
-                kind=KIND_MESSAGE_ID,
-                message_id=f"paragraph:{chosen['paragraph']}",
-            )
-        cite(source_store, run_id, target, range_obj, workspace=root)
         return {
             "path": str(target.relative_to(root)),
             "kind": kind,

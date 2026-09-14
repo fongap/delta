@@ -1,12 +1,11 @@
 //! Tool Lifecycle Execution Disposition (R3, ADR-035 + ADR-037).
 //!
 //! The idempotency state machine is already Rust-authoritative (ADR-022);
-//! this module owns the **disposition decision** that Python formerly made in
-//! `core/tool_lifecycle.py` `_execute_sync`: for a given tool call, decide
+//! this module owns the **disposition decision** for a given tool call: decide
 //! whether it must *execute*, *replay* a committed result, or *surface* an
 //! uncertain previous attempt — and, when it must execute, perform the
-//! `record_planned` + `mark_executing` transitions that must atomically precede
-//! the actual (Python-side) tool execution.
+//! `record_planned` + `mark_executing` transitions that must precede controlled
+//! capability execution.
 //!
 //! ADR-037 extends this with **cancellation decision authority**: when a tool
 //! call is cancelled after execution started (side effect may or may not have
@@ -38,7 +37,7 @@ pub struct ToolLifecyclePlanInput {
 #[derive(Debug, Clone, Serialize)]
 pub enum PlanAction {
     /// The tool must execute now; `record_planned` + `mark_executing` already
-    /// transitioned the row. Python runs `registry.execute` and reports back.
+    /// transitioned the row. The Runtime invokes its Capability Host.
     #[serde(rename = "execute")]
     Execute,
     /// A committed result exists for these args; Python reuses it verbatim.
@@ -53,7 +52,7 @@ pub enum PlanAction {
 #[derive(Debug, Clone, Serialize)]
 pub struct ToolLifecyclePlanOutput {
     pub action: PlanAction,
-    /// For `replay`: the stored committed result.
+    /// For `replay`: the stored committed result returned to the Runtime.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub result: Option<Value>,
     /// For `uncertain`: the error payload Python surfaces to the user.
@@ -74,8 +73,8 @@ pub fn plan(
     input: &ToolLifecyclePlanInput,
 ) -> Result<ToolLifecyclePlanOutput, ShadowReadError> {
     if input.run_id.is_empty() || input.tool_call_id.is_empty() {
-        // Without a run identity there is no idempotency authority; Python
-        // falls back to direct execution (no state machine) exactly as before.
+        // Headless callers may omit run identity. Product runtime calls always
+        // include it; this path remains for isolated authority tests.
         return Ok(ToolLifecyclePlanOutput {
             action: PlanAction::Execute,
             result: None,
@@ -274,6 +273,38 @@ mod tests {
         // The row is now Executing (transitioned ahead of Python execution).
         let entry = writer.get("r1", "c1").unwrap().unwrap();
         assert_eq!(entry.state, crate::idemlog::SideEffectState::Executing);
+    }
+
+    #[test]
+    fn failed_call_reenters_executing_before_retry() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("side_effects.db");
+        let writer = IdempotencyWriter::open(&db).unwrap();
+        let args = serde_json::json!({"path": "a.txt"});
+        writer
+            .record_planned("r-retry", "c-retry", "write_file", &args)
+            .unwrap();
+        writer.mark_executing("r-retry", "c-retry").unwrap();
+        writer
+            .mark_failed("r-retry", "c-retry", "worker failed")
+            .unwrap();
+
+        let out = plan(
+            &writer,
+            &input(
+                db.to_str().unwrap(),
+                "r-retry",
+                "c-retry",
+                "write_file",
+                args,
+            ),
+        )
+        .unwrap();
+        assert!(matches!(out.action, PlanAction::Execute));
+        assert_eq!(
+            writer.get("r-retry", "c-retry").unwrap().unwrap().state,
+            crate::idemlog::SideEffectState::Executing
+        );
     }
 
     #[test]

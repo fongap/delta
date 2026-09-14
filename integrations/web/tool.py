@@ -1,9 +1,7 @@
-"""The `web_search` tool + provider resolution.
+"""The controlled-worker `web_search` tool and explicit provider resolution.
 
-Provider selection (in order): the SecretStore profile `web_search:default` (`{provider,
-api_key}`) → the `web_search_provider` config value → the keyless `duckduckgo` default. Keys
-resolve `${VAR}` through the SecretStore. The tool is read-only; results are external and must
-be treated as untrusted data, not instructions.
+Provider name and key arrive through the capability job's grants. This module does
+not read application configuration or a secret store.
 """
 
 # (tool-builder module: attaches aisuite's dynamic metadata attributes
@@ -12,12 +10,10 @@ be treated as untrusted data, not instructions.
 
 from __future__ import annotations
 
-import os
 from typing import Any, Callable
 
-import aisuite as ai
+from integrations.tools import metadata as ai
 
-from packages.secrets import SecretStore
 from integrations.tools.metadata import attach_tool_metadata
 from integrations.web.providers import WebSearchProvider, build_provider
 
@@ -46,34 +42,22 @@ _SCHEMA = {
 
 
 def resolve_provider(
-    secrets: SecretStore | None = None, *, default: str = "duckduckgo"
+    *, name: str = "duckduckgo", api_key: str | None = None
 ) -> WebSearchProvider:
-    secrets = secrets or SecretStore()
-    profile = secrets.get("web_search:default") or {}
-    name = profile.get("provider") or _config_provider() or default
-    api_key = profile.get("api_key") or os.environ.get(f"{name.upper()}_API_KEY")
     return build_provider(name, api_key)
 
 
-def _config_provider() -> str | None:
-    try:
-        from packages.config import load_config
-
-        return load_config().web_search_provider
-    except Exception:
-        return None
-
-
 def make_web_search_tool(
-    secrets: SecretStore | None = None,
     *,
     provider: WebSearchProvider | None = None,
+    provider_name: str = "duckduckgo",
+    api_key: str | None = None,
 ) -> Callable[..., Any]:
     """Build the `web_search` tool. `provider` overrides resolution (used by tests)."""
 
     def web_search(query: str, max_results: int = 5) -> dict[str, Any]:
         try:
-            p = provider or resolve_provider(secrets)
+            p = provider or resolve_provider(name=provider_name, api_key=api_key)
         except ValueError as exc:
             return {"error": str(exc)}
         n = max_results if isinstance(max_results, int) else 5

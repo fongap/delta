@@ -1,4 +1,4 @@
-import { test, expect } from "./fixtures";
+import { test, expect, readMockState } from "./fixtures";
 
 // Guards the Settings-as-page refactor (§13, IA per UX-021): the ⚙ menu opens a full-page
 // surface with a left sub-nav — General · Models · Voice input — and each section renders.
@@ -41,19 +41,13 @@ test("Settings: Token savings card edits PDF fallback and thresholds", async ({ 
   // Fallback mode: fixture says "text"; switching marks "Send page images" active.
   const seg = page.getByTestId("pdf-fallback");
   await expect(seg.getByRole("button", { name: "Extract text" })).toHaveClass(/active/);
-  const [req] = await Promise.all([
-    page.waitForRequest((r) => r.url().endsWith("/v1/settings/pdf") && r.method() === "POST"),
-    seg.getByRole("button", { name: "Send page images" }).click(),
-  ]);
-  expect(req.postDataJSON()).toEqual({ pdf_fallback: "images" });
+  await seg.getByRole("button", { name: "Send page images" }).click();
+  await expect.poll(async () => (await readMockState<any>(page)).settings.pdf_fallback).toBe("images");
   await expect(seg.getByRole("button", { name: "Send page images" })).toHaveClass(/active/);
 
   // Thresholds: fixture starts at 2 pages / 10 MB; editing pages POSTs the clamped value.
   await expect(card.getByTestId("pdf-max-pages")).toHaveValue("2");
   await expect(card.getByTestId("pdf-max-mb")).toHaveValue("10");
-  const [req2] = await Promise.all([
-    page.waitForRequest((r) => r.url().endsWith("/v1/settings/pdf") && r.method() === "POST"),
-    card.getByTestId("pdf-max-pages").fill("30"),
-  ]);
-  expect(req2.postDataJSON()).toEqual({ pdf_max_pages: 30 });
+  await card.getByTestId("pdf-max-pages").fill("30");
+  await expect.poll(async () => (await readMockState<any>(page)).settings.pdf_max_pages).toBe(30);
 });

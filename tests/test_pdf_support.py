@@ -6,12 +6,11 @@ import base64
 import io
 import struct
 import zlib
+from types import SimpleNamespace
 
 import pytest
 
 from core import pdf_support
-from providers.base import ModelCapabilities
-from providers.capabilities import capabilities_for
 
 
 def _blank_pdf_url(pages: int = 3) -> str:
@@ -30,24 +29,6 @@ def _reset_mode():
     pdf_support.set_fallback_mode("text")
     yield
     pdf_support.set_fallback_mode("text")
-
-
-# -- capability flag ------------------------------------------------------------
-
-
-def test_native_protocols_have_pdf_capability():
-    assert capabilities_for("gpt-5.6-sol").pdf
-    assert capabilities_for("anthropic:claude-fable-5").pdf
-
-
-def test_compat_vendors_lack_pdf_capability():
-    for model in (
-        "zai:glm-5.2",
-        "kimi:kimi-k2.6",
-        "together:zai-org/GLM-5.2",
-        "local:qwen3",
-    ):
-        assert not capabilities_for(model).pdf, model
 
 
 # -- inspect --------------------------------------------------------------------
@@ -88,7 +69,7 @@ def _file_part(url: str) -> dict:
 
 
 def test_adapt_scanned_pdf_yields_visible_note():
-    caps = ModelCapabilities(vision=False, pdf=False)
+    caps = SimpleNamespace(vision=False, pdf=False)
     out = pdf_support.adapt_content([_file_part(_blank_pdf_url())], caps)
     assert len(out) == 1 and out[0]["type"] == "text"
     assert "no extractable text" in out[0]["text"]
@@ -98,17 +79,17 @@ def test_adapt_images_mode_needs_vision():
     url = _blank_pdf_url(pages=2)
     pdf_support.set_fallback_mode("images")
     with_vision = pdf_support.adapt_content(
-        [_file_part(url)], ModelCapabilities(vision=True, pdf=False)
+        [_file_part(url)], SimpleNamespace(vision=True, pdf=False)
     )
     assert [p["type"] for p in with_vision] == ["text", "image_url", "image_url"]
     without_vision = pdf_support.adapt_content(
-        [_file_part(url)], ModelCapabilities(vision=False, pdf=False)
+        [_file_part(url)], SimpleNamespace(vision=False, pdf=False)
     )
     assert all(p["type"] == "text" for p in without_vision)  # degrades to text
 
 
 def test_adapt_leaves_other_parts_alone():
-    caps = ModelCapabilities(vision=False, pdf=False)
+    caps = SimpleNamespace(vision=False, pdf=False)
     parts = [{"type": "text", "text": "hi"}, _file_part(_blank_pdf_url())]
     out = pdf_support.adapt_content(parts, caps)
     assert out[0] == {"type": "text", "text": "hi"} and len(out) == 2

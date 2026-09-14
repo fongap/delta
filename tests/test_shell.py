@@ -12,7 +12,6 @@ import time
 
 import pytest
 
-from core.permissions import PermissionEngine
 from integrations.tools import ToolRegistry
 from integrations.tools.shell import LocalExecutor, shell_tools
 
@@ -91,10 +90,6 @@ def test_shell_tool_integration(executor, tmp_path):
     # polling/killing the agent's own background tasks doesn't need approval
     assert reg.get("shell_task_output").metadata.requires_approval is False
     assert reg.get("shell_task_kill").metadata.requires_approval is False
-
-    eng = PermissionEngine(workspace_root=tmp_path)
-    decision = eng.evaluate("run_shell", {"command": "echo hi"}, spec.metadata)
-    assert not decision.allowed and decision.needs_user  # high-risk → asks
 
     out = reg.execute("run_shell", {"command": "echo hi"})
     assert "hi" in out["output"]

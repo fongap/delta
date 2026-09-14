@@ -1,8 +1,8 @@
 //! Delta desktop shell.
 //!
 //! Tauri is a thin native window over the React SPA. R6 onward it embeds the
-//! Rust Runtime (`delta-runtime-native`) in-process — there is no Python
-//! sidecar. The SPA talks to the runtime via Tauri IPC (`runtime_ipc.rs`):
+//! Rust Runtime (`delta-runtime-native`) in-process. The SPA talks to the
+//! runtime via Tauri IPC (`runtime_ipc.rs`):
 //! pass / stealth via `runtime_run`/`runtime_steer`/`runtime_cancel`, events
 //! via `listen("delta-runtime-event")`. No localhost HTTP/WebSocket hop.
 //!
@@ -26,12 +26,7 @@ use tauri::{
 };
 use tauri_plugin_autostart::ManagerExt;
 
-mod proxy;
 mod runtime_ipc;
-
-/// Integration-test hook (`tests/proxy_smoke.rs`): drive the proxy directly without an app.
-#[doc(hidden)]
-pub use proxy::start_proxy as proxy_start_for_tests;
 
 /// The active keep-awake guard while keep-awake is on (None when off). Dropping the guard
 /// releases the hold (kills `caffeinate` on macOS, clears the execution state on Windows).
@@ -266,7 +261,7 @@ fn follow_system_theme(window: tauri::WebviewWindow) -> bool {
 /// Pre-paint native theme (issue #8): the SPA's theme.ts only runs after the webview's JS has
 /// loaded — potentially after the first frame — which left a light Windows title-bar flash for
 /// dark users before setNativeTheme landed. This script runs at document-start (before the HTML
-/// is parsed or painted, via the same initialization_script channel as the sidecar endpoints)
+/// is parsed or painted, via a document-start initialization script)
 /// and mirrors theme.ts's resolution (localStorage pref "delta-theme", legacy "openwork-theme"
 /// read and migrated once, prefers-color-scheme fallback, absent/invalid = auto) so the native
 /// window chrome matches from the very first frame. `window.__TAURI__` is
@@ -612,22 +607,19 @@ async fn install_update(
             .map_err(|e| e.to_string())?,
     }
     // Installer-based Windows builds never reach here because the installer relaunches.
-    // macOS: the .app was swapped in place — restart into the new version. The tray
-    // Exit path's sidecar kill runs via RunEvent, so no orphaned delta-server.
+    // macOS: the .app was swapped in place — restart into the new version.
     app.restart();
 }
 
 pub fn run() {
-    // R6: no more Python sidecar or localhost proxy. The Rust Runtime
-    // is embedded directly in the Tauri shell. The frontend talks via
-    // Tauri IPC (invoke/listen) — no HTTP, no WebSocket, no delta-server.
+    // The Rust Runtime is embedded directly in the Tauri shell. The
+    // frontend talks only through Tauri IPC invoke/listen.
     let inject = format!("window.__OCW_PLATFORM__={:?};", std::env::consts::OS);
 
     tauri::Builder::default()
         // MUST be the first plugin: when a second launch happens (e.g. the user relaunches
         // while the window is closed-to-tray), this fires in the ALREADY-running instance to
-        // surface its healthy window, and the second process exits before it can spawn a
-        // duplicate sidecar — which previously left a window stuck on "Starting delta…".
+        // surface its healthy window, and the second process exits immediately.
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| {
             show_main(app);
         }))
@@ -668,20 +660,114 @@ pub fn run() {
             runtime_ipc::runtime_steer,
             runtime_ipc::runtime_follow_up,
             runtime_ipc::runtime_cancel,
+            runtime_ipc::runtime_approval,
+            runtime_ipc::runtime_directory_response,
+            runtime_ipc::runtime_plan_response,
+            runtime_ipc::runtime_question_response,
             runtime_ipc::runtime_messages,
             runtime_ipc::runtime_switch_model,
+            runtime_ipc::runtime_set_mode,
             runtime_ipc::runtime_truncate,
+            runtime_ipc::settings_get,
+            runtime_ipc::settings_set_model_key,
+            runtime_ipc::settings_set_default_model,
+            runtime_ipc::settings_add_model,
+            runtime_ipc::settings_remove_model,
+            runtime_ipc::settings_set_onboarded,
+            runtime_ipc::settings_set_language,
+            runtime_ipc::settings_set_context_bar,
+            runtime_ipc::settings_set_sessions_peek,
+            runtime_ipc::settings_set_scratch_base,
+            runtime_ipc::settings_set_pdf,
+            runtime_ipc::settings_set_compaction,
+            runtime_ipc::providers_list,
+            runtime_ipc::provider_protocols,
+            runtime_ipc::provider_set,
+            runtime_ipc::provider_remove,
+            runtime_ipc::provider_verify,
+            runtime_ipc::provider_fetch_models,
             runtime_ipc::sessions_list,
             runtime_ipc::session_messages,
             runtime_ipc::session_rename,
             runtime_ipc::session_set_flags,
             runtime_ipc::session_delete,
-            runtime_ipc::workspaces_recent
+            runtime_ipc::workspaces_recent,
+            runtime_ipc::workspace_open,
+            runtime_ipc::workspaces_trusted,
+            runtime_ipc::workspace_set_trusted,
+            runtime_ipc::session_revert,
+            runtime_ipc::session_set_reasoning,
+            runtime_ipc::session_roots,
+            runtime_ipc::session_add_root,
+            runtime_ipc::session_remove_root,
+            runtime_ipc::session_get_unattended,
+            runtime_ipc::session_set_unattended,
+            runtime_ipc::inbox_list,
+            runtime_ipc::inbox_resolve,
+            runtime_ipc::artifacts_list,
+            runtime_ipc::artifact_read,
+            runtime_ipc::artifact_resolve_path,
+            runtime_ipc::memory_list,
+            runtime_ipc::memory_update,
+            runtime_ipc::memory_delete,
+            runtime_ipc::memory_delete_all,
+            runtime_ipc::memory_settings,
+            runtime_ipc::memory_set_settings,
+            runtime_ipc::automations_list,
+            runtime_ipc::automation_create,
+            runtime_ipc::automation_get,
+            runtime_ipc::automation_update,
+            runtime_ipc::automation_delete,
+            runtime_ipc::automation_mark_seen,
+            runtime_ipc::automation_prepare_run,
+            runtime_ipc::automation_finalize_run,
+            runtime_ipc::scheduler_due,
+            runtime_ipc::mcp_list,
+            runtime_ipc::mcp_put,
+            runtime_ipc::mcp_patch,
+            runtime_ipc::mcp_delete,
+            runtime_ipc::mcp_tools,
+            runtime_ipc::mcp_reload,
+            runtime_ipc::mcp_connect,
+            runtime_ipc::mcp_signout,
+            runtime_ipc::audit_list,
+            runtime_ipc::sources_list,
+            runtime_ipc::validations_list,
+            runtime_ipc::skills_list,
+            runtime_ipc::skill_create,
+            runtime_ipc::skill_update,
+            runtime_ipc::skill_delete,
+            runtime_ipc::skill_move,
+            runtime_ipc::skill_resolve_folder,
+            runtime_ipc::skill_stage_upload,
+            runtime_ipc::skill_confirm_upload,
+            runtime_ipc::session_skills,
+            runtime_ipc::session_set_skill,
+            runtime_ipc::connectors_list,
+            runtime_ipc::connector_connect,
+            runtime_ipc::connector_disconnect,
+            runtime_ipc::connector_update_tools,
+            runtime_ipc::connector_action,
+            runtime_ipc::session_connections,
+            runtime_ipc::session_set_connection,
+            runtime_ipc::subscriptions_list,
+            runtime_ipc::subscription_add,
+            runtime_ipc::subscription_remove,
+            runtime_ipc::inbox_routing_list,
+            runtime_ipc::inbox_routing_set,
+            runtime_ipc::unrouted_list,
+            runtime_ipc::recent_channels,
+            runtime_ipc::dm_route_get,
+            runtime_ipc::dm_route_set,
+            runtime_ipc::browser_state,
+            runtime_ipc::browser_screenshot,
+            runtime_ipc::browser_close
         ])
         .setup(move |app| {
-            // R6: the Rust Runtime is embedded — no Python sidecar to spawn.
+            // The Rust Runtime is embedded and ready before the window opens.
             // Manage the session registry so runtime commands can access hosts.
             app.manage(runtime_ipc::init());
+            runtime_ipc::start_scheduler(app.handle().clone());
 
             // Restore keep-awake from the last session.
             let ka = if read_keep_awake_pref() {
@@ -695,7 +781,7 @@ pub fn run() {
             // lives in the existing application state directory.
             app.manage(Arc::new(Dictation::new(state_dir().join("models"))));
 
-            // 2. Build the window, injecting the sidecar endpoints before the SPA loads.
+            // 2. Build the window and initialize native platform/theme state.
             //    Overlay title bar (macOS): traffic lights float over the edge-to-edge UI.
             //
             // Initial window = 65% of the primary monitor's work area (screen resolution minus
@@ -745,7 +831,7 @@ pub fn run() {
             }
             let win = builder.build()?;
 
-            // Close-to-tray: hide instead of quitting so the sidecar keeps running.
+            // Close-to-tray: hide instead of quitting so scheduled tasks keep running.
             let w = win.clone();
             win.on_window_event(move |event| {
                 if let WindowEvent::CloseRequested { api, .. } = event {
@@ -800,4 +886,10 @@ pub fn run() {
                 }
             }
         });
+}
+
+/// Release/portable headless smoke entry. It never starts a window or network
+/// listener; success means the embedded authorities and Capability Host booted.
+pub fn portable_self_test() -> Result<(), String> {
+    runtime_ipc::portable_self_test()
 }

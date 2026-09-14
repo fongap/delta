@@ -151,7 +151,7 @@ export interface ProviderSetupState {
   fieldSaved: string | null; // field key flashing "✓ Saved"
 
   // -- custom-config-first (F1+F2) -------------------------------------------------
-  // The OpenAI and Anthropic protocol definitions loaded from /v1/protocols.
+  // The OpenAI and Anthropic protocol definitions loaded from Rust authority.
   protocols: ProviderProtocol[];
   // True while the "Add custom provider" form is open (no alias saved yet). The gallery's
   // surfaces render the create form in place of ProviderCards when this is set.
@@ -162,9 +162,9 @@ export interface ProviderSetupState {
   // The selected protocol_id for the create form; defaults to "openai".
   protoId: string;
   setProtoId: (id: string) => void;
-  // The resolved protocol definition for `protoId` (undefined until /v1/protocols loads).
+  // The resolved protocol definition for `protoId` (undefined until IPC resolves).
   protoDef: ProviderProtocol | undefined;
-  // Async state of the /v1/protocols fetch: loading / done / failed. The create form uses
+  // Async state of the protocol IPC read: loading / done / failed. The create form uses
   // this so the API-key field + dropdown don't silently render empty when the fetch hasn't
   // resolved (the "no API Key input box" + "no default protocol" symptom).
   protocolsLoading: boolean;
@@ -1027,7 +1027,7 @@ export function CustomCreateForm({ ps, tp, inline = false }: { ps: ProviderSetup
         </span>
       </div>
 
-      {/* While /v1/protocols hasn't resolved, show real status instead of silently rendering
+      {/* While protocol authority hasn't resolved, show real status instead of silently rendering
           an empty form (no API-key field, no protocol options → "no API Key input box" +
           "no default protocol"). The .catch in useProviderSetup surfaces load failures here. */}
       {ps.protocolsLoading && (

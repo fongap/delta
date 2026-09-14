@@ -1,0 +1,374 @@
+//! Rust Application Control Plane authority for automations, scheduler state,
+//! and run identity.
+
+use std::path::Path;
+use std::str::FromStr;
+
+use chrono::Local;
+use cron::Schedule;
+use serde_json::{json, Map, Value};
+
+use crate::{ShadowReadError, TaskStore};
+
+pub struct AutomationStore {
+    tasks: TaskStore,
+}
+
+impl AutomationStore {
+    pub fn open(state_dir: impl AsRef<Path>) -> Result<Self, ShadowReadError> {
+        std::fs::create_dir_all(state_dir.as_ref())?;
+        Ok(Self {
+            tasks: TaskStore::open(state_dir.as_ref().join("automation.db"))?,
+        })
+    }
+
+    pub fn list(&self) -> Result<Vec<Value>, ShadowReadError> {
+        self.tasks
+            .list_tasks()?
+            .into_iter()
+            .map(|entry| {
+                let mut data = object_or_empty(entry.data);
+                data.remove("agent");
+                data.insert("id".to_string(), Value::String(entry.id));
+                data.insert("enabled".to_string(), Value::Bool(entry.enabled));
+                data.insert(
+                    "next_run".to_string(),
+                    entry.next_run.map(Value::from).unwrap_or(Value::Null),
+                );
+                Ok(Value::Object(data))
+            })
+            .collect()
+    }
+
+    pub fn create(&self, payload: &Value) -> Result<Value, ShadowReadError> {
+        let title = payload
+            .get("title")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim();
+        let instructions = payload
+            .get("instructions")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .trim();
+        if title.is_empty() || instructions.is_empty() {
+            return Ok(json!({"ok": false, "error": "title and instructions are required"}));
+        }
+        let id = uuid::Uuid::new_v4().to_string();
+        let cron = payload.get("cron").and_then(Value::as_str);
+        let fire_at = payload.get("fire_at").and_then(Value::as_str);
+        let next_run = next_run(cron, fire_at);
+        let schedule_raw = if let Some(cron) = cron {
+            json!({"kind": "cron", "cron": cron, "fire_at": null, "timezone": payload.get("timezone").and_then(Value::as_str).unwrap_or("local")})
+        } else {
+            json!({"kind": "once", "cron": null, "fire_at": fire_at, "timezone": payload.get("timezone").and_then(Value::as_str).unwrap_or("local")})
+        };
+        let task = json!({
+            "id": id,
+            "title": title,
+            "instructions": instructions,
+            "schedule": cron.or(fire_at).unwrap_or("manual"),
+            "schedule_raw": schedule_raw,
+            "workspace": payload.get("workspace").and_then(Value::as_str).unwrap_or_default(),
+            "enabled": true,
+            "next_run": next_run,
+            "last_run": null,
+            "last_status": null,
+            "run_count": 0,
+            "notify_on_completion": payload.get("notify_on_completion").and_then(Value::as_bool).unwrap_or(true),
+            "seen_runs_at": 0,
+            "unseen_runs": 0,
+            "unseen_failed": false,
+            "always_allowed": payload.get("permissions").cloned().unwrap_or_else(|| json!([])),
+        });
+        self.tasks
+            .save_task(&id, true, next_run, &serde_json::to_string(&task)?)?;
+        Ok(json!({"ok": true, "task": task}))
+    }
+
+    pub fn get(&self, id: &str) -> Result<Value, ShadowReadError> {
+        let Some(entry) = self.tasks.get_task(id)? else {
+            return Ok(json!({"task": null, "runs": []}));
+        };
+        let mut task = object_or_empty(entry.data);
+        task.remove("agent");
+        task.insert("id".to_string(), Value::String(entry.id));
+        task.insert("enabled".to_string(), Value::Bool(entry.enabled));
+        task.insert(
+            "next_run".to_string(),
+            entry.next_run.map(Value::from).unwrap_or(Value::Null),
+        );
+        let runs = self
+            .tasks
+            .runs(id, 100)?
+            .into_iter()
+            .map(|run| run.data)
+            .collect::<Vec<_>>();
+        Ok(json!({"task": task, "runs": runs}))
+    }
+
+    pub fn update(&self, id: &str, changes: &Value) -> Result<Value, ShadowReadError> {
+        let Some(entry) = self.tasks.get_task(id)? else {
+            return Ok(json!({"ok": false, "error": "automation not found"}));
+        };
+        let mut task = object_or_empty(entry.data);
+        if let Some(changes) = changes.as_object() {
+            for (key, value) in changes {
+                task.insert(key.clone(), value.clone());
+            }
+        }
+        task.insert("id".to_string(), Value::String(id.to_string()));
+        task.remove("agent");
+        if let Some(cron) = changes.get("cron").and_then(Value::as_str) {
+            task.insert("schedule".to_string(), Value::String(cron.to_string()));
+            task.insert(
+                "schedule_raw".to_string(),
+                json!({"kind": "cron", "cron": cron, "fire_at": null, "timezone": "local"}),
+            );
+        }
+        let enabled = task
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(entry.enabled);
+        let next = if enabled {
+            next_run(
+                task.get("schedule_raw")
+                    .and_then(|value| value.get("cron"))
+                    .and_then(Value::as_str),
+                task.get("schedule_raw")
+                    .and_then(|value| value.get("fire_at"))
+                    .and_then(Value::as_str),
+            )
+            .or(entry.next_run)
+        } else {
+            None
+        };
+        self.tasks.save_task(
+            id,
+            enabled,
+            next,
+            &serde_json::to_string(&Value::Object(task.clone()))?,
+        )?;
+        Ok(json!({"ok": true, "task": task}))
+    }
+
+    pub fn delete(&self, id: &str) -> Result<Value, ShadowReadError> {
+        Ok(json!({"ok": self.tasks.delete_task(id)?}))
+    }
+
+    pub fn mark_seen(&self, id: &str) -> Result<Value, ShadowReadError> {
+        self.update(
+            id,
+            &json!({"seen_runs_at": now(), "unseen_runs": 0, "unseen_failed": false}),
+        )
+    }
+
+    pub fn prepare_run(&self, id: &str) -> Result<Value, ShadowReadError> {
+        self.prepare_run_with_trigger(id, "manual")
+    }
+
+    fn prepare_run_with_trigger(&self, id: &str, trigger: &str) -> Result<Value, ShadowReadError> {
+        let Some(entry) = self.tasks.get_task(id)? else {
+            return Ok(json!({"ok": false, "error": "automation not found"}));
+        };
+        let run_id = uuid::Uuid::new_v4().to_string();
+        let session_id = format!("__run__{run_id}");
+        let workspace = entry
+            .data
+            .get("workspace")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let prompt = entry
+            .data
+            .get("instructions")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let run = json!({
+            "run_id": run_id, "task_id": id, "session_id": session_id,
+            "started_at": now(), "finished_at": null, "status": "running",
+            "result_text": null, "artifacts": [], "error": null, "trigger": trigger,
+        });
+        self.tasks
+            .add_run(&run_id, id, now(), &serde_json::to_string(&run)?, workspace)?;
+        Ok(json!({
+            "ok": true, "run_id": run_id, "session_id": session_id,
+            "workspace": workspace, "prompt": prompt,
+            "task_id": id,
+            "task_title": entry.data.get("title").and_then(Value::as_str).unwrap_or("Automation"),
+        }))
+    }
+
+    pub fn due(&self) -> Result<Vec<Value>, ShadowReadError> {
+        Ok(self
+            .tasks
+            .due_tasks(now())?
+            .into_iter()
+            .map(|entry| {
+                let mut data = object_or_empty(entry.data);
+                data.remove("agent");
+                data.insert("id".to_string(), Value::String(entry.id));
+                Value::Object(data)
+            })
+            .collect())
+    }
+
+    /// Atomically claim due work from the scheduler's perspective: every
+    /// returned run is inserted before the task's next deadline advances, so a
+    /// second tick cannot launch the same occurrence again.
+    pub fn claim_due_runs(&self) -> Result<Vec<Value>, ShadowReadError> {
+        let mut prepared = Vec::new();
+        for entry in self.tasks.due_tasks(now())? {
+            let next = next_run_for_task(&entry.data, true);
+            let enabled = next.is_some();
+            let mut task = object_or_empty(entry.data.clone());
+            task.insert("enabled".to_string(), Value::Bool(enabled));
+            task.insert(
+                "next_run".to_string(),
+                next.map(Value::from).unwrap_or(Value::Null),
+            );
+            self.tasks.save_task(
+                &entry.id,
+                enabled,
+                next,
+                &serde_json::to_string(&Value::Object(task))?,
+            )?;
+            let run = self.prepare_run_with_trigger(&entry.id, "scheduled")?;
+            if run.get("ok").and_then(Value::as_bool) == Some(true) {
+                prepared.push(run);
+            }
+        }
+        Ok(prepared)
+    }
+
+    pub fn finalize_run(&mut self, id: &str, run_id: &str) -> Result<Value, ShadowReadError> {
+        let Some(run) = self.tasks.find_run(run_id)? else {
+            return Ok(json!({"ok": false, "error": "automation run not found"}));
+        };
+        if run.task_id != id {
+            return Ok(json!({"ok": false, "error": "automation run identity mismatch"}));
+        }
+        let mut data = object_or_empty(run.data);
+        data.insert("finished_at".to_string(), Value::from(now()));
+        data.insert("status".to_string(), Value::String("ok".to_string()));
+        let next = self.tasks.get_task(id)?.and_then(|task| task.next_run);
+        self.tasks.complete_run(
+            run_id,
+            id,
+            run.started_at,
+            &serde_json::to_string(&Value::Object(data))?,
+            &run.workspace,
+            now(),
+            next,
+        )?;
+        Ok(json!({"ok": true}))
+    }
+
+    pub fn finalize_session(
+        &mut self,
+        session_id: &str,
+        status: &str,
+    ) -> Result<Value, ShadowReadError> {
+        let Some(run_id) = session_id.strip_prefix("__run__") else {
+            return Ok(json!({"ok": false, "error": "not an automation session"}));
+        };
+        let Some(run) = self.tasks.find_run(run_id)? else {
+            return Ok(json!({"ok": false, "error": "automation run not found"}));
+        };
+        let task_id = run.task_id.clone();
+        let mut data = object_or_empty(run.data);
+        data.insert("finished_at".to_string(), Value::from(now()));
+        data.insert("status".to_string(), Value::String(status.to_string()));
+        let next = self
+            .tasks
+            .get_task(&task_id)?
+            .and_then(|task| task.next_run);
+        self.tasks.complete_run(
+            run_id,
+            &task_id,
+            run.started_at,
+            &serde_json::to_string(&Value::Object(data))?,
+            &run.workspace,
+            now(),
+            next,
+        )?;
+        Ok(json!({"ok": true, "task_id": task_id, "run_id": run_id}))
+    }
+}
+
+fn object_or_empty(value: Value) -> Map<String, Value> {
+    value.as_object().cloned().unwrap_or_default()
+}
+
+fn now() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_secs_f64())
+        .unwrap_or_default()
+}
+
+fn next_run(cron: Option<&str>, fire_at: Option<&str>) -> Option<f64> {
+    if let Some(fire_at) = fire_at {
+        if let Ok(parsed) =
+            time::OffsetDateTime::parse(fire_at, &time::format_description::well_known::Rfc3339)
+        {
+            return Some(parsed.unix_timestamp() as f64);
+        }
+    }
+    cron.filter(|value| !value.trim().is_empty())
+        .and_then(|value| {
+            let expression = if value.split_whitespace().count() == 5 {
+                format!("0 {value}")
+            } else {
+                value.to_string()
+            };
+            Schedule::from_str(&expression).ok()
+        })
+        .and_then(|schedule| schedule.upcoming(Local).next())
+        .map(|date| date.timestamp_millis() as f64 / 1000.0)
+}
+
+fn next_run_for_task(task: &Value, scheduled_tick: bool) -> Option<f64> {
+    let raw = task.get("schedule_raw").unwrap_or(&Value::Null);
+    let kind = raw.get("kind").and_then(Value::as_str).unwrap_or_default();
+    if kind == "once" && scheduled_tick {
+        return None;
+    }
+    next_run(
+        raw.get("cron").and_then(Value::as_str),
+        raw.get("fire_at").and_then(Value::as_str),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn automation_crud_and_manual_run_use_rust_taskstore() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = AutomationStore::open(temp.path()).unwrap();
+        let created = store
+            .create(&json!({"title": "Digest", "instructions": "Summarize", "cron": "0 9 * * *"}))
+            .unwrap();
+        let id = created["task"]["id"].as_str().unwrap();
+        assert_eq!(store.list().unwrap().len(), 1);
+        let prepared = store.prepare_run(id).unwrap();
+        assert_eq!(prepared["ok"], true);
+        assert_ne!(prepared["run_id"], prepared["session_id"]);
+        assert_eq!(store.delete(id).unwrap()["ok"], true);
+    }
+
+    #[test]
+    fn scheduled_claim_is_single_shot_for_due_one_time_task() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = AutomationStore::open(temp.path()).unwrap();
+        store
+            .create(&json!({
+                "title": "Once", "instructions": "Run",
+                "fire_at": "2020-01-01T00:00:00Z"
+            }))
+            .unwrap();
+        assert_eq!(store.claim_due_runs().unwrap().len(), 1);
+        assert!(store.claim_due_runs().unwrap().is_empty());
+    }
+}
