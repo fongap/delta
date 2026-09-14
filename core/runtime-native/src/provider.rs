@@ -20,6 +20,8 @@ pub struct ProviderRequest {
     pub settings: Option<Value>,
     pub api_key: String,
     pub base_url: String,
+    #[serde(default)]
+    pub timeout_secs: Option<f64>,
 }
 
 fn versioned_endpoint(base_url: &str, endpoint: &str) -> String {
@@ -38,9 +40,11 @@ struct ToolCallAccum {
     args: String,
 }
 
-fn agent() -> ureq::Agent {
+fn agent(timeout_secs: Option<f64>) -> ureq::Agent {
     ureq::AgentBuilder::new()
-        .timeout(std::time::Duration::from_secs(300))
+        .timeout(std::time::Duration::from_secs_f64(
+            timeout_secs.unwrap_or(300.0).max(0.05),
+        ))
         .build()
 }
 
@@ -115,7 +119,7 @@ pub fn complete_openai_chat(req: &ProviderRequest) -> Result<Value, String> {
     let url = format!("{}/chat/completions", req.base_url.trim_end_matches('/'));
     let body = build_openai_chat_body(req, false);
     let resp = send_json(
-        agent()
+        agent(req.timeout_secs)
             .post(&url)
             .set("Authorization", &format!("Bearer {}", req.api_key))
             .set("Content-Type", "application/json"),
@@ -190,7 +194,7 @@ pub fn stream_openai_chat(
     let url = format!("{}/chat/completions", req.base_url.trim_end_matches('/'));
     let body = build_openai_chat_body(req, true);
     let resp = send_json(
-        agent()
+        agent(req.timeout_secs)
             .post(&url)
             .set("Authorization", &format!("Bearer {}", req.api_key))
             .set("Content-Type", "application/json"),
@@ -203,6 +207,7 @@ pub fn stream_openai_chat(
     let mut tool_calls: Vec<ToolCallAccum> = Vec::new();
     let mut finish_reason: Option<String> = None;
     let mut usage: Option<Value> = None;
+    let mut saw_done = false;
     for line_res in buf.lines() {
         if cancel.load(std::sync::atomic::Ordering::Relaxed) {
             return Ok(serde_json::json!({"cancelled": true}));
@@ -217,6 +222,7 @@ pub fn stream_openai_chat(
         }
         let payload = &trimmed[6..];
         if payload == "[DONE]" {
+            saw_done = true;
             break;
         }
         let chunk: Value = match serde_json::from_str(payload) {
@@ -278,6 +284,11 @@ pub fn stream_openai_chat(
         if let Some(fr) = choice.get("finish_reason").and_then(|f| f.as_str()) {
             finish_reason = Some(fr.to_string());
         }
+    }
+    if !saw_done && finish_reason.is_none() {
+        return Err(
+            "connection closed before the provider stream reached a terminal event".to_string(),
+        );
     }
     let text = if text_parts.is_empty() {
         Value::Null
@@ -458,7 +469,7 @@ fn map_stop_reason(reason: &str) -> &str {
 pub fn complete_anthropic(req: &ProviderRequest) -> Result<Value, String> {
     let url = versioned_endpoint(&req.base_url, "messages");
     let body = build_anthropic_body(req, false);
-    let mut request = agent().post(&url);
+    let mut request = agent(req.timeout_secs).post(&url);
     for (k, v) in anthropic_headers(req) {
         request = request.set(k, &v);
     }
@@ -542,7 +553,7 @@ pub fn stream_anthropic(
 ) -> Result<Value, String> {
     let url = versioned_endpoint(&req.base_url, "messages");
     let body = build_anthropic_body(req, true);
-    let mut request = agent().post(&url);
+    let mut request = agent(req.timeout_secs).post(&url);
     for (k, v) in anthropic_headers(req) {
         request = request.set(k, &v);
     }
@@ -741,7 +752,7 @@ pub fn complete_openai_responses(req: &ProviderRequest) -> Result<Value, String>
     let url = versioned_endpoint(&req.base_url, "responses");
     let body = build_openai_responses_body(req, false);
     let resp = send_json(
-        agent()
+        agent(req.timeout_secs)
             .post(&url)
             .set("Authorization", &format!("Bearer {}", req.api_key))
             .set("Content-Type", "application/json"),
@@ -865,7 +876,7 @@ pub fn stream_openai_responses(
     let url = versioned_endpoint(&req.base_url, "responses");
     let body = build_openai_responses_body(req, true);
     let resp = send_json(
-        agent()
+        agent(req.timeout_secs)
             .post(&url)
             .set("Authorization", &format!("Bearer {}", req.api_key))
             .set("Content-Type", "application/json"),

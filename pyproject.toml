@@ -11,8 +11,6 @@ dependencies = [
     "openai==3.8.0",
     "anthropic==1.3.0",  # native Claude Messages API provider
     "textual==8.2.8",
-    "fastapi==0.141.1",
-    "uvicorn[standard]==0.52.4",
     # Pinned to a known aisuite commit; update only as a deliberate dependency change.
     "aisuite @ git+https://github.com/andrewyng/aisuite.git@1b4bbf303ec21968230b1ec869a144d054e9b3c4",
     "docstring_parser==0.18.0",

@@ -1097,6 +1097,7 @@ impl RuntimeHost {
             settings: Some(self.config.model_settings.clone()),
             api_key: self.config.api_key.clone(),
             base_url: self.config.base_url.clone(),
+            timeout_secs: self.config.ttft_timeout,
         }
     }
 
@@ -2890,7 +2891,9 @@ mod tests {
     #[test]
     fn test_is_retryable() {
         assert!(is_retryable_error("HTTP 429: rate limited"));
+        assert!(is_retryable_error("HTTP 502: bad gateway"));
         assert!(is_retryable_error("HTTP 503: service unavailable"));
+        assert!(is_retryable_error("HTTP 504: gateway timeout"));
         assert!(is_retryable_error("connection refused"));
         assert!(is_retryable_error("timeout waiting for response"));
         assert!(!is_retryable_error("HTTP 400: bad request"));
@@ -3041,6 +3044,206 @@ mod tests {
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
+    fn approval_test_host(
+        state_dir: &Path,
+        calls: Arc<AtomicUsize>,
+        unattended: bool,
+    ) -> (Arc<RuntimeHost>, RuntimeAuthorities) {
+        let authorities = RuntimeAuthorities::open(state_dir).unwrap();
+        let mut host = RuntimeHost::new(
+            "session-approval-e2e",
+            RuntimeConfig {
+                unattended,
+                ..RuntimeConfig::default()
+            },
+        )
+        .with_authorities(authorities.clone())
+        .with_tools(tool_contract("medium", true))
+        .with_tool_executor(Arc::new(CountingExecutor {
+            calls,
+            staged: None,
+        }));
+        host.set_run_id("run-approval-e2e".to_string());
+        (Arc::new(host), authorities)
+    }
+
+    fn execute_approval_tool(host: Arc<RuntimeHost>) -> std::thread::JoinHandle<ToolResult> {
+        std::thread::spawn(move || {
+            host.execute_tool_call(&ToolCall {
+                id: "call-approval-e2e".to_string(),
+                name: "write_report".to_string(),
+                arguments: json!({"path": "report.md"}),
+            })
+        })
+    }
+
+    fn wait_for_approval(host: &RuntimeHost) {
+        for _ in 0..200 {
+            if host.approvals.pending_ids() == ["call-approval-e2e"] {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        panic!("approval request did not become pending");
+    }
+
+    #[test]
+    fn native_e2e_approval_rejection_never_enters_capability() {
+        let temp = tempfile::tempdir().unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (host, authorities) = approval_test_host(temp.path(), calls.clone(), false);
+        let worker = execute_approval_tool(host.clone());
+        wait_for_approval(&host);
+
+        host.approvals
+            .resolve(Some("call-approval-e2e"), ApprovalDecision::Deny)
+            .unwrap();
+        let result = worker.join().unwrap();
+
+        assert_eq!(result.error.as_deref(), Some("tool call denied by user"));
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        let events = authorities
+            .ledger()
+            .lock()
+            .unwrap()
+            .reader()
+            .unwrap()
+            .events("run-approval-e2e")
+            .unwrap();
+        assert!(events.iter().any(|event| event.r#type == "approval.denied"));
+        assert!(events.iter().any(|event| event.r#type == "tool.cancelled"));
+    }
+
+    #[test]
+    fn native_e2e_cancel_while_approval_pending_is_terminal() {
+        let temp = tempfile::tempdir().unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (host, authorities) = approval_test_host(temp.path(), calls.clone(), false);
+        let worker = execute_approval_tool(host.clone());
+        wait_for_approval(&host);
+
+        host.cancel();
+        let result = worker.join().unwrap();
+
+        assert!(result
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("approval was pending")));
+        assert!(host.approvals.pending_ids().is_empty());
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        let events = authorities
+            .ledger()
+            .lock()
+            .unwrap()
+            .reader()
+            .unwrap()
+            .events("run-approval-e2e")
+            .unwrap();
+        assert!(events
+            .iter()
+            .any(|event| event.r#type == "approval.cancelled"));
+    }
+
+    #[test]
+    fn native_e2e_unattended_approval_is_durable_in_inbox() {
+        let temp = tempfile::tempdir().unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let (host, authorities) = approval_test_host(temp.path(), calls.clone(), true);
+        let worker = execute_approval_tool(host.clone());
+        wait_for_approval(&host);
+
+        let pending = authorities
+            .inbox()
+            .list(Some("session-approval-e2e"), Some("pending"));
+        assert_eq!(pending.len(), 1);
+        assert_eq!(pending[0].kind, "approval");
+        assert_eq!(
+            pending[0].tool_call_id.as_deref(),
+            Some("call-approval-e2e")
+        );
+
+        authorities.inbox().resolve(&pending[0].id, "once").unwrap();
+        host.approvals
+            .resolve(Some("call-approval-e2e"), ApprovalDecision::Once)
+            .unwrap();
+        let result = worker.join().unwrap();
+
+        assert!(result.error.is_none(), "{:?}", result.error);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(
+            authorities.inbox().get(&pending[0].id).unwrap().state,
+            "resolved"
+        );
+    }
+
+    struct CancelAwareExecutor {
+        started: Mutex<Option<mpsc::Sender<()>>>,
+    }
+
+    impl ToolExecutor for CancelAwareExecutor {
+        fn execute(&self, call: &ToolCall, context: &ToolExecutionContext) -> ToolResult {
+            if let Some(sender) = self.started.lock().unwrap().take() {
+                let _ = sender.send(());
+            }
+            while !context.cancel.load(Ordering::Acquire) {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            ToolResult {
+                tool_call_id: call.id.clone(),
+                output: json!({"ok": false}),
+                error: Some("capability cancelled".to_string()),
+                staged_artifacts: Vec::new(),
+                validation_criteria: None,
+                state: ToolExitState::Cancelled,
+            }
+        }
+    }
+
+    #[test]
+    fn native_e2e_cancel_during_tool_marks_side_effect_uncertain() {
+        let temp = tempfile::tempdir().unwrap();
+        let authorities = RuntimeAuthorities::open(temp.path()).unwrap();
+        let (started_tx, started_rx) = mpsc::channel();
+        let mut host = RuntimeHost::new("session-tool-cancel", RuntimeConfig::default())
+            .with_authorities(authorities.clone())
+            .with_tools(tool_contract("low", false))
+            .with_tool_executor(Arc::new(CancelAwareExecutor {
+                started: Mutex::new(Some(started_tx)),
+            }));
+        host.set_run_id("run-tool-cancel".to_string());
+        let host = Arc::new(host);
+        let worker_host = host.clone();
+        let worker = std::thread::spawn(move || {
+            worker_host.execute_tool_call(&ToolCall {
+                id: "call-tool-cancel".to_string(),
+                name: "write_report".to_string(),
+                arguments: json!({"path": "report.md"}),
+            })
+        });
+        started_rx.recv_timeout(Duration::from_secs(2)).unwrap();
+        host.cancel();
+        let result = worker.join().unwrap();
+
+        assert!(result.error.is_some());
+        let entry = authorities
+            .idempotency
+            .lock()
+            .unwrap()
+            .get("run-tool-cancel", "call-tool-cancel")
+            .unwrap()
+            .unwrap();
+        assert_eq!(entry.state, crate::idemlog::SideEffectState::Uncertain);
+        let events = authorities
+            .ledger()
+            .lock()
+            .unwrap()
+            .reader()
+            .unwrap()
+            .events("run-tool-cancel")
+            .unwrap();
+        assert!(events.iter().any(|event| event.r#type == "tool.cancelled"));
+    }
+
     #[test]
     fn runtime_promotes_and_hashes_only_staged_worker_artifacts() {
         let temp = tempfile::tempdir().unwrap();
@@ -3163,6 +3366,121 @@ mod tests {
         }
     }
 
+    enum RetryReply {
+        Status(u16),
+        Disconnect,
+        Stall(Duration),
+        Complete(&'static str),
+        PartialThenClose(&'static str),
+        ToolCall,
+    }
+
+    struct RetryMockProvider {
+        base_url: String,
+        requests: Arc<AtomicUsize>,
+        worker: std::thread::JoinHandle<()>,
+    }
+
+    impl RetryMockProvider {
+        fn start(replies: Vec<RetryReply>) -> Self {
+            let listener = TcpListener::bind("127.0.0.1:0").expect("bind retry provider");
+            let address = listener.local_addr().expect("retry provider address");
+            let requests = Arc::new(AtomicUsize::new(0));
+            let captured = requests.clone();
+            let worker = std::thread::spawn(move || {
+                let mut handlers = Vec::new();
+                for reply in replies {
+                    let (mut stream, _) = listener.accept().expect("accept retry request");
+                    captured.fetch_add(1, Ordering::SeqCst);
+                    handlers.push(std::thread::spawn(move || {
+                        stream
+                            .set_read_timeout(Some(Duration::from_secs(2)))
+                            .unwrap();
+                        let _ = read_http_request(&mut stream);
+                        match reply {
+                            RetryReply::Status(code) => {
+                                write!(
+                                    stream,
+                                    "HTTP/1.1 {code} Transient\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+                                )
+                                .unwrap();
+                            }
+                            RetryReply::Disconnect => {}
+                            RetryReply::Stall(duration) => {
+                                std::thread::sleep(duration);
+                            }
+                            RetryReply::Complete(text) => {
+                                write!(
+                                    stream,
+                                    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n"
+                                )
+                                .unwrap();
+                                write_openai_delta(&mut stream, text);
+                                write!(
+                                    stream,
+                                    "data: {{\"choices\":[{{\"delta\":{{}},\"finish_reason\":\"stop\"}}]}}\n\ndata: [DONE]\n\n"
+                                )
+                                .unwrap();
+                            }
+                            RetryReply::PartialThenClose(text) => {
+                                write!(
+                                    stream,
+                                    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n"
+                                )
+                                .unwrap();
+                                write_openai_delta(&mut stream, text);
+                            }
+                            RetryReply::ToolCall => {
+                                write!(
+                                    stream,
+                                    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n"
+                                )
+                                .unwrap();
+                                writeln!(
+                                    stream,
+                                    "data: {}\n",
+                                    json!({
+                                        "choices": [{
+                                            "delta": {"tool_calls": [{
+                                                "index": 0,
+                                                "id": "call-native-chain",
+                                                "function": {
+                                                    "name": "write_report",
+                                                    "arguments": "{\"path\":\"report.md\"}"
+                                                }
+                                            }]},
+                                            "finish_reason": null
+                                        }]
+                                    })
+                                )
+                                .unwrap();
+                                write!(
+                                    stream,
+                                    "data: {{\"choices\":[{{\"delta\":{{}},\"finish_reason\":\"tool_calls\"}}]}}\n\ndata: [DONE]\n\n"
+                                )
+                                .unwrap();
+                            }
+                        }
+                        let _ = stream.flush();
+                    }));
+                }
+                for handler in handlers {
+                    handler.join().expect("retry response handler");
+                }
+            });
+            Self {
+                base_url: format!("http://{address}/v1"),
+                requests,
+                worker,
+            }
+        }
+
+        fn finish(self) -> usize {
+            self.worker.join().expect("retry provider worker");
+            self.requests.load(Ordering::SeqCst)
+        }
+    }
+
     fn read_http_request(stream: &mut TcpStream) -> String {
         let mut reader = BufReader::new(stream.try_clone().unwrap());
         let mut content_length = 0usize;
@@ -3209,6 +3527,27 @@ mod tests {
         .with_event_sink(sink)
     }
 
+    fn retry_test_host(
+        base_url: String,
+        sink: Arc<CaptureSink>,
+        timeout_secs: Option<f64>,
+    ) -> RuntimeHost {
+        RuntimeHost::new(
+            "session-retry",
+            RuntimeConfig {
+                model: "test-model".to_string(),
+                protocol: "openai_chat".to_string(),
+                api_key: "test-key".to_string(),
+                base_url,
+                max_iterations: 3,
+                max_retries: 1,
+                ttft_timeout: timeout_secs,
+                ..RuntimeConfig::default()
+            },
+        )
+        .with_event_sink(sink)
+    }
+
     fn wait_for_terminal(handle: &RuntimeHandle) {
         for _ in 0..500 {
             if !handle.state().is_active() {
@@ -3226,6 +3565,187 @@ mod tests {
         fn emit(&self, frame: Value) {
             self.frames.lock().unwrap().push(frame);
         }
+    }
+
+    #[test]
+    fn native_e2e_basic_answer_stream_reaches_product_event_protocol() {
+        let provider = MockProvider::start(1);
+        let sink = Arc::new(CaptureSink::default());
+        let handle =
+            RuntimeHandle::spawn(provider_test_host(provider.base_url.clone(), sink.clone()))
+                .unwrap();
+        let run_id = handle.run("hello".to_string(), None).unwrap();
+        provider
+            .first_response_started
+            .recv_timeout(Duration::from_secs(2))
+            .unwrap();
+        provider.release_first_response.send(()).unwrap();
+        wait_for_terminal(&handle);
+
+        assert_eq!(handle.state(), RuntimeState::Completed);
+        assert_eq!(provider.finish().len(), 1);
+        let frames = sink.frames.lock().unwrap();
+        let types: Vec<&str> = frames
+            .iter()
+            .filter_map(|frame| frame["type"].as_str())
+            .collect();
+        assert_eq!(types.first(), Some(&"turn_start"));
+        assert!(types.contains(&"assistant_delta"));
+        assert!(types.contains(&"assistant_message"));
+        assert_eq!(types.last(), Some(&"turn_end"));
+        assert_eq!(frames[0]["payload"]["run_id"], run_id);
+        assert!(frames.iter().all(|frame| frame["sessionId"] == "session-1"));
+    }
+
+    #[test]
+    fn native_e2e_model_tool_policy_capability_and_model_continue() {
+        let provider = RetryMockProvider::start(vec![
+            RetryReply::ToolCall,
+            RetryReply::Complete("report complete"),
+        ]);
+        let temp = tempfile::tempdir().unwrap();
+        let authorities = RuntimeAuthorities::open(temp.path()).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let sink = Arc::new(CaptureSink::default());
+        let host = RuntimeHost::new(
+            "session-native-chain",
+            RuntimeConfig {
+                model: "test-model".to_string(),
+                protocol: "openai_chat".to_string(),
+                api_key: "test-key".to_string(),
+                base_url: provider.base_url.clone(),
+                max_iterations: 3,
+                ..RuntimeConfig::default()
+            },
+        )
+        .with_authorities(authorities.clone())
+        .with_tools(tool_contract("low", false))
+        .with_tool_executor(Arc::new(CountingExecutor {
+            calls: calls.clone(),
+            staged: None,
+        }))
+        .with_event_sink(sink.clone());
+        let handle = RuntimeHandle::spawn(host).unwrap();
+        let run_id = handle.run("write the report".to_string(), None).unwrap();
+        wait_for_terminal(&handle);
+
+        assert_eq!(handle.state(), RuntimeState::Completed);
+        assert_eq!(provider.finish(), 2);
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let frames = sink.frames.lock().unwrap();
+        let types: Vec<&str> = frames
+            .iter()
+            .filter_map(|frame| frame["type"].as_str())
+            .collect();
+        for expected in [
+            "tool_proposed",
+            "tool_started",
+            "tool_finished",
+            "assistant_message",
+            "turn_end",
+        ] {
+            assert!(types.contains(&expected), "missing {expected}: {types:?}");
+        }
+        let events = authorities
+            .ledger()
+            .lock()
+            .unwrap()
+            .reader()
+            .unwrap()
+            .events(&run_id)
+            .unwrap();
+        for expected in [
+            "run.started",
+            "tool.proposed",
+            "tool.approved",
+            "tool.started",
+            "tool.completed",
+            "run.completed",
+        ] {
+            assert!(
+                events.iter().any(|event| event.r#type == expected),
+                "missing ledger event {expected}"
+            );
+        }
+    }
+
+    #[test]
+    fn native_e2e_retries_all_transient_provider_failures_before_output() {
+        for status in [429, 502, 503, 504] {
+            let provider = RetryMockProvider::start(vec![
+                RetryReply::Status(status),
+                RetryReply::Complete("recovered"),
+            ]);
+            let sink = Arc::new(CaptureSink::default());
+            let handle = RuntimeHandle::spawn(retry_test_host(
+                provider.base_url.clone(),
+                sink.clone(),
+                None,
+            ))
+            .unwrap();
+            handle.run(format!("retry {status}"), None).unwrap();
+            wait_for_terminal(&handle);
+            assert_eq!(handle.state(), RuntimeState::Completed, "HTTP {status}");
+            assert_eq!(provider.finish(), 2, "HTTP {status}");
+            let expected_error_type = if status == 429 {
+                "RateLimit"
+            } else {
+                "ServerError"
+            };
+            assert!(sink.frames.lock().unwrap().iter().any(|frame| {
+                frame["type"] == "error" && frame["payload"]["error_type"] == expected_error_type
+            }));
+        }
+
+        let provider = RetryMockProvider::start(vec![
+            RetryReply::Disconnect,
+            RetryReply::Complete("recovered"),
+        ]);
+        let sink = Arc::new(CaptureSink::default());
+        let handle =
+            RuntimeHandle::spawn(retry_test_host(provider.base_url.clone(), sink, None)).unwrap();
+        handle.run("retry connection".to_string(), None).unwrap();
+        wait_for_terminal(&handle);
+        assert_eq!(handle.state(), RuntimeState::Completed);
+        assert_eq!(provider.finish(), 2);
+
+        let provider = RetryMockProvider::start(vec![
+            RetryReply::Stall(Duration::from_millis(100)),
+            RetryReply::Complete("recovered"),
+        ]);
+        let sink = Arc::new(CaptureSink::default());
+        let handle =
+            RuntimeHandle::spawn(retry_test_host(provider.base_url.clone(), sink, Some(0.05)))
+                .unwrap();
+        handle.run("retry timeout".to_string(), None).unwrap();
+        wait_for_terminal(&handle);
+        assert_eq!(handle.state(), RuntimeState::Completed);
+        assert_eq!(provider.finish(), 2);
+    }
+
+    #[test]
+    fn native_e2e_never_retries_after_visible_partial_output() {
+        let provider = RetryMockProvider::start(vec![RetryReply::PartialThenClose("visible")]);
+        let sink = Arc::new(CaptureSink::default());
+        let handle = RuntimeHandle::spawn(retry_test_host(
+            provider.base_url.clone(),
+            sink.clone(),
+            None,
+        ))
+        .unwrap();
+        handle.run("do not duplicate".to_string(), None).unwrap();
+        wait_for_terminal(&handle);
+
+        assert_eq!(handle.state(), RuntimeState::Failed);
+        assert_eq!(provider.finish(), 1);
+        let frames = sink.frames.lock().unwrap();
+        assert!(frames.iter().any(|frame| {
+            frame["type"] == "assistant_delta" && frame["payload"]["text"] == "visible"
+        }));
+        assert!(!frames.iter().any(|frame| {
+            frame["type"] == "error"
+                && frame["payload"]["error"] == "Transient model failure - retrying."
+        }));
     }
 
     #[test]

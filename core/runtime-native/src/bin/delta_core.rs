@@ -882,6 +882,7 @@ fn handle_stream(cmd: Command, ctx: StreamCtx) {
                 settings,
                 api_key,
                 base_url,
+                timeout_secs: None,
             };
             // The stream runs in a background thread. Use a LineWriter that
             // locks stdout per-write so the main loop (and other streams)
@@ -2288,6 +2289,7 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
                 settings,
                 api_key,
                 base_url,
+                timeout_secs: None,
             };
             match delta_runtime_native::provider::complete(&req) {
                 Ok(v) => Ok(v),

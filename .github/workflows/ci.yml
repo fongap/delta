@@ -742,9 +742,9 @@ jobs:
           set -euo pipefail
 
           # R6: the core product is Rust + TypeScript. This gate fails CI if a
-          # Python application backend authority (FastAPI server, delta-server,
-          # Python TurnEngine/SessionManager, aisuite runtime) is re-introduced.
-          # The Python backend was removed; this is now a hard (enforcing) gate.
+          # Any retired Python application authority, server packaging, legacy
+          # desktop transport, or multi-persona surface blocks the build.
+          # The native architecture is protected by a hard enforcing gate.
           python3 scripts/check_r6_architecture.py
 
 
