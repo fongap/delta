@@ -4,7 +4,7 @@
 // (input 1k / output 200 / cache_read 8k / cache_write 800 — 10k per turn), and the
 // settings fixture maps the default model to a 200k context window.
 import { expect } from "@playwright/test";
-import { test } from "./fixtures";
+import { test, readMockState } from "./fixtures";
 
 test("usage chip appears after a turn and opens the breakdown popover", async ({ page }) => {
   await page.goto("/");
@@ -78,13 +78,8 @@ test("Settings toggle turns the context bar on; default is the session total", a
   // Turn the bar ON in Settings -> General.
   await page.getByTestId("sidebar-footer-settings").click();
   await expect(page.getByTestId("context-bar-toggle")).not.toBeChecked();
-  const [req] = await Promise.all([
-    page.waitForRequest(
-      (r) => r.url().endsWith("/v1/settings/context-bar") && r.method() === "POST",
-    ),
-    page.getByTestId("context-bar-toggle").check(),
-  ]);
-  expect(req.postDataJSON()).toEqual({ context_bar: true });
+  await page.getByTestId("context-bar-toggle").check();
+  await expect.poll(async () => (await readMockState<any>(page)).settings.context_bar).toBe(true);
 
   // Reload so the app re-reads settings: the chip is now the fill bar, not a number.
   await page.goto("/");

@@ -1,5 +1,5 @@
-// Left-nav polish (§20): collapse (⌘B / brand button → reveal button docks it back) and the
-// RECENT-header group/filter popover (Group by Persona↔Chronological, Filter by delta).
+// R6 left-nav polish: collapse (⌘B / brand button → reveal button docks it back) and the
+// identity-collapsed Recent list, with no legacy persona grouping controls.
 import { expect } from "@playwright/test";
 import { test } from "./fixtures";
 
@@ -33,22 +33,14 @@ test("⌘B toggles the sidebar collapse", async ({ page }) => {
   await expect(app).not.toHaveClass(/nav-collapsed/);
 });
 
-test("RECENT header group/filter popover: switch grouping + see delta filters", async ({
+test("Recent is a fixed flat list without legacy persona grouping controls", async ({
   page,
 }) => {
   await page.goto("/");
   const header = page.getByTestId("recent-header");
   await expect(header).toContainText("Recent");
 
-  await header.getByRole("button", { name: "Group and filter conversations" }).click();
-  const menu = page.getByTestId("group-filter-menu");
-  await expect(menu).toContainText("Group by");
-
-  // Switch to Chronological → the persona accordion collapses into a flat list (the "Delta"
-  // persona group header is no longer a row; sessions list directly).
-  await menu.getByText("Chronological").click();
-  await expect(menu.getByText("Chronological").locator("xpath=..")).toContainText("✓");
-
-  // With only Delta surfaced, the per-persona filter section is hidden (it renders with >1
-  // persona) — the popover carries just the grouping control.
+  await expect(header.getByRole("button", { name: "Group and filter conversations" })).toHaveCount(0);
+  await expect(page.getByTestId("group-filter-menu")).toHaveCount(0);
+  await expect(page.getByTitle("Weekly plan 1")).toBeVisible();
 });

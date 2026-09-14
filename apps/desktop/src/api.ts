@@ -1675,7 +1675,12 @@ export class Session {
         this.handlers.onEvent(event);
       }
     });
-    this.handlers.onOpen?.();
+    // Native listeners register synchronously in the browser mock and asynchronously in Tauri.
+    // Keep the public Session lifecycle asynchronous in both cases so callers can assign their
+    // Session reference before onOpen auto-sends a queued automation prompt.
+    queueMicrotask(() => {
+      if (!this.stopped) this.handlers.onOpen?.();
+    });
   }
 
   /** `model` = the composer's CURRENT selection, carried on every message so the turn uses

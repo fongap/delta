@@ -1,5 +1,24 @@
 import { test, expect } from "./fixtures";
 
+function pdfWithPages(count: number): Buffer {
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    `<< /Type /Pages /Count ${count} /Kids [${Array.from({ length: count }, (_, i) => `${i + 3} 0 R`).join(" ")}] >>`,
+    ...Array.from({ length: count }, () => "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] >>"),
+  ];
+  let body = "%PDF-1.4\n";
+  const offsets = [0];
+  objects.forEach((object, index) => {
+    offsets.push(Buffer.byteLength(body));
+    body += `${index + 1} 0 obj\n${object}\nendobj\n`;
+  });
+  const xref = Buffer.byteLength(body);
+  body += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n`;
+  body += offsets.slice(1).map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("");
+  body += `trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+  return Buffer.from(body);
+}
+
 // Guards the three-control composer row (§22): send-gating (accent only with content), the "+"
 // attach menu, and the Mode menu (permission options + the folded-in Send-to-Inbox toggle).
 test("composer: send-gating, + attach menu, Mode menu", async ({ page }) => {
@@ -54,7 +73,7 @@ test("composer: picking a PDF shows an attachment chip and arms send", async ({ 
   await page.locator('input[type="file"]').setInputFiles({
     name: "report.pdf",
     mimeType: "application/pdf",
-    buffer: Buffer.from("%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF"),
+    buffer: pdfWithPages(1),
   });
 
   const chip = page.locator(".attach-chip");
@@ -77,7 +96,7 @@ test("composer: PDF over the page threshold is rejected with a notice", async ({
   await page.locator('input[type="file"]').setInputFiles({
     name: "big-report.pdf",
     mimeType: "application/pdf",
-    buffer: Buffer.from("%PDF-1.4\n%%pages=34\ntrailer\n<<>>\n%%EOF"),
+    buffer: pdfWithPages(34),
   });
 
   const notice = page.getByTestId("attach-notice");
@@ -94,7 +113,7 @@ test("composer: PDF over the page threshold is rejected with a notice", async ({
   await page.locator('input[type="file"]').setInputFiles({
     name: "small.pdf",
     mimeType: "application/pdf",
-    buffer: Buffer.from("%PDF-1.4\n%%pages=1\ntrailer\n<<>>\n%%EOF"),
+    buffer: pdfWithPages(1),
   });
   await expect(page.locator(".attach-chip")).toContainText("small.pdf");
 });
