@@ -1,12 +1,10 @@
 """R4 contract: `read_file_lines` is a first-class read tool that shares the
-Delta multi-root path resolver and the Source/Citation chokepoint with
-`read_file`. Reads must produce a `lines` citation in the run's source ledger.
+Delta multi-root path resolver with `read_file`. Results carry the exact line
+window so the Rust Runtime can register the authoritative citation.
 
 These tests exist to lock the v0.3.1 contract:
   - the tool name `read_file_lines` is preserved (no rename)
   - the implementation goes through the same `_windowed_read` chokepoint
-  - the citation is recorded with `kind = "lines"` and the actual read window
-  - a broken cite hook must not break the read (audit is best-effort)
   - the tool respects multi-root path resolution
   - the tool returns a clear error for missing files / path-escape attempts
 """
@@ -38,70 +36,6 @@ def test_read_file_lines_returns_numbered_window(tmp_path):
     assert out["has_more"] is True
 
 
-def test_read_file_lines_cite_hook_records_lines_citation(tmp_path):
-    """Reads through read_file_lines must land as a `lines` citation in the
-    run's source ledger (Source/Citation chokepoint shared with read_file)."""
-    from core.ledger import RunEventLedger
-    from core.sources import KIND_LINES, SourceStore
-
-    target = tmp_path / "data.txt"
-    target.write_text("alpha\nbeta\ngamma\n", encoding="utf-8")
-
-    ledger_db = tmp_path / "run-events.db"
-    RunEventLedger(ledger_db)
-    store = SourceStore(ledger_db, workspace=tmp_path)
-    run_id = "run_test_r4"
-
-    tools = file_tools(
-        str(tmp_path), source_store=store, run_id=run_id
-    )
-    out = _read_file_lines(tools)("data.txt", 2, 2)
-
-    assert out["start_line"] == 2
-    assert out["end_line"] == 3
-
-    # The source ledger now has exactly one citation for this run.
-    refs = store.list()
-    assert len(refs) == 1
-    ref = refs[0]
-
-    # Find the citation row that belongs to this run; it must contain a
-    # `lines` range matching the actual read window.
-    matching_runs = [c for c in ref.cited_ranges if c.get("run_id") == run_id]
-    assert matching_runs, f"no citation for run {run_id} (got {ref.cited_ranges!r})"
-    ranges = matching_runs[0]["ranges"]
-    line_ranges = [r for r in ranges if r.get("kind") == KIND_LINES]
-    assert line_ranges, f"expected a lines citation, got {ranges!r}"
-    line_range = line_ranges[0]
-    assert line_range["start"] == 2
-    assert line_range["end"] == 3
-
-
-def test_read_file_lines_broken_cite_hook_does_not_break_read(tmp_path):
-    """A failure inside the Source/Citation hook must not break the read itself.
-    The hook is best-effort (OSError / ValueError only — anything else surfaces
-    normally): the user has already seen the lines, so refusing the read on a
-    bookkeeping error would be a worse failure mode.
-    """
-    target = tmp_path / "data.txt"
-    target.write_text("hello\nworld\n", encoding="utf-8")
-
-    class _BoomStore:
-        def capture_file(self, *_a, **_kw):
-            raise OSError("capture failure")
-
-    tools = file_tools(
-        str(tmp_path),
-        source_store=_BoomStore(),
-        run_id="run_test_r4_boom",
-    )
-    # Must not raise.
-    out = _read_file_lines(tools)("data.txt", 1, 2)
-    assert "content" in out
-    assert "hello" in out["content"]
-    assert "world" in out["content"]
-
-
 def test_read_file_lines_missing_file_returns_error(tmp_path):
     tools = file_tools(str(tmp_path))
     out = _read_file_lines(tools)("does_not_exist.txt", 1, 5)
@@ -119,10 +53,7 @@ def test_read_file_lines_path_escape_returns_error(tmp_path):
 
 
 def test_read_file_lines_resolves_against_second_root(tmp_path):
-    """Multi-root: a path inside the second root must be readable, and the
-    citation is recorded against the matching root (not the primary)."""
-    from core.ledger import RunEventLedger
-    from core.sources import SourceStore
+    """Multi-root: a path inside the second root must be readable."""
 
     primary = tmp_path / "primary"
     second = tmp_path / "second"
@@ -130,14 +61,8 @@ def test_read_file_lines_resolves_against_second_root(tmp_path):
     second.mkdir()
     (second / "shared.txt").write_text("alpha\nbeta\ngamma\n", encoding="utf-8")
 
-    ledger_db = tmp_path / "run-events.db"
-    RunEventLedger(ledger_db)
-    store = SourceStore(ledger_db, workspace=tmp_path)
-
     tools = file_tools(
         str(primary),
-        source_store=store,
-        run_id="run_r4_multiroot",
         roots=[primary, second],
     )
     # Absolute path inside the second root.

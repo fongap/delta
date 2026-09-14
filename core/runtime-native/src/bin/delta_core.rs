@@ -50,9 +50,10 @@ use delta_runtime_native::{
     ApprovalRecordInput, ApprovalWriter, ArtifactInput, ArtifactRegistryWriter, CheckpointReader,
     CheckpointRegisterInput, CheckpointWriter, CitationValidationResult, CitationValidity,
     IdempotencyWriter, LedgerWriter, PolicyEvaluateInput, ProviderRequest, RetryClassifyInput,
-    RuntimeConfig, RuntimeHost, SideEffectEntry, SideEffectState, SourceCitationReader,
-    SourceCitationWriter, SourceRegisterInput, TaskStore, ToolLifecycleCancelInput,
-    ToolLifecyclePlanInput, ValidationReader, ValidationRegisterInput, ValidationWriter,
+    RuntimeConfig, RuntimeHandle, RuntimeHost, SideEffectEntry, SideEffectState,
+    SourceCitationReader, SourceCitationWriter, SourceRegisterInput, TaskStore,
+    ToolLifecycleCancelInput, ToolLifecyclePlanInput, ValidationReader, ValidationRegisterInput,
+    ValidationWriter,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -881,6 +882,7 @@ fn handle_stream(cmd: Command, ctx: StreamCtx) {
                 settings,
                 api_key,
                 base_url,
+                timeout_secs: None,
             };
             // The stream runs in a background thread. Use a LineWriter that
             // locks stdout per-write so the main loop (and other streams)
@@ -2212,13 +2214,9 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
             text,
             source,
         } => {
-            let registry = runtime_registry();
-            let reg = registry.lock().unwrap();
-            match reg.get(&session_id) {
-                Some(h) => {
-                    h.steer(&text, source);
-                    Ok(json!({"ok": true}))
-                }
+            let handle = runtime_registry().lock().unwrap().get(&session_id);
+            match handle {
+                Some(handle) => handle.steer(&text, source).map(|()| json!({"ok": true})),
                 None => Err(format!("session not found: {session_id}")),
             }
         }
@@ -2227,54 +2225,47 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
             text,
             source,
         } => {
-            let registry = runtime_registry();
-            let reg = registry.lock().unwrap();
-            match reg.get(&session_id) {
-                Some(h) => {
-                    h.follow_up(&text, source);
-                    Ok(json!({"ok": true}))
-                }
+            let handle = runtime_registry().lock().unwrap().get(&session_id);
+            match handle {
+                Some(handle) => handle
+                    .follow_up(&text, source)
+                    .map(|run_id| json!({"ok": true, "run_id": run_id})),
                 None => Err(format!("session not found: {session_id}")),
             }
         }
         Command::RuntimeCancel { session_id } => {
-            let registry = runtime_registry();
-            let reg = registry.lock().unwrap();
-            match reg.get(&session_id) {
-                Some(h) => {
-                    h.cancel();
-                    Ok(json!({"ok": true}))
-                }
+            let handle = runtime_registry().lock().unwrap().get(&session_id);
+            match handle {
+                Some(handle) => Ok(json!({"ok": true, "cancelled": handle.cancel()})),
                 None => Err(format!("session not found: {session_id}")),
             }
         }
         Command::RuntimeMessages { session_id } => {
-            let registry = runtime_registry();
-            let reg = registry.lock().unwrap();
-            match reg.get(&session_id) {
-                Some(h) => Ok(json!({"messages": h.messages()})),
+            let handle = runtime_registry().lock().unwrap().get(&session_id);
+            match handle {
+                Some(handle) => Ok(json!({
+                    "messages": handle.messages(),
+                    "state": handle.state(),
+                })),
                 None => Err(format!("session not found: {session_id}")),
             }
         }
         Command::RuntimeSwitchModel { session_id, model } => {
-            let registry = runtime_registry();
-            let mut reg = registry.lock().unwrap();
-            match reg.get_mut(&session_id) {
-                Some(h) => match h.switch_model(&model) {
-                    Some(notice) => Ok(json!({"ok": true, "notice": notice})),
-                    None => Ok(json!({"ok": true, "notice": Value::Null})),
+            let handle = runtime_registry().lock().unwrap().get(&session_id);
+            match handle {
+                Some(handle) => match handle.switch_model(&model) {
+                    Ok(notice) => Ok(json!({"ok": true, "notice": notice})),
+                    Err(error) => Err(error),
                 },
                 None => Err(format!("session not found: {session_id}")),
             }
         }
         Command::RuntimeTruncate { session_id, index } => {
-            let registry = runtime_registry();
-            let mut reg = registry.lock().unwrap();
-            match reg.get_mut(&session_id) {
-                Some(h) => {
-                    h.truncate_messages(index);
-                    Ok(json!({"ok": true, "len": h.messages().len()}))
-                }
+            let handle = runtime_registry().lock().unwrap().get(&session_id);
+            match handle {
+                Some(handle) => handle
+                    .truncate_messages(index)
+                    .map(|len| json!({"ok": true, "len": len})),
                 None => Err(format!("session not found: {session_id}")),
             }
         }
@@ -2298,6 +2289,7 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
                 settings,
                 api_key,
                 base_url,
+                timeout_secs: None,
             };
             match delta_runtime_native::provider::complete(&req) {
                 Ok(v) => Ok(v),
@@ -2362,12 +2354,10 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
     }
 }
 
-/// R6: Session registry — holds RuntimeHost instances keyed by session_id.
-/// The host owns conversation messages, cancel flag, steering queue, etc.
-/// Streaming commands (run/resume/retry) drive the host in a background thread;
-/// non-streaming commands (steer/cancel/messages) access it through this registry.
+/// R6: Session registry — holds cloneable active handles keyed by session_id.
+/// The agent loop itself is exclusively owned by each handle's worker thread.
 struct RuntimeRegistry {
-    hosts: HashMap<String, RuntimeHost>,
+    hosts: HashMap<String, Arc<RuntimeHandle>>,
 }
 
 impl RuntimeRegistry {
@@ -2377,16 +2367,12 @@ impl RuntimeRegistry {
         }
     }
 
-    fn get(&self, session_id: &str) -> Option<&RuntimeHost> {
-        self.hosts.get(session_id)
+    fn get(&self, session_id: &str) -> Option<Arc<RuntimeHandle>> {
+        self.hosts.get(session_id).cloned()
     }
 
-    fn get_mut(&mut self, session_id: &str) -> Option<&mut RuntimeHost> {
-        self.hosts.get_mut(session_id)
-    }
-
-    fn insert(&mut self, session_id: String, host: RuntimeHost) {
-        self.hosts.insert(session_id, host);
+    fn insert(&mut self, session_id: String, handle: Arc<RuntimeHandle>) {
+        self.hosts.insert(session_id, handle);
     }
 }
 
@@ -2427,6 +2413,7 @@ fn handle_runtime_stream(cmd: Command, ctx: StreamCtx) {
             source,
         } => {
             let config = RuntimeConfig {
+                model_id: model.clone(),
                 model,
                 protocol,
                 api_key,
@@ -2438,6 +2425,7 @@ fn handle_runtime_stream(cmd: Command, ctx: StreamCtx) {
                 model_settings: settings.unwrap_or(json!({})),
                 system_prompt,
                 workspace,
+                unattended: false,
             };
             let mut host = RuntimeHost::new(&session_id, config);
             if let Some(t) = tools {
@@ -2446,46 +2434,60 @@ fn handle_runtime_stream(cmd: Command, ctx: StreamCtx) {
             if let Some(msgs) = messages.and_then(|v| v.as_array().cloned()) {
                 host = host.with_messages(msgs);
             }
-            host = host.with_run_id(uuid_v4_simple());
-
-            let result = host.run(&user_input, source);
-            let _ = runtime_registry();
-            runtime_registry().lock().unwrap().insert(session_id, host);
-
-            match result {
-                Ok(v) => {
+            let handle = match RuntimeHandle::spawn(host) {
+                Ok(handle) => Arc::new(handle),
+                Err(error) => {
+                    emit(
+                        &out,
+                        json!({"ok": false, "request_id": request_id, "stream": "error", "error": error}),
+                    );
+                    return;
+                }
+            };
+            {
+                let mut registry = runtime_registry().lock().unwrap();
+                if registry
+                    .get(&session_id)
+                    .is_some_and(|existing| existing.state().is_active())
+                {
                     emit(
                         &out,
                         json!({
-                            "ok": true, "request_id": request_id, "stream": "done", "result": v
+                            "ok": false, "request_id": request_id, "stream": "error",
+                            "error": format!("session {session_id} already has an active run")
                         }),
                     );
+                    return;
                 }
-                Err(e) => {
-                    emit(
-                        &out,
-                        json!({
-                            "ok": false, "request_id": request_id, "stream": "error", "error": e
-                        }),
-                    );
-                }
+                registry.insert(session_id, handle.clone());
+            }
+            match handle.run(user_input, source) {
+                Ok(run_id) => emit(
+                    &out,
+                    json!({
+                        "ok": true, "request_id": request_id, "stream": "done",
+                        "result": {"accepted": true, "run_id": run_id}
+                    }),
+                ),
+                Err(error) => emit(
+                    &out,
+                    json!({"ok": false, "request_id": request_id, "stream": "error", "error": error}),
+                ),
             }
         }
         Command::RuntimeResume { session_id } => {
-            let registry = runtime_registry();
-            let result = {
-                let mut reg = registry.lock().unwrap();
-                match reg.get_mut(&session_id) {
-                    Some(host) => host.resume(),
-                    None => Err(format!("session not found: {session_id}")),
-                }
+            let handle = runtime_registry().lock().unwrap().get(&session_id);
+            let result = match handle {
+                Some(handle) => handle.resume(),
+                None => Err(format!("session not found: {session_id}")),
             };
             match result {
-                Ok(v) => {
+                Ok(run_id) => {
                     emit(
                         &out,
                         json!({
-                            "ok": true, "request_id": request_id, "stream": "done", "result": v
+                            "ok": true, "request_id": request_id, "stream": "done",
+                            "result": {"accepted": true, "run_id": run_id}
                         }),
                     );
                 }
@@ -2500,20 +2502,18 @@ fn handle_runtime_stream(cmd: Command, ctx: StreamCtx) {
             }
         }
         Command::RuntimeRetry { session_id } => {
-            let registry = runtime_registry();
-            let result = {
-                let mut reg = registry.lock().unwrap();
-                match reg.get_mut(&session_id) {
-                    Some(host) => host.retry(),
-                    None => Err(format!("session not found: {session_id}")),
-                }
+            let handle = runtime_registry().lock().unwrap().get(&session_id);
+            let result = match handle {
+                Some(handle) => handle.retry(),
+                None => Err(format!("session not found: {session_id}")),
             };
             match result {
-                Ok(v) => {
+                Ok(run_id) => {
                     emit(
                         &out,
                         json!({
-                            "ok": true, "request_id": request_id, "stream": "done", "result": v
+                            "ok": true, "request_id": request_id, "stream": "done",
+                            "result": {"accepted": true, "run_id": run_id}
                         }),
                     );
                 }
@@ -2537,10 +2537,6 @@ fn handle_runtime_stream(cmd: Command, ctx: StreamCtx) {
             );
         }
     }
-}
-
-fn uuid_v4_simple() -> String {
-    uuid::Uuid::new_v4().to_string()
 }
 
 fn main() -> std::process::ExitCode {

@@ -60,8 +60,7 @@ updates:
   #
   # Production dependencies intentionally remain ungrouped.
   #
-  # This is important for provider SDKs and transports such as openai,
-  # anthropic, MCP, FastAPI and websockets, which can have
+  # This is important for worker transports such as httpx and Slack, which can have
   # independent compatibility constraints.
   - package-ecosystem: "pip"
     directory: "/"

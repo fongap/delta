@@ -1,11 +1,32 @@
 // Custom-provider creation and identity behavior for the two supported protocols.
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { ProviderCards, CustomCreateForm, useProviderSetup, type ProviderSetupState } from "./ProviderSetup";
 import { I18nProvider } from "@delta/i18n/I18nContext";
 import type { ProviderInfo } from "../api";
 
 vi.mock("../tauri", () => ({ openExternal: vi.fn() }));
+
+const authority = vi.hoisted(() => ({
+  getProtocols: vi.fn(),
+  getProviders: vi.fn(),
+  setProvider: vi.fn(),
+  fetchModels: vi.fn(),
+  verifyProvider: vi.fn(),
+  removeProvider: vi.fn(),
+  setDefaultModel: vi.fn(),
+}));
+
+vi.mock("../runtimeTransport", async () => ({
+  ...(await vi.importActual<typeof import("../runtimeTransport")>("../runtimeTransport")),
+  directGetProtocols: authority.getProtocols,
+  directGetProviders: authority.getProviders,
+  directSetProvider: authority.setProvider,
+  directFetchProviderModels: authority.fetchModels,
+  directVerifyProvider: authority.verifyProvider,
+  directRemoveProvider: authority.removeProvider,
+  directSetDefaultModel: authority.setDefaultModel,
+}));
 
 // ProviderForm calls useI18n() — wrap every render in the provider (Sidebar.test.tsx pattern).
 const wrap = (ui: React.ReactElement) => <I18nProvider locale="en-US">{ui}</I18nProvider>;
@@ -28,6 +49,24 @@ const OPENAI: ProviderInfo = {
     { key: "base_url", label: "Endpoint", secret: false, required: true, help: "", placeholder: "https://…/v1" },
   ],
 };
+
+const OPENAI_PROTOCOL = {
+  id: "openai",
+  title: "OpenAI compatible",
+  needs_key: false,
+  recommended_model: null,
+  fields: OPENAI.fields,
+};
+
+beforeEach(() => {
+  authority.getProtocols.mockReset().mockResolvedValue([OPENAI_PROTOCOL]);
+  authority.getProviders.mockReset().mockResolvedValue([]);
+  authority.setProvider.mockReset().mockResolvedValue({ ok: true });
+  authority.fetchModels.mockReset().mockResolvedValue({ ok: true, models: [], added: [] });
+  authority.verifyProvider.mockReset().mockResolvedValue({ ok: true });
+  authority.removeProvider.mockReset().mockResolvedValue({ ok: true });
+  authority.setDefaultModel.mockReset().mockResolvedValue({ ok: true });
+});
 
 function makePs(fields: Record<string, string>, setFieldValue = vi.fn()): ProviderSetupState {
   return {
@@ -118,44 +157,27 @@ describe("custom provider identity", () => {
 
   it("keeps fetched models visible after a successful fetch in create mode", async () => {
     let savedProvider: ProviderInfo | null = null;
-    vi.stubGlobal("fetch", vi.fn(async (input: string | URL, init?: RequestInit) => {
-      const url = String(input);
-      const json = (value: unknown) => ({ json: async () => value });
-      if (url.endsWith("/v1/protocols")) {
-        return json([{
-          id: "openai",
-          title: "OpenAI compatible",
-          needs_key: false,
-          recommended_model: null,
-          fields: [
-            { key: "api_key", label: "API key (optional)", secret: true, required: false, help: "", placeholder: "sk-…" },
-            { key: "base_url", label: "Server address", secret: false, required: true, help: "", placeholder: "https://…/v1" },
-          ],
-        }]);
-      }
-      if (url.endsWith("/v1/providers/fetch")) {
-        return json({ ok: true, models: ["code-max", "code-mini"], added: ["code-max", "code-mini"] });
-      }
-      if (url.endsWith("/v1/providers/verify")) return json({ ok: true });
-      if (url.endsWith("/v1/providers") && init?.method === "POST") {
-        const body = JSON.parse(String(init.body));
-        savedProvider = {
-          ...OPENAI,
-          name: body.name,
-          alias: body.name,
-          title: body.name,
-          custom: true,
-          protocol: body.protocol,
-          blurb: "OpenAI compatible",
-          needs_key: false,
-          configured: true,
-          fields: [],
-        };
-        return json({ ok: true, provider: body.name, protocol: body.protocol });
-      }
-      if (url.endsWith("/v1/providers")) return json(savedProvider ? [savedProvider] : []);
-      throw new Error(`unexpected request: ${url}`);
-    }));
+    authority.setProvider.mockImplementation(async (name: string, _fields: unknown, protocol?: string) => {
+      savedProvider = {
+        ...OPENAI,
+        name,
+        alias: name,
+        title: name,
+        custom: true,
+        protocol,
+        blurb: "OpenAI compatible",
+        needs_key: false,
+        configured: true,
+        fields: [],
+      };
+      return { ok: true, provider: name, protocol };
+    });
+    authority.getProviders.mockImplementation(async () => savedProvider ? [savedProvider] : []);
+    authority.fetchModels.mockResolvedValue({
+      ok: true,
+      models: ["code-max", "code-mini"],
+      added: ["code-max", "code-mini"],
+    });
 
     function Harness() {
       const ps = useProviderSetup();
@@ -176,20 +198,7 @@ describe("custom provider identity", () => {
   });
 
   it("shows an error message and clears models on a failed fetch", async () => {
-    vi.stubGlobal("fetch", vi.fn(async (input: string | URL, init?: RequestInit) => {
-      const url = String(input);
-      const json = (value: unknown) => ({ json: async () => value });
-      if (url.endsWith("/v1/protocols")) {
-        return json([{ id: "openai", title: "OpenAI", needs_key: false, recommended_model: null, fields: [{ key: "api_key", label: "API key", secret: true, required: false, help: "", placeholder: "" }, { key: "base_url", label: "Server address", secret: false, required: true, help: "", placeholder: "" }] }]);
-      }
-      if (url.endsWith("/v1/providers") && init?.method === "POST") {
-        const body = JSON.parse(String(init.body));
-        return json({ ok: true, provider: body.name, protocol: body.protocol });
-      }
-      if (url.endsWith("/v1/providers/fetch")) return json({ ok: false, error: "Invalid API key." });
-      if (url.endsWith("/v1/providers")) return json([]);
-      throw new Error(`unexpected request: ${url}`);
-    }));
+    authority.fetchModels.mockResolvedValue({ ok: false, error: "Invalid API key." });
 
     function Harness() {
       const ps = useProviderSetup();
@@ -204,20 +213,7 @@ describe("custom provider identity", () => {
   });
 
   it("reports an up-to-date list and no chips when fetch returns no models", async () => {
-    vi.stubGlobal("fetch", vi.fn(async (input: string | URL, init?: RequestInit) => {
-      const url = String(input);
-      const json = (value: unknown) => ({ json: async () => value });
-      if (url.endsWith("/v1/protocols")) {
-        return json([{ id: "openai", title: "OpenAI", needs_key: false, recommended_model: null, fields: [{ key: "api_key", label: "API key", secret: true, required: false, help: "", placeholder: "" }, { key: "base_url", label: "Server address", secret: false, required: true, help: "", placeholder: "" }] }]);
-      }
-      if (url.endsWith("/v1/providers") && init?.method === "POST") {
-        const body = JSON.parse(String(init.body));
-        return json({ ok: true, provider: body.name, protocol: body.protocol });
-      }
-      if (url.endsWith("/v1/providers/fetch")) return json({ ok: true, models: [], added: [] });
-      if (url.endsWith("/v1/providers")) return json([]);
-      throw new Error(`unexpected request: ${url}`);
-    }));
+    authority.fetchModels.mockResolvedValue({ ok: true, models: [], added: [] });
 
     function Harness() {
       const ps = useProviderSetup();

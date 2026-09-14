@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-import aisuite as ai
+from integrations.tools import metadata as ai
 
 from integrations.tools.metadata import attach_tool_metadata
 

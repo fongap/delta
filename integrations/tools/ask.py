@@ -2,7 +2,7 @@
 
 The general human-in-the-loop Q&A primitive, modelled on Claude Code's own AskUserQuestion: a
 question, optional quick-reply `options`, and (by default) an always-available free-text escape —
-plus `multi` for choose-several. Like `request_directory`, it's intercepted by the TurnEngine: the
+plus `multi` for choose-several. The Rust Runtime handles the typed response lifecycle: the
 question becomes an Inbox item (answerable inline in the live session, or from the Inbox when the
 session runs unattended), the agent suspends until it's resolved, and the answer comes back as the
 tool result. The callable here is only a schema carrier + a safe fallback.
@@ -23,7 +23,7 @@ from typing import Any, Callable
 
 import json
 
-from aisuite.agents import ToolMetadata, tool
+from integrations.tools.metadata import ToolMetadata, tool
 from integrations.tools.metadata import attach_tool_metadata
 
 # How many questions one grouped call may carry (stepper chips get unreadable past this).

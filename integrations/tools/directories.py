@@ -1,6 +1,6 @@
 """The `request_directory` tool — the agent asks the user to grant access to a folder.
 
-Unlike ordinary tools, this one is intercepted by the TurnEngine: it emits a DIRECTORY_REQUESTED
+Unlike ordinary tools, this one is handled by the Rust Runtime: it emits a directory request
 event and waits for the user to pick/approve a folder out-of-band (the GUI surfaces a prompt),
 then the live session gains that root and the tool result tells the agent the outcome. The
 callable here is only a schema carrier + a safe fallback for surfaces without a requester.
@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from aisuite.agents import ToolMetadata, tool
+from integrations.tools.metadata import ToolMetadata, tool
 
 
 def request_directory_tool() -> Callable[..., dict[str, Any]]:

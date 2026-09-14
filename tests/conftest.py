@@ -46,6 +46,12 @@ async def fake_slack(monkeypatch):
     fake = FakeSlack()
     await fake.start()
     monkeypatch.setenv("SLACK_API_URL", fake.api_url)
+    # slack_sdk ignores NO_PROXY and eagerly copies HTTP(S)_PROXY into each
+    # AsyncWebClient.  That sends loopback fake traffic through a developer or
+    # CI proxy on Windows, producing a synthetic 502 and multi-minute retries.
+    # The fixture is hermetic, so clear proxy discovery only for its lifetime.
+    for name in ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy"):
+        monkeypatch.delenv(name, raising=False)
     try:
         yield fake
     finally:

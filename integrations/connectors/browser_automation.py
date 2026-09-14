@@ -20,7 +20,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-import aisuite as ai
+from integrations.tools import metadata as ai
 
 from integrations.web.guard import check_url
 from integrations.tools.metadata import attach_tool_metadata

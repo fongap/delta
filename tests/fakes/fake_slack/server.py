@@ -2,8 +2,8 @@
 
 Implements just enough of the Web API + Socket Mode envelope protocol for the real
 ``SlackAdapter`` / ``slack_bolt.AsyncApp`` to run end-to-end with **no network, tokens, or the
-Slack app console**. Built on Starlette + uvicorn (both already core deps) and served on an
-ephemeral port via an in-process ``uvicorn.Server`` background task.
+Slack app console**. It uses the messaging worker's aiohttp dependency and an ephemeral port;
+the retired application HTTP backend is not involved.
 
 See ``platform/docs/FAKE-SLACK-SPEC.md``. The adapter is pointed at the fake via the
 ``SLACK_API_URL`` base-URL override (env), which redirects every Web API call — including
@@ -25,12 +25,7 @@ import time
 import uuid
 from typing import Any
 
-import uvicorn
-from starlette.applications import Starlette
-from starlette.requests import Request
-from starlette.responses import JSONResponse
-from starlette.routing import Route, WebSocketRoute
-from starlette.websockets import WebSocket, WebSocketDisconnect
+from aiohttp import WSMsgType, web
 
 logger = logging.getLogger("tests.fakes.fake_slack")
 
@@ -70,15 +65,15 @@ class FakeSlack:
             []
         )  # every Web API method, in order (caching assertions)
 
-        self._sockets: set[WebSocket] = set()
+        self._sockets: set[web.WebSocketResponse] = set()
         self._socket_connected = asyncio.Event()
         self._socket_connections = 0  # total Socket Mode connects (tracks reconnects)
         self._ts_base = 1_700_000_000
         self._ts_seq = 0
 
         self.app = self._build_app()
-        self._server: uvicorn.Server | None = None
-        self._serve_task: asyncio.Task | None = None
+        self._runner: web.AppRunner | None = None
+        self._site: web.TCPSite | None = None
 
     # -- identity / urls -------------------------------------------------------
     @property
@@ -101,20 +96,14 @@ class FakeSlack:
     # -- lifecycle -------------------------------------------------------------
     async def start(self) -> FakeSlack:
         """Serve in-process on an ephemeral port; resolve the bound port."""
-        config = uvicorn.Config(
-            self.app,
-            host=self.host,
-            port=self.port,
-            log_level="warning",
-            lifespan="off",
-            access_log=False,
-        )
-        self._server = uvicorn.Server(config)
-        self._serve_task = asyncio.create_task(self._server.serve())
-        # Wait for the socket to bind, then read the actual (possibly ephemeral) port.
-        while not self._server.started:
-            await asyncio.sleep(0.01)
-        sock = self._server.servers[0].sockets[0]
+        self._runner = web.AppRunner(self.app, access_log=None)
+        await self._runner.setup()
+        self._site = web.TCPSite(self._runner, self.host, self.port)
+        await self._site.start()
+        server = self._site._server
+        if server is None or not server.sockets:
+            raise RuntimeError("FakeSlack failed to bind")
+        sock = server.sockets[0]
         self.port = sock.getsockname()[1]
         return self
 
@@ -125,15 +114,10 @@ class FakeSlack:
             except Exception:
                 pass
         self._sockets.clear()
-        if self._server is not None:
-            self._server.should_exit = True
-        if self._serve_task is not None:
-            try:
-                await asyncio.wait_for(self._serve_task, timeout=5)
-            except Exception:
-                self._serve_task.cancel()
-        self._server = None
-        self._serve_task = None
+        if self._runner is not None:
+            await self._runner.cleanup()
+        self._site = None
+        self._runner = None
 
     async def __aenter__(self) -> FakeSlack:
         return await self.start()
@@ -331,17 +315,17 @@ class FakeSlack:
         dead = []
         for ws in list(self._sockets):
             try:
-                await ws.send_text(raw)
+                await ws.send_str(raw)
             except Exception:
                 dead.append(ws)
         for ws in dead:
             self._sockets.discard(ws)
 
     # -- Web API ---------------------------------------------------------------
-    async def _api_params(self, request: Request) -> dict:
+    async def _api_params(self, request: web.Request) -> dict:
         # slack_sdk uses GET (query params) for read methods like users.info/conversations.info
         # and POST for the rest; the stateless senders POST JSON. Merge all three sources.
-        params: dict = {k: _maybe_json(v) for k, v in request.query_params.items()}
+        params: dict = {k: _maybe_json(v) for k, v in request.query.items()}
         ctype = request.headers.get("content-type", "")
         if "application/json" in ctype:
             try:
@@ -352,7 +336,7 @@ class FakeSlack:
                 pass
         else:
             try:
-                form = await request.form()
+                form = await request.post()
                 params.update({k: _maybe_json(v) for k, v in form.items()})
             except Exception:
                 pass
@@ -415,16 +399,17 @@ class FakeSlack:
         )
         return {"ok": True}
 
-    async def _api_endpoint(self, request: Request) -> JSONResponse:
-        method = request.path_params["method"]
+    async def _api_endpoint(self, request: web.Request) -> web.Response:
+        method = request.match_info["method"]
         params = await self._api_params(request)
-        return JSONResponse(self._dispatch_api(method, params))
+        return web.json_response(self._dispatch_api(method, params))
 
     # -- Socket Mode WebSocket -------------------------------------------------
-    async def _socket_endpoint(self, websocket: WebSocket) -> None:
-        await websocket.accept()
+    async def _socket_endpoint(self, request: web.Request) -> web.WebSocketResponse:
+        websocket = web.WebSocketResponse()
+        await websocket.prepare(request)
         # Slack greets a new Socket Mode connection with a hello.
-        await websocket.send_text(
+        await websocket.send_str(
             json.dumps(
                 {
                     "type": "hello",
@@ -437,31 +422,30 @@ class FakeSlack:
         self._socket_connections += 1
         self._socket_connected.set()
         try:
-            while True:
-                raw = await websocket.receive_text()
-                try:
-                    self._acks.append(json.loads(raw))
-                except Exception:
-                    pass
-        except WebSocketDisconnect:
-            pass
+            async for message in websocket:
+                if message.type == WSMsgType.TEXT:
+                    try:
+                        self._acks.append(json.loads(message.data))
+                    except Exception:
+                        pass
         except Exception:
             logger.debug("FakeSlack socket closed", exc_info=True)
         finally:
             self._sockets.discard(websocket)
+        return websocket
 
     # -- control HTTP API ------------------------------------------------------
-    async def _ctl_users(self, request: Request) -> JSONResponse:
+    async def _ctl_users(self, request: web.Request) -> web.Response:
         b = await request.json()
         self.add_user(b["id"], b["name"], b.get("real_name"), b.get("display_name"))
-        return JSONResponse({"ok": True})
+        return web.json_response({"ok": True})
 
-    async def _ctl_channels(self, request: Request) -> JSONResponse:
+    async def _ctl_channels(self, request: web.Request) -> web.Response:
         b = await request.json()
         self.add_channel(b["id"], b["name"], bool(b.get("is_im")))
-        return JSONResponse({"ok": True})
+        return web.json_response({"ok": True})
 
-    async def _ctl_inbound(self, request: Request) -> JSONResponse:
+    async def _ctl_inbound(self, request: web.Request) -> web.Response:
         b = await request.json()
         ts = await self.inbound(
             channel=b["channel"],
@@ -470,9 +454,9 @@ class FakeSlack:
             thread_ts=b.get("thread_ts"),
             channel_type=b.get("channel_type"),
         )
-        return JSONResponse({"ok": True, "ts": ts})
+        return web.json_response({"ok": True, "ts": ts})
 
-    async def _ctl_interaction(self, request: Request) -> JSONResponse:
+    async def _ctl_interaction(self, request: web.Request) -> web.Response:
         b = await request.json()
         await self.interaction(
             channel=b["channel"],
@@ -482,29 +466,28 @@ class FakeSlack:
             action_id=b["action_id"],
             value=b.get("value", ""),
         )
-        return JSONResponse({"ok": True})
+        return web.json_response({"ok": True})
 
-    async def _ctl_outbound(self, request: Request) -> JSONResponse:
-        return JSONResponse({"outbound": self.outbound()})
+    async def _ctl_outbound(self, request: web.Request) -> web.Response:
+        return web.json_response({"outbound": self.outbound()})
 
-    async def _ctl_reset(self, request: Request) -> JSONResponse:
+    async def _ctl_reset(self, request: web.Request) -> web.Response:
         await self.reset()
-        return JSONResponse({"ok": True})
+        return web.json_response({"ok": True})
 
-    async def _ctl_health(self, request: Request) -> JSONResponse:
-        return JSONResponse({"ok": True, "sockets": len(self._sockets)})
+    async def _ctl_health(self, request: web.Request) -> web.Response:
+        return web.json_response({"ok": True, "sockets": len(self._sockets)})
 
     # -- app wiring ------------------------------------------------------------
-    def _build_app(self) -> Starlette:
-        routes = [
-            Route("/api/{method}", self._api_endpoint, methods=["GET", "POST"]),
-            WebSocketRoute("/socket", self._socket_endpoint),
-            Route("/control/users", self._ctl_users, methods=["POST"]),
-            Route("/control/channels", self._ctl_channels, methods=["POST"]),
-            Route("/control/inbound", self._ctl_inbound, methods=["POST"]),
-            Route("/control/interaction", self._ctl_interaction, methods=["POST"]),
-            Route("/control/outbound", self._ctl_outbound, methods=["GET"]),
-            Route("/control/reset", self._ctl_reset, methods=["POST"]),
-            Route("/control/health", self._ctl_health, methods=["GET"]),
-        ]
-        return Starlette(routes=routes)
+    def _build_app(self) -> web.Application:
+        app = web.Application()
+        app.router.add_route("*", "/api/{method}", self._api_endpoint)
+        app.router.add_get("/socket", self._socket_endpoint)
+        app.router.add_post("/control/users", self._ctl_users)
+        app.router.add_post("/control/channels", self._ctl_channels)
+        app.router.add_post("/control/inbound", self._ctl_inbound)
+        app.router.add_post("/control/interaction", self._ctl_interaction)
+        app.router.add_get("/control/outbound", self._ctl_outbound)
+        app.router.add_post("/control/reset", self._ctl_reset)
+        app.router.add_get("/control/health", self._ctl_health)
+        return app

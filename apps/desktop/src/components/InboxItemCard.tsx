@@ -18,7 +18,7 @@ import {
 // ({label, description, recommended, preview}) and grouped questions (a stepper) — plain-string
 // options and single questions render exactly as before.
 
-// Shared styles (mock parity — same language as SourcesDrawer/PersonaView).
+// Shared styles (mock parity with the task access surfaces).
 const SEC = "text-[11px] uppercase tracking-[0.05em] text-faint font-semibold";
 const BTN_PRIMARY =
   "px-3 py-1.5 rounded-lg bg-accent text-onAccent text-[12.5px] font-medium hover:brightness-105 disabled:opacity-40 disabled:hover:brightness-100";

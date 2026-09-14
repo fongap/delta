@@ -1,7 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import type { Persona } from "../api";
 import type { SessionInfo } from "../types";
-import { isProjectScoped, shortPersonaName } from "../personaScope";
 import { Icon } from "./Icon";
 import { baseName } from "../paths";
 import { useI18n } from "@delta/i18n/I18nContext";
@@ -15,13 +13,11 @@ const byRecent = (a: SessionInfo, b: SessionInfo) =>
 
 export function SearchModal({
   sessions,
-  personas,
   onSelect,
   onClose,
 }: {
   sessions: SessionInfo[];
-  personas?: Persona[];
-  onSelect: (id: string, workspace: string, agent: string) => void;
+  onSelect: (id: string, workspace: string) => void;
   onClose: () => void;
 }) {
   const { t } = useI18n();
@@ -47,12 +43,7 @@ export function SearchModal({
     return () => window.removeEventListener("keydown", onWinKey);
   }, [onClose]);
 
-  const personaOf = (id: string) => personas?.find((p) => p.id === id);
-  // Right-side tag: the project folder for project-scoped personas, else the short persona name.
-  const tagFor = (s: SessionInfo) =>
-    s.workspace && isProjectScoped(personaOf(s.agent))
-      ? baseName(s.workspace)
-      : shortPersonaName(personaOf(s.agent)?.name, s.agent);
+  const tagFor = (s: SessionInfo) => s.workspace ? baseName(s.workspace) : "Delta";
 
   const q = query.trim().toLowerCase();
   const real = sessions.filter((s) => !s.session_id.startsWith("__") && !s.archived);
@@ -74,7 +65,7 @@ export function SearchModal({
   const choose = (s?: SessionInfo) => {
     const target = s || ordered[active];
     if (!target) return;
-    onSelect(target.session_id, target.workspace, target.agent);
+    onSelect(target.session_id, target.workspace);
     onClose();
   };
 

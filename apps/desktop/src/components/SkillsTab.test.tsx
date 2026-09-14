@@ -3,6 +3,20 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { I18nProvider } from "@delta/i18n/I18nContext";
 import { SkillsTab } from "./SkillsTab";
 
+const apiMocks = vi.hoisted(() => ({
+  listSkills: vi.fn(),
+  createSkill: vi.fn(),
+  updateSkill: vi.fn(),
+  deleteSkill: vi.fn(),
+  stageSkillUpload: vi.fn(),
+  confirmSkillUpload: vi.fn(),
+  revealSkill: vi.fn(),
+}));
+
+vi.mock("../api", () => ({
+  ...apiMocks,
+}));
+
 // SKILLS-SPEC §5/§6 GUI — Settings ▸ Skills: list + badges + rich-skill file counts, form
 // validation, the doors (write form / upload-with-preview / doorway-to-conversation).
 
@@ -10,17 +24,34 @@ type Call = { url: string; method: string; body: any };
 
 function stubFetch(routes: { match: string; method?: string; json: any }[]) {
   const calls: Call[] = [];
-  const fn = vi.fn(async (url: string, init?: RequestInit) => {
-    const method = (init?.method || "GET").toUpperCase();
-    calls.push({ url, method, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+  const response = (url: string, method: string, body?: any) => {
+    calls.push({ url, method, body });
     for (const r of routes) {
       if (url.includes(r.match) && (!r.method || r.method === method)) {
-        return { ok: true, json: async () => r.json } as Response;
+        return r.json;
       }
     }
-    return { ok: true, json: async () => ({}) } as Response;
-  });
-  vi.stubGlobal("fetch", fn);
+    return {};
+  };
+  apiMocks.listSkills.mockImplementation(async () =>
+    response("/v1/skills", "GET").skills ?? []
+  );
+  apiMocks.createSkill.mockImplementation(async (body: any) =>
+    response("/v1/skills", "POST", body)
+  );
+  apiMocks.updateSkill.mockImplementation(async (name: string, body: any) =>
+    response(`/v1/skills/${name}`, "PATCH", body)
+  );
+  apiMocks.deleteSkill.mockImplementation(async (name: string) =>
+    response(`/v1/skills/${name}`, "DELETE")
+  );
+  apiMocks.stageSkillUpload.mockImplementation(async (dataB64: string, filename: string) =>
+    response("/v1/skills/upload", "POST", { data_b64: dataB64, filename })
+  );
+  apiMocks.confirmSkillUpload.mockImplementation(async (token: string) =>
+    response("/v1/skills/upload/confirm", "POST", { token })
+  );
+  apiMocks.revealSkill.mockResolvedValue({ ok: true });
   return calls;
 }
 
@@ -49,7 +80,7 @@ const renderWithI18n = (ui: React.ReactElement) => render(<I18nProvider locale="
 
 afterEach(() => {
   cleanup();
-  vi.unstubAllGlobals();
+  for (const mock of Object.values(apiMocks)) mock.mockReset();
 });
 
 // The single add-action: open the "Add skill" menu, pick a door (SKILLS-SPEC §5).

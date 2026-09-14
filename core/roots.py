@@ -1,11 +1,7 @@
-"""Workspace roots — the directories a session is allowed to touch.
+"""Read/write roots granted to a controlled capability worker.
 
-A Delta session is "orphan": it owns a per-conversation **scratch** dir (the primary root,
-writable, the default save location) and may gain access to additional folders, each chosen
-read-only or read-write. The same `list[RootDir]` object is shared by reference across the
-PermissionEngine (scoping), the file toolkit (resolution), and the context injector (so the
-agent is told which dirs it has), so Slice C can mutate it in place at runtime and all three
-see the change. Index 0 is always the primary.
+Rust policy validates and issues these grants. Python consumes the immutable job scope
+only to resolve worker file operations; it is not an application policy authority.
 """
 
 from __future__ import annotations

@@ -1,7 +1,7 @@
 """Small JSON state-file helpers shared by the local state stores.
 
 These stores back the sidecar with simple JSON files written on hot paths (every approval,
-question, wake, inbound message, persona toggle, …). Two durability facts matter:
+question, wake, inbound message, settings toggle, …). Two durability facts matter:
 
 - A write interrupted by a crash / force-quit / power loss truncates the file. Writing to a
   temp file then atomically `os.replace`-ing it means the on-disk file is always complete.

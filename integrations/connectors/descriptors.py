@@ -1026,7 +1026,7 @@ DESCRIPTORS: list[ConnectorDescriptor] = [
         validate=_validate_quickbooks,
     ),
     # -- placeholders (available=False) --------------------------------------------
-    # Not yet shipped, but referenced by persona `recommends` (e.g. Ops → datadog/pagerduty) so
+    # Not yet shipped, but reserved for future capability recommendations so
     # the GUI can render a brand badge + a "connect to enable" state. A placeholder has no fields,
     # no validate, and `available=False`, so there is no connect path (connect_connector rejects an
     # unavailable connector and _profile_connected reports it disconnected). github/hubspot are NOT
@@ -1447,8 +1447,7 @@ def register_descriptor(descriptor: ConnectorDescriptor) -> None:
     _BY_NAME[descriptor.name] = descriptor
 
 
-# Experimental connectors live in a separate package so release builds can exclude the code
-# entirely (see packaging/server/delta-server.spec). When the package is absent this is a no-op.
+# Experimental connector descriptors live in a separate package. When it is absent this is a no-op.
 try:
     from integrations.connectors.experimental import EXPERIMENTAL_DESCRIPTORS as _EXPERIMENTAL
 except ImportError:

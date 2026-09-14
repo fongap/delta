@@ -501,7 +501,6 @@ jobs:
         run: >
           uv run --locked ruff check
           core
-          providers
           integrations
           packages
           tests
@@ -516,7 +515,6 @@ jobs:
 
           uv run --locked ruff check \
             core \
-            providers \
             integrations \
             packages \
             tests \
@@ -549,7 +547,6 @@ jobs:
         run: |
           uv run --locked pyright \
             core \
-            providers \
             integrations \
             packages
 
@@ -623,15 +620,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libasound2-dev pkg-config
 
-      - name: Stub sidecar binary for Tauri codegen
-        if: ${{ matrix.tauri-deps }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          mkdir -p apps/desktop/src-tauri/binaries
-          touch apps/desktop/src-tauri/binaries/sidecar
-
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: ${{ matrix.workspace }}
@@ -699,7 +687,6 @@ jobs:
               "openwork-theme\|openwork:theme-pref" \
               apps \
               core \
-              providers \
               integrations \
               packages \
               services \
@@ -751,9 +738,9 @@ jobs:
           set -euo pipefail
 
           # R6: the core product is Rust + TypeScript. This gate fails CI if a
-          # Python application backend authority (FastAPI server, delta-server,
-          # Python TurnEngine/SessionManager, aisuite runtime) is re-introduced.
-          # The Python backend was removed; this is now a hard (enforcing) gate.
+          # Any retired Python application authority, server packaging, legacy
+          # desktop transport, or multi-persona surface blocks the build.
+          # The native architecture is protected by a hard enforcing gate.
           python3 scripts/check_r6_architecture.py
 
 

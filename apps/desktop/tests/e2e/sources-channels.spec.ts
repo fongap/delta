@@ -38,7 +38,7 @@ test("Slack channels drill-down: gating, add (auto-prefixed), remove", async ({ 
 });
 
 // The recent-channels dropdown is a hand-rolled popover (NOT a <datalist> — WKWebView renders
-// none), fed by /v1/channels/recent: focus opens it, typing filters, picking fills the input.
+// none), fed by native recent-channel authority: focus opens it, typing filters, picking fills.
 test("recent channels popover: opens on focus, filters, picks", async ({ page }) => {
   await page.goto("/");
   await page.getByText("Draft the launch note").first().click();

@@ -1,7 +1,7 @@
 """The `propose_plan` tool — the agent presents its plan and asks to start executing.
 
 Registered only when the session starts in plan mode. Like `request_directory`, it is
-intercepted by the TurnEngine: it emits a PLAN_PROPOSED event and waits for the user's
+handled by the Rust Runtime: it emits a plan proposal event and waits for the user's
 out-of-band decision. Approval flips the live PermissionEngine out of plan mode (same
 session, full exploration context kept); rejection returns the user's feedback so the
 agent can revise the plan. The callable here is only a schema carrier + a safe fallback
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
-from aisuite.agents import ToolMetadata, tool
+from integrations.tools.metadata import ToolMetadata, tool
 
 
 def propose_plan_tool() -> Callable[..., dict[str, Any]]:

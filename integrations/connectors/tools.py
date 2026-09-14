@@ -16,7 +16,7 @@ import re
 from pathlib import Path
 from typing import Any, Callable
 
-import aisuite as ai
+from integrations.tools import metadata as ai
 
 from packages.secrets import SecretStore
 from integrations.connectors.base import parse_target

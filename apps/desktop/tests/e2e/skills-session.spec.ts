@@ -2,7 +2,7 @@ import { test, expect } from "./fixtures";
 
 // SKILLS-SPEC §9 journey 2 — liveness from the session's seat: the composer's "/" popup is
 // the live "what can my worker use right now" view. A skill created in Settings is offered;
-// a disabled one vanishes. Hermetic: the popup reads /v1/sessions/{id}/skills from fixtures.
+// a disabled one vanishes. Hermetic: the popup reads the mocked native skill authority.
 
 test("skills-session: new skill offered in '/', disabled one absent", async ({ page }) => {
   await page.goto("/");

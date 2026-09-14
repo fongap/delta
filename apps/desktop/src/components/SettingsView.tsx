@@ -43,18 +43,16 @@ import { Icon } from "./Icon";
 import { PanelHead } from "./IntegrationsView";
 import { ModelsTab } from "./ManageTabs";
 import { MemorySection } from "./MemorySection";
-import { PersonasTab } from "./PersonasTab";
 import { SkillsTab } from "./SkillsTab";
-import { showPersonas } from "../flags";
 
 // Settings, restructured (Option 2) into a full-page surface that mirrors IntegrationsView's shell:
-// a left sub-nav (Appearance · Files · Models · Personas) + centered panel, replacing the old
+// a left sub-nav (Appearance · Files · Models · Skills) + centered panel, replacing the old
 // top-tab ManageModal. Local/app concerns live here; anything external (Connectors, Messaging, MCP,
 // Activity) stays under Integrations. Appearance + Files are re-skinned to the mock's Tailwind idiom;
-// Models + Personas host the existing tab components inside the page shell (field re-skin to follow).
+// Models + Skills host the existing tab components inside the page shell.
 // "appearance" is the General tab's stable key — callers deep-link with it, so the
 // rename (UX-021) changed only the label. "files" folded into General as a card.
-type SetTab = "appearance" | "models" | "skills" | "voice" | "memory" | "personas";
+type SetTab = "appearance" | "models" | "skills" | "voice" | "memory";
 
 const CARD = "rounded-xl2 border border-line bg-panel";
 const FIELD_LABEL = "text-[12.5px] font-medium text-ink";
@@ -68,34 +66,26 @@ const BTN_BORDERED =
 const SET_TABS: {
   key: SetTab;
   labelKey: TranslationKey;
-  icon: "sliders" | "code" | "mic" | "archive" | "sparkle" | "book";
+  icon: "sliders" | "code" | "mic" | "archive" | "book";
 }[] = [
   { key: "appearance", labelKey: "settings.general.title", icon: "sliders" },
   { key: "models", labelKey: "settings.models.title", icon: "code" },
   { key: "skills", labelKey: "settings.skills.title", icon: "book" },
   { key: "voice", labelKey: "settings.voice.title", icon: "mic" },
   { key: "memory", labelKey: "settings.memory.title", icon: "archive" },
-  { key: "personas", labelKey: "settings.personas.title", icon: "sparkle" },
 ];
 
 export function SettingsView({
   initialTab,
-  onOpenPersona,
   onCreateSkill,
 }: {
   initialTab?: SetTab;
-  onOpenPersona?: (id: string) => void;
   // Skills doorway (SKILLS-SPEC §5.2): start a new conversation with the description
   // prefilled — the worker builds the skill and proposes it via save_skill.
   onCreateSkill?: (description: string) => void;
 }) {
-  // Personas is flag-gated (hidden for launch) — filter the tab AND coerce a stale
-  // deep-link to it (openSettings("personas") callers) so the page never opens on a
-  // section with no nav entry.
   const { t } = useI18n();
-  const personas = showPersonas();
-  const tabs = personas ? SET_TABS : SET_TABS.filter((t) => t.key !== "personas");
-  const wanted = initialTab && (personas || initialTab !== "personas") ? initialTab : "appearance";
+  const wanted = initialTab || "appearance";
   const [tab, setTab] = useState<SetTab>(wanted);
 
   // Deep-link sync: `initialTab` (settingsTab in App) can change while SettingsView is already
@@ -114,7 +104,7 @@ export function SettingsView({
         <div className="px-2 text-[13.5px] font-semibold mb-3 flex items-center gap-2">
           <Icon name="gear" size={16} /> {t("settings.title")}
         </div>
-        {tabs.map((tb) => {
+        {SET_TABS.map((tb) => {
           const active = tab === tb.key;
           return (
             <button
@@ -155,9 +145,7 @@ export function SettingsView({
             <VoiceInputSection />
           ) : tab === "memory" ? (
             <MemorySection />
-          ) : (
-            <PersonasSection onOpenPersona={onOpenPersona} />
-          )}
+          ) : null}
         </div>
       </div>
     </main>
@@ -389,21 +377,6 @@ function VoiceInputSection() {
           {error && <div role="alert" className="rounded-lg border border-dangerSoft bg-dangerSoft px-3 py-2.5 text-[12px] text-danger">{error}</div>}
         </div>
       )}
-    </section>
-  );
-}
-
-// -- Personas: installed/enabled/delete management, the dir/Git importer.
-function PersonasSection({ onOpenPersona }: { onOpenPersona?: (id: string) => void }) {
-  const { t } = useI18n();
-
-  return (
-    <section>
-      <PanelHead
-        title={t("settings.personas.title")}
-        sub={t("settings.personas.sub")}
-      />
-      <PersonasTab onOpenPersona={onOpenPersona} />
     </section>
   );
 }

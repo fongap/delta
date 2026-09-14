@@ -1,4 +1,4 @@
-"""Line-numbered file reading (`read_file`) 鈥?replaces the aisuite toolkit's reader.
+"""Line-numbered file reading for the controlled worker boundary.
 
 The toolkit's `read_file` returns raw text (the agent can't cite path:line without
 counting) and raises outright on large files (the agent errors and guesses). This one
@@ -13,9 +13,9 @@ the agent how to continue reading. Read-only, workspace-scoped.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
-import aisuite as ai
+from integrations.tools import metadata as ai
 
 from integrations.tools.metadata import attach_tool_metadata
 
@@ -84,101 +84,19 @@ _READ_FILE_LINES_SCHEMA = {
 }
 
 
-def _make_citer(
-    root: Path, source_store: Any, run_id: str
-) -> Callable[[Path, int, int], None]:
-    """Build a closure that captures the file and records a lines citation.
-
-    Imported here (not at module top) so the SourceStore / CitationRange
-    modules stay optional dependencies for callers that don't use the
-    auto-cite hook. The actual capture+cite is delegated to
-    :func:`core.citation.cite` so every reader (text, PDF, XLSX, ...) goes
-    through the same chokepoint.
-    """
-    from core.citation import cite
-    from core.sources import KIND_LINES, CitationRange
-
-    def _cite(target: Path, start_line: int, end_line: int) -> None:
-        # An empty window (start > end, e.g. an empty file or a read past the
-        # last line) is still a successful "I read this file" event — record
-        # just the start so the UI can show the file was opened.
-        if end_line < start_line:
-            range_obj: CitationRange = CitationRange(kind=KIND_LINES, start=start_line)
-        else:
-            range_obj = CitationRange(
-                kind=KIND_LINES, start=start_line, end=end_line
-            )
-        cite(source_store, run_id, target, range_obj, workspace=root)
-
-    return _cite
-
-
-def _make_multiroot_citer(
-    roots: list[Any], source_store: Any, run_id: str
-) -> Callable[[Path, int, int], None]:
-    """Build a closure that cites a read against whichever root the file
-    actually lives in (not the primary root). Falls back to the primary
-    root for path normalization when the file is outside every known
-    root -- the cite hook is best-effort and must never raise out of a
-    tool call.
-    """
-    from core.citation import cite
-    from core.sources import KIND_LINES, CitationRange
-
-    resolved = [Path(getattr(r, "path", r)).resolve() for r in roots]
-
-    def _cite(target: Path, start_line: int, end_line: int) -> None:
-        if end_line < start_line:
-            range_obj = CitationRange(kind=KIND_LINES, start=start_line)
-        else:
-            range_obj = CitationRange(
-                kind=KIND_LINES, start=start_line, end=end_line
-            )
-        ws: Path | None = None
-        for r in resolved:
-            try:
-                target.resolve().relative_to(r)
-                ws = r
-                break
-            except ValueError:
-                continue
-        if ws is None:
-            ws = resolved[0] if resolved else None
-        cite(source_store, run_id, target, range_obj, workspace=ws)
-
-    return _cite
-
-
 def file_tools(
     workspace: str,
     *,
-    source_store: Any | None = None,
-    run_id: str | None = None,
     roots: list[Any] | None = None,
 ) -> list:
     """Build the read_file / read_file_lines tools bound to a workspace.
 
-    ``source_store`` + ``run_id`` are an opt-in audit hook (P2 实用): every
-    successful read is captured as a :class:`SourceRef` and cited under the
-    run with a ``lines`` range covering the read window. Callers that don't
-    pass them (e.g. existing tests, ad-hoc callers) get the original
-    behavior unchanged -- the hook is purely additive.
-
     ``roots`` (P2 follow-up A) makes the reader multi-root aware: when
     provided, both tools accept absolute paths and resolve them against
-    any root in the list (mirroring aisuite's multi-root ``read_file``).
-    The cite hook records the citation against whichever root the file
-    actually lives in, not the primary.
+    any root in the list. The result carries the actual relative path and
+    line window so the Rust Runtime can register an authoritative citation.
     """
     root = Path(workspace).resolve()
-    if roots:
-        _cite = (
-            _make_multiroot_citer(roots, source_store, run_id)
-            if source_store and run_id
-            else None
-        )
-    else:
-        _cite = _make_citer(root, source_store, run_id) if source_store and run_id else None
 
     resolved_roots: list[Path] = []
     if roots:
@@ -252,8 +170,6 @@ def file_tools(
             return {"error": f"read failed: {exc}"}
 
         end = start + len(selected) - 1 if selected else start - 1
-        if _cite is not None:
-            _cite(target, start, end)
         # Path in the result is relative to whichever root matched
         # (multi-root) or to the single workspace root (single-root).
         base = matching_root if matching_root is not None else root

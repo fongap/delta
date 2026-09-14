@@ -48,7 +48,6 @@ const BTN_BORDERED =
 
 export function AccessSection({
   sessionId,
-  personaId,
   projectScoped,
   workspace,
   branch,
@@ -57,8 +56,7 @@ export function AccessSection({
   onOpenIntegrations,
 }: {
   sessionId: string;
-  personaId?: string;
-  // Project-scoped (code-family) sessions summarize the folder NAME, not a count.
+  // Project-scoped tasks summarize the folder name, not a count.
   projectScoped?: boolean;
   workspace?: string;
   branch?: string | null;
@@ -76,12 +74,10 @@ export function AccessSection({
   const rootEl = useRef<HTMLElement | null>(null);
 
   const reload = useCallback(() => {
-    // personaId hint: a brand-new session has no server-side record yet, so without it the
-    // view would resolve to the DEFAULT persona's defaults/recommends.
-    getSessionConnections(sessionId, personaId)
+    getSessionConnections(sessionId)
       .then(setConns)
       .catch(() => setConns(null));
-  }, [sessionId, personaId]);
+  }, [sessionId]);
   useEffect(() => {
     reload();
   }, [reload]);
@@ -230,7 +226,7 @@ export function AccessSection({
                 setConnectFor(null);
                 if (addedFrom === name) {
                   // Added from THIS session's panel → also enable it here explicitly (a
-                  // catalog connector need not be in the persona's default-on set).
+                  // catalog connector need not already have a session override).
                   setAddedFrom(null);
                   setSessionConnection(sessionId, name, true)
                     .catch(() => {})

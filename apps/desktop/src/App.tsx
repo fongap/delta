@@ -4,7 +4,6 @@ import {
   finalizeAutomationRun,
   getArtifacts,
   getHealth,
-  getRecentWorkspaces,
   getSessionMessages,
   getSessions,
   announceAutomationsChanged,
@@ -13,10 +12,8 @@ import {
   deleteMemory,
   updateMemory,
   getSettings,
-  getPersonas,
   getInbox,
   getUnattended,
-  PERSONAS_CHANGED,
   resolveInboxItem,
   deleteSession,
   renameSession,
@@ -29,9 +26,6 @@ import {
   Session,
   type InboxItem,
   type MessageSource,
-  type Persona,
-  type RecentWorkspace,
-  type SurfaceVisibility,
   type WorkspaceCommandTrust,
 } from "./api";
 import type {
@@ -43,7 +37,6 @@ import type {
   TodoItem,
   WsEvent,
 } from "./types";
-import { isProjectScoped } from "./personaScope";
 import { I18nProvider, useI18n } from "@delta/i18n/I18nContext";
 import { dictionaries, normalizeLocale } from "@delta/i18n/dictionaries";
 import type { Locale } from "@delta/i18n/types";
@@ -61,14 +54,12 @@ import { RunStatusBar } from "./components/RunStatusBar";
 import { ThinkingBlock, Transcript } from "./components/Transcript";
 import { Markdown } from "./components/Markdown";
 import { SessionIntro } from "./components/SessionIntro";
-import { FolderGate } from "./components/FolderGate";
 import { Onboarding } from "./components/Onboarding";
 import { UPDATER_FEED_PUBLISHED, UpdateBanner } from "./components/UpdateBanner";
 import { ScheduledView } from "./components/ScheduledView";
 import { RightRail } from "./components/RightRail";
 import { IntegrationsView } from "./components/IntegrationsView";
 import { SettingsView } from "./components/SettingsView";
-import { PersonaView } from "./components/PersonaView";
 import { AuditView } from "./components/AuditView";
 import { InboxView } from "./components/InboxView";
 import { ApprovalCard } from "./components/ApprovalCard";
@@ -99,63 +90,7 @@ function normalizeTodos(raw: unknown): TodoItem[] {
   });
 }
 
-// Fallbacks used only before the persona list loads (the in-component, family-aware
-// needsWorkspace/gatesWorkspace consult the real persona once available). Delta is the only
-// product surface (R6.0); a legacy agent id (code/chat/ops/...) is treated as Delta.
-const needsWorkspaceFallback = (a: string) => a === "delta" || a !== "chat";
-const gatesWorkspaceFallback = (_a: string) => false;
-const LAST_SESSION_KEY = "delta:last-session-by-agent:v1";
 const NAV_COLLAPSED_KEY = "delta:nav-collapsed:v1";
-
-type LastSession = { sessionId: string; workspace: string; updatedAt: number };
-
-function readLastSessions(): Record<string, LastSession> {
-  try {
-    const raw = localStorage.getItem(LAST_SESSION_KEY);
-    return raw ? JSON.parse(raw) : {};
-  } catch {
-    return {};
-  }
-}
-
-function rememberLastSession(agent: string, sessionId: string, workspace: string | null) {
-  if (!agent || !sessionId) return;
-  try {
-    const all = readLastSessions();
-    all[agent] = { sessionId, workspace: workspace || "", updatedAt: Date.now() };
-    localStorage.setItem(LAST_SESSION_KEY, JSON.stringify(all));
-  } catch {
-    /* localStorage may be unavailable; session restore is best effort. */
-  }
-}
-
-function sessionTs(s: SessionInfo): number {
-  return Date.parse(s.updated_at || "") || Number(s.updated_at) || 0;
-}
-
-function resumeTargetForAgent(agent: string, sessions: SessionInfo[]): LastSession | null {
-  const remembered = readLastSessions()[agent];
-  if (remembered?.sessionId) {
-    const live = sessions.find((s) => s.session_id === remembered.sessionId && s.agent === agent);
-    if (live || remembered.workspace) {
-      return {
-        sessionId: remembered.sessionId,
-        workspace: live?.workspace ?? remembered.workspace ?? "",
-        updatedAt: live ? sessionTs(live) : remembered.updatedAt,
-      };
-    }
-  }
-  const recent = sessions
-    .filter((s) => s.agent === agent && s.session_id && !s.session_id.startsWith("__"))
-    .sort((a, b) => sessionTs(b) - sessionTs(a))[0];
-  return recent ? { sessionId: recent.session_id, workspace: recent.workspace || "", updatedAt: sessionTs(recent) } : null;
-}
-
-function fallbackWorkspace(current: string | null, projects: RecentWorkspace[]): string {
-  if (current) return current;
-  const existing = projects.find((p) => p.exists);
-  return existing?.path || projects[0]?.path || "";
-}
 
 export function App() {
   const [locale, setLocaleState] = useState<Locale>(() => normalizeLocale(navigator.language));
@@ -164,10 +99,8 @@ export function App() {
   const tr = (key: TranslationKey): string => dictionaries[locale][key] ?? en[key];
   const [workspace, setWorkspace] = useState<string | null>(null);
   const [branch, setBranch] = useState<string | null>(null);
-  const [showGate, setShowGate] = useState(false);
   const [workspaceTrustRequest, setWorkspaceTrustRequest] =
     useState<WorkspaceCommandTrust | null>(null);
-  const [agent, setAgent] = useState("delta");
   // No hardcoded vendor/model default — the active model rides on the server-provided health
   // (`getHealth().then(h => setModel(h.model))`) and on Settings ▸ Models. An empty default
   // keeps the composer's "No model connected" chip honest until one resolves.
@@ -183,7 +116,6 @@ export function App() {
   // Per-session token usage (OPE-42): rebuilt from the transcript on session load,
   // accumulated live from assistant_message events, reset with the transcript.
   const [usage, setUsage] = useState<SessionUsage>(emptyUsage());
-  const [surfaces, setSurfaces] = useState<SurfaceVisibility>({ delta: true, chat: false, code: false });
   const [mode, setMode] = useState("interactive");
   const [connected, setConnected] = useState(false);
   const [running, setRunning] = useState(false);
@@ -212,7 +144,6 @@ export function App() {
   const [todo, setTodo] = useState<TodoItem[]>([]);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [reasoningOverrides, setReasoningOverrides] = useState<Record<string, string>>({});
-  const [projects, setProjects] = useState<RecentWorkspace[]>([]);
   const [sessionId, setSessionId] = useState<string>(newId());
   // WebSocket handlers and transcript reads can outlive the visible conversation while React
   // swaps sessions. Keep the foreground id in a ref so late events/responses from the old
@@ -231,13 +162,12 @@ export function App() {
   // id going stale (e.g. the automation was deleted) reopened a dead detail —
   // "Loading…" forever (owner-hit 2026-07-20). Nav re-entry should land on the list.
   const [scheduledOpenId, setScheduledOpenId] = useState<string | null>(null);
-  const [gateCreate, setGateCreate] = useState(false);
   // Which Settings section the full-page Settings surface opens on (§ Settings-as-page).
   const [settingsTab, setSettingsTab] = useState<
-    "appearance" | "models" | "skills" | "voice" | "memory" | "personas"
+    "appearance" | "models" | "skills" | "voice" | "memory"
   >("appearance");
   const openSettings = (
-    tab: "appearance" | "models" | "skills" | "voice" | "memory" | "personas" = "appearance",
+    tab: "appearance" | "models" | "skills" | "voice" | "memory" = "appearance",
   ) => {
     setSettingsTab(tab);
     setSurface("settings");
@@ -247,7 +177,7 @@ export function App() {
   // load; corrected by loadSettings.
   const [modelReady, setModelReady] = useState(true);
   const [surface, setSurface] = useState<
-    "session" | "scheduled" | "integrations" | "audit" | "inbox" | "persona" | "settings"
+    "session" | "scheduled" | "integrations" | "audit" | "inbox" | "settings"
   >("session");
   // A remembered Scheduled-detail target must not outlive the surface (see the
   // scheduledOpenId comment above): nav re-entry lands on the list, never a
@@ -255,17 +185,6 @@ export function App() {
   useEffect(() => {
     if (surface !== "scheduled") setScheduledOpenId(null);
   }, [surface]);
-  // The persona whose detail page is showing (surface === "persona"); empty falls back to the
-  // active session's persona. Phase 5 wires the grouped-nav gear + "Manage personas…" entry points.
-  const [personaViewId, setPersonaViewId] = useState<string>("");
-  // Where the persona page returns on "back": the active session, or Settings ▸ Personas when it
-  // was opened from there (persona config now lives in Settings).
-  const [personaViewReturn, setPersonaViewReturn] = useState<"session" | "settings">("session");
-  const openPersona = (id: string, from: "session" | "settings" = "session") => {
-    setPersonaViewReturn(from);
-    setPersonaViewId(id);
-    setSurface("persona");
-  };
   const [browserRefreshKey, setBrowserRefreshKey] = useState(0);
   const [railHidden, setRailHidden] = useState(false);
   // Left-nav collapse (⌘B): when collapsed the sidebar leaves the grid so content reclaims the
@@ -333,14 +252,6 @@ export function App() {
   // A pending composer prefill (text + attachments) pushed from the session start panel.
   const [composerPrefill, setComposerPrefill] = useState<{ text: string; attachments?: Attachment[]; nonce: number }>();
 
-  // Persona metadata drives workspace behavior by FAMILY, not by hardcoded id (so a DevOps/SecOps
-  // code-family persona gates a folder like Code, and a knowledge persona starts orphan like Delta).
-  const [personas, setPersonas] = useState<Persona[] | null>(null);
-  useEffect(() => {
-    getPersonas().then(setPersonas).catch(() => {});
-  }, []);
-  const personaOf = (a: string) => personas?.find((p) => p.id === a);
-
   // Pending Inbox items for the ACTIVE session — surfaced inline above the composer so an
   // unattended session's blocking question/approval can be answered in context (resolving the
   // same item the Inbox shows; first responder wins).
@@ -366,16 +277,6 @@ export function App() {
     getInbox(sessionId, "pending").then(setSessionInbox).catch(() => setSessionInbox([]));
     refreshSessions(); // attention badge should drop right away
   };
-  // Shows a working-area chip / project grouping. Persona's needs_workspace; fallback before load.
-  const needsWorkspace = (a: string) => personaOf(a)?.needs_workspace ?? needsWorkspaceFallback(a);
-  // MUST pick a folder before starting — project-scoped personas (git-bound Code, project-bound
-  // Ops). Scratch/deliverable personas start orphan: the server auto-provisions a per-conversation
-  // scratch dir and reports it in the `ready` event.
-  const gatesWorkspace = (a: string) => {
-    const p = personaOf(a);
-    return p ? isProjectScoped(p) : gatesWorkspaceFallback(a);
-  };
-
   // The desktop tray's "Settings" item dispatches this on the window.
   useEffect(() => {
     const open = () => openSettings("appearance");
@@ -399,12 +300,11 @@ export function App() {
   // The in-flight manual run to finalize after its first turn ({taskId, runId, sessionId}).
   const activeRunRef = useRef<{ taskId: string; runId: string; sessionId: string } | null>(null);
 
-  // Fetch ALL sessions + known projects so the sidebar can group them.
+  // Fetch every Delta task so the sidebar stays in sync with the native store.
   const refreshSessions = useCallback(() => {
     // A sidecar restart or a transient local request failure must not make every background
     // conversation vanish from the sidebar. Keep the last good snapshot until a fresh one lands.
     getSessions().then(setSessions).catch(() => {});
-    getRecentWorkspaces().then(setProjects).catch(() => {});
   }, []);
 
   // initial: adopt the server's seed workspace if any, else force the gate.
@@ -418,10 +318,8 @@ export function App() {
   // until `booting` clears), so an early click can't land on a session that's still settling.
   const [uiReady, setUiReady] = useState(false);
 
-  // On boot with no seeded workspace, reopen the last thing the user had — most recent
-  // conversation (restores its folder + agent + transcript), else the most recent project
-  // folder. Only a true first run (nothing to resume) falls through to the folder gate.
-  const resumeLastOrGate = async () => {
+  // On boot, reopen the most recent Delta task and preserve its transcript/workspace.
+  const resumeLast = async () => {
     let loadedSessions: SessionInfo[] = [];
     try {
       loadedSessions = (await getSessions()).filter((s) => s.session_id && !s.session_id.startsWith("__"));
@@ -431,7 +329,6 @@ export function App() {
       const last = [...sess].sort((a, b) => ts(b) - ts(a))[0];
       if (last) {
         setResumedExisting(true);
-        if (last.agent) setAgent(last.agent);
         if (last.workspace) {
           setWorkspace(last.workspace);
           setBranch(null);
@@ -445,28 +342,11 @@ export function App() {
           setUsage(emptyUsage());
         }
         activateSession(last.session_id);
-        setShowGate(false);
         return;
       }
     } catch {
       /* fall through */
     }
-    try {
-      const recents = await getRecentWorkspaces();
-      setProjects(recents);
-      // Only auto-adopt a recent folder for gated surfaces (Code). Delta starts orphan.
-      if (gatesWorkspace(agent)) {
-        const ws = recents.find((w) => w.exists) || recents[0];
-        if (ws) {
-          setWorkspace(ws.path);
-          setShowGate(false);
-          return;
-        }
-      }
-    } catch {
-      /* fall through */
-    }
-    setShowGate(gatesWorkspace(agent)); // only Code forces a first-run folder gate
   };
 
   useEffect(() => {
@@ -486,9 +366,8 @@ export function App() {
           // effect). resumeLastOrGate is async — if we cleared `booting` first, the throwaway
           // initial sessionId would connect against an empty/stale workspace and the server
           // would provision a junk per-conversation scratch dir for it before resume could
-          // flip to the real session. Delta ignores default_workspace (a Code concept).
-          if (h.default_workspace && gatesWorkspace(agent)) setWorkspace(h.default_workspace);
-          else await resumeLastOrGate();
+          // flip to the real session.
+          await resumeLast();
           // The mount-time loadSettings races the sidecar boot and swallows its failure —
           // on a cold start that left "Loading models…" stuck until the user visited
           // Settings (owner-hit 2026-07-23). Health just answered, so this one lands.
@@ -499,7 +378,6 @@ export function App() {
           if (cancelled) return;
           if (tries <= 0) {
             setBooting(false);
-            setShowGate(true);
           } else {
             setTimeout(() => attempt(tries - 1), 500);
           }
@@ -511,12 +389,11 @@ export function App() {
     };
   }, []);
 
-  // Reveal the UI once boot has settled AND the restored session is connected (or we're showing
-  // the folder gate). Latched, so later reconnects never flash the splash again.
+  // Reveal the UI once boot has settled and the restored task is connected.
   useEffect(() => {
     if (uiReady || booting) return;
-    if (connected || showGate) setUiReady(true);
-  }, [uiReady, booting, connected, showGate]);
+    if (connected) setUiReady(true);
+  }, [uiReady, booting, connected]);
   // Safety net: if the restored session never reports connected (backend slow/unreachable), reveal
   // the UI anyway. Boot already passed the health check, so a live connect is sub-second; this only
   // bites in the failure case, so keep it short.
@@ -534,14 +411,12 @@ export function App() {
         setModelContextWindows(s.model_context_windows || {});
         setContextBar(s.context_bar === true);
         setModelReady(s.model_ready);
-        if (s.surfaces) setSurfaces(s.surfaces);
         // Single Locale source of truth: the backend language setting wins once loaded.
         if (s.language) setLocaleState(normalizeLocale(s.language));
       })
       .catch(() => {});
 
-  // Persist a user-chosen language to the backend so it survives restarts and drives the
-  // agent/persona/compaction natural-language layers (§3). Applies the switch immediately.
+  // Persist a user-chosen language so it survives restarts and drives runtime prompts.
   const setLocale = useCallback(
     (l: Locale) => {
       setLocaleState(l);
@@ -553,15 +428,14 @@ export function App() {
   // Open Settings → Configure Models (from the composer's "No model connected" chip).
   const openModelSetup = () => openSettings("models");
 
-  // Leaving the Settings page: pick up any model/surface changes for the composer (the modal used to
-  // do this on close).
+  // Leaving Settings: pick up model changes for the composer.
   useEffect(() => {
     if (surface !== "settings") loadSettings();
   }, [surface]);
 
   useEffect(() => {
     refreshSessions();
-    loadSettings(); // selectable models + which session surfaces are visible
+    loadSettings();
   }, [refreshSessions]);
 
   // Poll the session list so the attention/liveness badges stay live and sessions created
@@ -571,31 +445,9 @@ export function App() {
     return () => clearInterval(t);
   }, [refreshSessions]);
 
-  // Persona toggles can archive sessions server-side (disable-archives, §18): refetch on the
-  // personas-changed event so the sidebar section disappears immediately, not on the next poll.
-  useEffect(() => {
-    const onPersonas = () => refreshSessions();
-    window.addEventListener(PERSONAS_CHANGED, onPersonas);
-    return () => window.removeEventListener(PERSONAS_CHANGED, onPersonas);
-  }, [refreshSessions]);
-
-  // If the active surface isn't visible (a resumed session landed on a retired surface like
-  // the old "code"/"chat" personas), fall back to Delta (always visible).
-  useEffect(() => {
-    if (agent !== "delta") {
-      switchAgent("delta");
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [agent]);
-
-  useEffect(() => {
-    if (surface === "session") rememberLastSession(agent, sessionId, workspace);
-  }, [surface, agent, sessionId, workspace]);
-
-  // (re)connect when workspace, session, or agent changes
+  // Reconnect when the workspace or task changes.
   useEffect(() => {
     if (booting) return; // wait until boot/resume settles the session before connecting
-    if (gatesWorkspace(agent) && !workspace) return; // Code needs a folder (gate handles it)
     const handleEvent = (ev: WsEvent) => {
       const d = ev.payload || {};
       // An interrupted/errored turn never emits assistant_message, so its streamed partial
@@ -846,7 +698,7 @@ export function App() {
       }
     };
 
-    const session = new Session(sessionId, workspace || "", agent, {
+    const session = new Session(sessionId, workspace || "", {
       onEvent: handleEvent,
       onOpen: () => {
         if (foregroundSessionIdRef.current !== sessionId) return;
@@ -876,7 +728,7 @@ export function App() {
     // first connect, dropping the user's first message (the "send twice" bug). The scratch
     // dir is deterministic from `sessionId` server-side, so skipping that reconnect is safe.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [booting, sessionId, agent, refreshSessions]);
+  }, [booting, sessionId, refreshSessions]);
 
   // Stream-following (FB-004): auto-scroll only while the user is AT the bottom, so scrolling
   // up to read during a streaming turn sticks. `atBottomRef` is the live truth (per scroll
@@ -928,14 +780,14 @@ export function App() {
   }, [items, streaming]);
 
   // Track produced-file count for the topbar "Artifacts" affordance (works even when the rail is
-  // hidden, where the rail itself doesn't fetch). Delta only; refreshes on file writes/turn end.
+  // hidden, where the rail itself doesn't fetch). Refreshes on file writes and turn completion.
   useEffect(() => {
-    if (agent !== "delta" || surface !== "session") {
+    if (surface !== "session") {
       setArtifactCount(0);
       return;
     }
     getArtifacts(sessionId).then((a) => setArtifactCount(a.length)).catch(() => {});
-  }, [agent, surface, sessionId, browserRefreshKey]);
+  }, [surface, sessionId, browserRefreshKey]);
 
   // Keep the active session's pending Inbox items fresh (answer-in-context card). Loads on session
   // change + after each turn, plus a slow poll so an unattended agent's new question surfaces.
@@ -1013,37 +865,24 @@ export function App() {
     sessionRef.current?.setModel(m);
   };
 
-  const startNewSession = (forAgent?: string) => {
-    const target = forAgent || agent;
+  const startNewSession = () => {
     setSurface("session"); // return to the conversation view if we were on a sub-view
     setItems([]);
     setUsage(emptyUsage());
     setStreaming("");
     setTodo([]);
     setRunning(false);
-    // "New session" under a browsed persona switches to it (expand≠switch: the header alone
-    // doesn't switch; this explicit action does).
-    if (target !== agent) {
-      setAgent(target);
-      if (gatesWorkspace(target)) {
-        // Never inherit the previous persona's folder — it may be a scratch dir. Clearing it
-        // also blocks the connection effect, so nothing can chat behind the open gate.
-        setWorkspace(null);
-        setBranch(null);
-        setShowGate(true);
-      } else setShowGate(false);
-    }
-    // Knowledge family: a new conversation starts fresh (orphan) — clear the workspace so the
-    // server provisions a NEW scratch dir for the new session id. Code keeps its repo.
-    if (!gatesWorkspace(target)) setWorkspace(null);
+    // Every task gets its own native workspace. The runtime adopts/provisions it on connect.
+    setWorkspace(null);
+    setBranch(null);
     activateSession(newId());
   };
-  // Inbox → session: the item carries its session's workspace/agent, so open it directly.
+  // Inbox → task: the item carries its native workspace, so open it directly.
   // UX-026: 5s top-right toast when a SCHEDULED automation run starts (never for
   // manual Run-now — the user is already watching). Rides the app-wide /ws/events
   // stream; View run opens the run's live session.
   const [runToast, setRunToast] = useState<{
-    title: string; sessionId: string; workspace: string; agent: string; time: string;
+    title: string; sessionId: string; workspace: string; time: string;
   } | null>(null);
   useEffect(() => {
     const stop = connectEvents((msg) => {
@@ -1053,7 +892,6 @@ export function App() {
         title: d.task_title || "Automation",
         sessionId: d.session_id || "",
         workspace: d.workspace || "",
-        agent: d.agent || "delta",
         time: new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }),
       });
       announceAutomationsChanged(); // the Scheduled band's badge is now stale
@@ -1092,16 +930,17 @@ export function App() {
     if (foregroundSessionIdRef.current === targetSessionId) setItems(itemsFromMessages(messages));
   };
 
-  const openSessionFromInbox = (sid: string, ws: string, ag: string) => selectSession(sid, ws, ag);
-  const selectSession = async (id: string, ws: string, ag: string) => {
+  const openSessionFromInbox = (sid: string, ws: string) => selectSession(sid, ws);
+  const selectSession = async (id: string, ws: string) => {
     setSurface("session"); // selecting a conversation always returns to the conversation view
     setTodo([]);
     setStreaming("");
     setRunning(false);
-    if (ag) setAgent(ag);
-    if (!gatesWorkspace(ag)) setShowGate(false);
     if (ws && ws !== workspace) {
       setWorkspace(ws); // switch project to the session's folder
+      setBranch(null);
+    } else if (!ws) {
+      setWorkspace(null);
       setBranch(null);
     }
     activateSession(id);
@@ -1115,100 +954,6 @@ export function App() {
       setItems([]);
       setUsage(emptyUsage());
     }
-  };
-  const switchAgent = async (name: string) => {
-    setSurface("session");
-    if (name === agent) return;
-    rememberLastSession(agent, sessionId, workspace);
-    const knownSessions = sessions.length ? sessions : await getSessions().catch(() => []);
-    const knownProjects = projects.length ? projects : await getRecentWorkspaces().catch(() => []);
-    const target = resumeTargetForAgent(name, knownSessions);
-
-    setAgent(name);
-    setItems([]);
-    setUsage(emptyUsage());
-    setStreaming("");
-    setTodo([]);
-    setRunning(false);
-
-    // The live workspace is only a valid fallback for a gated persona if it came from
-    // another gated persona — a knowledge persona's workspace is a scratch dir, and a
-    // code-family session must never adopt one. (`agent` is still the previous persona here.)
-    const inheritable = gatesWorkspace(agent) ? workspace : null;
-
-    if (target) {
-      // Code falls back to a recent folder; Delta resumes its scratch (target.workspace) or
-      // starts orphan ("" → server provisions). Chat has no workspace.
-      const targetWorkspace = gatesWorkspace(name)
-        ? target.workspace || fallbackWorkspace(inheritable, knownProjects)
-        : needsWorkspace(name)
-          ? target.workspace || ""
-          : "";
-      if (targetWorkspace && targetWorkspace !== workspace) {
-        setWorkspace(targetWorkspace);
-        setBranch(null);
-      } else if (!targetWorkspace) {
-        setWorkspace(null); // orphan delta: clear so the next `ready` adopts a fresh scratch
-      }
-      if (!gatesWorkspace(name)) setShowGate(false);
-      else if (targetWorkspace) setShowGate(false);
-      else setShowGate(true);
-      activateSession(target.sessionId);
-      try {
-        const messages = await getSessionMessages(target.sessionId);
-        if (foregroundSessionIdRef.current !== target.sessionId) return;
-        setItems(itemsFromMessages(messages));
-        setUsage(usageFromMessages(messages));
-      } catch {
-        if (foregroundSessionIdRef.current !== target.sessionId) return;
-        setItems([]);
-        setUsage(emptyUsage());
-      }
-      return;
-    }
-
-    const id = newId();
-    const fallback = gatesWorkspace(name) ? fallbackWorkspace(inheritable, knownProjects) : "";
-    if (fallback && fallback !== workspace) {
-      setWorkspace(fallback);
-      setBranch(null);
-    } else if (!fallback && needsWorkspace(name)) {
-      setWorkspace(null); // orphan delta: server provisions a fresh scratch on connect
-    }
-    activateSession(id);
-    rememberLastSession(name, id, fallback);
-    if (!gatesWorkspace(name)) setShowGate(false);
-    else setShowGate(!fallback);
-  };
-  const chooseWorkspace = (path: string, b?: string | null) => {
-    setWorkspace(path);
-    setBranch(b ?? null);
-    setShowGate(false);
-    setGateCreate(false);
-    setItems([]);
-    setUsage(emptyUsage());
-    setStreaming("");
-    setTodo([]);
-    activateSession(newId());
-    getRecentWorkspaces().then(setProjects).catch(() => {});
-  };
-  // "New project" lives under a project-scoped persona's accordion. Switch to that persona, start a
-  // fresh session with no folder yet, and open the gate in create mode — so the gate's
-  // surface==="session" && gatesWorkspace(agent) guard passes even if the active session was Chat/Delta.
-  const newProject = (forAgent?: string) => {
-    const target = forAgent || agent;
-    setSurface("session");
-    setItems([]);
-    setUsage(emptyUsage());
-    setStreaming("");
-    setTodo([]);
-    setRunning(false);
-    if (target !== agent) setAgent(target);
-    setWorkspace(null);
-    setBranch(null);
-    activateSession(newId());
-    setGateCreate(true);
-    setShowGate(true);
   };
   const renameConversation = async (id: string, title: string) => {
     const res = await renameSession(id, title);
@@ -1265,20 +1010,18 @@ export function App() {
   const openRunSession = (
     sessionId: string,
     ws: string,
-    ag: string,
     task?: { id: string; title: string },
   ) => {
     setRunContext(task ?? null);
     setSurface("session");
-    setShowGate(false);
-    selectSession(sessionId, ws, ag);
+    selectSession(sessionId, ws);
   };
   const runTaskNow = async (taskId: string, title?: string) => {
     const r = await runAutomation(taskId);
     if (!r || !r.ok) return;
     pendingPromptRef.current = r.prompt;
     activeRunRef.current = { taskId, runId: r.run_id, sessionId: r.session_id };
-    openRunSession(r.session_id, r.workspace, r.agent, { id: taskId, title: title || "" });
+    openRunSession(r.session_id, r.workspace, { id: taskId, title: title || "" });
   };
 
   const idle = items.length === 0 && !streaming;
@@ -1372,7 +1115,7 @@ export function App() {
               className="text-[12.5px] text-accent font-medium"
               data-testid="toast-view-run"
               onClick={() => {
-                selectSession(runToast.sessionId, runToast.workspace, runToast.agent);
+                selectSession(runToast.sessionId, runToast.workspace);
                 setRunToast(null);
               }}
             >
@@ -1433,26 +1176,16 @@ export function App() {
         />
       )}
       <Sidebar
-        agent={agent}
-        workspace={workspace || ""}
-        surfaces={surfaces}
         sessions={sessions}
-        projects={projects}
         activeSession={sessionId}
-        onSwitchAgent={switchAgent}
         onNewSession={startNewSession}
         onSelectSession={selectSession}
-        onNewProject={newProject}
         onRenameSession={renameConversation}
         onDeleteSession={deleteConversation}
         onArchiveSession={toggleArchived}
         onTogglePin={togglePinned}
-                    onSetReasoningEffort={setSessionReasoning}
+        onSetReasoningEffort={setSessionReasoning}
         onManage={() => openSettings("appearance")}
-        onOpenPersona={(id) => {
-          openPersona(id, "session");
-        }}
-        onManagePersonas={() => openSettings("personas")}
         onOpenScheduled={() => setSurface("scheduled")}
         onOpenAutomation={(id) => {
           setScheduledOpenId(id);
@@ -1480,7 +1213,6 @@ export function App() {
       ) : surface === "settings" ? (
         <SettingsView
           initialTab={settingsTab}
-          onOpenPersona={(id) => openPersona(id, "settings")}
           onCreateSkill={(description) => {
             // The Skills doorway (SKILLS-SPEC §5.2): creation is a conversation. Fresh
             // session, description in the composer — the user reads and hits send. With
@@ -1497,16 +1229,8 @@ export function App() {
         <AuditView />
       ) : surface === "inbox" ? (
         <InboxView onOpenSession={openSessionFromInbox} />
-      ) : surface === "persona" ? (
-        <PersonaView
-          personaId={personaViewId || agent}
-          onBack={() =>
-            personaViewReturn === "settings" ? openSettings("personas") : setSurface("session")
-          }
-          onOpenIntegrations={() => setSurface("integrations")}
-        />
       ) : (
-      <div className={"main" + (surface === "session" && agent !== "chat" && !railHidden ? " rail-open" : "")}>
+      <div className={"main" + (surface === "session" && !railHidden ? " rail-open" : "")}>
         <div className="main-topbar">
           {/* Left: the contextual cluster — [sidebar] [+ new session] [search] — rendered ONLY
               while the sidebar is collapsed (§22; the expanded sidebar already owns those
@@ -1552,9 +1276,9 @@ export function App() {
           </div>
           {/* Right: artifacts + the one session-panel toggle. Global search moved back into the
               sidebar brand row (A2 revised) — the topbar drag surface had swallowed its clicks.
-              Model/mode/persona controls stay in the composer (§22). */}
+              Model and mode controls stay in the composer (§22). */}
           <div className="main-topbar-side main-topbar-actions" onPointerDown={beginWindowDrag}>
-            {agent === "delta" && railHidden && artifactCount > 0 && (
+            {railHidden && artifactCount > 0 && (
               <button
                 className="topbar-artifacts-btn"
                 onPointerDown={(e) => e.stopPropagation()}
@@ -1566,19 +1290,16 @@ export function App() {
                 <span className="topbar-artifacts-count">{artifactCount}</span>
               </button>
             )}
-            {/* §32: the panel toggle is the ONE session-panel entry, for every non-chat persona
-                (the rail now carries Access, so code-family gets it too). */}
-            {agent !== "chat" && (
-              <button
-                className="topbar-icon-btn"
-                onPointerDown={(e) => e.stopPropagation()}
-                onClick={() => setRailHidden((h) => !h)}
-                aria-label={railHidden ? "Show side panel" : "Hide side panel"}
-                title={railHidden ? "Show side panel" : "Hide side panel"}
-              >
-                <Icon name="sidebarRight" size={16} />
-              </button>
-            )}
+            {/* §32: the panel toggle is the single task-panel entry. */}
+            <button
+              className="topbar-icon-btn"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={() => setRailHidden((h) => !h)}
+              aria-label={railHidden ? "Show side panel" : "Hide side panel"}
+              title={railHidden ? "Show side panel" : "Hide side panel"}
+            >
+              <Icon name="sidebarRight" size={16} />
+            </button>
           </div>
         </div>
         <div className={"main-workspace" + (railHidden ? " rail-hidden" : "")}>
@@ -1622,14 +1343,7 @@ export function App() {
             )}
             <div className="main-scroll" ref={scrollRef} onScroll={handleScroll}>
               {idle ? (
-                agent === "delta" ? (
-                  <SessionIntro
-                  />
-                ) : (
-                  <div className="hero">
-                    <h1 className="greeting">{agent === "chat" ? tr("sessionIntro.greeting") : "Let's build something."}</h1>
-                  </div>
-                )
+                <SessionIntro />
               ) : (
                 <>
                   <Transcript
@@ -1713,9 +1427,9 @@ export function App() {
               externalNotice={composerNotice}
               onExternalNoticeDismiss={() => setComposerNotice(null)}
               sessionId={sessionId}
-              workspace={needsWorkspace(agent) ? workspace || "" : undefined}
+              workspace={workspace || ""}
               unattended={unattended}
-              onUnattendedChange={agent !== "chat" ? toggleUnattended : undefined}
+              onUnattendedChange={toggleUnattended}
               prefill={composerPrefill}
               resetKey={sessionId}
               usage={usage}
@@ -1762,19 +1476,17 @@ export function App() {
             />
                   </div>
           <RightRail
-            active={surface === "session" && agent !== "chat" && !railHidden}
+            active={surface === "session" && !railHidden}
             sessionId={sessionId}
             refreshKey={browserRefreshKey}
             toolNames={items.filter((i) => i.kind === "tool").map((i: any) => i.name)}
             todo={todo}
             running={running}
             onPreviewChange={onArtifactPreview}
-            showArtifacts={agent === "delta"}
-            personaId={agent}
-            projectScoped={isProjectScoped(personaOf(agent))}
+            showArtifacts
             workspace={workspace || undefined}
             branch={branch}
-            scratchPrimary={agent === "delta"}
+            scratchPrimary
             openAccessKey={accessKey}
             onOpenIntegrations={() => setSurface("integrations")}
           />
@@ -1782,20 +1494,6 @@ export function App() {
       </div>
       )}
 
-      {showGate && surface === "session" && gatesWorkspace(agent) && (
-        <FolderGate
-          create={gateCreate}
-          onChoose={chooseWorkspace}
-          onCancel={
-            workspace
-              ? () => {
-                  setShowGate(false);
-                  setGateCreate(false);
-                }
-              : undefined
-          }
-        />
-      )}
       {workspaceTrustRequest && (
         <WorkspaceTrustPrompt
           request={workspaceTrustRequest}

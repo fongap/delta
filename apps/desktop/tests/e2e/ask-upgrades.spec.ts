@@ -1,5 +1,5 @@
 import type { Page } from "@playwright/test";
-import { test, expect } from "./fixtures";
+import { test, expect, patchMockState, readMockState } from "./fixtures";
 
 // OPE-51 — ask_user upgrades: rich options (descriptions, the Recommended tag, monospace
 // previews with the two-pane layout) and grouped questions (the stepper). Seeded via a per-test
@@ -64,24 +64,7 @@ const GROUPED_ITEM = {
 /** Replace the Inbox's seeded items for this test (resolve mutates the local copy). */
 async function seedInbox(page: Page, items: Record<string, unknown>[]) {
   const inbox = items.map((i) => ({ ...i }));
-  const json = (body: unknown) => ({
-    status: 200,
-    contentType: "application/json",
-    body: JSON.stringify(body),
-  });
-  await page.route(/\/v1\/inbox\/[^/]+\/resolve$/, (route) => {
-    const path = new URL(route.request().url()).pathname;
-    const id = decodeURIComponent(path.split("/").slice(-2)[0]);
-    const it = inbox.find((x) => x.id === id);
-    if (it) {
-      it.state = "resolved";
-      it.resolution = route.request().postDataJSON().resolution;
-    }
-    return route.fulfill(json({ ok: true }));
-  });
-  await page.route(/\/v1\/inbox(\?.*)?$/, (route) =>
-    route.fulfill(json({ items: inbox.filter((i) => i.state === "pending") })),
-  );
+  await patchMockState(page, { inbox });
   return inbox;
 }
 
@@ -108,11 +91,9 @@ test("rich options render descriptions + Recommended; the preview pane follows h
   await expect(pane).toContainText("env: staging");
 
   // Single-select still resolves on click, with the option's LABEL as the resolution.
-  const resolved = page.waitForRequest(
-    (r) => r.url().includes("/resolve") && r.method() === "POST",
-  );
   await page.getByRole("button", { name: /Markdown table/ }).click();
-  expect((await resolved).postDataJSON().resolution).toBe("Markdown table");
+  const state = await readMockState<{ inbox: typeof RICH_ITEM[] }>(page);
+  expect(state.inbox[0].resolution).toBe("Markdown table");
   await expect(page.getByText("How should I format the report?")).not.toBeVisible();
 });
 
@@ -142,11 +123,9 @@ test("grouped questions step through the header chips and resolve as one answer 
   await expect(stepper).toContainText("2 of 2");
 
   // The final answer resolves the whole card with a JSON map keyed by header.
-  const resolved = page.waitForRequest(
-    (r) => r.url().includes("/resolve") && r.method() === "POST",
-  );
   await page.getByRole("button", { name: "Stacked", exact: true }).click();
-  expect((await resolved).postDataJSON().resolution).toBe(
+  const state = await readMockState<{ inbox: typeof GROUPED_ITEM[] }>(page);
+  expect(state.inbox[0].resolution).toBe(
     JSON.stringify({ "Chart style": "Bar", Distribution: "Stacked" }),
   );
   await expect(page.getByText("Nothing pending.")).toBeVisible();

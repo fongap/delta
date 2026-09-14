@@ -1,12 +1,10 @@
-"""Tool registry — wraps callables (incl. aisuite toolkit tools) into a registry the
-runtime owns: JSON schemas for the model, plus execution. Permission checks live in the
-PermissionEngine and are applied by the turn engine, not here.
+"""Registry for controlled Python capability callables.
 
-Schema generation is reused from aisuite (`Tools`) so we don't reimplement
-docstring/type-hint → JSON-schema extraction.
+It owns model-facing JSON schemas plus execution dispatch. Policy and approval
+remain outside workers and are enforced by the Rust Runtime.
 
 Schema slimming (v0.3.0 P1): the generated schemas ride the WHOLE docstring into the
-model-facing `description`, and aisuite adds verbose titles/enums. On shared/free
+model-facing `description`. On shared/free
 gateways every redundant token of a tool schema costs prompt-processing time, so
 `register` stores a SLIM copy (trimmed descriptions, dropped `title`/redundant
 `additionalProperties`, capped enums) while keeping the structural keys the runtime
@@ -16,9 +14,9 @@ reads (`name`, `parameters.properties`, `required`) byte-identical.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
-
-from aisuite.utils.tools import Tools
+import inspect
+import types
+from typing import Any, Callable, Literal, Union, get_args, get_origin, get_type_hints
 
 # -- schema slimming (v0.3.0 P1) -------------------------------------------------
 
@@ -29,7 +27,7 @@ _MAX_DESC_CHARS = 300
 # Long enum lists add schema weight for little gain — cap them (the model can pass any
 # value; the enum is a hint, not validation here).
 _MAX_ENUM = 24
-# `additionalProperties: false` is the schema default; aisuite emits it on every object.
+# `additionalProperties: false` is redundant on every object.
 # The model gains nothing from seeing it repeatedly.
 _STRIP_DEFAULT_ADDL_PROPS = True
 
@@ -99,7 +97,7 @@ class ToolSpec:
     name: str
     schema: dict[str, Any]  # OpenAI-format function tool schema (SLIM — model-facing)
     func: Callable[..., Any]
-    metadata: Any = None  # aisuite ToolMetadata or None
+    metadata: Any = None
     # The unslimmed schema as registered (what the model never needs but the runtime
     # may read for auditing/approval). None when the schema was already explicit+slim.
     raw_schema: dict[str, Any] | None = None
@@ -123,7 +121,7 @@ class ToolRegistry:
         name = getattr(func, "__name__", None)
         if not name:
             raise ValueError("Tool function must have a __name__.")
-        meta = metadata or getattr(func, "__aisuite_tool_metadata__", None)
+        meta = metadata or getattr(func, "__delta_tool_metadata__", None)
         # Allow an explicit schema override (param or a `__delta_schema__` attribute)
         # for tools whose signature can't be auto-converted to a valid JSON schema.
         resolved_schema = (
@@ -167,5 +165,65 @@ class ToolRegistry:
 
 
 def _schema_for(func: Callable[..., Any]) -> dict[str, Any]:
-    """Generate one OpenAI-format tool schema via aisuite's schema generator."""
-    return Tools([func]).tools(format="openai")[0]
+    """Generate a compact OpenAI-format schema from a callable signature."""
+    signature = inspect.signature(func)
+    try:
+        hints = get_type_hints(func)
+    except (NameError, TypeError):
+        hints = {}
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+    for name, parameter in signature.parameters.items():
+        if name in {"self", "cls"} or parameter.kind in {
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+        }:
+            continue
+        annotation = hints.get(name, parameter.annotation)
+        properties[name] = _json_type(annotation)
+        if parameter.default is inspect.Parameter.empty:
+            required.append(name)
+        elif parameter.default is not None:
+            properties[name]["default"] = parameter.default
+    parameters: dict[str, Any] = {"type": "object", "properties": properties}
+    if required:
+        parameters["required"] = required
+    description = inspect.getdoc(func) or ""
+    return {
+        "type": "function",
+        "function": {
+            "name": func.__name__,
+            "description": description,
+            "parameters": parameters,
+        },
+    }
+
+
+def _json_type(annotation: Any) -> dict[str, Any]:
+    if annotation in {inspect.Parameter.empty, Any}:
+        return {}
+    origin = get_origin(annotation)
+    args = get_args(annotation)
+    if origin is Literal:
+        values = list(args)
+        node = _json_type(type(values[0])) if values else {}
+        node["enum"] = values
+        return node
+    if origin in {list, tuple, set}:
+        return {"type": "array", "items": _json_type(args[0] if args else Any)}
+    if origin is dict:
+        return {"type": "object"}
+    if origin in {Union, types.UnionType}:
+        non_null = [arg for arg in args if arg is not type(None)]
+        if len(non_null) == 1:
+            return _json_type(non_null[0])
+        return {"anyOf": [_json_type(arg) for arg in non_null]}
+    if annotation is str:
+        return {"type": "string"}
+    if annotation is bool:
+        return {"type": "boolean"}
+    if annotation is int:
+        return {"type": "integer"}
+    if annotation is float:
+        return {"type": "number"}
+    return {}

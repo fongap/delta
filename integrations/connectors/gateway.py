@@ -1,9 +1,7 @@
-"""Gateway — owns the messaging adapters and routes inbound messages.
+"""Controlled messaging worker — owns platform adapters and emits inbound events.
 
-Lives inside the always-on `delta-server` (started/stopped in its lifespan). On inbound:
-enforce the per-platform allowlist, then hand the message to the registered handler (the
-super-agent runner, wired in the next increment). Outbound replies go through the
-`send_message` tool, not the gateway — so the gateway stays a thin inbound router here.
+The Rust application control plane owns routing and policy. This worker only authenticates
+the platform sender, translates transport events, and hands typed events to its caller.
 """
 
 from __future__ import annotations

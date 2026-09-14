@@ -25,14 +25,6 @@ from integrations.connectors.fake import FakeAdapter
 from integrations.connectors.gateway import Gateway
 from integrations.connectors.integration_tools import make_integration_tools
 from integrations.connectors.senders import DEFAULT_SENDERS
-from integrations.connectors.setup import (
-    connect_connector,
-    connector_list,
-    disconnect_connector,
-    experimental_enabled,
-    set_experimental_enabled,
-    update_connector_tools,
-)
 from integrations.connectors.slack_addr import qualify as slack_qualify
 from integrations.connectors.slack_addr import split as slack_split
 from integrations.connectors.tool_defs import connector_for_tool
@@ -53,11 +45,7 @@ __all__ = [
     "SlackAdapter",
     "TeamAuth",
     "TelegramAdapter",
-    "connect_connector",
     "connector_for_tool",
-    "connector_list",
-    "disconnect_connector",
-    "experimental_enabled",
     "format_target",
     "get_descriptor",
     "is_authorized",
@@ -68,10 +56,8 @@ __all__ = [
     "make_send_file_tool",
     "make_send_message_tool",
     "parse_target",
-    "set_experimental_enabled",
     "slack_event_to_event",
     "slack_qualify",
     "slack_split",
     "telegram_message_to_event",
-    "update_connector_tools",
 ]

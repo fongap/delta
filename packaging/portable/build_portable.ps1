@@ -1,278 +1,150 @@
 #requires -Version 5.1
 <#
 .SYNOPSIS
-  Build the Delta Windows Portable ("DeltaPortable") package + relocatable ZIP + SHA-256.
+  Build the native Delta Windows Portable package, relocatable ZIP, and SHA-256.
 
 .DESCRIPTION
-  Produces an extract-and-run, fully relocatable Delta build (no installation, no registry
-  writes, no %APPDATA% dependency). The result is a folder tree that can be copied / moved /
-  renamed / carried to another drive or machine and keeps working:
+  The portable contains the Tauri application with the Rust Runtime embedded in-process.
+  Python is not an application dependency and no local server or companion process is shipped.
 
-      DeltaPortable\
-        Delta.exe            <- root bootstrapper (resolves ROOT, launches GUI, then exits)
-        App\
-          Delta\Delta.exe    <- the real Tauri app (productName "Delta")
-          Delta\sidecar\...  <- PyInstaller onedir delta-server (resources)
-          (DefaultData\      <- optional first-run data seed; emitted only if one exists)
-        Data\                <- created and seeded on first launch by Delta.exe (DELTA_STATE_DIR)
+      Delta\
+        Delta.exe
+        App\Delta\Delta.exe
+        Data\
         Other\
-          Source\            <- pointers to the open-source repo + build config
-          Help\              <- this portable's README
-          License\           <- LICENSE text
-        AppInfo\             <- appinfo.xml (portability metadata)
 
-  Steps:
-    1. PyInstaller-bundle the server into a standalone onedir folder (no venv at runtime).
-    2. Stage it at binaries\sidecar\ for Tauri's `resources` slot.
-    3. Build (or reuse) the root launcher -> Delta.exe.
-    4. `tauri build --no-bundle` -> the raw app Delta.exe + frontend (embedded).
-    5. Assemble the relocatable tree above.
-    6. Run the absolute-path leak scan (scan_portable_paths.ps1) -> fail the build on any leak.
-    7. Emit Delta-Windows-Portable.zip + .sha256 under <repo>\releases.
-
-  Prerequisites:
-    - Rust (rustup) with the x86_64-pc-windows-msvc target + MSVC C++ build tools (link.exe).
-    - Node + npm (frontend build).
-    - uv plus a locked Python environment at <repo>\.venv. Create it with the exact
-      release dependency graph (including pyinstaller and Windows tzdata):
-        uv sync --locked --extra build
-    - tar.exe (system bsdtar, present on Windows 10 1803+) for a long-path / Unicode-safe ZIP.
-
-  WebView2 is NOT bundled (tauri.conf.json uses downloadBootstrapper for installers). A portable
-  needs the WebView2 Evergreen runtime installed system-wide; this is a documented limitation,
-  not a build error. The launcher redirects the WebView2 profile (best effort) so the browser
-  profile moves with the portable whenever wry honors WEBVIEW2_USER_DATA_FOLDER.
-
-  Secrets stay safe in portable mode: every store/pref/log/DB/secret key is derived from
-  DELTA_STATE_DIR (see packages/secrets.py + src-tauri/src/lib.rs), which the launcher points
-  at <ROOT>\Data. Moving Data moves the secrets; the folder never writes to %APPDATA%.
+  The packaged application is exercised through `--runtime-self-test` before archiving. That
+  headless path initializes the Rust authorities and executes a native capability through the
+  Capability Host. The resulting ZIP is rejected if a retired server artifact reappears.
 #>
 [CmdletBinding()]
 param(
-    # Optional root-launcher .exe to embed. Defaults to rebuilding/reusing
-    # packaging\portable\target\release\delta-portable-launcher.exe.
     [string]$LauncherExe = "",
-    # Skip the slow npm/tauri frontend rebuild and reuse the last app exe if present.
     [switch]$SkipAppBuild
 )
 $ErrorActionPreference = "Stop"
 
-$Here      = Split-Path -Parent $MyInvocation.MyCommand.Path  # packaging\portable
-$Platform  = Split-Path -Parent $Here                         # packaging
-$Root      = Split-Path -Parent $Platform                     # <repo>
-$Gui       = Join-Path $Root "apps\desktop"
-$Venv      = Join-Path $Root ".venv"
-$PyExe     = Join-Path $Venv "Scripts\python.exe"
-$TauriCmd  = Join-Path $Gui "node_modules\.bin\tauri.cmd"
+$Here = Split-Path -Parent $MyInvocation.MyCommand.Path
+$Platform = Split-Path -Parent $Here
+$RepoRoot = Split-Path -Parent $Platform
+$Gui = Join-Path $RepoRoot "apps\desktop"
+$TauriCmd = Join-Path $Gui "node_modules\.bin\tauri.cmd"
+$TauriCfg = Join-Path $Gui "src-tauri\tauri.conf.json"
+$Cfg = Get-Content -LiteralPath $TauriCfg -Raw | ConvertFrom-Json
+$AppName = $Cfg.productName
+$Version = $Cfg.version
 
-# Version + app-name come from tauri.conf.json (single source of truth).
-$TauriCfg  = Join-Path $Gui "src-tauri\tauri.conf.json"
-$Cfg       = Get-Content $TauriCfg -Raw | ConvertFrom-Json
-$AppName   = $Cfg.productName                     # "Delta"
-$Version   = $Cfg.version                          # e.g. 0.2.0
-
-function Require-Cmd($name) {
-    if (-not (Get-Command $name -ErrorAction SilentlyContinue)) {
-        throw "Required tool '$name' not found on PATH. See the prerequisites in this script's header."
+function Require-Cmd([string]$Name) {
+    if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
+        throw "Required tool '$Name' was not found on PATH."
     }
 }
-Require-Cmd rustc
+
+function Assert-ChildPath([string]$Child, [string]$Parent) {
+    $parentFull = [System.IO.Path]::GetFullPath($Parent).TrimEnd('\', '/')
+    $childFull = [System.IO.Path]::GetFullPath($Child)
+    $prefix = $parentFull + [System.IO.Path]::DirectorySeparatorChar
+    if (-not $childFull.StartsWith($prefix, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing filesystem mutation outside ${parentFull}: $childFull"
+    }
+}
+
 Require-Cmd cargo
 Require-Cmd npm
 Require-Cmd tar
-if (-not (Test-Path $PyExe)) {
-    throw "Python interpreter not found at $PyExe. Create the venv and install deps (see header)."
-}
-if (-not (Test-Path $TauriCmd)) {
+if (-not (Test-Path -LiteralPath $TauriCmd -PathType Leaf)) {
     throw "Tauri CLI not found at $TauriCmd. Run npm install in $Gui first."
 }
 
-$Triple = (& rustc -vV | Select-String '^host:').ToString().Split()[-1]
-
-# A running delta-server.exe locks the output exe and makes PyInstaller's overwrite fail.
-$running = Get-Process -Name "delta-server" -ErrorAction SilentlyContinue
-if ($running) {
-    Write-Host "==> stopping $($running.Count) running delta-server process(es) holding the output exe"
-    $running | Stop-Process -Force
-    Start-Sleep -Seconds 1
-}
-
-# ---- 1. PyInstaller onedir server sidecar -------------------------------------
-Write-Host "==> [1/6] PyInstaller: bundling delta-server ($Triple)" -ForegroundColor Cyan
-# Run via `python -m PyInstaller` — the console-script .exe launcher in the venv can fail
-# silently (exit 1, no output) on some installs; the module invocation is the reliable path.
-# PyInstaller logs its progress through Python's logging module, which writes to stderr.
-# When native stderr is captured (pipe, CI, this script's host), PowerShell 5.1 rewrites each
-# line as an ErrorRecord; with the global $ErrorActionPreference="Stop" that would terminate
-# the build on PyInstaller's first INFO line. Scope the preference down for the call and gate
-# purely on the process exit code instead.
-$script:oldEap = $ErrorActionPreference
-$ErrorActionPreference = "Continue"
-try {
-    & $PyExe -m PyInstaller --noconfirm --clean `
-        --distpath (Join-Path $Here "dist") --workpath (Join-Path $Here "build") `
-        (Join-Path $Platform "server\delta-server.spec")
-    $pyCode = $LASTEXITCODE
-}
-finally { $ErrorActionPreference = $script:oldEap }
-if ($pyCode -ne 0) { throw "PyInstaller failed (exit $pyCode)" }
-
-$BinDir = Join-Path $Gui "src-tauri\binaries"
-New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
-$SideSrc = Join-Path $Here "dist\delta-server"
-$SideDst = Join-Path $BinDir "sidecar"
-if (Test-Path $SideDst) { Remove-Item -Recurse -Force $SideDst }
-Copy-Item -Recurse -Force $SideSrc $SideDst
-Write-Host "    sidecar -> $SideDst"
-
-# ---- 2. Root launcher (Delta.exe) ---------------------------------------------
-Write-Host "==> [2/6] root launcher (Delta.exe)" -ForegroundColor Cyan
+# ---- 1. Root launcher ---------------------------------------------------------
+Write-Host "==> [1/5] root launcher (Delta.exe)" -ForegroundColor Cyan
 if ($LauncherExe) {
     if (-not (Test-Path -LiteralPath $LauncherExe -PathType Leaf)) {
         throw "provided launcher executable not found: $LauncherExe"
     }
 } else {
-    # Cargo puts the artifact under the crate's own target dir
-    # (<here>\launcher\target\release\...). There is no workspace Cargo.toml at
-    # packaging\portable, so no shared target-dir.
-    $LauncherExe = Join-Path $Here "launcher\target\release\delta-portable-launcher.exe"
-    # Always rebuild the default launcher: build.rs owns the icon and PE version metadata,
-    # so reusing an existing executable can silently ship the previous release's version.
-    Write-Host "    building launcher from the current source/version"
-    Push-Location (Join-Path $Here "launcher")
+    $LauncherCrate = Join-Path $Here "launcher"
+    $LauncherExe = Join-Path $LauncherCrate "target\release\delta-portable-launcher.exe"
+    Push-Location $LauncherCrate
     try {
-        & cargo build --release
-        if ($LASTEXITCODE -ne 0) { throw "cargo build (launcher) failed (exit $LASTEXITCODE)" }
+        & cargo build --release --locked
+        if ($LASTEXITCODE -ne 0) { throw "portable launcher build failed (exit $LASTEXITCODE)" }
     }
     finally { Pop-Location }
-    if (-not (Test-Path -LiteralPath $LauncherExe -PathType Leaf)) {
-        throw "launcher build finished but no binary at $LauncherExe"
-    }
 }
 
-# ---- 2b. Delta Core Rust binary (R1 unified writer, ADR P1-E) -----------------
-Write-Host "==> [2b/6] delta-core Rust binary" -ForegroundColor Cyan
-$CoreCrate   = Join-Path $Root "core\runtime-native"
-$DeltaCoreExe = Join-Path $CoreCrate "target\release\delta_core.exe"
-Push-Location $CoreCrate
-try {
-    & cargo build --release --bin delta_core
-    if ($LASTEXITCODE -ne 0) { throw "cargo build (delta_core) failed (exit $LASTEXITCODE)" }
-}
-finally { Pop-Location }
-if (-not (Test-Path -LiteralPath $DeltaCoreExe -PathType Leaf)) {
-    throw "delta_core build finished but no binary at $DeltaCoreExe"
-}
-
-# ---- 3. Tauri app build (frontend embedded, no installers) ---------------------
+# ---- 2. Native Tauri application ---------------------------------------------
 if (-not $SkipAppBuild) {
-    Write-Host "==> [3/6] tauri build --no-bundle" -ForegroundColor Cyan
+    Write-Host "==> [2/5] native Tauri application with embedded Rust Runtime" -ForegroundColor Cyan
     Push-Location $Gui
     try {
-        # Same stderr-as-ErrorRecord hazard as step 1: Tauri's informational lines
-        # ("Info Looking up installed tauri packages…") go to stderr. When the host captures stderr,
-        # PowerShell 5.1 wraps each line as an ErrorRecord; with the global
-        # $ErrorActionPreference="Stop" that terminates the build on the first info line.
-        # Call the checked-in CLI shim directly: npm 12 no longer forwards the historic
-        # `npm run tauri build -- --no-bundle` argument shape reliably. Gate on exit code.
-        $script:oldEap3 = $ErrorActionPreference
+        $savedPreference = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
         try {
             & $TauriCmd build --no-bundle
-            $npmCode = $LASTEXITCODE
+            $buildCode = $LASTEXITCODE
         }
-        finally { $ErrorActionPreference = $script:oldEap3 }
-        if ($npmCode -ne 0) { throw "tauri build failed (exit $npmCode)" }
+        finally { $ErrorActionPreference = $savedPreference }
+        if ($buildCode -ne 0) { throw "tauri build failed (exit $buildCode)" }
     }
     finally { Pop-Location }
 } else {
-    Write-Host "==> [3/6] tauri build skipped (-SkipAppBuild), reusing existing app exe" -ForegroundColor DarkYellow
+    Write-Host "==> [2/5] app build skipped; reusing the existing release executable" -ForegroundColor DarkYellow
 }
 
-# The Cargo [package] name may differ from tauri.conf.json productName (here: the Cargo
-# package is "delta-desktop" while productName is "Delta"), and Tauri names the built
-# exe after the Cargo binary, not productName. Resolve the real binary name from Cargo.toml
-# (explicit [[bin]] name wins, else [package] name), falling back to productName.
 $CargoToml = Join-Path $Gui "src-tauri\Cargo.toml"
-$BinName   = $AppName
-if (Test-Path $CargoToml) {
-    $cargoText = Get-Content $CargoToml -Raw
-    if ($cargoText -match '\[\[bin\]\]\s*\r?\nname\s*=\s*"([^"]+)"') {
-        $BinName = $Matches[1]
-    } elseif ($cargoText -match '(?m)^\[package\]\s*\r?\nname\s*=\s*"([^"]+)"') {
-        $BinName = $Matches[1]
-    }
+$CargoText = Get-Content -LiteralPath $CargoToml -Raw
+$BinName = $AppName
+if ($CargoText -match '\[\[bin\]\]\s*\r?\nname\s*=\s*"([^"]+)"') {
+    $BinName = $Matches[1]
+} elseif ($CargoText -match '(?m)^\[package\]\s*\r?\nname\s*=\s*"([^"]+)"') {
+    $BinName = $Matches[1]
 }
 $AppExe = Join-Path $Gui "src-tauri\target\release\$BinName.exe"
-if (-not (Test-Path $AppExe)) {
-    throw "app exe not found at $AppExe — run without -SkipAppBuild (or check productName in tauri.conf.json)."
+if (-not (Test-Path -LiteralPath $AppExe -PathType Leaf)) {
+    throw "native app executable not found at $AppExe"
 }
 
-# ---- 4. Assemble relocatable tree ----------------------------------------------
-Write-Host "==> [4/6] assembling portable tree ($AppName $Version)" -ForegroundColor Cyan
+# ---- 3. Assemble and self-test ------------------------------------------------
+Write-Host "==> [3/5] assemble portable tree and run native self-test" -ForegroundColor Cyan
 $StageRoot = Join-Path $Here "build\portable-staging"
-$Portable  = Join-Path $StageRoot "DeltaPortable"
-$AppDir   = Join-Path $Portable "App\Delta"
-if (Test-Path $StageRoot) { Remove-Item -Recurse -Force $StageRoot }
-if (Test-Path $Portable) { Remove-Item -Recurse -Force $Portable }
-New-Item -ItemType Directory -Force -Path (Join-Path $Portable "Data")    | Out-Null
-New-Item -ItemType Directory -Force -Path $AppDir                          | Out-Null
+$Portable = Join-Path $StageRoot "DeltaPortable"
+$AppDir = Join-Path $Portable "App\Delta"
+Assert-ChildPath $StageRoot $Here
+if (Test-Path -LiteralPath $StageRoot) {
+    Remove-Item -LiteralPath $StageRoot -Recurse -Force
+}
+New-Item -ItemType Directory -Force -Path (Join-Path $Portable "Data") | Out-Null
+New-Item -ItemType Directory -Force -Path $AppDir | Out-Null
+Copy-Item -LiteralPath $AppExe -Destination (Join-Path $AppDir "$AppName.exe") -Force
+Copy-Item -LiteralPath $LauncherExe -Destination (Join-Path $Portable "$AppName.exe") -Force
 
-# App\ : real app exe + sidecar onedir (landing next to the exe, matching server_bin()).
-Copy-Item -Force $AppExe (Join-Path $AppDir "$AppName.exe")
-Copy-Item -Recurse -Force $SideDst (Join-Path $AppDir "sidecar")
-
-# Delta Core Rust binary (R1.5 unified writer) — lives next to Delta.exe so the Python
-# runtime can resolve it via the standard "same-dir as app exe" lookup (and the
-# parent-of-sidecar walk-up in _find_delta_core_binary). The name MUST be delta_core.exe
-# (underscore) to match the Cargo [[bin]] name and the DeltaCoreClient lookup. The existing
-# per-domain CLI binaries (write_idemlog.exe, write_ledger.exe, write_tasks.exe) are
-# kept inside sidecar/ for diagnostic / migration use only.
-Copy-Item -Force $DeltaCoreExe (Join-Path $AppDir "delta_core.exe")
-
-# Optional first-run data seed (launcher copies App\DefaultData -> Data only on first run).
-$DefaultSeed = Join-Path $AppDir "DefaultData"
-# (Nothing seeds DefaultData in this repo yet — the launcher creates Data\ empty on first run.)
-
-# Root launcher.
-Copy-Item -Force $LauncherExe (Join-Path $Portable "$AppName.exe")
-
-# Other\ : source pointers + help + license.
 $Other = Join-Path $Portable "Other"
-New-Item -ItemType Directory -Force -Path (Join-Path $Other "Source") | Out-Null
-New-Item -ItemType Directory -Force -Path (Join-Path $Other "Help")   | Out-Null
-New-Item -ItemType Directory -Force -Path (Join-Path $Other "License")| Out-Null
-Copy-Item -Force (Join-Path $Root "LICENSE") (Join-Path $Other "License\LICENSE.txt")
-Set-Content -Path (Join-Path $Other "Source\BUILD.txt") -Encoding utf8 -Value @"
-This is a Delta Windows Portable built from the Delta source tree.
-
-Source:  https://github.com/fongap/delta (see UPSTREAM.md / README.md in the repo)
-Build :  packaging\portable\build_portable.ps1
+$SourceDir = Join-Path $Other "Source"
+$HelpDir = Join-Path $Other "Help"
+$LicenseDir = Join-Path $Other "License"
+$AppInfoDir = Join-Path $Other "AppInfo"
+New-Item -ItemType Directory -Force -Path $SourceDir, $HelpDir, $LicenseDir, $AppInfoDir | Out-Null
+Copy-Item -LiteralPath (Join-Path $RepoRoot "LICENSE") -Destination (Join-Path $LicenseDir "LICENSE.txt") -Force
+Set-Content -LiteralPath (Join-Path $SourceDir "BUILD.txt") -Encoding utf8 -Value @"
+This Delta Windows Portable was built from https://github.com/fongap/delta.
+Build entry: packaging\portable\build_portable.ps1
+Runtime: React -> Tauri IPC/events -> embedded Rust Runtime -> controlled capabilities.
 "@
-Set-Content -Path (Join-Path $Other "Help\PORTABLE.txt") -Encoding utf8 -Value @"
+Set-Content -LiteralPath (Join-Path $HelpDir "PORTABLE.txt") -Encoding utf8 -Value @"
 Delta Portable — 绿色便携版（免安装）
 
-使用方法
-  1. 将整个 DeltaPortable 文件夹解压到任意可写位置（桌面、D 盘、U 盘均可）。
-  2. 双击运行 Delta.exe 即启动，无需安装，不写注册表，不依赖 %APPDATA%。
-  3. 复制 / 移动 / 重命名整个文件夹（甚至换盘、换电脑）后再启动，依然有效。
+1. 解压完整的 Delta 文件夹到任意可写位置。
+2. 双击 Delta.exe 启动。应用不写注册表，个人数据均在 Data\ 中。
+3. 复制、移动或重命名整个文件夹后仍可运行。
 
-数据目录
-  所有个人数据（配置、密钥、对话、日志、数据库）都保存在本文件夹的 Data\ 目录中，
-  全部随文件夹移动。删除 Data\ 即可完全清除本便携版在所有机器上留下的数据。
-
-注意
-  - 不要放在 Program Files 等需要管理员权限的目录（便携版不会请求提权）。
-  - 需要系统已安装 WebView2 运行时（Windows 10/11 通常自带；否则请到微软官网安装）。
-  - 若文件夹被设为只读，程序会明确提示“便携版目录不可写”而不是静默失败。
+便携版内置 Rust Runtime，不依赖 Python 应用服务。需要系统已安装 WebView2 Runtime。
 "@
 
-# AppInfo moved into Other\ (no standalone AppInfo\ folder).
-# Use System.Xml.XmlWriter (System.Xml.Linq is not loaded by default on PowerShell 5.1).
-$AppInfoDir = Join-Path $Other "AppInfo"
-New-Item -ItemType Directory -Force -Path $AppInfoDir | Out-Null
 $AppInfoXml = Join-Path $AppInfoDir "appinfo.xml"
-$AppInfoWriter = [System.Xml.XmlWriter]::Create($AppInfoXml)
+$XmlSettings = [System.Xml.XmlWriterSettings]::new()
+$XmlSettings.Indent = $true
+$AppInfoWriter = [System.Xml.XmlWriter]::Create($AppInfoXml, $XmlSettings)
 try {
     $AppInfoWriter.WriteStartDocument()
     $AppInfoWriter.WriteStartElement("appinfo")
@@ -281,55 +153,63 @@ try {
     $AppInfoWriter.WriteElementString("launcher", "$AppName.exe")
     $AppInfoWriter.WriteStartElement("layout")
     $AppInfoWriter.WriteAttributeString("relocatable", "true")
-    $AppInfoWriter.WriteAttributeString("description", "App/Data/Other convention; all data under Data\")
+    $AppInfoWriter.WriteAttributeString("runtime", "rust-embedded")
     $AppInfoWriter.WriteEndElement()
     $AppInfoWriter.WriteEndElement()
     $AppInfoWriter.WriteEndDocument()
 }
 finally { $AppInfoWriter.Dispose() }
 
-# ---- 5. Absolute-path leak scan (gate) ------------------------------------------
-Write-Host "==> [5/6] absolute-path leak scan" -ForegroundColor Cyan
+$SmokeState = Join-Path $StageRoot "runtime-self-test-state"
+New-Item -ItemType Directory -Force -Path $SmokeState | Out-Null
+$OldStateDir = $env:DELTA_STATE_DIR
+$env:DELTA_STATE_DIR = $SmokeState
+try {
+    & (Join-Path $AppDir "$AppName.exe") --runtime-self-test
+    if ($LASTEXITCODE -ne 0) { throw "embedded Rust Runtime self-test failed (exit $LASTEXITCODE)" }
+}
+finally { $env:DELTA_STATE_DIR = $OldStateDir }
+
+$ForbiddenNames = @("delta-server", "fastapi", "uvicorn", "server_entry", "packaging/server", "packaging\server", "sidecar")
+$BadEntries = @(
+    Get-ChildItem -LiteralPath $Portable -Recurse -Force |
+        ForEach-Object { $_.FullName.Substring($Portable.Length).TrimStart('\', '/') } |
+        Where-Object {
+            $candidate = $_.ToLowerInvariant()
+            @($ForbiddenNames | Where-Object { $candidate.Contains($_) }).Count -gt 0
+        }
+)
+if ($BadEntries.Count) {
+    throw "retired application-backend artifact found in portable tree: $($BadEntries -join ', ')"
+}
+
+# ---- 4. Relocatability gate ---------------------------------------------------
+Write-Host "==> [4/5] relocatability scan" -ForegroundColor Cyan
 $ScanScript = Join-Path $Here "scan_portable_paths.ps1"
-if (-not (Test-Path $ScanScript)) {
-    throw "scan helper not found at $ScanScript"
-}
 & $ScanScript -Root $Portable
-if ($LASTEXITCODE -ne 0) {
-    throw "Absolute-path leak scan FAILED — inspect the lines above; portable must be fully relocatable."
-}
+if ($LASTEXITCODE -ne 0) { throw "portable relocatability scan failed" }
 
-# ---- 6. ZIP + SHA-256 (tar.exe: long paths, UTF-8, Chinese filenames) ------------
-Write-Host "==> [6/6] packaging ZIP + SHA-256" -ForegroundColor Cyan
-$ZipName = "$AppName-Windows-Portable.zip"
-$ReleaseDir = Join-Path $Root "releases"
+# ---- 5. ZIP and checksum ------------------------------------------------------
+Write-Host "==> [5/5] archive and SHA-256" -ForegroundColor Cyan
+$ReleaseDir = Join-Path $RepoRoot "releases"
+$ZipPath = Join-Path $ReleaseDir "$AppName-Windows-Portable.zip"
+$HashPath = "$ZipPath.sha256"
 New-Item -ItemType Directory -Force -Path $ReleaseDir | Out-Null
-$ZipPath = Join-Path $ReleaseDir $ZipName
-if (Test-Path $ZipPath) { Remove-Item -Force $ZipPath }
-if (Test-Path "$ZipPath.sha256") { Remove-Item -Force "$ZipPath.sha256" }
+Assert-ChildPath $ZipPath $ReleaseDir
+if (Test-Path -LiteralPath $ZipPath) { Remove-Item -LiteralPath $ZipPath -Force }
+if (Test-Path -LiteralPath $HashPath) { Remove-Item -LiteralPath $HashPath -Force }
 
-# The ZIP must open with a single top-level "Delta/" folder (requirements: 解压即用、
-# 可整体移动). tar.exe stores every path literally, so zipping the tree from inside
-# staging would start the entries at "./". Move the assembled tree to the explicit
-# packaging/build staging root as `Delta`, then zip that — entries begin `Delta/` while
-# the repository-root releases directory receives only the final ZIP and checksum.
-Write-Host "    staging top-level $AppName/ in the archive"
 $Zipped = Join-Path $StageRoot $AppName
-if (Test-Path $Zipped) { Remove-Item -Recurse -Force $Zipped }
-Move-Item -Force $Portable $Zipped
+Assert-ChildPath $Zipped $StageRoot
+Move-Item -LiteralPath $Portable -Destination $Zipped
 Push-Location $StageRoot
 try {
     & tar -a -c -f $ZipPath Delta
-    if ($LASTEXITCODE -ne 0) { throw "tar zip failed (exit $LASTEXITCODE)" }
+    if ($LASTEXITCODE -ne 0) { throw "portable ZIP creation failed (exit $LASTEXITCODE)" }
 }
 finally { Pop-Location }
 
-$Hash = (Get-FileHash $ZipPath -Algorithm SHA256).Hash.ToLower()
-Set-Content -Path "$ZipPath.sha256" -Encoding ascii -Value "$Hash"
-Write-Host ""
+$Hash = (Get-FileHash -LiteralPath $ZipPath -Algorithm SHA256).Hash.ToLowerInvariant()
+Set-Content -LiteralPath $HashPath -Encoding ascii -Value $Hash
 Write-Host "Portable ZIP : $ZipPath" -ForegroundColor Green
-Write-Host "SHA-256 file: $ZipPath.sha256" -ForegroundColor Green
-Write-Host "SHA-256      : $Hash"
-Get-ChildItem -Path $Zipped -Recurse -File |
-    Measure-Object -Property Length -Sum |
-    ForEach-Object { Write-Host ("Staged files   : {0} file(s), {1:N1} MB" -f $_.Count, ($_.Sum/1MB)) }
+Write-Host "SHA-256      : $Hash" -ForegroundColor Green
