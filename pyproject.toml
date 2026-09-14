@@ -11,7 +11,7 @@ dependencies = [
     "httpx==0.28.1",  # sync outbound senders for messaging connectors (send_message tool)
     "ddgs==9.16.0",  # keyless default web-search provider (DuckDuckGo); Tavily/Brave use httpx
     # PDF fallback: pypdf extracts text; pypdfium2 rasterizes scanned pages without AGPL PyMuPDF.
-    "pypdf==6.16.2",
+    "pypdf==6.18.1",
     "pypdfium2==5.13.0",
 ]
 
