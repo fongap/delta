@@ -623,15 +623,6 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libasound2-dev pkg-config
 
-      - name: Stub sidecar binary for Tauri codegen
-        if: ${{ matrix.tauri-deps }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          mkdir -p apps/desktop/src-tauri/binaries
-          touch apps/desktop/src-tauri/binaries/sidecar
-
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
         with:
           workspaces: ${{ matrix.workspace }}

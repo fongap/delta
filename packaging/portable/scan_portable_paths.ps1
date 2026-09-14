@@ -48,7 +48,7 @@ function Test-AbsolutePath([string]$line) {
     # non-alphanumeric delimiter. The `[^A-Za-z0-9/:]` guard excludes URL schemes like
     # `http://` (the `p:` is preceded by a letter, so it never reads as a drive letter).
     #
-    # Python `%s:` format placeholders (e.g. uvicorn's addr_format = "%s://%s:%d") must not
+    # `%s:` format placeholders (for example addr_format = "%s://%s:%d") must not
     # be treated as drive letters: the `%` immediately before the letter is the format
     # specifier, not a path delimiter.
     if ($line -notmatch '%[sSdD]%|%\{') {

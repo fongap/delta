@@ -146,43 +146,6 @@ jobs:
             apps/desktop/src-tauri
             packaging/portable/launcher
 
-      - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7.0.0
-        with:
-          python-version-file: ".python-version"
-
-      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
-        with:
-          version: "0.12.3"
-          enable-cache: true
-
-      - name: Set up sidecar build environment
-        shell: pwsh
-        run: |
-          # The release artifact must include the messaging runtime (Slack Socket Mode + Telegram
-          # bot transports) that the product exposes to users. Without `--extra messaging`, the
-          # sidecar builds and the Gateway tests pass, but `slack_bolt`/`telegram` never land in
-          # delta-server.exe and the published "Delta" silently loses its messaging capability.
-          uv sync --locked --extra build --extra messaging
-          uv pip check --python .venv\Scripts\python.exe
-
-          # `delta` is the distribution/project name, not a Python package.
-          # Smoke-test the real post-refactor entry points + the messaging runtime that
-          # the official release promises. A missing import here is a release blocker.
-          .\.venv\Scripts\python.exe -c @"
-          import aisuite
-          import core
-          import providers
-          import integrations
-          import packages
-          import services
-          import slack_bolt
-          import telegram
-          import aiohttp
-          from core.cli import main as cli_main
-          from services.server.run import main as server_main
-          print("Python runtime import smoke passed (incl. messaging: slack_bolt, telegram, aiohttp)")
-          "@
-
       - name: Install frontend dependencies
         working-directory: apps/desktop
         run: npm ci
@@ -242,6 +205,31 @@ jobs:
             throw "portable ZIP must contain exactly one Delta/ top-level directory"
           }
 
+          # A release may never reintroduce the retired application backend.
+          $forbidden = @(
+            "delta-server",
+            "fastapi",
+            "uvicorn",
+            "server_entry",
+            "packaging/server",
+            "packaging\server",
+            "/sidecar/",
+            "\sidecar\"
+          )
+          $badEntries = @()
+          foreach ($entry in $entries) {
+            $candidate = $entry.ToLowerInvariant()
+            foreach ($pattern in $forbidden) {
+              if ($candidate.Contains($pattern)) {
+                $badEntries += $entry
+                break
+              }
+            }
+          }
+          if ($badEntries.Count) {
+            throw "portable ZIP contains retired application-backend artifacts: $($badEntries -join ', ')"
+          }
+
           # Extract the actual artifact. Validation after extraction catches packaging
           # mistakes that a source-tree build alone cannot detect.
           $verifyRoot = Join-Path $env:RUNNER_TEMP "delta-portable-verify"
@@ -261,7 +249,6 @@ jobs:
           $requiredFiles = @(
             "Delta\Delta.exe",
             "Delta\App\Delta\Delta.exe",
-            "Delta\App\Delta\sidecar\delta-server.exe",
             "Delta\Other\AppInfo\appinfo.xml"
           )
 
@@ -283,15 +270,9 @@ jobs:
             throw "portable metadata version mismatch: expected $($env:EXPECTED_VERSION), got $actualVersion"
           }
 
-          # Boot the packaged PyInstaller sidecar and verify the real bundled
-          # runtime / dependency graph. `--self-test` imports every module the
-          # official release is contracted to ship (core/providers/integrations
-          # + mcp, pypdf, pypdfium2, croniter, certifi, tzdata, slack_bolt,
-          # telegram, aiohttp) without opening a listening port, calling a
-          # model, or touching user data. Replaces the bare `--help` smoke that
-          # proved only that the binary launched.
-          $serverExe = Join-Path $verifyRoot "Delta\App\Delta\sidecar\delta-server.exe"
-
+          # Headless boot of the exact packaged app: initializes the embedded Rust
+          # authorities and executes a native capability through Capability Host.
+          $appExe = Join-Path $verifyRoot "Delta\App\Delta\Delta.exe"
           $smokeState = Join-Path $env:RUNNER_TEMP "delta-portable-smoke-state"
 
           if (Test-Path -LiteralPath $smokeState) {
@@ -304,22 +285,18 @@ jobs:
           $env:DELTA_STATE_DIR = $smokeState
 
           try {
-            & $serverExe --self-test
+            & $appExe --runtime-self-test
 
             if ($LASTEXITCODE -ne 0) {
-              throw "packaged delta-server self-test failed (exit $LASTEXITCODE)"
+              throw "packaged Rust Runtime self-test failed (exit $LASTEXITCODE)"
             }
           }
           finally {
             $env:DELTA_STATE_DIR = $oldStateDir
           }
 
-          # The portable artifact must boot from non-ASCII + whitespace paths and
-          # survive a directory move. Delta derives every data/secret path from
-          # the sidecar's own location at startup, so a relocated binary should
-          # just work; the historical bug was a build-time hard-coded path leaking
-          # into the bundle (rejected by scan_portable_paths.ps1, but worth
-          # re-checking by exercising the live binary, not just the source tree).
+          # The embedded Runtime must also boot after relocation to a non-ASCII,
+          # whitespace-containing path, using only the relocated Data directory.
           $unicodeRoot = Join-Path $env:RUNNER_TEMP "测试 Delta\Delta 移动测试\Delta"
 
           if (Test-Path -LiteralPath $unicodeRoot) {
@@ -328,7 +305,7 @@ jobs:
 
           Copy-Item -Recurse -Force (Join-Path $verifyRoot "Delta") $unicodeRoot
 
-          $unicodeExe = Join-Path $unicodeRoot "App\Delta\sidecar\delta-server.exe"
+          $unicodeExe = Join-Path $unicodeRoot "App\Delta\Delta.exe"
           $unicodeState = Join-Path $unicodeRoot "Data"
 
           if (-not (Test-Path -LiteralPath $unicodeState -PathType Container)) {
@@ -339,10 +316,10 @@ jobs:
           $env:DELTA_STATE_DIR = $unicodeState
 
           try {
-            & $unicodeExe --self-test
+            & $unicodeExe --runtime-self-test
 
             if ($LASTEXITCODE -ne 0) {
-              throw "packaged delta-server self-test failed under Unicode+whitespace path (exit $LASTEXITCODE)"
+              throw "packaged Rust Runtime self-test failed under Unicode+whitespace path (exit $LASTEXITCODE)"
             }
           }
           finally {

@@ -1,8 +1,8 @@
 //! Delta desktop shell.
 //!
 //! Tauri is a thin native window over the React SPA. R6 onward it embeds the
-//! Rust Runtime (`delta-runtime-native`) in-process — there is no Python
-//! sidecar. The SPA talks to the runtime via Tauri IPC (`runtime_ipc.rs`):
+//! Rust Runtime (`delta-runtime-native`) in-process. The SPA talks to the
+//! runtime via Tauri IPC (`runtime_ipc.rs`):
 //! pass / stealth via `runtime_run`/`runtime_steer`/`runtime_cancel`, events
 //! via `listen("delta-runtime-event")`. No localhost HTTP/WebSocket hop.
 //!
@@ -612,9 +612,8 @@ async fn install_update(
 }
 
 pub fn run() {
-    // R6: no more Python sidecar or localhost proxy. The Rust Runtime
-    // is embedded directly in the Tauri shell. The frontend talks via
-    // Tauri IPC (invoke/listen) — no HTTP, no WebSocket, no delta-server.
+    // The Rust Runtime is embedded directly in the Tauri shell. The
+    // frontend talks only through Tauri IPC invoke/listen.
     let inject = format!("window.__OCW_PLATFORM__={:?};", std::env::consts::OS);
 
     tauri::Builder::default()
@@ -765,7 +764,7 @@ pub fn run() {
             runtime_ipc::browser_close
         ])
         .setup(move |app| {
-            // R6: the Rust Runtime is embedded — no Python sidecar to spawn.
+            // The Rust Runtime is embedded and ready before the window opens.
             // Manage the session registry so runtime commands can access hosts.
             app.manage(runtime_ipc::init());
             runtime_ipc::start_scheduler(app.handle().clone());
@@ -887,4 +886,10 @@ pub fn run() {
                 }
             }
         });
+}
+
+/// Release/portable headless smoke entry. It never starts a window or network
+/// listener; success means the embedded authorities and Capability Host booted.
+pub fn portable_self_test() -> Result<(), String> {
+    runtime_ipc::portable_self_test()
 }

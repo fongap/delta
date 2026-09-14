@@ -1,16 +1,14 @@
 //! R6 Tauri Runtime IPC — in-process Runtime Host.
 //!
-//! Replaces the Python sidecar + localhost proxy with direct Tauri
-//! commands. The React frontend calls `invoke("runtime_run", {...})`
-//! instead of routing through a localhost service.
+//! React invokes commands directly on the embedded Rust Runtime.
 //!
 //! Runtime events (turn_start, assistant_delta, tool_finished, etc.)
 //! are emitted via `app.emit("delta-runtime-event", frame)` so the
 //! frontend's existing event-parsing code (`parseRuntimeEvent`) works
-//! unchanged — it just receives from Tauri events instead of WebSocket.
+//! unchanged through the single product event contract.
 
 use std::collections::{BTreeMap, HashMap};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -20,6 +18,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use delta_runtime_native::{
     ApplicationStore, AutomationStore, CapabilityHost, EventSink, McpStore, MemoryStore,
     ModelAuthority, RuntimeAuthorities, RuntimeConfig, RuntimeHandle, RuntimeHost, SkillStore,
+    ToolCall, ToolExecutionContext, ToolExecutor, ToolExitState,
 };
 
 struct TauriEventSink {
@@ -92,6 +91,54 @@ impl RuntimeRegistry {
 
 pub fn init() -> RuntimeRegistry {
     RuntimeRegistry::new()
+}
+
+/// Headless release smoke: boot every embedded Rust authority and execute a
+/// real native capability through the same Capability Host used by Runtime.
+pub fn portable_self_test() -> Result<(), String> {
+    let registry = RuntimeRegistry::new();
+    let settings = registry.models.lock().unwrap().settings();
+    if health().get("status").and_then(Value::as_str) != Some("ok")
+        || !settings.is_object()
+        || registry.capabilities.tool_schemas().as_array().is_none()
+    {
+        return Err("embedded Runtime authorities did not initialize".to_string());
+    }
+
+    let workspace = state_dir().join("runtime-self-test-workspace");
+    if workspace.exists() {
+        std::fs::remove_dir_all(&workspace).map_err(|error| error.to_string())?;
+    }
+    std::fs::create_dir_all(&workspace).map_err(|error| error.to_string())?;
+    std::fs::write(workspace.join("probe.txt"), "delta-runtime-ready")
+        .map_err(|error| error.to_string())?;
+
+    let result = registry.capabilities.execute(
+        &ToolCall {
+            id: "portable-self-test".to_string(),
+            name: "read_file".to_string(),
+            arguments: json!({"path": "probe.txt"}),
+        },
+        &ToolExecutionContext {
+            session_id: "portable-self-test".to_string(),
+            run_id: "portable-self-test".to_string(),
+            workspace: Some(workspace.to_string_lossy().to_string()),
+            timeout: Duration::from_secs(5),
+            cancel: Arc::new(AtomicBool::new(false)),
+            progress: Arc::new(|_| {}),
+        },
+    );
+    let cleanup = std::fs::remove_dir_all(&workspace);
+    if result.state != ToolExitState::Completed
+        || result.output.get("text").and_then(Value::as_str) != Some("delta-runtime-ready")
+    {
+        return Err(format!(
+            "native capability self-test failed: {:?}",
+            result.state
+        ));
+    }
+    cleanup.map_err(|error| error.to_string())?;
+    Ok(())
 }
 
 static APP_EVENT_SEQUENCE: AtomicU64 = AtomicU64::new(0);
