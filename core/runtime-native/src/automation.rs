@@ -450,6 +450,9 @@ mod tests {
 
         assert_eq!(first.claim_due_runs().unwrap().len(), 1);
         assert!(second.claim_due_runs().unwrap().is_empty());
-        assert_eq!(second.get(&id).unwrap()["runs"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            second.get(&id).unwrap()["runs"].as_array().unwrap().len(),
+            1
+        );
     }
 }
