@@ -21,6 +21,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 .github/scripts/r7_model_authority_failclosed_patch.py
+          python3 .github/scripts/r7_model_authority_followup.py
           rustfmt --edition 2021 \
             core/runtime-native/src/model_authority.rs \
             apps/desktop/src-tauri/src/runtime_ipc.rs
