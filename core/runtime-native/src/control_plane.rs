@@ -683,16 +683,49 @@ fn trust_path(state_dir: &Path) -> PathBuf {
     state_dir.join("workspace_trust.json")
 }
 
-fn trusted_workspace_paths(state_dir: &Path) -> Vec<String> {
-    fs::read_to_string(trust_path(state_dir))
-        .ok()
-        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-        .and_then(|value| value.get("trusted_workspaces").cloned())
-        .and_then(|value| value.as_array().cloned())
-        .unwrap_or_default()
-        .into_iter()
-        .filter_map(|value| value.as_str().map(str::to_string))
-        .collect()
+fn trusted_workspace_paths(state_dir: &Path) -> Result<Vec<String>, ShadowReadError> {
+    let path = trust_path(state_dir);
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let text = fs::read_to_string(&path).map_err(|error| {
+        ShadowReadError::Parse(format!(
+            "failed to read workspace trust authority {}: {error}",
+            path.display()
+        ))
+    })?;
+    let value = serde_json::from_str::<Value>(&text).map_err(|error| {
+        ShadowReadError::Parse(format!(
+            "invalid workspace trust authority {}: {error}",
+            path.display()
+        ))
+    })?;
+    let object = value.as_object().ok_or_else(|| {
+        ShadowReadError::Parse(format!(
+            "workspace trust authority {} must be a JSON object",
+            path.display()
+        ))
+    })?;
+    let entries = object
+        .get("trusted_workspaces")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            ShadowReadError::Parse(format!(
+                "workspace trust authority {} must contain a trusted_workspaces array",
+                path.display()
+            ))
+        })?;
+    let mut paths = Vec::with_capacity(entries.len());
+    for entry in entries {
+        let value = entry.as_str().ok_or_else(|| {
+            ShadowReadError::Parse(format!(
+                "workspace trust authority {} contains a non-string workspace path",
+                path.display()
+            ))
+        })?;
+        paths.push(value.to_string());
+    }
+    Ok(paths)
 }
 
 fn requested_commands(workspace: &Path) -> Vec<String> {
@@ -716,14 +749,14 @@ fn requested_commands(workspace: &Path) -> Vec<String> {
         .collect()
 }
 
-fn workspace_trust_dto(state_dir: &Path, workspace: &Path) -> Value {
+fn workspace_trust_dto_from_paths(workspace: &Path, trusted_paths: &[String]) -> Value {
     let canonical = workspace
         .canonicalize()
         .unwrap_or_else(|_| workspace.to_path_buf())
         .to_string_lossy()
         .to_string();
     let commands = requested_commands(workspace);
-    let trusted = trusted_workspace_paths(state_dir).contains(&canonical);
+    let trusted = trusted_paths.contains(&canonical);
     json!({
         "workspace": canonical,
         "requested_commands": commands,
@@ -731,6 +764,11 @@ fn workspace_trust_dto(state_dir: &Path, workspace: &Path) -> Value {
         "required": !trusted && !commands.is_empty(),
         "exists": workspace.is_dir(),
     })
+}
+
+fn workspace_trust_dto(state_dir: &Path, workspace: &Path) -> Result<Value, ShadowReadError> {
+    let trusted_paths = trusted_workspace_paths(state_dir)?;
+    Ok(workspace_trust_dto_from_paths(workspace, &trusted_paths))
 }
 
 pub fn open_workspace(
@@ -749,6 +787,7 @@ pub fn open_workspace(
         return Ok(json!({"ok": false, "path": path, "error": "workspace must be a directory"}));
     }
     let canonical_text = canonical.to_string_lossy().to_string();
+    let command_trust = workspace_trust_dto(state_dir, &canonical)?;
     let conn = open_conn(&state_dir.join("core.db"))?;
     conn.execute(
         "INSERT INTO workspaces (path, last_used) VALUES (?1, CURRENT_TIMESTAMP)
@@ -767,14 +806,15 @@ pub fn open_workspace(
         "ok": true,
         "path": canonical_text,
         "git_branch": git_branch,
-        "command_trust": workspace_trust_dto(state_dir, &canonical),
+        "command_trust": command_trust,
     }))
 }
 
 pub fn list_trusted_workspaces(state_dir: &Path) -> Result<Value, ShadowReadError> {
-    let workspaces = trusted_workspace_paths(state_dir)
-        .into_iter()
-        .map(|path| workspace_trust_dto(state_dir, Path::new(&path)))
+    let paths = trusted_workspace_paths(state_dir)?;
+    let workspaces = paths
+        .iter()
+        .map(|path| workspace_trust_dto_from_paths(Path::new(path), &paths))
         .collect::<Vec<_>>();
     Ok(json!({"workspaces": workspaces}))
 }
@@ -788,7 +828,7 @@ pub fn set_workspace_trusted(
         .canonicalize()
         .map_err(|error| ShadowReadError::Parse(format!("workspace is unavailable: {error}")))?;
     let canonical_text = canonical.to_string_lossy().to_string();
-    let mut paths = trusted_workspace_paths(state_dir);
+    let mut paths = trusted_workspace_paths(state_dir)?;
     paths.retain(|item| item != &canonical_text);
     if trusted {
         paths.push(canonical_text);
@@ -799,7 +839,7 @@ pub fn set_workspace_trusted(
         trust_path(state_dir),
         serde_json::to_vec_pretty(&json!({"trusted_workspaces": paths}))?,
     )?;
-    let mut response = workspace_trust_dto(state_dir, &canonical);
+    let mut response = workspace_trust_dto_from_paths(&canonical, &paths);
     response["ok"] = Value::Bool(true);
     Ok(response)
 }
@@ -1049,6 +1089,62 @@ mod tests {
             )
             .unwrap();
         assert_eq!(marker, "r6-agent-migration:code->delta");
+    }
+
+    #[test]
+    fn workspace_trust_missing_file_is_valid_empty_state() {
+        let state = tempfile::tempdir().unwrap();
+        let listed = list_trusted_workspaces(state.path()).unwrap();
+        assert_eq!(listed["workspaces"].as_array().unwrap().len(), 0);
+    }
+
+    #[test]
+    fn corrupt_workspace_trust_fails_closed_and_is_not_overwritten() {
+        let state = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let authority_path = trust_path(state.path());
+        fs::write(&authority_path, b"{broken").unwrap();
+        let before = fs::read(&authority_path).unwrap();
+
+        assert!(list_trusted_workspaces(state.path()).is_err());
+        assert!(open_workspace(state.path(), workspace.path().to_str().unwrap(), false).is_err());
+        assert!(!state.path().join("core.db").exists());
+        assert!(
+            set_workspace_trusted(state.path(), workspace.path().to_str().unwrap(), true).is_err()
+        );
+        assert_eq!(fs::read(&authority_path).unwrap(), before);
+    }
+
+    #[test]
+    fn invalid_workspace_trust_shapes_fail_closed() {
+        let state = tempfile::tempdir().unwrap();
+        let authority_path = trust_path(state.path());
+        for invalid in [
+            "[]",
+            "{}",
+            r#"{"trusted_workspaces":"not-an-array"}"#,
+            r#"{"trusted_workspaces":[1]}"#,
+        ] {
+            fs::write(&authority_path, invalid).unwrap();
+            assert!(list_trusted_workspaces(state.path()).is_err(), "{invalid}");
+        }
+    }
+
+    #[test]
+    fn workspace_trust_roundtrip_uses_single_rust_authority() {
+        let state = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir().unwrap();
+        let workspace_path = workspace.path().to_str().unwrap();
+
+        let trusted = set_workspace_trusted(state.path(), workspace_path, true).unwrap();
+        assert_eq!(trusted["trusted"], true);
+        let listed = list_trusted_workspaces(state.path()).unwrap();
+        assert_eq!(listed["workspaces"].as_array().unwrap().len(), 1);
+
+        let untrusted = set_workspace_trusted(state.path(), workspace_path, false).unwrap();
+        assert_eq!(untrusted["trusted"], false);
+        let listed = list_trusted_workspaces(state.path()).unwrap();
+        assert_eq!(listed["workspaces"].as_array().unwrap().len(), 0);
     }
 
     #[test]
