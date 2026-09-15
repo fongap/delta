@@ -14,15 +14,18 @@ use crate::{ShadowReadError, TaskStore};
 pub struct AutomationStore {
     tasks: TaskStore,
     db_path: PathBuf,
+    state_dir: PathBuf,
 }
 
 impl AutomationStore {
     pub fn open(state_dir: impl AsRef<Path>) -> Result<Self, ShadowReadError> {
-        std::fs::create_dir_all(state_dir.as_ref())?;
-        let db_path = state_dir.as_ref().join("automation.db");
+        let state_dir = state_dir.as_ref().to_path_buf();
+        std::fs::create_dir_all(&state_dir)?;
+        let db_path = state_dir.join("automation.db");
         Ok(Self {
             tasks: TaskStore::open(&db_path)?,
             db_path,
+            state_dir,
         })
     }
 
@@ -323,6 +326,47 @@ impl AutomationStore {
         )?;
         Ok(json!({"ok": true}))
     }
+    pub fn finalize_recovery(
+        &mut self,
+        session_id: &str,
+        recovery: &Value,
+    ) -> Result<Value, ShadowReadError> {
+        let Some(status) = terminal_status(recovery) else {
+            return Ok(json!({"ok": false, "error": "runtime recovery is not terminal"}));
+        };
+        self.finalize_session(session_id, &status)
+    }
+
+    pub fn reconcile_terminal_sessions(&mut self) -> Result<Value, ShadowReadError> {
+        let runs = self.tasks.unfinished_runs()?;
+        let mut reconciled = 0usize;
+        let mut pending = 0usize;
+        for run in runs {
+            let session_id = run
+                .data
+                .get("session_id")
+                .and_then(Value::as_str)
+                .map(str::to_string)
+                .unwrap_or_else(|| format!("__run__{}", run.run_id));
+            let Some(recovery) =
+                crate::control_plane::get_session_recovery(&self.state_dir, &session_id)?
+            else {
+                pending += 1;
+                continue;
+            };
+            if terminal_status(&recovery).is_none() {
+                pending += 1;
+                continue;
+            }
+            let result = self.finalize_recovery(&session_id, &recovery)?;
+            if result.get("ok").and_then(Value::as_bool) == Some(true) {
+                reconciled += 1;
+            } else {
+                pending += 1;
+            }
+        }
+        Ok(json!({"ok": true, "reconciled": reconciled, "pending": pending}))
+    }
 
     pub fn finalize_session(
         &mut self,
@@ -353,6 +397,27 @@ impl AutomationStore {
             next,
         )?;
         Ok(json!({"ok": true, "task_id": task_id, "run_id": run_id}))
+    }
+}
+
+fn terminal_status(recovery: &Value) -> Option<String> {
+    match recovery.get("event").and_then(Value::as_str) {
+        Some("turn_end") => recovery
+            .get("payload")
+            .and_then(|payload| payload.get("status"))
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        Some("interrupted") => Some("interrupted".to_string()),
+        Some("error")
+            if recovery
+                .get("payload")
+                .and_then(|payload| payload.get("terminal"))
+                .and_then(Value::as_bool)
+                == Some(true) =>
+        {
+            Some("failed".to_string())
+        }
+        _ => None,
     }
 }
 
@@ -417,6 +482,66 @@ mod tests {
         assert_eq!(prepared["ok"], true);
         assert_ne!(prepared["run_id"], prepared["session_id"]);
         assert_eq!(store.delete(id).unwrap()["ok"], true);
+    }
+    #[test]
+    fn terminal_reconciliation_is_restart_safe_and_idempotent() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = AutomationStore::open(temp.path()).unwrap();
+        let created = store
+            .create(&json!({"title": "Recover", "instructions": "Run"}))
+            .unwrap();
+        let task_id = created["task"]["id"].as_str().unwrap().to_string();
+        let prepared = store.prepare_run(&task_id).unwrap();
+        let session_id = prepared["session_id"].as_str().unwrap().to_string();
+        crate::control_plane::ensure_session(temp.path(), &session_id, None, "model").unwrap();
+        crate::control_plane::record_runtime_event(
+            temp.path(),
+            &json!({
+                "type": "turn_end", "version": 1, "sessionId": session_id,
+                "sequence": 1, "payload": {"status": "completed", "iterations": 1}
+            }),
+        )
+        .unwrap();
+
+        let first = store.reconcile_terminal_sessions().unwrap();
+        assert_eq!(first["reconciled"], 1);
+        let after_first = store.get(&task_id).unwrap();
+        assert_eq!(after_first["task"]["run_count"], 1);
+        assert_eq!(after_first["runs"][0]["status"], "completed");
+
+        let second = store.reconcile_terminal_sessions().unwrap();
+        assert_eq!(second["reconciled"], 0);
+        let after_second = store.get(&task_id).unwrap();
+        assert_eq!(after_second["task"]["run_count"], 1);
+    }
+
+    #[test]
+    fn transient_error_recovery_does_not_finalize_automation() {
+        let temp = tempfile::tempdir().unwrap();
+        let mut store = AutomationStore::open(temp.path()).unwrap();
+        let created = store
+            .create(&json!({"title": "Retry", "instructions": "Run"}))
+            .unwrap();
+        let task_id = created["task"]["id"].as_str().unwrap().to_string();
+        let prepared = store.prepare_run(&task_id).unwrap();
+        let session_id = prepared["session_id"].as_str().unwrap().to_string();
+        crate::control_plane::ensure_session(temp.path(), &session_id, None, "model").unwrap();
+        crate::control_plane::record_runtime_event(
+            temp.path(),
+            &json!({
+                "type": "error", "version": 1, "sessionId": session_id,
+                "sequence": 1,
+                "payload": {"error": "retrying", "error_type": "transient_5xx", "terminal": false}
+            }),
+        )
+        .unwrap();
+
+        let result = store.reconcile_terminal_sessions().unwrap();
+        assert_eq!(result["reconciled"], 0);
+        assert_eq!(result["pending"], 1);
+        let state = store.get(&task_id).unwrap();
+        assert_eq!(state["runs"][0]["status"], "running");
+        assert_eq!(state["task"]["run_count"], 0);
     }
 
     #[test]

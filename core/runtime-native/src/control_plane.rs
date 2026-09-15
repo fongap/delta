@@ -538,6 +538,29 @@ pub fn get_unattended(state_dir: &Path, session_id: &str) -> Result<bool, Shadow
     .map_err(ShadowReadError::from)
 }
 
+pub fn get_session_recovery(
+    state_dir: &Path,
+    session_id: &str,
+) -> Result<Option<Value>, ShadowReadError> {
+    if !safe_session_id(session_id) {
+        return Err(ShadowReadError::Parse("unsafe session id".to_string()));
+    }
+    let db_path = state_dir.join("core.db");
+    if !db_path.exists() {
+        return Ok(None);
+    }
+    let conn = open_conn(&db_path)?;
+    let mut stmt = conn.prepare("SELECT recovery FROM sessions WHERE session_id = ?1")?;
+    let mut rows = stmt.query(params![session_id])?;
+    let Some(row) = rows.next()? else {
+        return Ok(None);
+    };
+    let raw: Option<String> = row.get(0)?;
+    raw.filter(|value| !value.trim().is_empty())
+        .map(|value| serde_json::from_str::<Value>(&value).map_err(ShadowReadError::from))
+        .transpose()
+}
+
 pub fn set_unattended(
     state_dir: &Path,
     session_id: &str,
