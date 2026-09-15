@@ -92,7 +92,9 @@ impl McpStore {
 
     pub fn put(&self, name: &str, config: Value) -> Result<Value, ShadowReadError> {
         validate_name(name)?;
-        validate_server_config(&config)?;
+        if !config.is_object() {
+            return Ok(json!({"ok": false, "error": "MCP config must be an object"}));
+        }
         let mut servers = self.servers.lock().unwrap();
         let mut next = servers.clone();
         next.insert(name.to_string(), config);
@@ -179,12 +181,14 @@ fn redact_config(config: &Value) -> Value {
 fn redact_value(value: &Value, parent_key: Option<&str>) -> Value {
     match value {
         Value::Object(object) => {
-            let redact_all_children = parent_key.is_some_and(|key| {
-                key.eq_ignore_ascii_case("env") || key.eq_ignore_ascii_case("headers")
-            });
+            let redact_all_children = parent_key.is_some_and(is_secret_container_key);
             let mut redacted = Map::new();
             for (key, child) in object {
                 let next = if redact_all_children || is_secret_key(key) {
+                    Value::String(REDACTED.to_string())
+                } else if key.eq_ignore_ascii_case("auth")
+                    && child.as_str() != Some("oauth")
+                {
                     Value::String(REDACTED.to_string())
                 } else {
                     redact_value(child, Some(key))
@@ -199,8 +203,15 @@ fn redact_value(value: &Value, parent_key: Option<&str>) -> Value {
                 .map(|item| redact_value(item, parent_key))
                 .collect(),
         ),
+        _ if parent_key.is_some_and(is_secret_container_key) => {
+            Value::String(REDACTED.to_string())
+        }
         _ => value.clone(),
     }
+}
+
+fn is_secret_container_key(key: &str) -> bool {
+    key.eq_ignore_ascii_case("env") || key.eq_ignore_ascii_case("headers")
 }
 
 fn is_secret_key(key: &str) -> bool {
@@ -216,6 +227,8 @@ fn is_secret_key(key: &str) -> bool {
             | "password"
             | "secret"
             | "client_secret"
+            | "credential"
+            | "credentials"
     )
 }
 
@@ -258,7 +271,7 @@ mod tests {
     }
 
     #[test]
-    fn list_exposes_only_oauth_metadata_and_recursively_redacts_secrets() {
+    fn list_exposes_only_oauth_metadata_and_redacts_auth_payload() {
         let temp = tempfile::tempdir().unwrap();
         let store = McpStore::open(temp.path()).unwrap();
         store
@@ -275,7 +288,7 @@ mod tests {
 
         let listed = store.list();
         assert!(listed[0]["auth"].is_null());
-        assert_eq!(listed[0]["config"]["auth"]["access_token"], REDACTED);
+        assert_eq!(listed[0]["config"]["auth"], REDACTED);
         assert_eq!(listed[0]["config"]["headers"]["Authorization"], REDACTED);
         assert_eq!(listed[0]["config"]["nested"]["client_secret"], REDACTED);
         assert_eq!(listed[0]["config"]["nested"]["safe"], "visible");
