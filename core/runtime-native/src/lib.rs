@@ -22,6 +22,7 @@ pub mod automation;
 pub mod capability;
 pub mod checkpoint;
 pub mod control_plane;
+pub mod durability;
 pub mod idemlog;
 pub mod inbox;
 pub mod ledger;

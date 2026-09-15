@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::{params, Connection};
 use serde_json::{json, Value};
 
-use crate::ShadowReadError;
+use crate::{durability::atomic_write, ShadowReadError};
 
 pub struct MemoryStore {
     db_path: PathBuf,
@@ -161,7 +161,8 @@ impl MemoryStore {
         if let Some(rules) = patch.get("user_rules").and_then(Value::as_str) {
             settings["user_rules"] = Value::String(rules.chars().take(20_000).collect());
         }
-        std::fs::write(&self.settings_path, serde_json::to_vec_pretty(&settings)?)?;
+        let bytes = serde_json::to_vec_pretty(&settings)?;
+        atomic_write(&self.settings_path, &bytes)?;
         Ok(settings)
     }
 }
