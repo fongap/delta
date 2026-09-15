@@ -44,23 +44,26 @@ const DEFAULT_MAX_ITERATIONS: usize = 12;
 /// Sink for runtime events. The delta_core binary installs a stdout sink;
 /// the in-process Tauri shell installs a Tauri-event sink.
 pub trait EventSink: Send + Sync {
-    fn emit(&self, frame: Value);
+    fn emit(&self, frame: Value) -> Result<(), String>;
 }
 
 /// Default sink: write the frame as one JSON line to stdout.
 pub struct StdoutSink;
 impl EventSink for StdoutSink {
-    fn emit(&self, frame: Value) {
+    fn emit(&self, frame: Value) -> Result<(), String> {
         let mut stdout = std::io::stdout();
-        let _ = writeln!(stdout, "{frame}");
-        let _ = stdout.flush();
+        writeln!(stdout, "{frame}").map_err(|error| error.to_string())?;
+        stdout.flush().map_err(|error| error.to_string())?;
+        Ok(())
     }
 }
 
 /// Silent sink: drop every event (tests, headless runners).
 pub struct NullSink;
 impl EventSink for NullSink {
-    fn emit(&self, _: Value) {}
+    fn emit(&self, _: Value) -> Result<(), String> {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -475,6 +478,7 @@ pub struct RuntimeHost {
     runtime_state: Option<Arc<Mutex<RuntimeState>>>,
     run_id: Option<String>,
     sink: Arc<dyn EventSink>,
+    event_error: Arc<Mutex<Option<String>>>,
 }
 
 /// A queued steering/follow-up instruction: (text, optional MessageSource sidecar).
@@ -720,13 +724,25 @@ struct RuntimeEventEmitter {
     session_id: String,
     sequence: Arc<Mutex<u64>>,
     sink: Arc<dyn EventSink>,
+    event_error: Arc<Mutex<Option<String>>>,
 }
 
 impl RuntimeEventEmitter {
     fn emit(&self, event: RuntimeEvent) {
-        let mut sequence = self.sequence.lock().unwrap();
-        *sequence += 1;
-        self.sink.emit(event.to_frame(&self.session_id, *sequence));
+        if self.event_error.lock().unwrap().is_some() {
+            return;
+        }
+        let frame = {
+            let mut sequence = self.sequence.lock().unwrap();
+            *sequence += 1;
+            event.to_frame(&self.session_id, *sequence)
+        };
+        if let Err(error) = self.sink.emit(frame) {
+            let mut event_error = self.event_error.lock().unwrap();
+            if event_error.is_none() {
+                *event_error = Some(error);
+            }
+        }
     }
 }
 
@@ -888,6 +904,7 @@ impl RuntimeHost {
             runtime_state: None,
             run_id: None,
             sink: Arc::new(NullSink),
+            event_error: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -1036,11 +1053,23 @@ impl RuntimeHost {
         self.event_emitter().emit(event);
     }
 
+    fn clear_event_error(&self) {
+        *self.event_error.lock().unwrap() = None;
+    }
+
+    fn ensure_event_delivery(&self) -> Result<(), String> {
+        match self.event_error.lock().unwrap().clone() {
+            Some(error) => Err(format!("runtime event persistence failed: {error}")),
+            None => Ok(()),
+        }
+    }
+
     fn event_emitter(&self) -> RuntimeEventEmitter {
         RuntimeEventEmitter {
             session_id: self.session_id.clone(),
             sequence: self.sequence.clone(),
             sink: self.sink.clone(),
+            event_error: self.event_error.clone(),
         }
     }
 
@@ -1458,6 +1487,7 @@ impl RuntimeHost {
             arguments: call.arguments.clone(),
             reason: reason.to_string(),
         });
+        self.ensure_event_delivery()?;
         self.ledger_append(
             "approval.required",
             "runtime",
@@ -1724,6 +1754,10 @@ impl RuntimeHost {
             }),
             _ => unreachable!(),
         }
+        if let Err(error) = self.ensure_event_delivery() {
+            self.interactions.cancel(&call.id);
+            return Some(ToolResult::failure(&call.id, error));
+        }
         let inbox_id = if self.config.unattended {
             match self.authorities.as_ref().and_then(|authorities| {
                 authorities
@@ -1810,6 +1844,9 @@ impl RuntimeHost {
             arguments: call.arguments.clone(),
             risk_level: Some(format!("{level:?}")),
         });
+        if let Err(error) = self.ensure_event_delivery() {
+            return ToolResult::failure(&call.id, error);
+        }
         if let Err(error) = self.ledger_append(
             "tool.proposed",
             "model",
@@ -1942,6 +1979,9 @@ impl RuntimeHost {
             tool_call_id: call.id.clone(),
             name: call.name.clone(),
         });
+        if let Err(error) = self.ensure_event_delivery() {
+            return ToolResult::failure(&call.id, error);
+        }
         if let Err(error) = self.ledger_append(
             "tool.started",
             "runtime",
@@ -2106,11 +2146,13 @@ impl RuntimeHost {
         let mut iterations = 0usize;
         let mut turn_retries = 0u32;
         loop {
+            self.ensure_event_delivery()?;
             if iterations >= self.config.max_iterations {
                 self.emit_event(RuntimeEvent::TurnEnd {
                     status: "max_iterations_exceeded".to_string(),
                     iterations,
                 });
+                self.ensure_event_delivery()?;
                 return Ok("max_iterations_exceeded".to_string());
             }
             iterations += 1;
@@ -2118,6 +2160,7 @@ impl RuntimeHost {
                 self.messages
                     .push(json!({"role": "notice", "kind": "interrupted", "ts": now_ts()}));
                 self.emit_event(RuntimeEvent::Interrupted { iterations });
+                self.ensure_event_delivery()?;
                 return Ok("interrupted".to_string());
             }
             // Steering received before the request begins is incorporated in
@@ -2162,6 +2205,7 @@ impl RuntimeHost {
                         self.messages
                             .push(json!({"role": "notice", "kind": "interrupted", "ts": now_ts()}));
                         self.emit_event(RuntimeEvent::Interrupted { iterations });
+                        self.ensure_event_delivery()?;
                         return Ok("interrupted".to_string());
                     }
                     if self.drain_steering() {
@@ -2233,6 +2277,7 @@ impl RuntimeHost {
                 self.messages
                     .push(json!({"role": "notice", "kind": "interrupted", "ts": now_ts()}));
                 self.emit_event(RuntimeEvent::Interrupted { iterations });
+                self.ensure_event_delivery()?;
                 return Ok("interrupted".to_string());
             }
             let turn = turn.unwrap_or_default();
@@ -2251,6 +2296,7 @@ impl RuntimeHost {
                 reasoning: turn.reasoning.clone(),
                 usage: turn.usage.clone(),
             });
+            self.ensure_event_delivery()?;
             if turn.tool_calls.is_empty() {
                 if self.drain_steering() {
                     continue;
@@ -2259,6 +2305,7 @@ impl RuntimeHost {
                     status: "completed".to_string(),
                     iterations,
                 });
+                self.ensure_event_delivery()?;
                 return Ok("completed".to_string());
             }
             for tc in &turn.tool_calls {
@@ -2283,6 +2330,7 @@ impl RuntimeHost {
                 self.messages
                     .push(json!({"role": "notice", "kind": "interrupted", "ts": now_ts()}));
                 self.emit_event(RuntimeEvent::Interrupted { iterations });
+                self.ensure_event_delivery()?;
                 return Ok("interrupted".to_string());
             }
             self.drain_steering();
@@ -2299,12 +2347,14 @@ impl RuntimeHost {
         attachments: &[Value],
         source: Option<Value>,
     ) -> Result<Value, String> {
+        self.clear_event_error();
         self.emit_event(RuntimeEvent::TurnStart {
             input: Value::String(user_input.to_string()),
             attachments: attachments.to_vec(),
             source: source.clone(),
             run_id: self.run_id.clone(),
         });
+        self.ensure_event_delivery()?;
         let mut message = json!({"role": "user", "content": user_input, "ts": now_ts()});
         if !attachments.is_empty() {
             message["attachments"] = Value::Array(attachments.to_vec());
@@ -2326,12 +2376,14 @@ impl RuntimeHost {
     }
 
     pub fn resume(&mut self) -> Result<Value, String> {
+        self.clear_event_error();
         self.emit_event(RuntimeEvent::TurnStart {
             input: Value::String("(resumed)".to_string()),
             attachments: Vec::new(),
             source: None,
             run_id: self.run_id.clone(),
         });
+        self.ensure_event_delivery()?;
         self.ledger_transition("run.started", "system", json!({"kind": "resume"}))?;
         let result = self.loop_turn();
         if result.is_err() {
@@ -2345,6 +2397,7 @@ impl RuntimeHost {
     }
 
     pub fn retry(&mut self) -> Result<Value, String> {
+        self.clear_event_error();
         let tail_is_error = self.messages.iter().rev().any(|m| {
             m.get("role").and_then(|r| r.as_str()) == Some("notice")
                 && m.get("kind").and_then(|k| k.as_str()) == Some("error")
@@ -2364,6 +2417,7 @@ impl RuntimeHost {
             source: None,
             run_id: self.run_id.clone(),
         });
+        self.ensure_event_delivery()?;
         self.ledger_transition("run.started", "system", json!({"kind": "retry"}))?;
         let result = self.loop_turn();
         if result.is_err() {
@@ -2661,12 +2715,14 @@ fn runtime_worker(
                 &provider_cancel,
             ),
             RuntimeCommand::SwitchModel { change, reply } => {
+                host.clear_event_error();
                 let notice = match change {
                     ModelChange::LegacyId(model) => host.switch_model(&model),
                     ModelChange::Resolved(config) => host.switch_runtime_config(*config),
                 };
                 sync_message_snapshot(&host, &messages);
-                let _ = reply.send(Ok(notice));
+                let result = host.ensure_event_delivery().map(|_| notice);
+                let _ = reply.send(result);
             }
             RuntimeCommand::Truncate { index, reply } => {
                 host.truncate_messages(index);
@@ -3304,6 +3360,20 @@ mod tests {
         frames: Mutex<Vec<Value>>,
     }
 
+    struct FailOnTurnEndSink {
+        frames: Mutex<Vec<Value>>,
+    }
+
+    impl EventSink for FailOnTurnEndSink {
+        fn emit(&self, frame: Value) -> Result<(), String> {
+            if frame.get("type").and_then(Value::as_str) == Some("turn_end") {
+                return Err("simulated persistence failure".to_string());
+            }
+            self.frames.lock().unwrap().push(frame);
+            Ok(())
+        }
+    }
+
     struct MockProvider {
         base_url: String,
         first_response_started: mpsc::Receiver<()>,
@@ -3562,8 +3632,9 @@ mod tests {
     }
 
     impl EventSink for CaptureSink {
-        fn emit(&self, frame: Value) {
+        fn emit(&self, frame: Value) -> Result<(), String> {
             self.frames.lock().unwrap().push(frame);
+            Ok(())
         }
     }
 
@@ -3755,6 +3826,7 @@ mod tests {
             session_id: "session-1".to_string(),
             sequence: Arc::new(Mutex::new(0)),
             sink: sink.clone(),
+            event_error: Arc::new(Mutex::new(None)),
         };
         let mut writer = ProviderEventWriter::new(emitter);
         writer
@@ -3775,6 +3847,33 @@ mod tests {
         assert_eq!(frames[0]["payload"]["text"], "hi");
         assert!(frames[0].get("stream").is_none());
         assert!(frames[0].get("request_id").is_none());
+    }
+
+    #[test]
+    fn event_sink_failure_fails_run_and_suppresses_later_terminal_events() {
+        let sink = Arc::new(FailOnTurnEndSink {
+            frames: Mutex::new(Vec::new()),
+        });
+        let mut host = RuntimeHost::new(
+            "session-persistence-failure",
+            RuntimeConfig {
+                max_iterations: 0,
+                ..RuntimeConfig::default()
+            },
+        )
+        .with_event_sink(sink.clone());
+
+        let result = host.run("hello", None);
+        assert!(result
+            .as_ref()
+            .err()
+            .is_some_and(|error| { error.contains("runtime event persistence failed") }));
+        let frames = sink.frames.lock().unwrap();
+        let event_types = frames
+            .iter()
+            .filter_map(|frame| frame.get("type").and_then(Value::as_str))
+            .collect::<Vec<_>>();
+        assert_eq!(event_types, vec!["turn_start"]);
     }
 
     #[test]
