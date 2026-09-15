@@ -597,8 +597,8 @@ impl CapabilityRunner for NativeCapabilityRunner {
 
 /// Process-backed runner for Python, PowerShell, shell, and other controlled
 /// workers. One ABI job is written to stdin. Stdout may contain progress frames
-/// followed by a typed CapabilityResult. The Runtime owns timeout/cancellation
-/// and force-terminates the child when either fires.
+/// followed by exactly one typed CapabilityResult. The Runtime owns
+/// timeout/cancellation and force-terminates the child when either fires.
 pub struct WorkerProcessRunner {
     program: PathBuf,
     arguments: Vec<String>,
@@ -795,15 +795,15 @@ impl CapabilityRunner for WorkerProcessRunner {
             Some(CapabilityExitState::Cancelled) => CapabilityResult::cancelled(&job.job_id),
             Some(CapabilityExitState::TimedOut) => CapabilityResult::timed_out(&job.job_id),
             _ => result.unwrap_or_else(|| {
-                if stdout_lines.is_empty() {
-                    CapabilityResult::failed(
-                        &job.job_id,
-                        "worker returned no typed result",
-                        Some("worker_protocol"),
-                    )
+                let message = if stdout_lines.is_empty() {
+                    "worker returned no typed result".to_string()
                 } else {
-                    CapabilityResult::completed(&job.job_id, Value::String(stdout_lines.join("\n")))
-                }
+                    format!(
+                        "worker returned no typed result ({} untyped stdout line(s))",
+                        stdout_lines.len()
+                    )
+                };
+                CapabilityResult::failed(&job.job_id, &message, Some("worker_protocol"))
             }),
         };
         if !stderr_lines.is_empty() {
@@ -851,7 +851,15 @@ fn drain_worker_lines(
                         frame
                     };
                     if let Ok(typed) = serde_json::from_value::<CapabilityResult>(payload) {
-                        *result = Some(typed);
+                        if result.is_some() {
+                            *result = Some(CapabilityResult::failed(
+                                &typed.job_id,
+                                "worker emitted multiple terminal results",
+                                Some("worker_protocol"),
+                            ));
+                        } else {
+                            *result = Some(typed);
+                        }
                     } else {
                         stdout_lines.push(line);
                     }
@@ -1310,7 +1318,7 @@ mod tests {
     }
 
     #[test]
-    fn worker_process_consumes_abi_job_and_returns_stdout() {
+    fn worker_process_rejects_untyped_stdout() {
         let temp = tempfile::tempdir().unwrap();
         #[cfg(windows)]
         let runner = {
@@ -1338,8 +1346,72 @@ mod tests {
         job.timeout_secs = 2;
         let control = CapabilityControl::new(Arc::new(AtomicBool::new(false)), Arc::new(|_| {}));
         let result = runner.run(&job, &control);
+        assert_eq!(result.state, CapabilityExitState::Failed);
+        assert_eq!(
+            result
+                .diagnostics
+                .as_ref()
+                .and_then(|diagnostics| diagnostics.error_code.as_deref()),
+            Some("worker_protocol")
+        );
+    }
+
+    #[test]
+    fn drain_worker_lines_accepts_exactly_one_terminal_result() {
+        let (sender, receiver) = mpsc::channel();
+        let typed = CapabilityResult::completed("job-typed", serde_json::json!({"ok": true}));
+        sender
+            .send(WorkerLine::Stdout(serde_json::to_string(&typed).unwrap()))
+            .unwrap();
+        let control = CapabilityControl::new(Arc::new(AtomicBool::new(false)), Arc::new(|_| {}));
+        let mut stdout_lines = Vec::new();
+        let mut stderr_lines = Vec::new();
+        let mut result = None;
+        drain_worker_lines(
+            &receiver,
+            &control,
+            &mut stdout_lines,
+            &mut stderr_lines,
+            &mut result,
+        );
+        let result = result.unwrap();
         assert_eq!(result.state, CapabilityExitState::Completed);
-        assert_eq!(result.result, Some(Value::String("worker-ok".to_string())));
+        assert_eq!(result.job_id, "job-typed");
+        assert!(stdout_lines.is_empty());
+        assert!(stderr_lines.is_empty());
+    }
+
+    #[test]
+    fn drain_worker_lines_rejects_multiple_terminal_results() {
+        let (sender, receiver) = mpsc::channel();
+        for _ in 0..2 {
+            let typed = CapabilityResult::completed("job-typed", serde_json::json!({"ok": true}));
+            sender
+                .send(WorkerLine::Stdout(serde_json::to_string(&typed).unwrap()))
+                .unwrap();
+        }
+        let control = CapabilityControl::new(Arc::new(AtomicBool::new(false)), Arc::new(|_| {}));
+        let mut stdout_lines = Vec::new();
+        let mut stderr_lines = Vec::new();
+        let mut result = None;
+        drain_worker_lines(
+            &receiver,
+            &control,
+            &mut stdout_lines,
+            &mut stderr_lines,
+            &mut result,
+        );
+        let result = result.unwrap();
+        assert_eq!(result.state, CapabilityExitState::Failed);
+        assert_eq!(
+            result
+                .diagnostics
+                .as_ref()
+                .and_then(|diagnostics| diagnostics.error_code.as_deref()),
+            Some("worker_protocol")
+        );
+        assert!(stdout_lines.is_empty());
+        assert!(stderr_lines.is_empty());
     }
 
     #[test]
