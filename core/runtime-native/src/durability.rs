@@ -1,6 +1,6 @@
-use std::fs::{self, OpenOptions};
 #[cfg(unix)]
 use std::fs::File;
+use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -22,13 +22,16 @@ pub fn atomic_write(path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), ShadowRe
 }
 
 fn sibling_temp_path(path: &Path) -> Result<PathBuf, ShadowReadError> {
-    let file_name = path.file_name().and_then(|value| value.to_str()).ok_or_else(|| {
-        ShadowReadError::Parse(format!("authority path has no UTF-8 file name: {}", path.display()))
-    })?;
-    Ok(path.with_file_name(format!(
-        ".{file_name}.tmp-{}",
-        uuid::Uuid::new_v4()
-    )))
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| {
+            ShadowReadError::Parse(format!(
+                "authority path has no UTF-8 file name: {}",
+                path.display()
+            ))
+        })?;
+    Ok(path.with_file_name(format!(".{file_name}.tmp-{}", uuid::Uuid::new_v4())))
 }
 
 fn write_and_replace(path: &Path, temp_path: &Path, bytes: &[u8]) -> Result<(), ShadowReadError> {
@@ -76,11 +79,7 @@ fn replace_file(temp_path: &Path, path: &Path) -> Result<(), ShadowReadError> {
     const REPLACEFILE_WRITE_THROUGH: u32 = 0x0000_0001;
 
     let target: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
-    let replacement: Vec<u16> = temp_path
-        .as_os_str()
-        .encode_wide()
-        .chain(Some(0))
-        .collect();
+    let replacement: Vec<u16> = temp_path.as_os_str().encode_wide().chain(Some(0)).collect();
     let replaced = unsafe {
         ReplaceFileW(
             target.as_ptr(),
