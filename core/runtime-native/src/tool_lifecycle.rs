@@ -73,8 +73,6 @@ pub fn plan(
     input: &ToolLifecyclePlanInput,
 ) -> Result<ToolLifecyclePlanOutput, ShadowReadError> {
     if input.run_id.is_empty() || input.tool_call_id.is_empty() {
-        // Headless callers may omit run identity. Product runtime calls always
-        // include it; this path remains for isolated authority tests.
         return Ok(ToolLifecyclePlanOutput {
             action: PlanAction::Execute,
             result: None,
@@ -83,48 +81,72 @@ pub fn plan(
         });
     }
 
-    // 1. Replay / uncertain decision (mirrors IdempotencyWriter::lookup).
-    if let Some(entry) = writer.lookup(&input.run_id, &input.tool_call_id, &input.args)? {
-        match entry.state {
-            crate::idemlog::SideEffectState::Uncertain => Ok(ToolLifecyclePlanOutput {
-                action: PlanAction::Uncertain,
-                result: None,
-                error: Some(serde_json::json!({
-                    "error": "side effect is uncertain — the previous run may or may not have executed it. User resolution required.",
-                    "operation_id": entry.operation_id.clone(),
-                })),
-                operation_id: Some(entry.operation_id.clone()),
-            }),
-            crate::idemlog::SideEffectState::Committed => Ok(ToolLifecyclePlanOutput {
-                action: PlanAction::Replay,
-                result: Some(entry.result.clone()),
-                error: None,
-                operation_id: None,
-            }),
-            _ => Ok(ToolLifecyclePlanOutput {
-                action: PlanAction::Execute,
-                result: None,
-                error: None,
-                operation_id: None,
-            }),
+    if let Some(entry) = writer.get(&input.run_id, &input.tool_call_id)? {
+        let incoming_sha = crate::idemlog::args_sha256(&input.args);
+        if entry.args_sha256 != incoming_sha {
+            return Err(ShadowReadError::Parse(format!(
+                "identity_collision: operation_id {} already has args_sha256 {} but new args produce {}",
+                entry.operation_id, entry.args_sha256, incoming_sha
+            )));
         }
-    } else {
-        // 2. No committed/uncertain entry → fresh execution. Transition to
-        //    Planned then Executing atomically before Python runs the tool.
-        writer.record_planned(
-            &input.run_id,
-            &input.tool_call_id,
-            &input.tool_name,
-            &input.args,
-        )?;
-        writer.mark_executing(&input.run_id, &input.tool_call_id)?;
-        Ok(ToolLifecyclePlanOutput {
-            action: PlanAction::Execute,
-            result: None,
-            error: None,
-            operation_id: None,
-        })
+        match entry.state {
+            crate::idemlog::SideEffectState::Uncertain => {
+                return Ok(ToolLifecyclePlanOutput {
+                    action: PlanAction::Uncertain,
+                    result: None,
+                    error: Some(serde_json::json!({
+                        "error": "side effect is uncertain — the previous run may or may not have executed it. User resolution required.",
+                        "operation_id": entry.operation_id.clone(),
+                    })),
+                    operation_id: Some(entry.operation_id),
+                });
+            }
+            crate::idemlog::SideEffectState::Committed => {
+                return Ok(ToolLifecyclePlanOutput {
+                    action: PlanAction::Replay,
+                    result: Some(entry.result),
+                    error: None,
+                    operation_id: None,
+                });
+            }
+            crate::idemlog::SideEffectState::Executing => {
+                writer.mark_uncertain(&input.run_id, &input.tool_call_id)?;
+                return Ok(ToolLifecyclePlanOutput {
+                    action: PlanAction::Uncertain,
+                    result: None,
+                    error: Some(serde_json::json!({
+                        "error": "side effect is uncertain — a previous execution started but did not reach a durable terminal state. User resolution required.",
+                        "operation_id": entry.operation_id.clone(),
+                    })),
+                    operation_id: Some(entry.operation_id),
+                });
+            }
+            crate::idemlog::SideEffectState::Planned => {
+                writer.mark_executing(&input.run_id, &input.tool_call_id)?;
+                return Ok(ToolLifecyclePlanOutput {
+                    action: PlanAction::Execute,
+                    result: None,
+                    error: None,
+                    operation_id: None,
+                });
+            }
+            crate::idemlog::SideEffectState::Failed => {}
+        }
     }
+
+    writer.record_planned(
+        &input.run_id,
+        &input.tool_call_id,
+        &input.tool_name,
+        &input.args,
+    )?;
+    writer.mark_executing(&input.run_id, &input.tool_call_id)?;
+    Ok(ToolLifecyclePlanOutput {
+        action: PlanAction::Execute,
+        result: None,
+        error: None,
+        operation_id: None,
+    })
 }
 
 /// Input for an interruption lifecycle decision (ADR-037 / ADR-038).
@@ -352,6 +374,33 @@ mod tests {
         .unwrap();
         assert!(matches!(out.action, PlanAction::Uncertain));
         assert!(out.operation_id.is_some());
+    }
+
+    #[test]
+    fn executing_entry_becomes_uncertain_instead_of_reexecuting() {
+        let dir = tempdir().unwrap();
+        let db = dir.path().join("side_effects.db");
+        let writer = IdempotencyWriter::open(&db).unwrap();
+        let args = serde_json::json!({"path": "a.txt"});
+        writer
+            .record_planned("r-executing", "c-executing", "write_file", &args)
+            .unwrap();
+        writer.mark_executing("r-executing", "c-executing").unwrap();
+
+        let out = plan(
+            &writer,
+            &input(
+                db.to_str().unwrap(),
+                "r-executing",
+                "c-executing",
+                "write_file",
+                args,
+            ),
+        )
+        .unwrap();
+        assert!(matches!(out.action, PlanAction::Uncertain));
+        let entry = writer.get("r-executing", "c-executing").unwrap().unwrap();
+        assert_eq!(entry.state, crate::idemlog::SideEffectState::Uncertain);
     }
 
     #[test]

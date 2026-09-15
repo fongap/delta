@@ -1163,6 +1163,62 @@ impl RuntimeHost {
         Ok(())
     }
 
+    fn failure_after_ledger_event(
+        &self,
+        call: &ToolCall,
+        event_type: &str,
+        actor: &str,
+        payload: Value,
+        primary_error: impl Into<String>,
+    ) -> ToolResult {
+        let primary_error = primary_error.into();
+        match self.ledger_append(event_type, actor, payload) {
+            Ok(()) => ToolResult::failure(&call.id, primary_error),
+            Err(error) => ToolResult::failure(
+                &call.id,
+                format!("{primary_error}; failed to persist {event_type}: {error}"),
+            ),
+        }
+    }
+
+    fn mark_tool_uncertain(
+        &self,
+        authorities: &RuntimeAuthorities,
+        run_id: &str,
+        call: &ToolCall,
+        event_type: &str,
+        actor: &str,
+        payload: Value,
+    ) -> Result<(), String> {
+        {
+            let writer = authorities.idempotency.lock().unwrap();
+            writer.mark_uncertain(run_id, &call.id).map_err(|error| {
+                format!("failed to persist uncertain side-effect state: {error}")
+            })?;
+        }
+        self.ledger_append(event_type, actor, payload)
+            .map_err(|error| format!("failed to persist {event_type}: {error}"))
+    }
+
+    fn mark_tool_failed(
+        &self,
+        authorities: &RuntimeAuthorities,
+        run_id: &str,
+        call: &ToolCall,
+        failure_reason: &str,
+        event: (&str, &str, Value),
+    ) -> Result<(), String> {
+        let (event_type, actor, payload) = event;
+        {
+            let writer = authorities.idempotency.lock().unwrap();
+            writer
+                .mark_failed(run_id, &call.id, failure_reason)
+                .map_err(|error| format!("failed to persist failed side-effect state: {error}"))?;
+        }
+        self.ledger_append(event_type, actor, payload)
+            .map_err(|error| format!("failed to persist {event_type}: {error}"))
+    }
+
     fn finish_run_ledger(&self, result: &Result<String, String>) -> Result<(), String> {
         match result {
             Ok(status) if status == "completed" => {
@@ -1759,18 +1815,25 @@ impl RuntimeHost {
             return Some(ToolResult::failure(&call.id, error));
         }
         let inbox_id = if self.config.unattended {
-            match self.authorities.as_ref().and_then(|authorities| {
-                authorities
-                    .inbox
-                    .add_interaction(&self.session_id, &call.id, kind, &call.arguments)
-                    .ok()
-            }) {
-                Some(item) => Some(item.id),
-                None => {
+            let Some(authorities) = self.authorities.as_ref() else {
+                self.interactions.cancel(&call.id);
+                return Some(ToolResult::failure(
+                    &call.id,
+                    "inbox authority is unavailable",
+                ));
+            };
+            match authorities.inbox.add_interaction(
+                &self.session_id,
+                &call.id,
+                kind,
+                &call.arguments,
+            ) {
+                Ok(item) => Some(item.id),
+                Err(error) => {
                     self.interactions.cancel(&call.id);
                     return Some(ToolResult::failure(
                         &call.id,
-                        "inbox authority is unavailable",
+                        format!("failed to persist inbox interaction: {error}"),
                     ));
                 }
             }
@@ -1791,24 +1854,32 @@ impl RuntimeHost {
         loop {
             if self.cancel.load(Ordering::Acquire) {
                 self.interactions.cancel(&call.id);
-                let _ = self.ledger_append(
+                let primary = "run cancelled while user input was pending";
+                if let Err(error) = self.ledger_append(
                     "interaction.cancelled",
                     "user",
                     json!({"tool_call_id": call.id, "kind": kind}),
-                );
-                return Some(ToolResult::failure(
-                    &call.id,
-                    "run cancelled while user input was pending",
-                ));
+                ) {
+                    return Some(ToolResult::failure(
+                        &call.id,
+                        format!("{primary}; failed to persist interaction.cancelled: {error}"),
+                    ));
+                }
+                return Some(ToolResult::failure(&call.id, primary));
             }
             match receiver.recv_timeout(Duration::from_millis(25)) {
                 Ok(value) => {
                     self.set_runtime_state(RuntimeState::Running);
-                    let _ = self.ledger_append(
+                    if let Err(error) = self.ledger_append(
                         "interaction.resolved",
                         "user",
-                        json!({"tool_call_id": call.id, "kind": kind, "response": value}),
-                    );
+                        json!({"tool_call_id": call.id, "kind": kind, "response": value.clone()}),
+                    ) {
+                        return Some(ToolResult::failure(
+                            &call.id,
+                            format!("failed to persist interaction.resolved: {error}"),
+                        ));
+                    }
                     return Some(ToolResult::success(&call.id, value));
                 }
                 Err(mpsc::RecvTimeoutError::Timeout) => {}
@@ -1826,12 +1897,13 @@ impl RuntimeHost {
         let (_schema, metadata) = match self.tool_contract(call) {
             Ok(contract) => contract,
             Err(error) => {
-                let _ = self.ledger_append(
-                    "tool.failed",
-                    "runtime",
-                    json!({"tool_call_id": call.id, "tool": call.name, "stage": "schema", "error": error}),
-                );
-                return ToolResult::failure(&call.id, error);
+                return self.failure_after_ledger_event(
+                call,
+                "tool.failed",
+                "runtime",
+                json!({"tool_call_id": call.id, "tool": call.name, "stage": "schema", "error": &error}),
+                error,
+            );
             }
         };
         let (level, decision) = match self.policy_for(call, metadata) {
@@ -1848,12 +1920,12 @@ impl RuntimeHost {
             return ToolResult::failure(&call.id, error);
         }
         if let Err(error) = self.ledger_append(
-            "tool.proposed",
-            "model",
-            json!({"tool_call_id": call.id, "tool": call.name, "arguments": call.arguments, "level": format!("{level:?}")}),
-        ) {
-            return ToolResult::failure(&call.id, error);
-        }
+        "tool.proposed",
+        "model",
+        json!({"tool_call_id": call.id, "tool": call.name, "arguments": call.arguments, "level": format!("{level:?}")}),
+    ) {
+        return ToolResult::failure(&call.id, error);
+    }
 
         if !decision.allowed
             && self
@@ -1872,38 +1944,49 @@ impl RuntimeHost {
             }
         } else if !decision.allowed {
             if !decision.needs_user {
-                let _ = self.record_approval(
+                if let Err(error) = self.record_approval(
                     call,
                     "policy_denied",
                     "denied",
                     None,
                     &decision.reason,
                     level,
-                );
-                let _ = self.ledger_append(
-                    "tool.failed",
-                    "runtime",
-                    json!({"tool_call_id": call.id, "tool": call.name, "stage": "policy", "error": &decision.reason}),
-                );
-                return ToolResult::failure(&call.id, decision.reason);
+                ) {
+                    return ToolResult::failure(
+                        &call.id,
+                        format!(
+                            "{}; failed to persist policy denial: {error}",
+                            decision.reason
+                        ),
+                    );
+                }
+                return self.failure_after_ledger_event(
+                call,
+                "tool.failed",
+                "runtime",
+                json!({"tool_call_id": call.id, "tool": call.name, "stage": "policy", "error": &decision.reason}),
+                decision.reason,
+            );
             }
             match self.require_approval(call, &decision.reason, level) {
                 Ok(approval) if approval.is_approved() => {}
                 Ok(_) => {
-                    let _ = self.ledger_append(
+                    return self.failure_after_ledger_event(
+                        call,
                         "tool.cancelled",
                         "user",
                         json!({"tool_call_id": call.id, "tool": call.name, "reason": "denied"}),
+                        "tool call denied by user",
                     );
-                    return ToolResult::failure(&call.id, "tool call denied by user");
                 }
                 Err(error) => {
-                    let _ = self.ledger_append(
+                    return self.failure_after_ledger_event(
+                        call,
                         "tool.cancelled",
                         "runtime",
                         json!({"tool_call_id": call.id, "tool": call.name, "reason": &error}),
+                        error,
                     );
-                    return ToolResult::failure(&call.id, error);
                 }
             }
         } else if let Err(error) = self.record_approval(
@@ -1947,30 +2030,37 @@ impl RuntimeHost {
         match plan.action {
             PlanAction::Replay => {
                 let output = plan.result.unwrap_or_else(|| json!({"ok": true}));
-                let _ = self.ledger_append(
+                if let Err(error) = self.ledger_append(
                     "tool.replayed",
                     "runtime",
                     json!({"tool_call_id": call.id, "tool": call.name}),
+                ) {
+                    return ToolResult::failure(
+                    &call.id,
+                    format!("committed result exists but tool.replayed could not be persisted: {error}"),
                 );
+                }
                 return ToolResult::success(&call.id, output);
             }
             PlanAction::Uncertain => {
-                let _ = self.ledger_append(
-                    "tool.uncertain",
-                    "runtime",
-                    json!({"tool_call_id": call.id, "tool": call.name, "operation_id": plan.operation_id}),
-                );
+                let uncertainty = plan
+                    .error
+                    .as_ref()
+                    .and_then(|value| value.get("error"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("previous tool result is uncertain")
+                    .to_string();
+                if let Err(error) = self.ledger_append(
+                "tool.uncertain",
+                "runtime",
+                json!({"tool_call_id": call.id, "tool": call.name, "operation_id": plan.operation_id}),
+            ) {
                 return ToolResult::failure(
                     &call.id,
-                    plan.error
-                        .and_then(|value| {
-                            value
-                                .get("error")
-                                .and_then(Value::as_str)
-                                .map(str::to_string)
-                        })
-                        .unwrap_or_else(|| "previous tool result is uncertain".to_string()),
+                    format!("{uncertainty}; failed to persist tool.uncertain: {error}"),
                 );
+            }
+                return ToolResult::failure(&call.id, uncertainty);
             }
             PlanAction::Execute => {}
         }
@@ -1989,13 +2079,16 @@ impl RuntimeHost {
         ) {
             return ToolResult::failure(&call.id, error);
         }
+
+        let progress_error = Arc::new(Mutex::new(None::<String>));
+        let progress_error_sink = progress_error.clone();
         let progress_authorities = authorities.clone();
         let progress_run_id = run_id.clone();
         let progress_workspace = self.config.workspace.clone().unwrap_or_default();
         let progress_tool_call_id = call.id.clone();
         let progress_tool = call.name.clone();
         let progress = Arc::new(move |frame: CapabilityProgress| {
-            let _ = progress_authorities.ledger.lock().unwrap().append(
+            let write_result = progress_authorities.ledger.lock().unwrap().append(
                 &progress_run_id,
                 "tool.progress",
                 "worker",
@@ -2010,6 +2103,12 @@ impl RuntimeHost {
                 }),
                 &progress_workspace,
             );
+            if let Err(error) = write_result {
+                let mut current = progress_error_sink.lock().unwrap();
+                if current.is_none() {
+                    *current = Some(error.to_string());
+                }
+            }
         });
         let context = ToolExecutionContext {
             session_id: self.session_id.clone(),
@@ -2020,63 +2119,96 @@ impl RuntimeHost {
             progress,
         };
         let mut result = self.tool_executor.execute(call, &context);
+
+        if let Some(progress_error) = progress_error.lock().unwrap().clone() {
+            let primary = format!(
+            "tool progress ledger persistence failed after execution started; outcome is uncertain: {progress_error}"
+        );
+            if let Err(error) = self.mark_tool_uncertain(
+                authorities,
+                &run_id,
+                call,
+                "tool.uncertain",
+                "runtime",
+                json!({
+                    "tool_call_id": call.id,
+                    "tool": call.name,
+                    "reason": "progress_persistence_failed",
+                    "error": &progress_error
+                }),
+            ) {
+                return ToolResult::failure(&call.id, format!("{primary}; {error}"));
+            }
+            return ToolResult::failure(&call.id, primary);
+        }
+
         if self.cancel.load(Ordering::Acquire) {
-            let _ = authorities
-                .idempotency
-                .lock()
-                .unwrap()
-                .mark_uncertain(&run_id, &call.id);
-            let _ = self.ledger_append(
+            let primary = "tool cancelled; side effect is uncertain";
+            if let Err(error) = self.mark_tool_uncertain(
+                authorities,
+                &run_id,
+                call,
                 "tool.cancelled",
                 "user",
                 json!({"tool_call_id": call.id, "tool": call.name, "state": "uncertain"}),
-            );
-            return ToolResult::failure(&call.id, "tool cancelled; side effect is uncertain");
+            ) {
+                return ToolResult::failure(&call.id, format!("{primary}; {error}"));
+            }
+            return ToolResult::failure(&call.id, primary);
         }
+
         if let Some(error) = result.error.clone() {
             let event_type = match result.state {
                 ToolExitState::TimedOut => "tool.timed_out",
                 ToolExitState::Cancelled => "tool.cancelled",
                 ToolExitState::Completed | ToolExitState::Failed => "tool.failed",
             };
-            if matches!(
+            let payload = json!({
+                "tool_call_id": call.id,
+                "tool": call.name,
+                "error": &error,
+                "state": format!("{:?}", result.state).to_lowercase()
+            });
+            let persisted = if matches!(
                 result.state,
                 ToolExitState::TimedOut | ToolExitState::Cancelled
             ) {
-                let _ = authorities
-                    .idempotency
-                    .lock()
-                    .unwrap()
-                    .mark_uncertain(&run_id, &call.id);
+                self.mark_tool_uncertain(authorities, &run_id, call, event_type, "runtime", payload)
             } else {
-                let _ = authorities
-                    .idempotency
-                    .lock()
-                    .unwrap()
-                    .mark_failed(&run_id, &call.id, &error);
+                self.mark_tool_failed(
+                    authorities,
+                    &run_id,
+                    call,
+                    &error,
+                    (event_type, "runtime", payload),
+                )
+            };
+            if let Err(persistence_error) = persisted {
+                return ToolResult::failure(&call.id, format!("{error}; {persistence_error}"));
             }
-            let _ = self.ledger_append(
-                event_type,
-                "runtime",
-                json!({"tool_call_id": call.id, "tool": call.name, "error": error, "state": format!("{:?}", result.state).to_lowercase()}),
-            );
             return result;
         }
 
         let artifacts = match self.formalize_artifacts(&result.staged_artifacts) {
             Ok(artifacts) => artifacts,
             Err(error) => {
-                let _ = authorities
-                    .idempotency
-                    .lock()
-                    .unwrap()
-                    .mark_failed(&run_id, &call.id, &error);
-                let _ = self.ledger_append(
-                    "tool.failed",
-                    "runtime",
-                    json!({"tool_call_id": call.id, "tool": call.name, "stage": "artifact", "error": &error}),
+                let primary = format!(
+                "{error}; capability execution completed but artifact finalization did not reach a trusted terminal state"
+            );
+                if let Err(persistence_error) = self.mark_tool_uncertain(
+                authorities,
+                &run_id,
+                call,
+                "tool.uncertain",
+                "runtime",
+                json!({"tool_call_id": call.id, "tool": call.name, "stage": "artifact", "error": &error}),
+            ) {
+                return ToolResult::failure(
+                    &call.id,
+                    format!("{primary}; {persistence_error}"),
                 );
-                return ToolResult::failure(&call.id, error);
+            }
+                return ToolResult::failure(&call.id, primary);
             }
         };
         let validation = match self
@@ -2087,30 +2219,42 @@ impl RuntimeHost {
             }
             Ok(validation) => {
                 let error = "tool artifact validation failed".to_string();
-                let _ = authorities
-                    .idempotency
-                    .lock()
-                    .unwrap()
-                    .mark_failed(&run_id, &call.id, &error);
-                let _ = self.ledger_append(
-                    "tool.failed",
-                    "runtime",
-                    json!({"tool_call_id": call.id, "tool": call.name, "error": error, "validation": validation}),
+                let primary = format!(
+                "{error}; capability execution completed but validation did not reach a trusted terminal state"
+            );
+                if let Err(persistence_error) = self.mark_tool_uncertain(
+                authorities,
+                &run_id,
+                call,
+                "tool.uncertain",
+                "runtime",
+                json!({"tool_call_id": call.id, "tool": call.name, "stage": "validation", "error": &error, "validation": validation}),
+            ) {
+                return ToolResult::failure(
+                    &call.id,
+                    format!("{primary}; {persistence_error}"),
                 );
-                return ToolResult::failure(&call.id, error);
+            }
+                return ToolResult::failure(&call.id, primary);
             }
             Err(error) => {
-                let _ = authorities
-                    .idempotency
-                    .lock()
-                    .unwrap()
-                    .mark_failed(&run_id, &call.id, &error);
-                let _ = self.ledger_append(
-                    "tool.failed",
-                    "runtime",
-                    json!({"tool_call_id": call.id, "tool": call.name, "stage": "validation", "error": &error}),
+                let primary = format!(
+                "{error}; capability execution completed but validation persistence did not reach a trusted terminal state"
+            );
+                if let Err(persistence_error) = self.mark_tool_uncertain(
+                authorities,
+                &run_id,
+                call,
+                "tool.uncertain",
+                "runtime",
+                json!({"tool_call_id": call.id, "tool": call.name, "stage": "validation", "error": &error}),
+            ) {
+                return ToolResult::failure(
+                    &call.id,
+                    format!("{primary}; {persistence_error}"),
                 );
-                return ToolResult::failure(&call.id, error);
+            }
+                return ToolResult::failure(&call.id, primary);
             }
         };
         if let Some(output) = result.output.as_object_mut() {
@@ -2126,7 +2270,23 @@ impl RuntimeHost {
             &call.arguments,
             &result.output,
         ) {
-            return ToolResult::failure(&call.id, error.to_string());
+            let primary = format!(
+            "tool result commit failed after capability execution; outcome is uncertain: {error}"
+        );
+            if let Err(persistence_error) = self.mark_tool_uncertain(
+            authorities,
+            &run_id,
+            call,
+            "tool.uncertain",
+            "runtime",
+            json!({"tool_call_id": call.id, "tool": call.name, "reason": "idempotency_commit_failed", "error": error.to_string()}),
+        ) {
+            return ToolResult::failure(
+                &call.id,
+                format!("{primary}; {persistence_error}"),
+            );
+        }
+            return ToolResult::failure(&call.id, primary);
         }
         if let Err(error) = self.ledger_append(
             "tool.completed",
@@ -2990,6 +3150,26 @@ mod tests {
         }
     }
 
+    struct ProgressLedgerFailureExecutor {
+        ledger_db: PathBuf,
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl ToolExecutor for ProgressLedgerFailureExecutor {
+        fn execute(&self, call: &ToolCall, context: &ToolExecutionContext) -> ToolResult {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let connection = rusqlite::Connection::open(&self.ledger_db).unwrap();
+            connection.execute_batch("DROP TABLE run_events").unwrap();
+            (context.progress)(CapabilityProgress {
+                job_id: "job-progress-failure".to_string(),
+                fraction: 0.5,
+                stage: Some("working".to_string()),
+                message: Some("halfway".to_string()),
+            });
+            ToolResult::success(&call.id, json!({"ok": true}))
+        }
+    }
+
     fn tool_contract(risk: &str, requires_approval: bool) -> Value {
         json!([{
             "type": "function",
@@ -3068,6 +3248,95 @@ mod tests {
             .list(10, Some("session-1"), None, Some("write_report"))
             .unwrap();
         assert_eq!(approvals[0]["status"], "auto_approved");
+    }
+
+    #[test]
+    fn post_execution_artifact_failure_becomes_uncertain_and_never_reexecutes() {
+        let temp = tempfile::tempdir().unwrap();
+        let workspace = temp.path().join("workspace");
+        let staging = workspace.join(".delta/staging/run-postprocess");
+        fs::create_dir_all(&staging).unwrap();
+        let escaped = workspace.join("escaped.md");
+        fs::write(&escaped, "candidate").unwrap();
+        let authorities = RuntimeAuthorities::open(temp.path().join("state")).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut host = RuntimeHost::new(
+            "session-postprocess",
+            RuntimeConfig {
+                workspace: Some(workspace.to_string_lossy().to_string()),
+                ..RuntimeConfig::default()
+            },
+        )
+        .with_authorities(authorities.clone())
+        .with_tools(tool_contract("low", false))
+        .with_tool_executor(Arc::new(CountingExecutor {
+            calls: calls.clone(),
+            staged: Some(StagedArtifact {
+                staging_path: escaped,
+                relative_path: "reports/final.md".to_string(),
+                kind: "markdown".to_string(),
+                incomplete: false,
+            }),
+        }));
+        host.set_run_id("run-postprocess".to_string());
+        let call = ToolCall {
+            id: "call-postprocess".to_string(),
+            name: "write_report".to_string(),
+            arguments: json!({"path": "reports/final.md"}),
+        };
+
+        let first = host.execute_tool_call(&call);
+        assert!(first.error.is_some());
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let entry = authorities
+            .idempotency
+            .lock()
+            .unwrap()
+            .get("run-postprocess", "call-postprocess")
+            .unwrap()
+            .unwrap();
+        assert_eq!(entry.state, crate::idemlog::SideEffectState::Uncertain);
+
+        let second = host.execute_tool_call(&call);
+        assert!(second
+            .error
+            .as_deref()
+            .is_some_and(|error| error.contains("uncertain")));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn progress_ledger_failure_marks_side_effect_uncertain() {
+        let temp = tempfile::tempdir().unwrap();
+        let authorities = RuntimeAuthorities::open(temp.path()).unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut host = RuntimeHost::new("session-progress-failure", RuntimeConfig::default())
+            .with_authorities(authorities.clone())
+            .with_tools(tool_contract("low", false))
+            .with_tool_executor(Arc::new(ProgressLedgerFailureExecutor {
+                ledger_db: temp.path().join("run_events.db"),
+                calls: calls.clone(),
+            }));
+        host.set_run_id("run-progress-failure".to_string());
+
+        let result = host.execute_tool_call(&ToolCall {
+            id: "call-progress-failure".to_string(),
+            name: "write_report".to_string(),
+            arguments: json!({"path": "report.md"}),
+        });
+        assert!(result
+            .error
+            .as_deref()
+            .is_some_and(|error| { error.contains("tool progress ledger persistence failed") }));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let entry = authorities
+            .idempotency
+            .lock()
+            .unwrap()
+            .get("run-progress-failure", "call-progress-failure")
+            .unwrap()
+            .unwrap();
+        assert_eq!(entry.state, crate::idemlog::SideEffectState::Uncertain);
     }
 
     #[test]
