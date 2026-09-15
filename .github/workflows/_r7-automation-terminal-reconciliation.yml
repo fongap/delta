@@ -1,0 +1,677 @@
+name: R7 Automation Terminal Reconciliation
+
+on:
+  push:
+    branches:
+      - codex/r7-automation-terminal-reconciliation
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: codex/r7-automation-terminal-reconciliation
+
+      - name: Apply terminal reconciliation patch
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          runtime_path = Path('core/runtime-native/src/runtime.rs')
+          control_path = Path('core/runtime-native/src/control_plane.rs')
+          taskstore_path = Path('core/runtime-native/src/taskstore.rs')
+          automation_path = Path('core/runtime-native/src/automation.rs')
+          ipc_path = Path('apps/desktop/src-tauri/src/runtime_ipc.rs')
+
+          runtime = runtime_path.read_text()
+          control = control_path.read_text()
+          taskstore = taskstore_path.read_text()
+          automation = automation_path.read_text()
+          ipc = ipc_path.read_text()
+
+          def once(text, old, new, label):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected one target, got {count}')
+              return text.replace(old, new, 1)
+
+          # Runtime error events distinguish transient retry notices from terminal failures.
+          runtime = once(
+              runtime,
+              '''    Error {
+                  error: String,
+                  error_type: String,
+              },''',
+              '''    Error {
+                  error: String,
+                  error_type: String,
+                  terminal: bool,
+              },''',
+              'RuntimeEvent Error shape',
+          )
+          runtime = once(
+              runtime,
+              '''            Self::Error { error, error_type } => {
+                  ("error", json!({"error": error, "error_type": error_type}))
+              }''',
+              '''            Self::Error {
+                  error,
+                  error_type,
+                  terminal,
+              } => (
+                  "error",
+                  json!({"error": error, "error_type": error_type, "terminal": terminal}),
+              ),''',
+              'RuntimeEvent Error envelope',
+          )
+          runtime = once(
+              runtime,
+              '''                        self.emit_event(RuntimeEvent::Error {
+                              error: "Transient model failure - retrying.".to_string(),
+                              error_type: classify_transient_error(&e),
+                          });''',
+              '''                        self.emit_event(RuntimeEvent::Error {
+                              error: "Transient model failure - retrying.".to_string(),
+                              error_type: classify_transient_error(&e),
+                              terminal: false,
+                          });''',
+              'retry error terminal marker',
+          )
+          runtime = once(
+              runtime,
+              '''                    self.emit_event(RuntimeEvent::Error {
+                          error: e.clone(),
+                          error_type: classify_transient_error(&e),
+                      });''',
+              '''                    self.emit_event(RuntimeEvent::Error {
+                          error: e.clone(),
+                          error_type: classify_transient_error(&e),
+                          terminal: true,
+                      });''',
+              'terminal error marker',
+          )
+
+          # Control plane exposes durable recovery evidence without transferring Automation authority.
+          marker = '''pub fn set_unattended(
+              state_dir: &Path,
+              session_id: &str,
+              unattended: bool,
+          ) -> Result<Value, ShadowReadError> {'''
+          recovery_fn = '''pub fn get_session_recovery(
+              state_dir: &Path,
+              session_id: &str,
+          ) -> Result<Option<Value>, ShadowReadError> {
+              if !safe_session_id(session_id) {
+                  return Err(ShadowReadError::Parse("unsafe session id".to_string()));
+              }
+              let db_path = state_dir.join("core.db");
+              if !db_path.exists() {
+                  return Ok(None);
+              }
+              let conn = open_conn(&db_path)?;
+              let mut stmt = conn.prepare("SELECT recovery FROM sessions WHERE session_id = ?1")?;
+              let mut rows = stmt.query(params![session_id])?;
+              let Some(row) = rows.next()? else {
+                  return Ok(None);
+              };
+              let raw: Option<String> = row.get(0)?;
+              raw.filter(|value| !value.trim().is_empty())
+                  .map(|value| serde_json::from_str::<Value>(&value).map_err(ShadowReadError::from))
+                  .transpose()
+          }
+
+          '''
+          at = control.find(marker)
+          if at < 0:
+              raise SystemExit('control recovery insertion marker missing')
+          control = control[:at] + recovery_fn + control[at:]
+
+          # TaskStore can enumerate unfinished runs and complete_run is idempotent after finished_at is durable.
+          runs_end = '''    /// Atomically complete a run and update task stats.
+          ///'''
+          unfinished = '''    /// List runs that have not reached a durable terminal record yet.
+              pub fn unfinished_runs(&self) -> Result<Vec<TaskRunEntry>, ShadowReadError> {
+              let mut stmt = self.conn.prepare(
+                  "SELECT run_id, task_id, started_at, data, workspace FROM task_runs ORDER BY started_at",
+              )?;
+              let rows = stmt.query_map([], |row| {
+                  let data_str: String = row.get(3)?;
+                  let data: Value = serde_json::from_str(&data_str).unwrap_or(Value::Null);
+                  let workspace: Option<String> = row.get(4)?;
+                  Ok(TaskRunEntry {
+                      run_id: row.get(0)?,
+                      task_id: row.get(1)?,
+                      started_at: row.get(2)?,
+                      data,
+                      workspace: workspace.unwrap_or_default(),
+                  })
+              })?;
+              let mut out = Vec::new();
+              for row in rows {
+                  let row = row?;
+                  let finished = row
+                      .data
+                      .get("finished_at")
+                      .is_some_and(|value| !value.is_null());
+                  let status = row
+                      .data
+                      .get("status")
+                      .and_then(Value::as_str)
+                      .unwrap_or_default();
+                  if !finished && status == "running" {
+                      out.push(row);
+                  }
+              }
+              Ok(out)
+          }
+
+          '''
+          at = taskstore.find(runs_end)
+          if at < 0:
+              raise SystemExit('unfinished_runs insertion marker missing')
+          taskstore = taskstore[:at] + unfinished + taskstore[at:]
+
+          taskstore = once(
+              taskstore,
+              '''        let tx = self.conn.transaction()?;
+
+                  // 1. Insert/replace the run
+              tx.execute(''',
+              '''        let tx = self.conn.transaction()?;
+
+                  // A terminal run may be observed more than once by immediate finalization
+              // and restart reconciliation. Once finished_at is durable, completion is a no-op
+              // so run_count / max_runs state can never be applied twice.
+              let already_finished = {
+                  let mut stmt = tx.prepare("SELECT data FROM task_runs WHERE run_id = ?")?;
+                  let mut rows = stmt.query(params![run_id])?;
+                  if let Some(row) = rows.next()? {
+                      let existing: String = row.get(0)?;
+                      let existing = serde_json::from_str::<Value>(&existing).unwrap_or(Value::Null);
+                      existing
+                          .get("finished_at")
+                          .is_some_and(|value| !value.is_null())
+                  } else {
+                      false
+                  }
+              };
+              if already_finished {
+                  let task_data: String = tx.query_row(
+                      "SELECT data FROM scheduled_tasks WHERE id = ?",
+                      params![task_id],
+                      |row| row.get(0),
+                  )?;
+                  let task_json = serde_json::from_str::<Value>(&task_data)?;
+                  tx.commit()?;
+                  return Ok(task_json);
+              }
+
+                  // 1. Insert/replace the run
+              tx.execute(''',
+              'complete_run idempotency',
+          )
+
+          task_test_marker = '''    #[test]
+              fn complete_run_non_exhausted_uses_python_next_run() {'''
+          task_test = '''    #[test]
+              fn complete_run_is_idempotent_after_terminal_persistence() {
+              let mut store = TaskStore::open_in_memory().unwrap();
+              store
+                  .save_task(
+                      "task_1",
+                      true,
+                      None,
+                      r#"{"id":"task_1","run_count":0,"max_runs":0}"#,
+                  )
+                  .unwrap();
+              store
+                  .add_run(
+                      "run_1",
+                      "task_1",
+                      1000.0,
+                      r#"{"run_id":"run_1","status":"running","finished_at":null}"#,
+                      "",
+                  )
+                  .unwrap();
+              let terminal = r#"{"run_id":"run_1","status":"completed","finished_at":1100.0}"#;
+              store
+                  .complete_run("run_1", "task_1", 1000.0, terminal, "", 1100.0, None)
+                  .unwrap();
+              store
+                  .complete_run("run_1", "task_1", 1000.0, terminal, "", 1200.0, None)
+                  .unwrap();
+
+              let task = store.get_task("task_1").unwrap().unwrap();
+              assert_eq!(task.data["run_count"], 1);
+              let run = store.find_run("run_1").unwrap().unwrap();
+              assert_eq!(run.data["status"], "completed");
+              assert_eq!(run.data["finished_at"], 1100.0);
+          }
+
+          '''
+          at = taskstore.find(task_test_marker)
+          if at < 0:
+              raise SystemExit('taskstore idempotency test marker missing')
+          taskstore = taskstore[:at] + task_test + taskstore[at:]
+
+          # Automation retains sole terminal authority; transcript recovery is compensation evidence only.
+          automation = once(
+              automation,
+              '''pub struct AutomationStore {
+              tasks: TaskStore,
+              db_path: PathBuf,
+          }''',
+              '''pub struct AutomationStore {
+              tasks: TaskStore,
+              db_path: PathBuf,
+              state_dir: PathBuf,
+          }''',
+              'AutomationStore state_dir field',
+          )
+          automation = once(
+              automation,
+              '''    pub fn open(state_dir: impl AsRef<Path>) -> Result<Self, ShadowReadError> {
+                  std::fs::create_dir_all(state_dir.as_ref())?;
+                  let db_path = state_dir.as_ref().join("automation.db");
+                  Ok(Self {
+                      tasks: TaskStore::open(&db_path)?,
+                      db_path,
+                  })
+              }''',
+              '''    pub fn open(state_dir: impl AsRef<Path>) -> Result<Self, ShadowReadError> {
+                  let state_dir = state_dir.as_ref().to_path_buf();
+                  std::fs::create_dir_all(&state_dir)?;
+                  let db_path = state_dir.join("automation.db");
+                  Ok(Self {
+                      tasks: TaskStore::open(&db_path)?,
+                      db_path,
+                      state_dir,
+                  })
+              }''',
+              'AutomationStore open',
+          )
+
+          finalize_marker = '''    pub fn finalize_session(
+              &mut self,
+              session_id: &str,
+              status: &str,
+          ) -> Result<Value, ShadowReadError> {'''
+          reconcile_methods = '''    pub fn finalize_recovery(
+              &mut self,
+              session_id: &str,
+              recovery: &Value,
+          ) -> Result<Value, ShadowReadError> {
+              let Some(status) = terminal_status(recovery) else {
+                  return Ok(json!({"ok": false, "error": "runtime recovery is not terminal"}));
+              };
+              self.finalize_session(session_id, &status)
+          }
+
+              pub fn reconcile_terminal_sessions(&mut self) -> Result<Value, ShadowReadError> {
+              let runs = self.tasks.unfinished_runs()?;
+              let mut reconciled = 0usize;
+              let mut pending = 0usize;
+              for run in runs {
+                  let session_id = run
+                      .data
+                      .get("session_id")
+                      .and_then(Value::as_str)
+                      .map(str::to_string)
+                      .unwrap_or_else(|| format!("__run__{}", run.run_id));
+                  let Some(recovery) =
+                      crate::control_plane::get_session_recovery(&self.state_dir, &session_id)?
+                  else {
+                      pending += 1;
+                      continue;
+                  };
+                  if terminal_status(&recovery).is_none() {
+                      pending += 1;
+                      continue;
+                  }
+                  let result = self.finalize_recovery(&session_id, &recovery)?;
+                  if result.get("ok").and_then(Value::as_bool) == Some(true) {
+                      reconciled += 1;
+                  } else {
+                      pending += 1;
+                  }
+              }
+              Ok(json!({"ok": true, "reconciled": reconciled, "pending": pending}))
+          }
+
+          '''
+          at = automation.find(finalize_marker)
+          if at < 0:
+              raise SystemExit('automation reconcile insertion marker missing')
+          automation = automation[:at] + reconcile_methods + automation[at:]
+
+          helper_marker = '''fn object_or_empty(value: Value) -> Map<String, Value> {'''
+          terminal_helper = '''fn terminal_status(recovery: &Value) -> Option<String> {
+              match recovery.get("event").and_then(Value::as_str) {
+                  Some("turn_end") => recovery
+                      .get("payload")
+                      .and_then(|payload| payload.get("status"))
+                      .and_then(Value::as_str)
+                      .map(str::to_string),
+                  Some("interrupted") => Some("interrupted".to_string()),
+                  Some("error")
+                      if recovery
+                          .get("payload")
+                          .and_then(|payload| payload.get("terminal"))
+                          .and_then(Value::as_bool)
+                          == Some(true) =>
+                  {
+                      Some("failed".to_string())
+                  }
+                  _ => None,
+              }
+          }
+
+          '''
+          at = automation.find(helper_marker)
+          if at < 0:
+              raise SystemExit('automation terminal helper marker missing')
+          automation = automation[:at] + terminal_helper + automation[at:]
+
+          automation_test_marker = '''    #[test]
+              fn scheduled_claim_is_single_shot_for_due_one_time_task() {'''
+          automation_tests = '''    #[test]
+              fn terminal_reconciliation_is_restart_safe_and_idempotent() {
+              let temp = tempfile::tempdir().unwrap();
+              let mut store = AutomationStore::open(temp.path()).unwrap();
+              let created = store
+                  .create(&json!({"title": "Recover", "instructions": "Run"}))
+                  .unwrap();
+              let task_id = created["task"]["id"].as_str().unwrap().to_string();
+              let prepared = store.prepare_run(&task_id).unwrap();
+              let session_id = prepared["session_id"].as_str().unwrap().to_string();
+
+              crate::control_plane::ensure_session(temp.path(), &session_id, None, "model")
+                  .unwrap();
+              crate::control_plane::record_runtime_event(
+                  temp.path(),
+                  &json!({
+                      "type": "turn_end",
+                      "version": 1,
+                      "sessionId": session_id,
+                      "sequence": 1,
+                      "payload": {"status": "completed", "iterations": 1}
+                  }),
+              )
+              .unwrap();
+
+              let first = store.reconcile_terminal_sessions().unwrap();
+              assert_eq!(first["reconciled"], 1);
+              let after_first = store.get(&task_id).unwrap();
+              assert_eq!(after_first["task"]["run_count"], 1);
+              assert_eq!(after_first["runs"][0]["status"], "completed");
+
+              let second = store.reconcile_terminal_sessions().unwrap();
+              assert_eq!(second["reconciled"], 0);
+              let after_second = store.get(&task_id).unwrap();
+              assert_eq!(after_second["task"]["run_count"], 1);
+          }
+
+              #[test]
+              fn transient_error_recovery_does_not_finalize_automation() {
+              let temp = tempfile::tempdir().unwrap();
+              let mut store = AutomationStore::open(temp.path()).unwrap();
+              let created = store
+                  .create(&json!({"title": "Retry", "instructions": "Run"}))
+                  .unwrap();
+              let task_id = created["task"]["id"].as_str().unwrap().to_string();
+              let prepared = store.prepare_run(&task_id).unwrap();
+              let session_id = prepared["session_id"].as_str().unwrap().to_string();
+              crate::control_plane::ensure_session(temp.path(), &session_id, None, "model")
+                  .unwrap();
+              crate::control_plane::record_runtime_event(
+                  temp.path(),
+                  &json!({
+                      "type": "error",
+                      "version": 1,
+                      "sessionId": session_id,
+                      "sequence": 1,
+                      "payload": {"error": "retrying", "error_type": "transient_5xx", "terminal": false}
+                  }),
+              )
+              .unwrap();
+
+              let result = store.reconcile_terminal_sessions().unwrap();
+              assert_eq!(result["reconciled"], 0);
+              assert_eq!(result["pending"], 1);
+              let state = store.get(&task_id).unwrap();
+              assert_eq!(state["runs"][0]["status"], "running");
+              assert_eq!(state["task"]["run_count"], 0);
+          }
+
+          '''
+          at = automation.find(automation_test_marker)
+          if at < 0:
+              raise SystemExit('automation tests insertion marker missing')
+          automation = automation[:at] + automation_tests + automation[at:]
+
+          # Desktop: after transcript persistence, Automation finalization is compensatable,
+          # not part of EventSink success. All terminal event types are handled immediately.
+          old_sink = '''impl EventSink for TauriEventSink {
+              fn emit(&self, frame: Value) -> Result<(), String> {
+                  delta_runtime_native::control_plane::record_runtime_event(&self.state_dir, &frame)
+                      .map_err(|error| format!("persist runtime event: {error}"))?;
+                  if frame.get("type").and_then(Value::as_str) == Some("turn_end") {
+                      if let (Some(session_id), Some(status)) = (
+                          frame.get("sessionId").and_then(Value::as_str),
+                          frame
+                              .get("payload")
+                              .and_then(|payload| payload.get("status"))
+                              .and_then(Value::as_str),
+                      ) {
+                          if session_id.starts_with("__run__") {
+                              let _ = self
+                                  .automations
+                                  .lock()
+                                  .unwrap()
+                                  .finalize_session(session_id, status);
+                          }
+                      }
+                  }
+                  let _ = self.app.emit("delta-runtime-event", frame);
+                  Ok(())
+              }
+          }'''
+          new_sink = '''impl EventSink for TauriEventSink {
+              fn emit(&self, frame: Value) -> Result<(), String> {
+                  delta_runtime_native::control_plane::record_runtime_event(&self.state_dir, &frame)
+                      .map_err(|error| format!("persist runtime event: {error}"))?;
+                  let event_type = frame.get("type").and_then(Value::as_str).unwrap_or_default();
+                  if matches!(event_type, "turn_end" | "interrupted" | "error") {
+                      if let Some(session_id) = frame
+                          .get("sessionId")
+                          .and_then(Value::as_str)
+                          .filter(|session_id| session_id.starts_with("__run__"))
+                      {
+                          let recovery = json!({
+                              "event": event_type,
+                              "payload": frame.get("payload").cloned().unwrap_or_else(|| json!({})),
+                          });
+                          match self
+                              .automations
+                              .lock()
+                              .unwrap()
+                              .finalize_recovery(session_id, &recovery)
+                          {
+                              Ok(result)
+                                  if result.get("ok").and_then(Value::as_bool) == Some(true) => {}
+                              Ok(_) => {}
+                              Err(error) => eprintln!(
+                                  "automation finalization deferred for {session_id}: {error}"
+                              ),
+                          }
+                      }
+                  }
+                  let _ = self.app.emit("delta-runtime-event", frame);
+                  Ok(())
+              }
+          }'''
+          ipc = once(ipc, old_sink, new_sink, 'TauriEventSink reconciliation')
+
+          old_scheduler_head = '''        .spawn(move || loop {
+                  let state = app.state::<RuntimeRegistry>();
+                  let runs = state
+                      .automations
+                      .lock()
+                      .unwrap()
+                      .claim_due_runs()
+                      .unwrap_or_default();
+                  for run in runs {'''
+          new_scheduler_head = '''        .spawn(move || loop {
+                  let state = app.state::<RuntimeRegistry>();
+                  let runs = {
+                      let mut automations = state.automations.lock().unwrap();
+                      if let Err(error) = automations.reconcile_terminal_sessions() {
+                          eprintln!("automation terminal reconciliation failed: {error}");
+                      }
+                      match automations.claim_due_runs() {
+                          Ok(runs) => runs,
+                          Err(error) => {
+                              eprintln!("automation scheduler claim failed: {error}");
+                              Vec::new()
+                          }
+                      }
+                  };
+                  for run in runs {'''
+          ipc = once(ipc, old_scheduler_head, new_scheduler_head, 'scheduler reconciliation head')
+
+          old_accepted = '''                let accepted = start_runtime(
+                      &app,
+                      state.inner(),
+                      session_id.clone(),
+                      model_id,
+                      run.get("prompt")
+                          .and_then(Value::as_str)
+                          .unwrap_or_default()
+                          .to_string(),
+                      run.get("workspace")
+                          .and_then(Value::as_str)
+                          .map(str::to_string),
+                      None,
+                      None,
+                      Some("unattended".to_string()),
+                      None,
+                      None,
+                      Some(json!({"automation_id": run.get("task_id"), "trigger": "scheduled"})),
+                  );'''
+          new_accepted = '''                let workspace = run
+                      .get("workspace")
+                      .and_then(Value::as_str)
+                      .map(str::to_string);
+                  let session_ready = delta_runtime_native::control_plane::ensure_session(
+                      &state_dir(),
+                      &session_id,
+                      workspace.as_deref().filter(|value| !value.is_empty()),
+                      &model_id,
+                  );
+                  let accepted = match session_ready {
+                      Ok(_) => start_runtime(
+                          &app,
+                          state.inner(),
+                          session_id.clone(),
+                          model_id,
+                          run.get("prompt")
+                              .and_then(Value::as_str)
+                              .unwrap_or_default()
+                              .to_string(),
+                          workspace,
+                          None,
+                          None,
+                          Some("unattended".to_string()),
+                          None,
+                          None,
+                          Some(json!({"automation_id": run.get("task_id"), "trigger": "scheduled"})),
+                      ),
+                      Err(error) => json!({"ok": false, "error": error.to_string()}),
+                  };'''
+          ipc = once(ipc, old_accepted, new_accepted, 'scheduler pre-ensure session')
+
+          old_failed = '''                } else {
+                      let _ = state
+                          .automations
+                          .lock()
+                          .unwrap()
+                          .finalize_session(&session_id, "failed");
+                  }'''
+          new_failed = '''                } else {
+                      let recovery = json!({
+                          "event": "error",
+                          "payload": {
+                              "error": accepted.get("error").cloned().unwrap_or(Value::Null),
+                              "error_type": "automation_start_failed",
+                              "terminal": true,
+                          }
+                      });
+                      let recovery_frame = json!({
+                          "type": "error",
+                          "version": 1,
+                          "sessionId": session_id,
+                          "sequence": 0,
+                          "payload": recovery.get("payload").cloned().unwrap_or(Value::Null),
+                      });
+                      if let Err(error) = delta_runtime_native::control_plane::record_runtime_event(
+                          &state_dir(),
+                          &recovery_frame,
+                      ) {
+                          eprintln!("automation start failure recovery persistence failed: {error}");
+                      }
+                      if let Err(error) = state
+                          .automations
+                          .lock()
+                          .unwrap()
+                          .finalize_recovery(&session_id, &recovery)
+                      {
+                          eprintln!("automation start failure finalization deferred: {error}");
+                      }
+                  }'''
+          ipc = once(ipc, old_failed, new_failed, 'scheduler start failure recovery')
+
+          runtime_path.write_text(runtime)
+          control_path.write_text(control)
+          taskstore_path.write_text(taskstore)
+          automation_path.write_text(automation)
+          ipc_path.write_text(ipc)
+          PY
+
+          rustfmt --edition 2021 \
+            core/runtime-native/src/runtime.rs \
+            core/runtime-native/src/control_plane.rs \
+            core/runtime-native/src/taskstore.rs \
+            core/runtime-native/src/automation.rs \
+            apps/desktop/src-tauri/src/runtime_ipc.rs
+          git diff --check
+
+      - name: Verify Rust gates
+        shell: bash
+        run: |
+          cargo check --manifest-path core/runtime-native/Cargo.toml
+          cargo test --manifest-path core/runtime-native/Cargo.toml
+          cargo clippy --manifest-path core/runtime-native/Cargo.toml --all-targets -- -D warnings
+          cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
+          cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
+          cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      - name: Commit product patch and self-delete
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/_r7-automation-terminal-reconciliation.yml
+          git add \
+            core/runtime-native/src/runtime.rs \
+            core/runtime-native/src/control_plane.rs \
+            core/runtime-native/src/taskstore.rs \
+            core/runtime-native/src/automation.rs \
+            apps/desktop/src-tauri/src/runtime_ipc.rs
+          git diff --cached --check
+          git commit -m "fix(r7): reconcile automation terminal state"
+          git push origin HEAD:codex/r7-automation-terminal-reconciliation
