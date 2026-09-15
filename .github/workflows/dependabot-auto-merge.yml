@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   purge-orphan-workflow-history:
-    name: Purge orphan workflow history
+    name: Purge rehydrated R5.1 workflow history
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -25,7 +25,7 @@ jobs:
       contents: read
 
     steps:
-      - name: Remove orphan R5.1 workflow runs
+      - name: Remove rehydrated R5.1 workflow runs
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -56,14 +56,14 @@ jobs:
           356373219	R5.1 test format sync	.github/workflows/r51-test-format-sync.yml
           EOF
 
-          echo "Orphan workflow identities to purge:"
+          echo "Rehydrated workflow identities to purge:"
           cat orphan-workflows.tsv
 
-          # Safety gate: none of these files may exist on main. If one has been
-          # restored, abort rather than deleting history for a live workflow.
+          # Safety gate: all five exact paths must now exist on main as inert
+          # workflow_dispatch-only stubs. If any path is missing, abort.
           while IFS=$'\t' read -r workflow_id workflow_name workflow_path; do
-            if gh api "repos/${GITHUB_REPOSITORY}/contents/${workflow_path}?ref=main" --silent 2>/dev/null; then
-              echo "::error::${workflow_path} exists on main; refusing to purge ${workflow_name}."
+            if ! gh api "repos/${GITHUB_REPOSITORY}/contents/${workflow_path}?ref=main" --silent >/dev/null; then
+              echo "::error::${workflow_path} is not present on main; refusing to purge ${workflow_name}."
               exit 1
             fi
           done < orphan-workflows.tsv
@@ -85,12 +85,15 @@ jobs:
               echo "Deleting ${batch_count} run(s) from ${workflow_name}"
               while IFS= read -r run_id; do
                 [ -z "$run_id" ] && continue
+                echo "Deleting run ${run_id}"
+                gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" \
+                  --jq '[.id, .status, (.conclusion // ""), .event, .head_branch, .head_sha] | @tsv' || true
                 retry gh api --method DELETE "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" --silent
                 total_deleted_runs=$((total_deleted_runs + 1))
               done < "$run_ids_file"
             done
 
-            remaining="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow_id}/runs?per_page=1" --jq '.total_count')"
+            remaining="$(retry gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow_id}/runs?per_page=1" --jq '.total_count')"
             if [ "$remaining" != "0" ]; then
               echo "::error::${workflow_name} still has ${remaining} run(s)."
               exit 1
