@@ -1,0 +1,69 @@
+name: R7 Workspace Trust Atomic Write
+
+on:
+  push:
+    branches:
+      - codex/r7-workspace-trust-atomic-write
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: codex/r7-workspace-trust-atomic-write
+      - name: Patch Workspace Trust authority
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('core/runtime-native/src/control_plane.rs')
+          text = path.read_text(encoding='utf-8')
+
+          old_import = 'use crate::ShadowReadError;'
+          new_import = 'use crate::{durability::atomic_write, ShadowReadError};'
+          if text.count(old_import) != 1:
+              raise SystemExit(f'expected one authority import, got {text.count(old_import)}')
+          text = text.replace(old_import, new_import, 1)
+
+          old_write = '''    fs::create_dir_all(state_dir)?;
+              fs::write(
+                  trust_path(state_dir),
+                  serde_json::to_vec_pretty(&json!({"trusted_workspaces": paths}))?,
+              )?;'''
+          # Keep matching resilient to workflow YAML indentation by constructing source lines.
+          old_write = '\n'.join([
+              '    fs::create_dir_all(state_dir)?;',
+              '    fs::write(',
+              '        trust_path(state_dir),',
+              '        serde_json::to_vec_pretty(&json!({"trusted_workspaces": paths}))?,',
+              '    )?;',
+          ])
+          new_write = '\n'.join([
+              '    let bytes = serde_json::to_vec_pretty(&json!({"trusted_workspaces": paths}))?;',
+              '    atomic_write(trust_path(state_dir), &bytes)?;',
+          ])
+          if text.count(old_write) != 1:
+              raise SystemExit(f'expected one workspace trust write block, got {text.count(old_write)}')
+          text = text.replace(old_write, new_write, 1)
+          path.write_text(text, encoding='utf-8')
+          PY
+          rustfmt --edition 2021 core/runtime-native/src/control_plane.rs
+          git diff --check
+      - name: Commit product change and remove staging workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/r7-workspace-trust-atomic-write.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add core/runtime-native/src/control_plane.rs .github/workflows/r7-workspace-trust-atomic-write.yml
+          git diff --cached --check
+          git commit -m 'fix(r7): persist workspace trust atomically'
+          git push origin HEAD:codex/r7-workspace-trust-atomic-write
