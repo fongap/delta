@@ -46,6 +46,7 @@ impl McpStore {
             &self.path,
             serde_json::to_vec_pretty(&json!({"mcpServers": servers}))?,
         )?;
+        restrict_private_file(&self.path)?;
         Ok(())
     }
 
@@ -159,6 +160,24 @@ fn redact_config(config: &Value) -> Value {
     value
 }
 
+#[cfg(unix)]
+fn restrict_private_file(path: &Path) -> Result<(), ShadowReadError> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn restrict_private_file(_path: &Path) -> Result<(), ShadowReadError> {
+    // The desktop installer/first-run shell owns the app-data ACL on Windows.
+    Ok(())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn restrict_private_file(_path: &Path) -> Result<(), ShadowReadError> {
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -187,5 +206,23 @@ mod tests {
             McpStore::open(temp.path()),
             Err(ShadowReadError::Json(_))
         ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn persisted_mcp_config_is_private() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let store = McpStore::open(temp.path()).unwrap();
+        store
+            .put("demo", json!({"headers": {"Authorization": "secret"}}))
+            .unwrap();
+        let mode = std::fs::metadata(temp.path().join("mcp.json"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
     }
 }
