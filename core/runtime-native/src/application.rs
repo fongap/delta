@@ -1,7 +1,7 @@
 //! Rust authority for connector configuration and product routing state.
 //!
-//! Credentials live in a private file and never cross the product IPC boundary.
-//! Connector workers own remote protocol details; this store owns product state.
+//! Product state and connector credentials live in one private authority file.
+//! Secrets never cross the product IPC boundary; connector workers own remote protocol details.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::ShadowReadError;
+use crate::{durability::atomic_write_private, ShadowReadError};
 
 const CONNECTORS: &[(&str, &str, &str, bool, bool)] = &[
     ("telegram", "Telegram", "telegram", true, true),
@@ -88,48 +88,82 @@ struct ApplicationState {
     dm_session: Option<String>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct ApplicationAuthority {
+    #[serde(default)]
+    state: ApplicationState,
+    #[serde(default)]
+    secrets: BTreeMap<String, BTreeMap<String, String>>,
+}
+
 pub struct ApplicationStore {
-    state_path: PathBuf,
-    secrets_path: PathBuf,
+    authority_path: PathBuf,
 }
 
 impl ApplicationStore {
     pub fn open(state_dir: impl AsRef<Path>) -> Result<Self, ShadowReadError> {
         std::fs::create_dir_all(state_dir.as_ref())?;
-        Ok(Self {
-            state_path: state_dir.as_ref().join("application-state.json"),
-            secrets_path: state_dir.as_ref().join("connector-secrets.json"),
-        })
+        let store = Self {
+            authority_path: state_dir.as_ref().join("application.json"),
+        };
+        store.migrate_legacy(state_dir.as_ref())?;
+        Ok(store)
+    }
+
+    fn migrate_legacy(&self, state_dir: &Path) -> Result<(), ShadowReadError> {
+        let legacy_state = state_dir.join("application-state.json");
+        let legacy_secrets = state_dir.join("connector-secrets.json");
+
+        if self.authority_path.exists() {
+            // Once the consolidated file exists it is the sole authority.
+            // Validate it before removing stale migration inputs.
+            self.read_authority()?;
+            remove_if_exists(&legacy_state)?;
+            remove_if_exists(&legacy_secrets)?;
+            return Ok(());
+        }
+        if !legacy_state.exists() && !legacy_secrets.exists() {
+            return Ok(());
+        }
+
+        let state = if legacy_state.exists() {
+            serde_json::from_str(&std::fs::read_to_string(&legacy_state)?)?
+        } else {
+            ApplicationState::default()
+        };
+        let secrets = if legacy_secrets.exists() {
+            serde_json::from_str(&std::fs::read_to_string(&legacy_secrets)?)?
+        } else {
+            BTreeMap::new()
+        };
+        self.write_authority(&ApplicationAuthority { state, secrets })?;
+        remove_if_exists(&legacy_state)?;
+        remove_if_exists(&legacy_secrets)?;
+        Ok(())
+    }
+
+    fn read_authority(&self) -> Result<ApplicationAuthority, ShadowReadError> {
+        if !self.authority_path.exists() {
+            return Ok(ApplicationAuthority::default());
+        }
+        let text = std::fs::read_to_string(&self.authority_path)?;
+        Ok(serde_json::from_str(&text)?)
+    }
+
+    fn write_authority(&self, authority: &ApplicationAuthority) -> Result<(), ShadowReadError> {
+        let bytes = serde_json::to_vec_pretty(authority)?;
+        atomic_write_private(&self.authority_path, &bytes)?;
+        Ok(())
     }
 
     fn read(&self) -> Result<ApplicationState, ShadowReadError> {
-        if !self.state_path.exists() {
-            return Ok(ApplicationState::default());
-        }
-        let text = std::fs::read_to_string(&self.state_path)?;
-        Ok(serde_json::from_str(&text)?)
+        Ok(self.read_authority()?.state)
     }
 
     fn write(&self, state: &ApplicationState) -> Result<(), ShadowReadError> {
-        std::fs::write(&self.state_path, serde_json::to_vec_pretty(state)?)?;
-        Ok(())
-    }
-
-    fn read_secrets(&self) -> Result<BTreeMap<String, BTreeMap<String, String>>, ShadowReadError> {
-        if !self.secrets_path.exists() {
-            return Ok(BTreeMap::new());
-        }
-        let text = std::fs::read_to_string(&self.secrets_path)?;
-        Ok(serde_json::from_str(&text)?)
-    }
-
-    fn write_secrets(
-        &self,
-        secrets: &BTreeMap<String, BTreeMap<String, String>>,
-    ) -> Result<(), ShadowReadError> {
-        std::fs::write(&self.secrets_path, serde_json::to_vec_pretty(secrets)?)?;
-        restrict_private_file(&self.secrets_path)?;
-        Ok(())
+        let mut authority = self.read_authority()?;
+        authority.state = state.clone();
+        self.write_authority(&authority)
     }
 
     pub fn connectors(&self) -> Result<Vec<Value>, ShadowReadError> {
@@ -180,18 +214,16 @@ impl ApplicationStore {
         if fields.is_empty() && name != "browser" {
             return Ok(json!({"ok": false, "error": "connector credentials are required"}));
         }
-        // Validate both authoritative files before mutating either one.
-        let mut state = self.read()?;
-        let mut secrets = self.read_secrets()?;
-        secrets.insert(name.to_string(), fields.clone());
+        let mut authority = self.read_authority()?;
+        authority.secrets.insert(name.to_string(), fields.clone());
         let account = fields
             .get("email")
             .or_else(|| fields.get("account"))
             .or_else(|| fields.get("workspace"))
             .cloned()
             .unwrap_or_else(|| "Connected".to_string());
-        let previous = state.connectors.remove(name).unwrap_or_default();
-        state.connectors.insert(
+        let previous = authority.state.connectors.remove(name).unwrap_or_default();
+        authority.state.connectors.insert(
             name.to_string(),
             ConnectorState {
                 connected: true,
@@ -201,19 +233,15 @@ impl ApplicationStore {
                 details: previous.details,
             },
         );
-        self.write_secrets(&secrets)?;
-        self.write(&state)?;
+        self.write_authority(&authority)?;
         Ok(json!({"ok": true, "account": account}))
     }
 
     pub fn disconnect(&self, name: &str) -> Result<Value, ShadowReadError> {
-        // Validate both authoritative files before mutating either one.
-        let mut state = self.read()?;
-        let mut secrets = self.read_secrets()?;
-        let removed = state.connectors.remove(name).is_some();
-        secrets.remove(name);
-        self.write(&state)?;
-        self.write_secrets(&secrets)?;
+        let mut authority = self.read_authority()?;
+        let removed = authority.state.connectors.remove(name).is_some();
+        authority.secrets.remove(name);
+        self.write_authority(&authority)?;
         Ok(json!({"ok": removed}))
     }
 
@@ -453,21 +481,12 @@ impl ApplicationStore {
     }
 }
 
-#[cfg(unix)]
-fn restrict_private_file(path: &Path) -> Result<(), ShadowReadError> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-    Ok(())
-}
-
-#[cfg(windows)]
-fn restrict_private_file(_path: &Path) -> Result<(), ShadowReadError> {
-    Ok(())
-}
-
-#[cfg(not(any(unix, windows)))]
-fn restrict_private_file(_path: &Path) -> Result<(), ShadowReadError> {
-    Ok(())
+fn remove_if_exists(path: &Path) -> Result<(), ShadowReadError> {
+    match std::fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
 }
 
 #[cfg(test)]
@@ -502,41 +521,130 @@ mod tests {
             true
         );
     }
-    #[test]
-    fn corrupt_application_state_fails_closed_and_is_not_overwritten() {
-        let temp = tempfile::tempdir().unwrap();
-        let state_path = temp.path().join("application-state.json");
-        std::fs::write(&state_path, b"{not-json").unwrap();
-        let store = ApplicationStore::open(temp.path()).unwrap();
 
-        assert!(matches!(store.connectors(), Err(ShadowReadError::Json(_))));
+    #[test]
+    fn corrupt_consolidated_authority_fails_closed_and_is_not_overwritten() {
+        let temp = tempfile::tempdir().unwrap();
+        let authority_path = temp.path().join("application.json");
+        std::fs::write(&authority_path, b"{not-json").unwrap();
+
         assert!(matches!(
-            store.update_tools("slack", &BTreeMap::from([("send".to_string(), true)])),
+            ApplicationStore::open(temp.path()),
             Err(ShadowReadError::Json(_))
         ));
-        assert_eq!(std::fs::read(&state_path).unwrap(), b"{not-json");
+        assert_eq!(std::fs::read(&authority_path).unwrap(), b"{not-json");
     }
 
     #[test]
-    fn corrupt_connector_secrets_fail_closed_and_are_not_overwritten() {
+    fn legacy_state_and_secrets_migrate_once_into_single_authority() {
         let temp = tempfile::tempdir().unwrap();
-        let secrets_path = temp.path().join("connector-secrets.json");
-        std::fs::write(&secrets_path, b"{not-json").unwrap();
+        let mut state = ApplicationState::default();
+        state.connectors.insert(
+            "slack".to_string(),
+            ConnectorState {
+                connected: true,
+                enabled: true,
+                account: Some("legacy".to_string()),
+                ..ConnectorState::default()
+            },
+        );
+        let secrets = BTreeMap::from([(
+            "slack".to_string(),
+            BTreeMap::from([("token".to_string(), "legacy-secret".to_string())]),
+        )]);
+        let legacy_state = temp.path().join("application-state.json");
+        let legacy_secrets = temp.path().join("connector-secrets.json");
+        std::fs::write(&legacy_state, serde_json::to_vec_pretty(&state).unwrap()).unwrap();
+        std::fs::write(
+            &legacy_secrets,
+            serde_json::to_vec_pretty(&secrets).unwrap(),
+        )
+        .unwrap();
+
         let store = ApplicationStore::open(temp.path()).unwrap();
+        assert!(!legacy_state.exists());
+        assert!(!legacy_secrets.exists());
+        let authority = store.read_authority().unwrap();
+        assert!(authority.state.connectors["slack"].connected);
+        assert_eq!(authority.secrets["slack"]["token"], "legacy-secret");
+        assert!(temp.path().join("application.json").is_file());
+    }
+
+    #[test]
+    fn consolidated_authority_wins_after_migration_commit_point() {
+        let temp = tempfile::tempdir().unwrap();
+        let authority = ApplicationAuthority {
+            state: ApplicationState::default(),
+            secrets: BTreeMap::new(),
+        };
+        atomic_write_private(
+            temp.path().join("application.json"),
+            &serde_json::to_vec_pretty(&authority).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(temp.path().join("application-state.json"), b"{stale").unwrap();
+        std::fs::write(temp.path().join("connector-secrets.json"), b"{stale").unwrap();
+
+        ApplicationStore::open(temp.path()).unwrap();
+        assert!(!temp.path().join("application-state.json").exists());
+        assert!(!temp.path().join("connector-secrets.json").exists());
+    }
+
+    #[test]
+    fn corrupt_legacy_state_fails_migration_without_creating_new_authority() {
+        let temp = tempfile::tempdir().unwrap();
+        let legacy_state = temp.path().join("application-state.json");
+        std::fs::write(&legacy_state, b"{not-json").unwrap();
 
         assert!(matches!(
-            store.connect(
-                "slack",
-                &BTreeMap::from([("token".to_string(), "new-secret".to_string())]),
-            ),
+            ApplicationStore::open(temp.path()),
             Err(ShadowReadError::Json(_))
         ));
-        assert_eq!(std::fs::read(&secrets_path).unwrap(), b"{not-json");
+        assert_eq!(std::fs::read(&legacy_state).unwrap(), b"{not-json");
+        assert!(!temp.path().join("application.json").exists());
+    }
+
+    #[test]
+    fn corrupt_legacy_secrets_fail_migration_without_mutating_legacy_state() {
+        let temp = tempfile::tempdir().unwrap();
+        let legacy_state = temp.path().join("application-state.json");
+        let legacy_secrets = temp.path().join("connector-secrets.json");
+        let state_bytes = serde_json::to_vec_pretty(&ApplicationState::default()).unwrap();
+        std::fs::write(&legacy_state, &state_bytes).unwrap();
+        std::fs::write(&legacy_secrets, b"{not-json").unwrap();
+
+        assert!(matches!(
+            ApplicationStore::open(temp.path()),
+            Err(ShadowReadError::Json(_))
+        ));
+        assert_eq!(std::fs::read(&legacy_state).unwrap(), state_bytes);
+        assert_eq!(std::fs::read(&legacy_secrets).unwrap(), b"{not-json");
+        assert!(!temp.path().join("application.json").exists());
+    }
+
+    #[test]
+    fn connect_and_disconnect_commit_state_and_secrets_together() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ApplicationStore::open(temp.path()).unwrap();
+        store
+            .connect(
+                "slack",
+                &BTreeMap::from([("token".to_string(), "secret-value".to_string())]),
+            )
+            .unwrap();
+        let connected = store.read_authority().unwrap();
+        assert!(connected.state.connectors["slack"].connected);
+        assert_eq!(connected.secrets["slack"]["token"], "secret-value");
+
+        store.disconnect("slack").unwrap();
+        let disconnected = store.read_authority().unwrap();
+        assert!(!disconnected.state.connectors.contains_key("slack"));
+        assert!(!disconnected.secrets.contains_key("slack"));
     }
 
     #[cfg(unix)]
     #[test]
-    fn connector_secrets_are_persisted_private() {
+    fn application_authority_is_persisted_private() {
         use std::os::unix::fs::PermissionsExt;
 
         let temp = tempfile::tempdir().unwrap();
@@ -547,49 +655,11 @@ mod tests {
                 &BTreeMap::from([("token".to_string(), "secret-value".to_string())]),
             )
             .unwrap();
-        let mode = std::fs::metadata(temp.path().join("connector-secrets.json"))
+        let mode = std::fs::metadata(temp.path().join("application.json"))
             .unwrap()
             .permissions()
             .mode()
             & 0o777;
         assert_eq!(mode, 0o600);
-    }
-    #[test]
-    fn connect_does_not_mutate_secrets_when_application_state_is_corrupt() {
-        let temp = tempfile::tempdir().unwrap();
-        let state_path = temp.path().join("application-state.json");
-        std::fs::write(&state_path, b"{not-json").unwrap();
-        let store = ApplicationStore::open(temp.path()).unwrap();
-
-        assert!(matches!(
-            store.connect(
-                "slack",
-                &BTreeMap::from([("token".to_string(), "new-secret".to_string())]),
-            ),
-            Err(ShadowReadError::Json(_))
-        ));
-        assert!(!temp.path().join("connector-secrets.json").exists());
-    }
-
-    #[test]
-    fn disconnect_does_not_mutate_state_when_secrets_are_corrupt() {
-        let temp = tempfile::tempdir().unwrap();
-        let store = ApplicationStore::open(temp.path()).unwrap();
-        store
-            .connect(
-                "slack",
-                &BTreeMap::from([("token".to_string(), "secret-value".to_string())]),
-            )
-            .unwrap();
-
-        let state_path = temp.path().join("application-state.json");
-        let before = std::fs::read(&state_path).unwrap();
-        std::fs::write(temp.path().join("connector-secrets.json"), b"{not-json").unwrap();
-
-        assert!(matches!(
-            store.disconnect("slack"),
-            Err(ShadowReadError::Json(_))
-        ));
-        assert_eq!(std::fs::read(&state_path).unwrap(), before);
     }
 }
