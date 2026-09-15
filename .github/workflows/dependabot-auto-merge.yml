@@ -6,12 +6,91 @@ on:
       - opened
       - reopened
       - synchronize
+  push:
+    branches:
+      - main
 
 permissions:
   contents: write
   pull-requests: write
 
 jobs:
+  purge-deleted-workflow-history:
+    name: Purge deleted workflow history
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      actions: write
+      contents: read
+
+    steps:
+      - name: Remove every deleted workflow run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          retry() {
+            local attempt=1
+            local max=5
+            local delay=2
+            until "$@"; do
+              if [ "$attempt" -ge "$max" ]; then
+                echo "::error::Command failed after ${max} attempts: $*"
+                return 1
+              fi
+              echo "::warning::GitHub API call failed (attempt ${attempt}/${max}); retrying in ${delay}s"
+              sleep "$delay"
+              attempt=$((attempt + 1))
+              delay=$((delay * 2))
+            done
+          }
+
+          retry gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/workflows?per_page=100" \
+            --jq '.workflows[] | [.id, .name, .path, .state] | @tsv' \
+            > workflows.tsv
+
+          echo "Workflow inventory:"
+          cat workflows.tsv
+
+          awk -F '\t' '$4 == "deleted" {print $1}' workflows.tsv > deleted-workflow-ids.txt
+          deleted_count="$(wc -l < deleted-workflow-ids.txt | tr -d ' ')"
+          echo "Found ${deleted_count} deleted workflow identities."
+
+          total_deleted_runs=0
+          while IFS= read -r workflow_id; do
+            [ -z "$workflow_id" ] && continue
+
+            workflow_line="$(awk -F '\t' -v id="$workflow_id" '$1 == id {print; exit}' workflows.tsv)"
+            echo "Purging workflow: ${workflow_line}"
+
+            while true; do
+              run_ids_file="runs-${workflow_id}.txt"
+              : > "$run_ids_file"
+
+              retry gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow_id}/runs?per_page=100" \
+                --jq '.workflow_runs[].id' \
+                > "$run_ids_file"
+
+              batch_count="$(wc -l < "$run_ids_file" | tr -d ' ')"
+              if [ "$batch_count" = "0" ]; then
+                break
+              fi
+
+              while IFS= read -r run_id; do
+                [ -z "$run_id" ] && continue
+                echo "Deleting run ${run_id} from workflow ${workflow_id}"
+                retry gh api --method DELETE "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" --silent
+                total_deleted_runs=$((total_deleted_runs + 1))
+              done < "$run_ids_file"
+            done
+          done < deleted-workflow-ids.txt
+
+          echo "Deleted ${total_deleted_runs} runs across ${deleted_count} deleted workflow identities."
+          echo "Deleted workflow history purge complete."
+
   enable-auto-merge:
     name: Enable auto-merge
     # Only Dependabot PRs are eligible for auto-merge. Anything else
