@@ -31,20 +31,31 @@ impl EventSink for TauriEventSink {
     fn emit(&self, frame: Value) -> Result<(), String> {
         delta_runtime_native::control_plane::record_runtime_event(&self.state_dir, &frame)
             .map_err(|error| format!("persist runtime event: {error}"))?;
-        if frame.get("type").and_then(Value::as_str) == Some("turn_end") {
-            if let (Some(session_id), Some(status)) = (
-                frame.get("sessionId").and_then(Value::as_str),
-                frame
-                    .get("payload")
-                    .and_then(|payload| payload.get("status"))
-                    .and_then(Value::as_str),
-            ) {
-                if session_id.starts_with("__run__") {
-                    let _ = self
-                        .automations
-                        .lock()
-                        .unwrap()
-                        .finalize_session(session_id, status);
+        let event_type = frame
+            .get("type")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        if matches!(event_type, "turn_end" | "interrupted" | "error") {
+            if let Some(session_id) = frame
+                .get("sessionId")
+                .and_then(Value::as_str)
+                .filter(|session_id| session_id.starts_with("__run__"))
+            {
+                let recovery = json!({
+                    "event": event_type,
+                    "payload": frame.get("payload").cloned().unwrap_or_else(|| json!({})),
+                });
+                match self
+                    .automations
+                    .lock()
+                    .unwrap()
+                    .finalize_recovery(session_id, &recovery)
+                {
+                    Ok(result) if result.get("ok").and_then(Value::as_bool) == Some(true) => {}
+                    Ok(_) => {}
+                    Err(error) => {
+                        eprintln!("automation finalization deferred for {session_id}: {error}")
+                    }
                 }
             }
         }
@@ -150,12 +161,19 @@ pub fn start_scheduler(app: AppHandle) {
         .name("delta-rust-scheduler".to_string())
         .spawn(move || loop {
             let state = app.state::<RuntimeRegistry>();
-            let runs = state
-                .automations
-                .lock()
-                .unwrap()
-                .claim_due_runs()
-                .unwrap_or_default();
+            let runs = {
+                let mut automations = state.automations.lock().unwrap();
+                if let Err(error) = automations.reconcile_terminal_sessions() {
+                    eprintln!("automation terminal reconciliation failed: {error}");
+                }
+                match automations.claim_due_runs() {
+                    Ok(runs) => runs,
+                    Err(error) => {
+                        eprintln!("automation scheduler claim failed: {error}");
+                        Vec::new()
+                    }
+                }
+            };
             for run in runs {
                 let session_id = run
                     .get("session_id")
@@ -171,25 +189,36 @@ pub fn start_scheduler(app: AppHandle) {
                     .and_then(Value::as_str)
                     .unwrap_or_default()
                     .to_string();
-                let accepted = start_runtime(
-                    &app,
-                    state.inner(),
-                    session_id.clone(),
-                    model_id,
-                    run.get("prompt")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_string(),
-                    run.get("workspace")
-                        .and_then(Value::as_str)
-                        .map(str::to_string),
-                    None,
-                    None,
-                    Some("unattended".to_string()),
-                    None,
-                    None,
-                    Some(json!({"automation_id": run.get("task_id"), "trigger": "scheduled"})),
+                let workspace = run
+                    .get("workspace")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                let session_ready = delta_runtime_native::control_plane::ensure_session(
+                    &state_dir(),
+                    &session_id,
+                    workspace.as_deref().filter(|value| !value.is_empty()),
+                    &model_id,
                 );
+                let accepted = match session_ready {
+                    Ok(_) => start_runtime(
+                        &app,
+                        state.inner(),
+                        session_id.clone(),
+                        model_id,
+                        run.get("prompt")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                        workspace,
+                        None,
+                        None,
+                        Some("unattended".to_string()),
+                        None,
+                        None,
+                        Some(json!({"automation_id": run.get("task_id"), "trigger": "scheduled"})),
+                    ),
+                    Err(error) => json!({"ok": false, "error": error.to_string()}),
+                };
                 if accepted.get("ok").and_then(Value::as_bool) == Some(true) {
                     let sequence = APP_EVENT_SEQUENCE.fetch_add(1, Ordering::SeqCst) + 1;
                     let _ = app.emit(
@@ -206,11 +235,35 @@ pub fn start_scheduler(app: AppHandle) {
                         }),
                     );
                 } else {
-                    let _ = state
+                    let recovery = json!({
+                        "event": "error",
+                        "payload": {
+                            "error": accepted.get("error").cloned().unwrap_or(Value::Null),
+                            "error_type": "automation_start_failed",
+                            "terminal": true,
+                        }
+                    });
+                    let recovery_frame = json!({
+                        "type": "error",
+                        "version": 1,
+                        "sessionId": session_id,
+                        "sequence": 0,
+                        "payload": recovery.get("payload").cloned().unwrap_or(Value::Null),
+                    });
+                    if let Err(error) = delta_runtime_native::control_plane::record_runtime_event(
+                        &state_dir(),
+                        &recovery_frame,
+                    ) {
+                        eprintln!("automation start failure recovery persistence failed: {error}");
+                    }
+                    if let Err(error) = state
                         .automations
                         .lock()
                         .unwrap()
-                        .finalize_session(&session_id, "failed");
+                        .finalize_recovery(&session_id, &recovery)
+                    {
+                        eprintln!("automation start failure finalization deferred: {error}");
+                    }
                 }
             }
             std::thread::sleep(Duration::from_secs(15));

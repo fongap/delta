@@ -308,6 +308,41 @@ impl TaskStore {
         }
         Ok(out)
     }
+    /// List Automation runs that have not reached a durable terminal record.
+    pub fn unfinished_runs(&self) -> Result<Vec<TaskRunEntry>, ShadowReadError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT run_id, task_id, started_at, data, workspace FROM task_runs ORDER BY started_at",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let data_str: String = row.get(3)?;
+            let data: Value = serde_json::from_str(&data_str).unwrap_or(Value::Null);
+            let workspace: Option<String> = row.get(4)?;
+            Ok(TaskRunEntry {
+                run_id: row.get(0)?,
+                task_id: row.get(1)?,
+                started_at: row.get(2)?,
+                data,
+                workspace: workspace.unwrap_or_default(),
+            })
+        })?;
+        let mut out = Vec::new();
+        for row in rows {
+            let row = row?;
+            let finished = row
+                .data
+                .get("finished_at")
+                .is_some_and(|value| !value.is_null());
+            let status = row
+                .data
+                .get("status")
+                .and_then(Value::as_str)
+                .unwrap_or_default();
+            if !finished && status == "running" {
+                out.push(row);
+            }
+        }
+        Ok(out)
+    }
 
     /// Atomically complete a run and update task stats.
     ///
@@ -338,6 +373,33 @@ impl TaskStore {
         next_run: Option<f64>,
     ) -> Result<Value, ShadowReadError> {
         let tx = self.conn.transaction()?;
+
+        // Immediate finalization and restart reconciliation may observe the same
+        // terminal run. Once finished_at is durable, completion is a no-op so
+        // run_count and max_runs state can never be applied twice.
+        let already_finished = {
+            let mut stmt = tx.prepare("SELECT data FROM task_runs WHERE run_id = ?")?;
+            let mut rows = stmt.query(params![run_id])?;
+            if let Some(row) = rows.next()? {
+                let existing: String = row.get(0)?;
+                let existing = serde_json::from_str::<Value>(&existing).unwrap_or(Value::Null);
+                existing
+                    .get("finished_at")
+                    .is_some_and(|value| !value.is_null())
+            } else {
+                false
+            }
+        };
+        if already_finished {
+            let task_data: String = tx.query_row(
+                "SELECT data FROM scheduled_tasks WHERE id = ?",
+                params![task_id],
+                |row| row.get(0),
+            )?;
+            let task_json = serde_json::from_str::<Value>(&task_data)?;
+            tx.commit()?;
+            return Ok(task_json);
+        }
 
         // 1. Insert/replace the run
         tx.execute(
@@ -663,6 +725,40 @@ mod tests {
         let blob = &task.data;
         assert_eq!(blob["enabled"], false);
         assert_eq!(blob["run_count"], 1);
+    }
+    #[test]
+    fn complete_run_is_idempotent_after_terminal_persistence() {
+        let mut store = TaskStore::open_in_memory().unwrap();
+        store
+            .save_task(
+                "task_1",
+                true,
+                None,
+                r#"{"id":"task_1","run_count":0,"max_runs":0}"#,
+            )
+            .unwrap();
+        store
+            .add_run(
+                "run_1",
+                "task_1",
+                1000.0,
+                r#"{"run_id":"run_1","status":"running","finished_at":null}"#,
+                "",
+            )
+            .unwrap();
+        let terminal = r#"{"run_id":"run_1","status":"completed","finished_at":1100.0}"#;
+        store
+            .complete_run("run_1", "task_1", 1000.0, terminal, "", 1100.0, None)
+            .unwrap();
+        store
+            .complete_run("run_1", "task_1", 1000.0, terminal, "", 1200.0, None)
+            .unwrap();
+
+        let task = store.get_task("task_1").unwrap().unwrap();
+        assert_eq!(task.data["run_count"], 1);
+        let run = store.find_run("run_1").unwrap().unwrap();
+        assert_eq!(run.data["status"], "completed");
+        assert_eq!(run.data["finished_at"], 1100.0);
     }
 
     #[test]

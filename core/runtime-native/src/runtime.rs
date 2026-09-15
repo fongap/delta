@@ -149,6 +149,7 @@ pub enum RuntimeEvent {
     Error {
         error: String,
         error_type: String,
+        terminal: bool,
     },
     Interrupted {
         iterations: usize,
@@ -281,9 +282,14 @@ impl RuntimeEvent {
                 "turn_end",
                 json!({"status": status, "iterations": iterations}),
             ),
-            Self::Error { error, error_type } => {
-                ("error", json!({"error": error, "error_type": error_type}))
-            }
+            Self::Error {
+                error,
+                error_type,
+                terminal,
+            } => (
+                "error",
+                json!({"error": error, "error_type": error_type, "terminal": terminal}),
+            ),
             Self::Interrupted { iterations } => ("interrupted", json!({"iterations": iterations})),
             Self::Compacting => ("compacting", json!({})),
             Self::Compacted { text } => ("compacted", json!({"text": text})),
@@ -2393,6 +2399,7 @@ impl RuntimeHost {
                         self.emit_event(RuntimeEvent::Error {
                             error: "Transient model failure - retrying.".to_string(),
                             error_type: classify_transient_error(&e),
+                            terminal: false,
                         });
                         continue;
                     }
@@ -2419,6 +2426,7 @@ impl RuntimeHost {
                     self.emit_event(RuntimeEvent::Error {
                         error: e.clone(),
                         error_type: classify_transient_error(&e),
+                        terminal: true,
                     });
                     return Err(e);
                 }
