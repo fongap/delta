@@ -28,8 +28,9 @@ struct TauriEventSink {
 }
 
 impl EventSink for TauriEventSink {
-    fn emit(&self, frame: Value) {
-        let _ = delta_runtime_native::control_plane::record_runtime_event(&self.state_dir, &frame);
+    fn emit(&self, frame: Value) -> Result<(), String> {
+        delta_runtime_native::control_plane::record_runtime_event(&self.state_dir, &frame)
+            .map_err(|error| format!("persist runtime event: {error}"))?;
         if frame.get("type").and_then(Value::as_str) == Some("turn_end") {
             if let (Some(session_id), Some(status)) = (
                 frame.get("sessionId").and_then(Value::as_str),
@@ -48,6 +49,7 @@ impl EventSink for TauriEventSink {
             }
         }
         let _ = self.app.emit("delta-runtime-event", frame);
+        Ok(())
     }
 }
 
