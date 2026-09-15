@@ -732,17 +732,17 @@ impl RuntimeEventEmitter {
         if self.event_error.lock().unwrap().is_some() {
             return;
         }
-        let frame = {
-            let mut sequence = self.sequence.lock().unwrap();
-            *sequence += 1;
-            event.to_frame(&self.session_id, *sequence)
-        };
+        let mut sequence = self.sequence.lock().unwrap();
+        let next_sequence = *sequence + 1;
+        let frame = event.to_frame(&self.session_id, next_sequence);
         if let Err(error) = self.sink.emit(frame) {
             let mut event_error = self.event_error.lock().unwrap();
             if event_error.is_none() {
                 *event_error = Some(error);
             }
+            return;
         }
+        *sequence = next_sequence;
     }
 }
 
@@ -2180,8 +2180,11 @@ impl RuntimeHost {
                 &mut streamed_text,
                 &mut streamed_reasoning,
             ) {
-                Ok(ProviderStreamOutcome::Completed) => {}
+                Ok(ProviderStreamOutcome::Completed) => {
+                    self.ensure_event_delivery()?;
+                }
                 Ok(ProviderStreamOutcome::Interrupted) => {
+                    self.ensure_event_delivery()?;
                     if !streamed_text.is_empty() || !streamed_reasoning.is_empty() {
                         let partial_text =
                             (!streamed_text.is_empty()).then(|| streamed_text.join(""));
@@ -2214,6 +2217,7 @@ impl RuntimeHost {
                     continue;
                 }
                 Err(e) => {
+                    self.ensure_event_delivery()?;
                     if turn_retries < self.config.max_retries
                         && streamed_text.is_empty()
                         && streamed_reasoning.is_empty()
@@ -2322,10 +2326,13 @@ impl RuntimeHost {
                     result: result.output.clone(),
                     error: result.error.clone(),
                 });
+                self.ensure_event_delivery()?;
             }
             self.emit_event(RuntimeEvent::IterationEnd {
                 iteration: iterations,
             });
+            self.ensure_event_delivery()?;
+
             if self.cancel.load(Ordering::Relaxed) {
                 self.messages
                     .push(json!({"role": "notice", "kind": "interrupted", "ts": now_ts()}));
