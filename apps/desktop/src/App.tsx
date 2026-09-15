@@ -67,8 +67,15 @@ import { DirectoryRequestCard } from "./components/DirectoryRequestCard";
 import { PlanCard } from "./components/PlanCard";
 import { WorkspaceTrustPrompt } from "./components/WorkspaceTrustPrompt";
 
-const newId = () =>
-  (crypto as any).randomUUID ? crypto.randomUUID().slice(0, 12) : Math.random().toString(36).slice(2, 14);
+const newId = () => {
+  if (typeof crypto.randomUUID === "function") return crypto.randomUUID().slice(0, 12);
+
+  // Older WebViews may not expose randomUUID, but getRandomValues is still a
+  // cryptographically secure source. Six bytes preserve the existing 12-char ID size.
+  return Array.from(crypto.getRandomValues(new Uint8Array(6)), (byte) =>
+    byte.toString(16).padStart(2, "0"),
+  ).join("");
+};
 
 // Tools whose success means a new/changed file should show up under Artifacts right away.
 const FILE_WRITE_TOOLS = new Set(["write_file", "apply_patch", "apply_unified_diff", "replace_in_file"]);
