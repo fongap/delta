@@ -180,16 +180,16 @@ impl ApplicationStore {
         if fields.is_empty() && name != "browser" {
             return Ok(json!({"ok": false, "error": "connector credentials are required"}));
         }
+        // Validate both authoritative files before mutating either one.
+        let mut state = self.read()?;
         let mut secrets = self.read_secrets()?;
         secrets.insert(name.to_string(), fields.clone());
-        self.write_secrets(&secrets)?;
         let account = fields
             .get("email")
             .or_else(|| fields.get("account"))
             .or_else(|| fields.get("workspace"))
             .cloned()
             .unwrap_or_else(|| "Connected".to_string());
-        let mut state = self.read()?;
         let previous = state.connectors.remove(name).unwrap_or_default();
         state.connectors.insert(
             name.to_string(),
@@ -201,16 +201,18 @@ impl ApplicationStore {
                 details: previous.details,
             },
         );
+        self.write_secrets(&secrets)?;
         self.write(&state)?;
         Ok(json!({"ok": true, "account": account}))
     }
 
     pub fn disconnect(&self, name: &str) -> Result<Value, ShadowReadError> {
+        // Validate both authoritative files before mutating either one.
         let mut state = self.read()?;
-        let removed = state.connectors.remove(name).is_some();
-        self.write(&state)?;
         let mut secrets = self.read_secrets()?;
+        let removed = state.connectors.remove(name).is_some();
         secrets.remove(name);
+        self.write(&state)?;
         self.write_secrets(&secrets)?;
         Ok(json!({"ok": removed}))
     }
@@ -551,5 +553,43 @@ mod tests {
             .mode()
             & 0o777;
         assert_eq!(mode, 0o600);
+    }
+    #[test]
+    fn connect_does_not_mutate_secrets_when_application_state_is_corrupt() {
+        let temp = tempfile::tempdir().unwrap();
+        let state_path = temp.path().join("application-state.json");
+        std::fs::write(&state_path, b"{not-json").unwrap();
+        let store = ApplicationStore::open(temp.path()).unwrap();
+
+        assert!(matches!(
+            store.connect(
+                "slack",
+                &BTreeMap::from([("token".to_string(), "new-secret".to_string())]),
+            ),
+            Err(ShadowReadError::Json(_))
+        ));
+        assert!(!temp.path().join("connector-secrets.json").exists());
+    }
+
+    #[test]
+    fn disconnect_does_not_mutate_state_when_secrets_are_corrupt() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ApplicationStore::open(temp.path()).unwrap();
+        store
+            .connect(
+                "slack",
+                &BTreeMap::from([("token".to_string(), "secret-value".to_string())]),
+            )
+            .unwrap();
+
+        let state_path = temp.path().join("application-state.json");
+        let before = std::fs::read(&state_path).unwrap();
+        std::fs::write(temp.path().join("connector-secrets.json"), b"{not-json").unwrap();
+
+        assert!(matches!(
+            store.disconnect("slack"),
+            Err(ShadowReadError::Json(_))
+        ));
+        assert_eq!(std::fs::read(&state_path).unwrap(), before);
     }
 }
