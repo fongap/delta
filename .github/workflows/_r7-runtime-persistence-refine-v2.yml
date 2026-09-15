@@ -1,0 +1,108 @@
+name: R7 Runtime Persistence Refine v2
+
+on:
+  push:
+    branches:
+      - codex/r7-runtime-persistence-failclosed
+
+permissions:
+  contents: write
+
+jobs:
+  refine:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: codex/r7-runtime-persistence-failclosed
+      - name: Tighten stream and sequence semantics
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          path = Path('core/runtime-native/src/runtime.rs')
+          text = path.read_text()
+
+          def sub(pattern, replacement, label, flags=0):
+              global text
+              text, count = re.subn(pattern, replacement, text, count=1, flags=flags)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected one match, got {count}')
+
+          sub(
+              r'''\s*let frame = \{\s*let mut sequence = self\.sequence\.lock\(\)\.unwrap\(\);\s*\*sequence \+= 1;\s*event\.to_frame\(&self\.session_id, \*sequence\)\s*\};\s*if let Err\(error\) = self\.sink\.emit\(frame\) \{\s*let mut event_error = self\.event_error\.lock\(\)\.unwrap\(\);\s*if event_error\.is_none\(\) \{\s*\*event_error = Some\(error\);\s*\}\s*\}''',
+              '''
+              let mut sequence = self.sequence.lock().unwrap();
+              let next_sequence = *sequence + 1;
+              let frame = event.to_frame(&self.session_id, next_sequence);
+              if let Err(error) = self.sink.emit(frame) {
+                  let mut event_error = self.event_error.lock().unwrap();
+                  if event_error.is_none() {
+                      *event_error = Some(error);
+                  }
+                  return;
+              }
+              *sequence = next_sequence;
+          ''',
+              'event emitter',
+              re.S,
+          )
+
+          sub(
+              r'''Ok\(ProviderStreamOutcome::Completed\) => \{\}''',
+              '''Ok(ProviderStreamOutcome::Completed) => {
+                      self.ensure_event_delivery()?;
+                  }''',
+              'provider completed guard',
+          )
+          sub(
+              r'''Ok\(ProviderStreamOutcome::Interrupted\) => \{''',
+              '''Ok(ProviderStreamOutcome::Interrupted) => {
+                      self.ensure_event_delivery()?;''',
+              'provider interrupted guard',
+          )
+          sub(
+              r'''Err\(e\) => \{\s*if turn_retries''',
+              '''Err(e) => {
+                      self.ensure_event_delivery()?;
+                      if turn_retries''',
+              'provider error guard',
+          )
+
+          sub(
+              r'''(self\.emit_event\(RuntimeEvent::ToolFinished \{.*?\}\);)(\s*\})\s*(self\.emit_event\(RuntimeEvent::IterationEnd)''',
+              r'''\1
+                      self.ensure_event_delivery()?;
+                  \2
+                  \3''',
+              'tool finished guard',
+              re.S,
+          )
+          sub(
+              r'''(self\.emit_event\(RuntimeEvent::IterationEnd \{\s*iteration: iterations,\s*\}\);)(\s*if self\.cancel\.load)''',
+              r'''\1
+                  self.ensure_event_delivery()?;
+                  \2''',
+              'iteration guard',
+              re.S,
+          )
+
+          path.write_text(text)
+          PY
+          rustfmt --edition 2021 core/runtime-native/src/runtime.rs
+          git diff --check
+          cargo check --manifest-path core/runtime-native/Cargo.toml
+          cargo test --manifest-path core/runtime-native/Cargo.toml
+      - name: Commit refinement and remove temporary workflows
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/_r7-runtime-persistence-refine.yml
+          git rm .github/workflows/_r7-runtime-persistence-refine-v2.yml
+          git add core/runtime-native/src/runtime.rs
+          git diff --cached --check
+          git commit -m "fix(r7): tighten event persistence boundary"
+          git push origin HEAD:codex/r7-runtime-persistence-failclosed
