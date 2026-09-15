@@ -1,7 +1,7 @@
 //! Rust authority for folder-backed Delta skills.
 
 use std::collections::{BTreeMap, HashSet};
-use std::io::{Cursor, Read};
+use std::io::{Cursor, ErrorKind, Read};
 use std::path::{Component, Path, PathBuf};
 
 use base64::Engine;
@@ -47,7 +47,7 @@ impl SkillStore {
     }
 
     pub fn list(&self, workspace: Option<&str>) -> Result<Vec<Value>, ShadowReadError> {
-        let disabled = self.disabled();
+        let disabled = self.disabled()?;
         let mut rows = BTreeMap::new();
         let mut scopes = vec![(self.global_dir(), "global")];
         if let Some(workspace) = workspace.filter(|value| !value.is_empty()) {
@@ -253,7 +253,7 @@ impl SkillStore {
         session_id: &str,
         workspace: Option<&str>,
     ) -> Result<Vec<Value>, ShadowReadError> {
-        let overrides = self.session_overrides();
+        let overrides = self.session_overrides()?;
         let session = overrides.get(session_id).and_then(Value::as_object);
         Ok(self
             .list(workspace)?
@@ -279,7 +279,7 @@ impl SkillStore {
         workspace: Option<&str>,
     ) -> Result<Value, ShadowReadError> {
         validate_name(skill)?;
-        let mut overrides = self.session_overrides();
+        let mut overrides = self.session_overrides()?;
         let session = overrides
             .entry(session_id.to_string())
             .or_insert_with(|| json!({}));
@@ -314,20 +314,33 @@ impl SkillStore {
         Err(ShadowReadError::Parse("skill not found".to_string()))
     }
 
-    fn disabled(&self) -> HashSet<String> {
-        std::fs::read_to_string(self.state_dir.join("skills-settings.json"))
-            .ok()
-            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-            .and_then(|value| value.get("disabled").cloned())
-            .and_then(|value| value.as_array().cloned())
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|value| value.as_str().map(str::to_string))
-            .collect()
+    fn disabled(&self) -> Result<HashSet<String>, ShadowReadError> {
+        let path = self.state_dir.join("skills-settings.json");
+        let Some(value) = read_optional_json(&path)? else {
+            return Ok(HashSet::new());
+        };
+        let root = value.as_object().ok_or_else(|| {
+            ShadowReadError::Parse("skill settings root must be an object".to_string())
+        })?;
+        let disabled = root
+            .get("disabled")
+            .ok_or_else(|| ShadowReadError::Parse("skill settings are missing disabled".to_string()))?
+            .as_array()
+            .ok_or_else(|| {
+                ShadowReadError::Parse("skill settings disabled must be an array".to_string())
+            })?;
+        let mut names = HashSet::new();
+        for value in disabled {
+            let name = value.as_str().ok_or_else(|| {
+                ShadowReadError::Parse("skill settings disabled entries must be strings".to_string())
+            })?;
+            names.insert(validate_name(name)?);
+        }
+        Ok(names)
     }
 
     fn set_enabled(&self, name: &str, enabled: bool) -> Result<(), ShadowReadError> {
-        let mut disabled = self.disabled();
+        let mut disabled = self.disabled()?;
         if enabled {
             disabled.remove(name);
         } else {
@@ -342,12 +355,43 @@ impl SkillStore {
         Ok(())
     }
 
-    fn session_overrides(&self) -> serde_json::Map<String, Value> {
-        std::fs::read_to_string(self.state_dir.join("session-skills.json"))
-            .ok()
-            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-            .and_then(|value| value.as_object().cloned())
-            .unwrap_or_default()
+    fn session_overrides(&self) -> Result<serde_json::Map<String, Value>, ShadowReadError> {
+        let path = self.state_dir.join("session-skills.json");
+        let Some(value) = read_optional_json(&path)? else {
+            return Ok(serde_json::Map::new());
+        };
+        let overrides = value.as_object().cloned().ok_or_else(|| {
+            ShadowReadError::Parse("session skill state root must be an object".to_string())
+        })?;
+        for (session_id, skills) in &overrides {
+            if session_id.trim().is_empty() {
+                return Err(ShadowReadError::Parse(
+                    "session skill state contains an empty session id".to_string(),
+                ));
+            }
+            let skills = skills.as_object().ok_or_else(|| {
+                ShadowReadError::Parse(
+                    "session skill state entries must be objects".to_string(),
+                )
+            })?;
+            for (skill, enabled) in skills {
+                validate_name(skill)?;
+                if !enabled.is_boolean() {
+                    return Err(ShadowReadError::Parse(
+                        "session skill state flags must be booleans".to_string(),
+                    ));
+                }
+            }
+        }
+        Ok(overrides)
+    }
+}
+
+fn read_optional_json(path: &Path) -> Result<Option<Value>, ShadowReadError> {
+    match std::fs::read_to_string(path) {
+        Ok(text) => Ok(Some(serde_json::from_str::<Value>(&text)?)),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
     }
 }
 
@@ -534,5 +578,71 @@ mod tests {
             false
         );
         assert_eq!(store.delete("brief", None).unwrap()["ok"], true);
+    }
+
+    #[test]
+    fn corrupt_skill_settings_fail_closed_without_overwrite() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = SkillStore::open(temp.path()).unwrap();
+        store
+            .create(&json!({"name": "brief", "instructions": "Do it"}))
+            .unwrap();
+        let path = temp.path().join("skills-settings.json");
+        std::fs::write(&path, b"{not-json").unwrap();
+
+        assert!(matches!(store.list(None), Err(ShadowReadError::Json(_))));
+        assert!(matches!(
+            store.update("brief", &json!({"enabled": false}), None),
+            Err(ShadowReadError::Json(_))
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), b"{not-json");
+    }
+
+    #[test]
+    fn invalid_skill_settings_shape_fails_closed() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = SkillStore::open(temp.path()).unwrap();
+        std::fs::write(
+            temp.path().join("skills-settings.json"),
+            serde_json::to_vec(&json!({"disabled": "brief"})).unwrap(),
+        )
+        .unwrap();
+        assert!(matches!(store.list(None), Err(ShadowReadError::Parse(_))));
+    }
+
+    #[test]
+    fn corrupt_session_skill_state_fails_closed_without_overwrite() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = SkillStore::open(temp.path()).unwrap();
+        store
+            .create(&json!({"name": "brief", "instructions": "Do it"}))
+            .unwrap();
+        let path = temp.path().join("session-skills.json");
+        std::fs::write(&path, b"{not-json").unwrap();
+
+        assert!(matches!(
+            store.session_rows("s1", None),
+            Err(ShadowReadError::Json(_))
+        ));
+        assert!(matches!(
+            store.set_session("s1", "brief", false, false, None),
+            Err(ShadowReadError::Json(_))
+        ));
+        assert_eq!(std::fs::read(&path).unwrap(), b"{not-json");
+    }
+
+    #[test]
+    fn invalid_session_skill_shape_fails_closed() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = SkillStore::open(temp.path()).unwrap();
+        std::fs::write(
+            temp.path().join("session-skills.json"),
+            serde_json::to_vec(&json!({"s1": {"brief": "disabled"}})).unwrap(),
+        )
+        .unwrap();
+        assert!(matches!(
+            store.session_rows("s1", None),
+            Err(ShadowReadError::Parse(_))
+        ));
     }
 }
