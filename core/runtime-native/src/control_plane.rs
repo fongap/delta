@@ -15,7 +15,7 @@ use base64::Engine;
 use rusqlite::{params, Connection};
 use serde_json::{json, Value};
 
-use crate::ShadowReadError;
+use crate::{durability::atomic_write, ShadowReadError};
 
 const SESSIONS_TABLE: &str = "CREATE TABLE IF NOT EXISTS sessions (
     session_id TEXT PRIMARY KEY, workspace TEXT, model TEXT, mode TEXT,
@@ -830,11 +830,8 @@ pub fn set_workspace_trusted(
         paths.push(canonical_text);
         paths.sort();
     }
-    fs::create_dir_all(state_dir)?;
-    fs::write(
-        trust_path(state_dir),
-        serde_json::to_vec_pretty(&json!({"trusted_workspaces": paths}))?,
-    )?;
+    let bytes = serde_json::to_vec_pretty(&json!({"trusted_workspaces": paths}))?;
+    atomic_write(trust_path(state_dir), &bytes)?;
     let mut response = workspace_trust_dto_from_paths(&canonical, &paths);
     response["ok"] = Value::Bool(true);
     Ok(response)
