@@ -10,10 +10,7 @@ pub fn atomic_write(path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), ShadowRe
     atomic_write_with_privacy(path.as_ref(), bytes, false)
 }
 
-pub fn atomic_write_private(
-    path: impl AsRef<Path>,
-    bytes: &[u8],
-) -> Result<(), ShadowReadError> {
+pub fn atomic_write_private(path: impl AsRef<Path>, bytes: &[u8]) -> Result<(), ShadowReadError> {
     atomic_write_with_privacy(path.as_ref(), bytes, true)
 }
 
@@ -78,10 +75,7 @@ fn open_temp_file(path: &Path, private: bool) -> Result<std::fs::File, ShadowRea
 
 #[cfg(not(unix))]
 fn open_temp_file(path: &Path, _private: bool) -> Result<std::fs::File, ShadowReadError> {
-    Ok(OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(path)?)
+    Ok(OpenOptions::new().write(true).create_new(true).open(path)?)
 }
 
 #[cfg(not(windows))]
