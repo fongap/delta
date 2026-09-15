@@ -7,7 +7,7 @@ use std::path::{Component, Path, PathBuf};
 use base64::Engine;
 use serde_json::{json, Value};
 
-use crate::ShadowReadError;
+use crate::{durability::atomic_write, ShadowReadError};
 
 pub struct SkillStore {
     state_dir: PathBuf,
@@ -289,10 +289,8 @@ impl SkillStore {
         } else {
             session.insert(skill.to_string(), Value::Bool(enabled));
         }
-        std::fs::write(
-            self.state_dir.join("session-skills.json"),
-            serde_json::to_vec_pretty(&overrides)?,
-        )?;
+        let bytes = serde_json::to_vec_pretty(&overrides)?;
+        atomic_write(self.state_dir.join("session-skills.json"), &bytes)?;
         Ok(json!({"ok": true, "skills": self.session_rows(session_id, workspace)?}))
     }
 
@@ -352,10 +350,8 @@ impl SkillStore {
         }
         let mut disabled = disabled.into_iter().collect::<Vec<_>>();
         disabled.sort();
-        std::fs::write(
-            self.state_dir.join("skills-settings.json"),
-            serde_json::to_vec_pretty(&json!({"disabled": disabled}))?,
-        )?;
+        let bytes = serde_json::to_vec_pretty(&json!({"disabled": disabled}))?;
+        atomic_write(self.state_dir.join("skills-settings.json"), &bytes)?;
         Ok(())
     }
 
@@ -458,7 +454,7 @@ fn write_skill(
         description.replace(['\r', '\n'], " "),
         instructions.trim()
     );
-    std::fs::write(folder.join("SKILL.md"), text)?;
+    atomic_write(folder.join("SKILL.md"), text.as_bytes())?;
     Ok(())
 }
 
