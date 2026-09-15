@@ -16,15 +16,98 @@ jobs:
         with:
           ref: codex/r7-model-authority-failclosed
 
-      - name: Apply model authority patch
+      - name: Refine scheduler authority ordering
         shell: bash
         run: |
           set -euo pipefail
-          python3 .github/scripts/r7_model_authority_failclosed_patch.py
-          python3 .github/scripts/r7_model_authority_followup.py
-          rustfmt --edition 2021 \
-            core/runtime-native/src/model_authority.rs \
-            apps/desktop/src-tauri/src/runtime_ipc.rs
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path("apps/desktop/src-tauri/src/runtime_ipc.rs")
+          text = path.read_text(encoding="utf-8")
+          old = '''                let settings = state.models.lock().unwrap().settings();
+                let model_id = settings
+                    .as_ref()
+                    .ok()
+                    .and_then(|settings| settings.get("model"))
+                    .and_then(Value::as_str)
+                    .unwrap_or_default()
+                    .to_string();
+                let workspace = run
+                    .get("workspace")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                let session_ready = delta_runtime_native::control_plane::ensure_session(
+                    &state_dir(),
+                    &session_id,
+                    workspace.as_deref().filter(|value| !value.is_empty()),
+                    &model_id,
+                );
+                let accepted = match (settings, session_ready) {
+                    (Err(error), _) => json!({"ok": false, "error": error}),
+                    (Ok(_), Ok(_)) => start_runtime(
+                        &app,
+                        state.inner(),
+                        session_id.clone(),
+                        model_id,
+                        run.get("prompt")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string(),
+                        workspace,
+                        None,
+                        None,
+                        Some("unattended".to_string()),
+                        None,
+                        None,
+                        Some(json!({"automation_id": run.get("task_id"), "trigger": "scheduled"})),
+                    ),
+                    (_, Err(error)) => json!({"ok": false, "error": error.to_string()}),
+                };'''
+          new = '''                let workspace = run
+                    .get("workspace")
+                    .and_then(Value::as_str)
+                    .map(str::to_string);
+                let accepted = match state.models.lock().unwrap().settings() {
+                    Err(error) => json!({"ok": false, "error": error}),
+                    Ok(settings) => {
+                        let model_id = settings
+                            .get("model")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .to_string();
+                        match delta_runtime_native::control_plane::ensure_session(
+                            &state_dir(),
+                            &session_id,
+                            workspace.as_deref().filter(|value| !value.is_empty()),
+                            &model_id,
+                        ) {
+                            Ok(_) => start_runtime(
+                                &app,
+                                state.inner(),
+                                session_id.clone(),
+                                model_id,
+                                run.get("prompt")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or_default()
+                                    .to_string(),
+                                workspace,
+                                None,
+                                None,
+                                Some("unattended".to_string()),
+                                None,
+                                None,
+                                Some(json!({"automation_id": run.get("task_id"), "trigger": "scheduled"})),
+                            ),
+                            Err(error) => json!({"ok": false, "error": error.to_string()}),
+                        }
+                    }
+                };'''
+          if text.count(old) != 1:
+              raise SystemExit(f"scheduler authority ordering target count={text.count(old)}")
+          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          PY
+          rustfmt --edition 2021 apps/desktop/src-tauri/src/runtime_ipc.rs
           git diff --check
 
       - name: Install Tauri Linux system dependencies
@@ -51,21 +134,17 @@ jobs:
           cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml
           cargo clippy --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
 
-      - name: Commit product patch
+      - name: Commit product refinement
         shell: bash
         run: |
           set -euo pipefail
-          if git diff --quiet -- \
-            core/runtime-native/src/model_authority.rs \
-            apps/desktop/src-tauri/src/runtime_ipc.rs; then
-            echo "Product patch already committed; nothing to push."
+          if git diff --quiet -- apps/desktop/src-tauri/src/runtime_ipc.rs; then
+            echo "Product refinement already committed; nothing to push."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add \
-            core/runtime-native/src/model_authority.rs \
-            apps/desktop/src-tauri/src/runtime_ipc.rs
+          git add apps/desktop/src-tauri/src/runtime_ipc.rs
           git diff --cached --check
-          git commit -m "fix(r7): fail closed on model authority corruption"
+          git commit -m "fix(r7): fail closed before scheduler session mutation"
           git push origin HEAD:codex/r7-model-authority-failclosed
