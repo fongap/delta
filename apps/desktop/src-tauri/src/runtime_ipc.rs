@@ -1350,8 +1350,12 @@ pub fn session_set_skill(
 }
 
 #[tauri::command]
-pub fn connectors_list(state: State<'_, RuntimeRegistry>) -> Value {
-    json!({"connectors": state.application.connectors()})
+pub fn connectors_list(state: State<'_, RuntimeRegistry>) -> Result<Value, String> {
+    state
+        .application
+        .connectors()
+        .map(|connectors| json!({"connectors": connectors}))
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1388,8 +1392,14 @@ pub fn connector_action(
 }
 
 #[tauri::command]
-pub fn session_connections(state: State<'_, RuntimeRegistry>, session_id: String) -> Value {
-    state.application.session_connections(&session_id)
+pub fn session_connections(
+    state: State<'_, RuntimeRegistry>,
+    session_id: String,
+) -> Result<Value, String> {
+    state
+        .application
+        .session_connections(&session_id)
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1409,8 +1419,12 @@ pub fn session_set_connection(
 }
 
 #[tauri::command]
-pub fn subscriptions_list(state: State<'_, RuntimeRegistry>) -> Value {
-    json!({"subscriptions": state.application.subscriptions()})
+pub fn subscriptions_list(state: State<'_, RuntimeRegistry>) -> Result<Value, String> {
+    state
+        .application
+        .subscriptions()
+        .map(|subscriptions| json!({"subscriptions": subscriptions}))
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1432,8 +1446,12 @@ pub fn subscription_remove(
 }
 
 #[tauri::command]
-pub fn inbox_routing_list(state: State<'_, RuntimeRegistry>) -> Value {
-    json!({"bindings": state.application.inbox_bindings()})
+pub fn inbox_routing_list(state: State<'_, RuntimeRegistry>) -> Result<Value, String> {
+    state
+        .application
+        .inbox_bindings()
+        .map(|bindings| json!({"bindings": bindings}))
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
@@ -1451,18 +1469,30 @@ pub fn inbox_routing_set(
 }
 
 #[tauri::command]
-pub fn unrouted_list(state: State<'_, RuntimeRegistry>) -> Value {
-    json!({"items": state.application.unrouted()})
+pub fn unrouted_list(state: State<'_, RuntimeRegistry>) -> Result<Value, String> {
+    state
+        .application
+        .unrouted()
+        .map(|items| json!({"items": items}))
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub fn recent_channels(state: State<'_, RuntimeRegistry>) -> Value {
-    json!({"channels": state.application.recent_channels()})
+pub fn recent_channels(state: State<'_, RuntimeRegistry>) -> Result<Value, String> {
+    state
+        .application
+        .recent_channels()
+        .map(|channels| json!({"channels": channels}))
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]
-pub fn dm_route_get(state: State<'_, RuntimeRegistry>) -> Value {
-    json!({"dm_session": state.application.dm_route()})
+pub fn dm_route_get(state: State<'_, RuntimeRegistry>) -> Result<Value, String> {
+    state
+        .application
+        .dm_route()
+        .map(|dm_session| json!({"dm_session": dm_session}))
+        .map_err(|error| error.to_string())
 }
 
 #[tauri::command]

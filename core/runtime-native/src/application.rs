@@ -102,11 +102,12 @@ impl ApplicationStore {
         })
     }
 
-    fn read(&self) -> ApplicationState {
-        std::fs::read_to_string(&self.state_path)
-            .ok()
-            .and_then(|text| serde_json::from_str(&text).ok())
-            .unwrap_or_default()
+    fn read(&self) -> Result<ApplicationState, ShadowReadError> {
+        if !self.state_path.exists() {
+            return Ok(ApplicationState::default());
+        }
+        let text = std::fs::read_to_string(&self.state_path)?;
+        Ok(serde_json::from_str(&text)?)
     }
 
     fn write(&self, state: &ApplicationState) -> Result<(), ShadowReadError> {
@@ -114,9 +115,26 @@ impl ApplicationStore {
         Ok(())
     }
 
-    pub fn connectors(&self) -> Vec<Value> {
-        let state = self.read();
-        CONNECTORS
+    fn read_secrets(&self) -> Result<BTreeMap<String, BTreeMap<String, String>>, ShadowReadError> {
+        if !self.secrets_path.exists() {
+            return Ok(BTreeMap::new());
+        }
+        let text = std::fs::read_to_string(&self.secrets_path)?;
+        Ok(serde_json::from_str(&text)?)
+    }
+
+    fn write_secrets(
+        &self,
+        secrets: &BTreeMap<String, BTreeMap<String, String>>,
+    ) -> Result<(), ShadowReadError> {
+        std::fs::write(&self.secrets_path, serde_json::to_vec_pretty(secrets)?)?;
+        restrict_private_file(&self.secrets_path)?;
+        Ok(())
+    }
+
+    pub fn connectors(&self) -> Result<Vec<Value>, ShadowReadError> {
+        let state = self.read()?;
+        Ok(CONNECTORS
             .iter()
             .map(|(name, title, logo, two_way, channels)| {
                 let current = state.connectors.get(*name).cloned().unwrap_or_default();
@@ -148,7 +166,7 @@ impl ApplicationStore {
                 }
                 row
             })
-            .collect()
+            .collect())
     }
 
     pub fn connect(
@@ -162,21 +180,16 @@ impl ApplicationStore {
         if fields.is_empty() && name != "browser" {
             return Ok(json!({"ok": false, "error": "connector credentials are required"}));
         }
-        let mut secrets = std::fs::read_to_string(&self.secrets_path)
-            .ok()
-            .and_then(|text| {
-                serde_json::from_str::<BTreeMap<String, BTreeMap<String, String>>>(&text).ok()
-            })
-            .unwrap_or_default();
+        // Validate both authoritative files before mutating either one.
+        let mut state = self.read()?;
+        let mut secrets = self.read_secrets()?;
         secrets.insert(name.to_string(), fields.clone());
-        std::fs::write(&self.secrets_path, serde_json::to_vec_pretty(&secrets)?)?;
         let account = fields
             .get("email")
             .or_else(|| fields.get("account"))
             .or_else(|| fields.get("workspace"))
             .cloned()
             .unwrap_or_else(|| "Connected".to_string());
-        let mut state = self.read();
         let previous = state.connectors.remove(name).unwrap_or_default();
         state.connectors.insert(
             name.to_string(),
@@ -188,20 +201,19 @@ impl ApplicationStore {
                 details: previous.details,
             },
         );
+        self.write_secrets(&secrets)?;
         self.write(&state)?;
         Ok(json!({"ok": true, "account": account}))
     }
 
     pub fn disconnect(&self, name: &str) -> Result<Value, ShadowReadError> {
-        let mut state = self.read();
+        // Validate both authoritative files before mutating either one.
+        let mut state = self.read()?;
+        let mut secrets = self.read_secrets()?;
         let removed = state.connectors.remove(name).is_some();
-        self.write(&state)?;
-        let mut secrets = std::fs::read_to_string(&self.secrets_path)
-            .ok()
-            .and_then(|text| serde_json::from_str::<BTreeMap<String, Value>>(&text).ok())
-            .unwrap_or_default();
         secrets.remove(name);
-        std::fs::write(&self.secrets_path, serde_json::to_vec_pretty(&secrets)?)?;
+        self.write(&state)?;
+        self.write_secrets(&secrets)?;
         Ok(json!({"ok": removed}))
     }
 
@@ -210,7 +222,7 @@ impl ApplicationStore {
         name: &str,
         enabled: &BTreeMap<String, bool>,
     ) -> Result<Value, ShadowReadError> {
-        let mut state = self.read();
+        let mut state = self.read()?;
         let connector = state.connectors.entry(name.to_string()).or_default();
         for (tool, value) in enabled {
             connector.tools.insert(tool.clone(), *value);
@@ -226,7 +238,7 @@ impl ApplicationStore {
         action: &str,
         payload: &Value,
     ) -> Result<Value, ShadowReadError> {
-        let mut state = self.read();
+        let mut state = self.read()?;
         let connector = state.connectors.entry(name.to_string()).or_default();
         let array_add = |details: &mut BTreeMap<String, Value>, key: &str, value: String| {
             let values = details.entry(key.to_string()).or_insert_with(|| json!([]));
@@ -324,8 +336,8 @@ impl ApplicationStore {
         Ok(response)
     }
 
-    pub fn session_connections(&self, session_id: &str) -> Value {
-        let state = self.read();
+    pub fn session_connections(&self, session_id: &str) -> Result<Value, ShadowReadError> {
+        let state = self.read()?;
         let overrides = state.session_connections.get(session_id);
         let connected = state.connectors.iter().filter(|(_, connector)| connector.connected)
             .map(|(name, connector)| json!({
@@ -333,7 +345,7 @@ impl ApplicationStore {
                 "enabled": overrides.and_then(|values| values.get(name)).copied().unwrap_or(connector.enabled),
                 "detail": connector.account.clone().unwrap_or_default(),
             })).collect::<Vec<_>>();
-        json!({"connected": connected, "recommended": [], "attention": 0})
+        Ok(json!({"connected": connected, "recommended": [], "attention": 0}))
     }
 
     pub fn set_session_connection(
@@ -343,7 +355,7 @@ impl ApplicationStore {
         enabled: bool,
         clear: bool,
     ) -> Result<Value, ShadowReadError> {
-        let mut state = self.read();
+        let mut state = self.read()?;
         let overrides = state
             .session_connections
             .entry(session_id.to_string())
@@ -357,15 +369,15 @@ impl ApplicationStore {
         Ok(json!({"ok": true}))
     }
 
-    pub fn subscriptions(&self) -> Vec<Value> {
-        self.read().subscriptions
+    pub fn subscriptions(&self) -> Result<Vec<Value>, ShadowReadError> {
+        Ok(self.read()?.subscriptions)
     }
 
     pub fn subscribe(&self, session_id: &str, channel: &str) -> Result<Value, ShadowReadError> {
         if session_id.is_empty() || channel.trim().is_empty() {
             return Ok(json!({"ok": false, "error": "session and channel are required"}));
         }
-        let mut state = self.read();
+        let mut state = self.read()?;
         state.subscriptions.retain(|item| {
             item.get("session_id").and_then(Value::as_str) != Some(session_id)
                 || item.get("channel").and_then(Value::as_str) != Some(channel)
@@ -379,7 +391,7 @@ impl ApplicationStore {
     }
 
     pub fn unsubscribe(&self, session_id: &str, channel: &str) -> Result<Value, ShadowReadError> {
-        let mut state = self.read();
+        let mut state = self.read()?;
         let before = state.subscriptions.len();
         state.subscriptions.retain(|item| {
             item.get("session_id").and_then(Value::as_str) != Some(session_id)
@@ -390,8 +402,8 @@ impl ApplicationStore {
         Ok(json!({"ok": true, "removed": removed}))
     }
 
-    pub fn inbox_bindings(&self) -> Vec<Value> {
-        self.read().inbox_bindings
+    pub fn inbox_bindings(&self) -> Result<Vec<Value>, ShadowReadError> {
+        Ok(self.read()?.inbox_bindings)
     }
 
     pub fn set_inbox_binding(
@@ -400,7 +412,7 @@ impl ApplicationStore {
         channel: Option<&str>,
         target: &str,
     ) -> Result<Value, ShadowReadError> {
-        let mut state = self.read();
+        let mut state = self.read()?;
         state
             .inbox_bindings
             .retain(|item| item.get("name").and_then(Value::as_str) != Some(name));
@@ -412,32 +424,50 @@ impl ApplicationStore {
         Ok(json!({"ok": true, "bindings": bindings}))
     }
 
-    pub fn unrouted(&self) -> Vec<Value> {
-        self.read().unrouted
+    pub fn unrouted(&self) -> Result<Vec<Value>, ShadowReadError> {
+        Ok(self.read()?.unrouted)
     }
-    pub fn recent_channels(&self) -> Vec<Value> {
-        self.read().recent_channels
+    pub fn recent_channels(&self) -> Result<Vec<Value>, ShadowReadError> {
+        Ok(self.read()?.recent_channels)
     }
-    pub fn dm_route(&self) -> Option<String> {
-        self.read().dm_session
+    pub fn dm_route(&self) -> Result<Option<String>, ShadowReadError> {
+        Ok(self.read()?.dm_session)
     }
 
     pub fn set_dm_route(&self, session_id: &str) -> Result<Value, ShadowReadError> {
-        let mut state = self.read();
+        let mut state = self.read()?;
         state.dm_session = (!session_id.is_empty()).then(|| session_id.to_string());
         let route = state.dm_session.clone();
         self.write(&state)?;
         Ok(json!({"ok": true, "dm_session": route}))
     }
 
-    pub fn connected_names(&self) -> BTreeSet<String> {
-        self.read()
+    pub fn connected_names(&self) -> Result<BTreeSet<String>, ShadowReadError> {
+        Ok(self
+            .read()?
             .connectors
             .into_iter()
             .filter(|(_, state)| state.connected && state.enabled)
             .map(|(name, _)| name)
-            .collect()
+            .collect())
     }
+}
+
+#[cfg(unix)]
+fn restrict_private_file(path: &Path) -> Result<(), ShadowReadError> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
+    Ok(())
+}
+
+#[cfg(windows)]
+fn restrict_private_file(_path: &Path) -> Result<(), ShadowReadError> {
+    Ok(())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn restrict_private_file(_path: &Path) -> Result<(), ShadowReadError> {
+    Ok(())
 }
 
 #[cfg(test)]
@@ -454,10 +484,10 @@ mod tests {
                 &BTreeMap::from([("token".to_string(), "secret-value".to_string())]),
             )
             .unwrap();
-        assert!(!serde_json::to_string(&store.connectors())
+        assert!(!serde_json::to_string(&store.connectors().unwrap())
             .unwrap()
             .contains("secret-value"));
-        assert!(store.connected_names().contains("slack"));
+        assert!(store.connected_names().unwrap().contains("slack"));
     }
 
     #[test]
@@ -466,10 +496,100 @@ mod tests {
         let store = ApplicationStore::open(temp.path()).unwrap();
         store.subscribe("s1", "slack:C1").unwrap();
         store.subscribe("s1", "slack:C1").unwrap();
-        assert_eq!(store.subscriptions().len(), 1);
+        assert_eq!(store.subscriptions().unwrap().len(), 1);
         assert_eq!(
             store.unsubscribe("s1", "slack:C1").unwrap()["removed"],
             true
         );
+    }
+    #[test]
+    fn corrupt_application_state_fails_closed_and_is_not_overwritten() {
+        let temp = tempfile::tempdir().unwrap();
+        let state_path = temp.path().join("application-state.json");
+        std::fs::write(&state_path, b"{not-json").unwrap();
+        let store = ApplicationStore::open(temp.path()).unwrap();
+
+        assert!(matches!(store.connectors(), Err(ShadowReadError::Json(_))));
+        assert!(matches!(
+            store.update_tools("slack", &BTreeMap::from([("send".to_string(), true)])),
+            Err(ShadowReadError::Json(_))
+        ));
+        assert_eq!(std::fs::read(&state_path).unwrap(), b"{not-json");
+    }
+
+    #[test]
+    fn corrupt_connector_secrets_fail_closed_and_are_not_overwritten() {
+        let temp = tempfile::tempdir().unwrap();
+        let secrets_path = temp.path().join("connector-secrets.json");
+        std::fs::write(&secrets_path, b"{not-json").unwrap();
+        let store = ApplicationStore::open(temp.path()).unwrap();
+
+        assert!(matches!(
+            store.connect(
+                "slack",
+                &BTreeMap::from([("token".to_string(), "new-secret".to_string())]),
+            ),
+            Err(ShadowReadError::Json(_))
+        ));
+        assert_eq!(std::fs::read(&secrets_path).unwrap(), b"{not-json");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn connector_secrets_are_persisted_private() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let temp = tempfile::tempdir().unwrap();
+        let store = ApplicationStore::open(temp.path()).unwrap();
+        store
+            .connect(
+                "slack",
+                &BTreeMap::from([("token".to_string(), "secret-value".to_string())]),
+            )
+            .unwrap();
+        let mode = std::fs::metadata(temp.path().join("connector-secrets.json"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
+    }
+    #[test]
+    fn connect_does_not_mutate_secrets_when_application_state_is_corrupt() {
+        let temp = tempfile::tempdir().unwrap();
+        let state_path = temp.path().join("application-state.json");
+        std::fs::write(&state_path, b"{not-json").unwrap();
+        let store = ApplicationStore::open(temp.path()).unwrap();
+
+        assert!(matches!(
+            store.connect(
+                "slack",
+                &BTreeMap::from([("token".to_string(), "new-secret".to_string())]),
+            ),
+            Err(ShadowReadError::Json(_))
+        ));
+        assert!(!temp.path().join("connector-secrets.json").exists());
+    }
+
+    #[test]
+    fn disconnect_does_not_mutate_state_when_secrets_are_corrupt() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ApplicationStore::open(temp.path()).unwrap();
+        store
+            .connect(
+                "slack",
+                &BTreeMap::from([("token".to_string(), "secret-value".to_string())]),
+            )
+            .unwrap();
+
+        let state_path = temp.path().join("application-state.json");
+        let before = std::fs::read(&state_path).unwrap();
+        std::fs::write(temp.path().join("connector-secrets.json"), b"{not-json").unwrap();
+
+        assert!(matches!(
+            store.disconnect("slack"),
+            Err(ShadowReadError::Json(_))
+        ));
+        assert_eq!(std::fs::read(&state_path).unwrap(), before);
     }
 }
