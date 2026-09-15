@@ -1082,7 +1082,7 @@ pub fn memory_delete_all(state: State<'_, RuntimeRegistry>) -> Value {
 
 #[tauri::command]
 pub fn memory_settings(state: State<'_, RuntimeRegistry>) -> Value {
-    state.memory.settings()
+    authority_result(state.memory.settings())
 }
 
 #[tauri::command]
