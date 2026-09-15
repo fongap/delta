@@ -324,7 +324,9 @@ impl SkillStore {
         })?;
         let disabled = root
             .get("disabled")
-            .ok_or_else(|| ShadowReadError::Parse("skill settings are missing disabled".to_string()))?
+            .ok_or_else(|| {
+                ShadowReadError::Parse("skill settings are missing disabled".to_string())
+            })?
             .as_array()
             .ok_or_else(|| {
                 ShadowReadError::Parse("skill settings disabled must be an array".to_string())
@@ -332,7 +334,9 @@ impl SkillStore {
         let mut names = HashSet::new();
         for value in disabled {
             let name = value.as_str().ok_or_else(|| {
-                ShadowReadError::Parse("skill settings disabled entries must be strings".to_string())
+                ShadowReadError::Parse(
+                    "skill settings disabled entries must be strings".to_string(),
+                )
             })?;
             names.insert(validate_name(name)?);
         }
@@ -370,9 +374,7 @@ impl SkillStore {
                 ));
             }
             let skills = skills.as_object().ok_or_else(|| {
-                ShadowReadError::Parse(
-                    "session skill state entries must be objects".to_string(),
-                )
+                ShadowReadError::Parse("session skill state entries must be objects".to_string())
             })?;
             for (skill, enabled) in skills {
                 validate_name(skill)?;
