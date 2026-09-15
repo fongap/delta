@@ -9,80 +9,35 @@ permissions:
   contents: write
 
 jobs:
-  patch:
+  fix-generator:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: codex/r7-automation-terminal-reconciliation
 
-      - name: Apply terminal reconciliation patch structurally
+      - name: Fix generated RuntimeEvent match arm
         shell: bash
         run: |
           python3 - <<'PY'
           from pathlib import Path
-          import re
-          import textwrap
-
-          workflow = Path('.github/workflows/_r7-automation-terminal-reconciliation.yml').read_text()
-          start_marker = "          python3 - <<'PY'\n"
-          end_marker = "\n          PY\n"
-          start = workflow.index(start_marker) + len(start_marker)
-          end = workflow.index(end_marker, start)
-          script = textwrap.dedent(workflow[start:end])
-
-          fn_start = script.index('def once(')
-          fn_end = script.index('# Runtime error events', fn_start)
-          robust_once = r'''def once(text, old, new, label):
-              count = text.count(old)
-              if count == 1:
-                  return text.replace(old, new, 1)
-              if count > 1:
-                  raise SystemExit(f'{label}: expected one target, got {count}')
-              parts = re.split(r'(\s+)', old)
-              pattern = ''.join(r'\s+' if part.isspace() else re.escape(part) for part in parts if part)
-              matches = list(re.finditer(pattern, text, flags=re.S))
-              if len(matches) != 1:
-                  raise SystemExit(f'{label}: expected one structural target, got {len(matches)}')
-              match = matches[0]
-              return text[:match.start()] + new + text[match.end():]
-
-          '''
-          script = script[:fn_start] + textwrap.dedent(robust_once) + script[fn_end:]
-          exec(compile(script, '<automation-terminal-reconciliation-v2>', 'exec'))
+          path = Path('.github/workflows/_r7-automation-terminal-reconciliation.yml')
+          text = path.read_text()
+          old = '                json!({"error": error, "error_type": error_type, "terminal": terminal}),\\n            )\','
+          new = '                json!({"error": error, "error_type": error_type, "terminal": terminal}),\\n            ),\','
+          if text.count(old) != 1:
+              raise SystemExit(f'expected one match-arm generator target, got {text.count(old)}')
+          path.write_text(text.replace(old, new, 1))
           PY
-
-          rustfmt --edition 2021 \
-            core/runtime-native/src/runtime.rs \
-            core/runtime-native/src/control_plane.rs \
-            core/runtime-native/src/taskstore.rs \
-            core/runtime-native/src/automation.rs \
-            apps/desktop/src-tauri/src/runtime_ipc.rs
           git diff --check
 
-      - name: Verify Rust gates
-        shell: bash
-        run: |
-          cargo check --manifest-path core/runtime-native/Cargo.toml
-          cargo test --manifest-path core/runtime-native/Cargo.toml
-          cargo clippy --manifest-path core/runtime-native/Cargo.toml --all-targets -- -D warnings
-          cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
-          cargo test --manifest-path apps/desktop/src-tauri/Cargo.toml
-          cargo clippy --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
-
-      - name: Commit product patch and remove temporary workflows
+      - name: Commit fix and self-delete
         shell: bash
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git rm .github/workflows/_r7-automation-terminal-reconciliation.yml
           git rm .github/workflows/_r7-automation-terminal-reconciliation-v2.yml
-          git add \
-            core/runtime-native/src/runtime.rs \
-            core/runtime-native/src/control_plane.rs \
-            core/runtime-native/src/taskstore.rs \
-            core/runtime-native/src/automation.rs \
-            apps/desktop/src-tauri/src/runtime_ipc.rs
+          git add .github/workflows/_r7-automation-terminal-reconciliation.yml
           git diff --cached --check
-          git commit -m "fix(r7): reconcile automation terminal state"
+          git commit -m "chore(r7): fix reconciliation generator syntax"
           git push origin HEAD:codex/r7-automation-terminal-reconciliation
