@@ -80,7 +80,9 @@ impl RuntimeRegistry {
     fn new() -> Self {
         Self {
             hosts: Mutex::new(HashMap::new()),
-            models: Mutex::new(ModelAuthority::new(state_dir())),
+            models: Mutex::new(
+                ModelAuthority::open(state_dir()).expect("initialize Rust model authority"),
+            ),
             authorities: RuntimeAuthorities::open(state_dir())
                 .expect("initialize Rust runtime authorities"),
             capabilities: Arc::new(

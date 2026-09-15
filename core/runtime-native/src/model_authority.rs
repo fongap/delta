@@ -4,6 +4,12 @@
 //! protocol, endpoint and credential inside the Rust boundary. Secret values
 //! are accepted on writes and consumed by the provider transport, but are never
 //! included in settings/provider responses.
+//!
+//! Provider profiles, model mappings, default model, provider preferences and
+//! API keys all live in one private authority file persisted with a single
+//! atomic write. Legacy `prefs.json` + `secrets.json` are migrated once at
+//! startup (hard cut) and then removed; the consolidated authority is the sole
+//! source of truth.
 
 use std::collections::HashSet;
 use std::fs;
@@ -11,8 +17,10 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use regex::Regex;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
+use crate::durability::atomic_write_private;
 use crate::RuntimeConfig;
 
 const DEFAULT_OPENAI_URL: &str = "https://api.openai.com/v1";
@@ -20,6 +28,19 @@ const DEFAULT_ANTHROPIC_URL: &str = "https://api.anthropic.com";
 const OPENAI_PROTOCOL: &str = "openai";
 const ANTHROPIC_PROTOCOL: &str = "anthropic";
 const PROFILE_PREFIX: &str = "provider-profile:";
+const LEGACY_PROFILE_PREFIX: &str = "provider:";
+
+/// Single persisted authority: product prefs + provider secrets in one file.
+///
+/// Both halves are written together in one atomic commit so a crash can never
+/// leave provider configuration updated while its secret is not (or vice versa).
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+struct ModelAuthorityFile {
+    #[serde(default)]
+    prefs: Map<String, Value>,
+    #[serde(default)]
+    secrets: Map<String, Value>,
+}
 
 const MODEL_MATRIX: &[(&str, &str, Option<u64>)] = &[
     ("gpt-5.6-sol", "GPT-5.6 Sol · OpenAI", Some(400_000)),
@@ -202,14 +223,125 @@ pub struct ModelAuthority {
 }
 
 impl ModelAuthority {
-    pub fn new(state_dir: impl Into<PathBuf>) -> Self {
-        Self {
-            state_dir: state_dir.into(),
+    /// Open the sole model authority, migrating legacy files once on first use.
+    ///
+    /// Fail-closed: any corrupt legacy input or corrupt existing authority
+    /// returns an error without creating or overwriting the authority file.
+    pub fn open(state_dir: impl Into<PathBuf>) -> Result<Self, String> {
+        let state_dir = state_dir.into();
+        fs::create_dir_all(&state_dir).map_err(|error| error.to_string())?;
+        let authority = Self { state_dir };
+        authority.migrate_legacy()?;
+        Ok(authority)
+    }
+
+    fn authority_path(&self) -> PathBuf {
+        self.state_dir.join("model-authority.json")
+    }
+
+    /// One-time hard-cut migration from the retired dual authority
+    /// (`prefs.json` + `secrets.json`) into the single consolidated authority.
+    fn migrate_legacy(&self) -> Result<(), String> {
+        let legacy_prefs = self.state_dir.join("prefs.json");
+        let legacy_secrets = self.state_dir.join("secrets.json");
+
+        if self.authority_path().exists() {
+            // The consolidated file is the sole authority. Validate it before
+            // removing any stale migration inputs left by an interrupted cleanup.
+            self.read_authority()?;
+            remove_if_exists(&legacy_prefs)?;
+            remove_if_exists(&legacy_secrets)?;
+            return Ok(());
+        }
+
+        if !legacy_prefs.exists() && !legacy_secrets.exists() {
+            return Ok(()); // first run — no authority yet
+        }
+
+        // Both legacy files must parse successfully; any corruption fails closed
+        // without creating the new authority.
+        let prefs = if legacy_prefs.exists() {
+            read_legacy_object(&legacy_prefs)?
+        } else {
+            Map::new()
+        };
+        let mut secrets = if legacy_secrets.exists() {
+            read_legacy_object(&legacy_secrets)?
+        } else {
+            Map::new()
+        };
+        self.normalize_provider_keys(&mut secrets, &prefs);
+
+        // Once the new authority is committed it becomes the sole authority.
+        self.write_authority(&ModelAuthorityFile { prefs, secrets })?;
+        remove_if_exists(&legacy_prefs)?;
+        remove_if_exists(&legacy_secrets)?;
+        Ok(())
+    }
+
+    /// Read the sole authority. A missing file is a first run; a corrupt or
+    /// non-object file fails closed.
+    fn read_authority(&self) -> Result<ModelAuthorityFile, String> {
+        let path = self.authority_path();
+        if !path.exists() {
+            return Ok(ModelAuthorityFile::default());
+        }
+        let text = fs::read_to_string(&path)
+            .map_err(|error| format!("read {}: {error}", path.display()))?;
+        let file: ModelAuthorityFile = serde_json::from_str(&text)
+            .map_err(|error| format!("parse {}: {error}", path.display()))?;
+        Ok(file)
+    }
+
+    /// Persist the whole authority (prefs + secrets) in one private atomic write.
+    fn write_authority(&self, file: &ModelAuthorityFile) -> Result<(), String> {
+        let bytes = serde_json::to_vec_pretty(file).map_err(|error| error.to_string())?;
+        atomic_write_private(self.authority_path(), &bytes).map_err(|error| error.to_string())
+    }
+
+    /// Rename retired `provider:<name>` keys to `provider-profile:<name>` and
+    /// back-fill missing metadata. Runs once during the hard-cut migration.
+    fn normalize_provider_keys(
+        &self,
+        secrets: &mut Map<String, Value>,
+        prefs: &Map<String, Value>,
+    ) {
+        let legacy_keys: Vec<String> = secrets
+            .keys()
+            .filter(|key| key.starts_with(LEGACY_PROFILE_PREFIX))
+            .cloned()
+            .collect();
+        for legacy_key in legacy_keys {
+            let name = legacy_key
+                .strip_prefix(LEGACY_PROFILE_PREFIX)
+                .unwrap_or_default();
+            let target = profile_key(name);
+            if secrets.contains_key(&target) {
+                secrets.remove(&legacy_key);
+                continue;
+            }
+            if let Some(mut value) = secrets.remove(&legacy_key) {
+                if let Some(profile) = value.as_object_mut() {
+                    let protocol = self
+                        .descriptor(name, prefs)
+                        .map(|descriptor| descriptor.protocol)
+                        .unwrap_or_else(|_| OPENAI_PROTOCOL.to_string());
+                    profile
+                        .entry("protocol".to_string())
+                        .or_insert_with(|| json!(protocol));
+                    profile
+                        .entry("name".to_string())
+                        .or_insert_with(|| json!(name));
+                }
+                secrets.insert(target, value);
+            }
         }
     }
 
     pub fn resolve_runtime_config(&self, requested_model: &str) -> Result<RuntimeConfig, String> {
-        let prefs = self.read_prefs()?;
+        let file = self.read_authority()?;
+        let prefs = &file.prefs;
+        let secrets = &file.secrets;
         let model_id = if requested_model.trim().is_empty() {
             prefs
                 .get("default_model")
@@ -222,9 +354,9 @@ impl ModelAuthority {
         if model_id.is_empty() {
             return Err("no model configured".to_string());
         }
-        let (provider_name, provider_model) = self.route_model(model_id, &prefs);
-        let descriptor = self.descriptor(&provider_name, &prefs)?;
-        let profile = self.resolved_profile(&provider_name, &prefs)?;
+        let (provider_name, provider_model) = self.route_model(model_id, prefs);
+        let descriptor = self.descriptor(&provider_name, prefs)?;
+        let profile = self.resolved_profile(&provider_name, secrets)?;
         let profile_protocol = profile
             .get("protocol")
             .and_then(Value::as_str)
@@ -277,7 +409,9 @@ impl ModelAuthority {
     }
 
     pub fn settings(&self) -> Result<Value, String> {
-        let prefs = self.read_prefs()?;
+        let file = self.read_authority()?;
+        let prefs = &file.prefs;
+        let secrets = &file.secrets;
         let default_model = prefs
             .get("default_model")
             .and_then(Value::as_str)
@@ -296,7 +430,7 @@ impl ModelAuthority {
         }
         for (model, _, _) in MODEL_MATRIX {
             if !hidden.contains(model)
-                && self.provider_configured(&self.route_model(model, &prefs).0, &prefs)?
+                && self.provider_configured(&self.route_model(model, prefs).0, prefs, secrets)?
                 && !models.iter().any(|existing| existing == model)
             {
                 models.push((*model).to_string());
@@ -310,13 +444,13 @@ impl ModelAuthority {
             .filter_map(Value::as_str)
         {
             if !hidden.contains(model)
-                && self.provider_configured(&self.route_model(model, &prefs).0, &prefs)?
+                && self.provider_configured(&self.route_model(model, prefs).0, prefs, secrets)?
                 && !models.iter().any(|existing| existing == model)
             {
                 models.push(model.to_string());
             }
         }
-        let openai_profile = self.resolved_profile("openai", &prefs)?;
+        let openai_profile = self.resolved_profile("openai", secrets)?;
         let openai_descriptor = self.builtin_descriptor("openai").unwrap();
         let openai_base = openai_profile
             .get("base_url")
@@ -344,14 +478,14 @@ impl ModelAuthority {
             "model_context_windows": windows,
             "has_key": env_key || stored_key,
             "model_ready": !default_model.is_empty()
-                && self.provider_configured(&self.route_model(&default_model, &prefs).0, &prefs)?,
+                && self.provider_configured(&self.route_model(&default_model, prefs).0, prefs, secrets)?,
             "source": if env_key { Value::String("env".to_string()) } else if stored_key { Value::String("store".to_string()) } else { Value::Null },
             "onboarded": prefs.get("onboarded").and_then(Value::as_bool).unwrap_or(false),
             "language": prefs.get("language").cloned().unwrap_or(Value::Null),
             "sessions_peek": bounded_i64(prefs.get("sessions_peek"), 5, 1, 50),
             "context_bar": prefs.get("context_bar").and_then(Value::as_bool).unwrap_or(false),
             "scratch_base": prefs.get("scratch_base").and_then(Value::as_str).unwrap_or("~/Delta"),
-            "secrets_path": self.secrets_path().to_string_lossy(),
+            "secrets_path": self.authority_path().to_string_lossy(),
             "pdf_fallback": match prefs.get("pdf_fallback").and_then(Value::as_str) { Some("images") => "images", _ => "text" },
             "pdf_max_pages": bounded_i64(prefs.get("pdf_max_pages"), 20, 1, 100),
             "pdf_max_mb": bounded_i64(prefs.get("pdf_max_mb"), 10, 1, 10),
@@ -385,10 +519,12 @@ impl ModelAuthority {
     }
 
     pub fn providers(&self) -> Result<Value, String> {
-        let prefs = self.read_prefs()?;
+        let file = self.read_authority()?;
+        let prefs = &file.prefs;
+        let secrets = &file.secrets;
         let mut rows: Vec<Value> = PROVIDERS
             .iter()
-            .map(|descriptor| self.provider_row((*descriptor).into(), false, &prefs))
+            .map(|descriptor| self.provider_row((*descriptor).into(), false, prefs, secrets))
             .collect::<Result<Vec<_>, _>>()?;
         if let Some(custom) = prefs.get("provider_profiles").and_then(Value::as_object) {
             for (name, meta) in custom {
@@ -420,7 +556,7 @@ impl ModelAuthority {
                     env_key: String::new(),
                     blurb: "User-defined provider".to_string(),
                 };
-                rows.push(self.provider_row(descriptor, true, &prefs)?);
+                rows.push(self.provider_row(descriptor, true, prefs, secrets)?);
             }
         }
         Ok(Value::Array(rows))
@@ -436,23 +572,24 @@ impl ModelAuthority {
         if name.is_empty() {
             return Err("name required".to_string());
         }
-        let mut prefs = self.read_prefs()?;
+        let mut file = self.read_authority()?;
+        let prefs = &mut file.prefs;
         if let Some(protocol) = protocol {
             validate_alias(name)?;
             if PROVIDERS.iter().any(|descriptor| descriptor.name == name) {
                 return Err(format!("provider already exists: {name}"));
             }
             validate_protocol(protocol)?;
-            let profiles = object_mut(&mut prefs, "provider_profiles");
+            let profiles = object_mut(prefs, "provider_profiles");
             profiles.insert(
                 name.to_string(),
                 json!({"protocol": protocol, "preset": false}),
             );
         }
-        let descriptor = self.descriptor(name, &prefs)?;
-        let mut secrets = self.read_secrets()?;
+        let descriptor = self.descriptor(name, prefs)?;
         let key = profile_key(name);
-        let mut profile = secrets
+        let mut profile = file
+            .secrets
             .get(&key)
             .and_then(Value::as_object)
             .cloned()
@@ -496,25 +633,29 @@ impl ModelAuthority {
             }
         }
         validate_profile(&descriptor, &profile, protocol.is_none())?;
-        secrets.insert(key, Value::Object(profile));
-        self.write_secrets(&secrets)?;
+        file.secrets.insert(key, Value::Object(profile));
 
         let recommended = if name == "openai" {
             descriptor.recommended_model.to_string()
         } else {
             format!("{name}:{}", descriptor.recommended_model)
         };
-        self.add_model_to_prefs(&mut prefs, &recommended);
+        self.add_model_to_prefs(prefs, &recommended);
         let current = prefs
             .get("default_model")
             .and_then(Value::as_str)
             .unwrap_or("");
         if current.is_empty()
-            || !self.provider_configured(&self.route_model(current, &prefs).0, &prefs)?
+            || !self.provider_configured(
+                &self.route_model(current, prefs).0,
+                prefs,
+                &file.secrets,
+            )?
         {
             prefs.insert("default_model".to_string(), json!(recommended));
         }
-        self.write_prefs(&prefs)?;
+        // One atomic commit: provider profile (prefs) + secret together.
+        self.write_authority(&file)?;
         Ok(json!({
             "ok": true,
             "provider": name,
@@ -524,7 +665,8 @@ impl ModelAuthority {
     }
 
     pub fn remove_provider(&self, name: &str) -> Result<Value, String> {
-        let mut prefs = self.read_prefs()?;
+        let mut file = self.read_authority()?;
+        let prefs = &mut file.prefs;
         let custom = prefs
             .get("provider_profiles")
             .and_then(Value::as_object)
@@ -532,9 +674,7 @@ impl ModelAuthority {
         if !custom && self.builtin_descriptor(name).is_none() {
             return Err(format!("unknown provider: {name}"));
         }
-        let mut secrets = self.read_secrets()?;
-        secrets.remove(&profile_key(name));
-        self.write_secrets(&secrets)?;
+        file.secrets.remove(&profile_key(name));
         if custom {
             if let Some(profiles) = prefs
                 .get_mut("provider_profiles")
@@ -543,10 +683,10 @@ impl ModelAuthority {
                 profiles.remove(name);
             }
             let prefix = format!("{name}:");
-            retain_strings_without_prefix(&mut prefs, "models", &prefix);
-            retain_strings_without_prefix(&mut prefs, "hidden_models", &prefix);
-            self.write_prefs(&prefs)?;
+            retain_strings_without_prefix(prefs, "models", &prefix);
+            retain_strings_without_prefix(prefs, "hidden_models", &prefix);
         }
+        self.write_authority(&file)?;
         Ok(json!({"ok": true, "provider": name}))
     }
 
@@ -555,10 +695,10 @@ impl ModelAuthority {
         if model.is_empty() {
             return Err("empty model".to_string());
         }
-        let mut prefs = self.read_prefs()?;
-        self.add_model_to_prefs(&mut prefs, model);
-        prefs.insert("default_model".to_string(), json!(model));
-        self.write_prefs(&prefs)?;
+        let mut file = self.read_authority()?;
+        self.add_model_to_prefs(&mut file.prefs, model);
+        file.prefs.insert("default_model".to_string(), json!(model));
+        self.write_authority(&file)?;
         self.settings().map(with_ok)
     }
 
@@ -567,23 +707,23 @@ impl ModelAuthority {
         if model.is_empty() {
             return Err("empty model".to_string());
         }
-        let mut prefs = self.read_prefs()?;
-        self.add_model_to_prefs(&mut prefs, model);
-        self.write_prefs(&prefs)?;
+        let mut file = self.read_authority()?;
+        self.add_model_to_prefs(&mut file.prefs, model);
+        self.write_authority(&file)?;
         self.settings().map(with_ok)
     }
 
     pub fn remove_model(&self, model: &str) -> Result<Value, String> {
         let model = model.trim();
-        let mut prefs = self.read_prefs()?;
-        if prefs.get("default_model").and_then(Value::as_str) == Some(model) {
+        let mut file = self.read_authority()?;
+        if file.prefs.get("default_model").and_then(Value::as_str) == Some(model) {
             return Err("default model cannot be hidden".to_string());
         }
-        remove_string(&mut prefs, "models", model);
+        remove_string(&mut file.prefs, "models", model);
         if MODEL_MATRIX.iter().any(|(id, _, _)| *id == model) {
-            push_unique(&mut prefs, "hidden_models", model);
+            push_unique(&mut file.prefs, "hidden_models", model);
         }
-        self.write_prefs(&prefs)?;
+        self.write_authority(&file)?;
         self.settings().map(with_ok)
     }
 
@@ -594,13 +734,13 @@ impl ModelAuthority {
 
     pub fn set_language(&self, language: &str) -> Result<Value, String> {
         let value = language.trim();
-        let mut prefs = self.read_prefs()?;
+        let mut file = self.read_authority()?;
         if value.is_empty() {
-            prefs.remove("language");
+            file.prefs.remove("language");
         } else {
-            prefs.insert("language".to_string(), json!(value));
+            file.prefs.insert("language".to_string(), json!(value));
         }
-        self.write_prefs(&prefs)?;
+        self.write_authority(&file)?;
         self.settings().map(with_ok)
     }
 
@@ -622,7 +762,8 @@ impl ModelAuthority {
     }
 
     pub fn set_pdf_settings(&self, patch: &Value) -> Result<Value, String> {
-        let mut prefs = self.read_prefs()?;
+        let mut file = self.read_authority()?;
+        let prefs = &mut file.prefs;
         if let Some(mode) = patch.get("pdf_fallback").and_then(Value::as_str) {
             if !matches!(mode, "text" | "images") {
                 return Err("pdf_fallback must be 'text' or 'images'".to_string());
@@ -635,12 +776,13 @@ impl ModelAuthority {
         if let Some(value) = patch.get("pdf_max_mb").and_then(Value::as_i64) {
             prefs.insert("pdf_max_mb".to_string(), json!(value.clamp(1, 10)));
         }
-        self.write_prefs(&prefs)?;
+        self.write_authority(&file)?;
         self.settings().map(with_ok)
     }
 
     pub fn set_compaction_settings(&self, patch: &Value) -> Result<Value, String> {
-        let mut prefs = self.read_prefs()?;
+        let mut file = self.read_authority()?;
+        let prefs = &mut file.prefs;
         if let Some(value) = patch
             .get("compaction_threshold_pct")
             .and_then(Value::as_f64)
@@ -659,21 +801,23 @@ impl ModelAuthority {
         if let Some(value) = patch.get("compaction_model").and_then(Value::as_str) {
             prefs.insert("compaction_model".to_string(), json!(value));
         }
-        self.write_prefs(&prefs)?;
+        self.write_authority(&file)?;
         Ok(json!({"ok": true}))
     }
 
     pub fn verify_provider(&self, name: &str, fields: &Value) -> Result<Value, String> {
-        let prefs = self.read_prefs()?;
-        Ok(match self.probe_config(name, fields, &prefs) {
-            Ok(config) => probe_provider(&config, false),
-            Err(error) => json!({"ok": false, "error": error}),
-        })
+        let file = self.read_authority()?;
+        Ok(
+            match self.probe_config(name, fields, &file.prefs, &file.secrets) {
+                Ok(config) => probe_provider(&config, false),
+                Err(error) => json!({"ok": false, "error": error}),
+            },
+        )
     }
 
     pub fn fetch_models(&self, name: &str, fields: &Value) -> Result<Value, String> {
-        let mut prefs = self.read_prefs()?;
-        let config = match self.probe_config(name, fields, &prefs) {
+        let mut file = self.read_authority()?;
+        let config = match self.probe_config(name, fields, &file.prefs, &file.secrets) {
             Ok(config) => config,
             Err(error) => return Ok(json!({"ok": false, "error": error})),
         };
@@ -684,16 +828,17 @@ impl ModelAuthority {
         let mut added = Vec::new();
         for model in models.iter().filter_map(Value::as_str) {
             let full = format!("{name}:{model}");
-            let before = prefs
+            let before = file
+                .prefs
                 .get("models")
                 .and_then(Value::as_array)
                 .is_some_and(|items| items.iter().any(|item| item.as_str() == Some(&full)));
-            self.add_model_to_prefs(&mut prefs, &full);
+            self.add_model_to_prefs(&mut file.prefs, &full);
             if !before {
                 added.push(full);
             }
         }
-        self.write_prefs(&prefs)?;
+        self.write_authority(&file)?;
         Ok(json!({"ok": true, "alias": name, "models": models, "added": added}))
     }
 
@@ -702,9 +847,10 @@ impl ModelAuthority {
         name: &str,
         fields: &Value,
         prefs: &Map<String, Value>,
+        secrets: &Map<String, Value>,
     ) -> Result<ProbeConfig, String> {
         let descriptor = self.descriptor(name, prefs)?;
-        let mut profile = self.resolved_profile(name, prefs)?;
+        let mut profile = self.resolved_profile(name, secrets)?;
         if let Some(fields) = fields.as_object() {
             for key in ["api_key", "base_url", "api_mode"] {
                 if let Some(value) = fields.get(key).and_then(Value::as_str) {
@@ -742,8 +888,9 @@ impl ModelAuthority {
         descriptor: ProviderDescriptor,
         custom: bool,
         prefs: &Map<String, Value>,
+        secrets: &Map<String, Value>,
     ) -> Result<Value, String> {
-        let profile = self.resolved_profile(&descriptor.name, prefs)?;
+        let profile = self.resolved_profile(&descriptor.name, secrets)?;
         let values: Map<String, Value> = ["base_url", "api_mode"]
             .into_iter()
             .filter_map(|key| {
@@ -763,7 +910,7 @@ impl ModelAuthority {
             "title": descriptor.title,
             "needs_key": true,
             "fields": fields,
-            "configured": self.provider_configured(&descriptor.name, prefs),
+            "configured": self.provider_configured(&descriptor.name, prefs, secrets),
             "values": values,
             "suggested_models": suggested_models(&descriptor.name),
             "recommended_model": descriptor.recommended_model,
@@ -776,11 +923,16 @@ impl ModelAuthority {
         }))
     }
 
-    fn provider_configured(&self, name: &str, prefs: &Map<String, Value>) -> Result<bool, String> {
+    fn provider_configured(
+        &self,
+        name: &str,
+        prefs: &Map<String, Value>,
+        secrets: &Map<String, Value>,
+    ) -> Result<bool, String> {
         let Ok(descriptor) = self.descriptor(name, prefs) else {
             return Ok(false);
         };
-        let profile = self.resolved_profile(name, prefs)?;
+        let profile = self.resolved_profile(name, secrets)?;
         let base_url = profile
             .get("base_url")
             .and_then(Value::as_str)
@@ -879,44 +1031,13 @@ impl ModelAuthority {
     fn resolved_profile(
         &self,
         name: &str,
-        prefs: &Map<String, Value>,
+        secrets: &Map<String, Value>,
     ) -> Result<Map<String, Value>, String> {
-        let mut secrets = self.read_secrets()?;
-        self.migrate_legacy_profile(name, &mut secrets, prefs)?;
         Ok(secrets
             .get(&profile_key(name))
             .and_then(Value::as_object)
             .map(resolve_object)
             .unwrap_or_default())
-    }
-
-    fn migrate_legacy_profile(
-        &self,
-        name: &str,
-        secrets: &mut Map<String, Value>,
-        prefs: &Map<String, Value>,
-    ) -> Result<(), String> {
-        let legacy = format!("provider:{name}");
-        let target = profile_key(name);
-        if !secrets.contains_key(&target) {
-            if let Some(mut value) = secrets.remove(&legacy) {
-                if let Some(profile) = value.as_object_mut() {
-                    let protocol = self
-                        .descriptor(name, prefs)
-                        .map(|descriptor| descriptor.protocol)
-                        .unwrap_or_else(|_| OPENAI_PROTOCOL.to_string());
-                    profile
-                        .entry("protocol".to_string())
-                        .or_insert_with(|| json!(protocol));
-                    profile
-                        .entry("name".to_string())
-                        .or_insert_with(|| json!(name));
-                }
-                secrets.insert(target, value);
-                self.write_secrets(secrets)?;
-            }
-        }
-        Ok(())
     }
 
     fn add_model_to_prefs(&self, prefs: &mut Map<String, Value>, model: &str) {
@@ -927,33 +1048,9 @@ impl ModelAuthority {
     }
 
     fn set_pref(&self, key: &str, value: Value) -> Result<(), String> {
-        let mut prefs = self.read_prefs()?;
-        prefs.insert(key.to_string(), value);
-        self.write_prefs(&prefs)
-    }
-
-    fn prefs_path(&self) -> PathBuf {
-        self.state_dir.join("prefs.json")
-    }
-
-    fn secrets_path(&self) -> PathBuf {
-        self.state_dir.join("secrets.json")
-    }
-
-    fn read_prefs(&self) -> Result<Map<String, Value>, String> {
-        read_object(&self.prefs_path())
-    }
-
-    fn write_prefs(&self, prefs: &Map<String, Value>) -> Result<(), String> {
-        write_object(&self.prefs_path(), prefs, false)
-    }
-
-    fn read_secrets(&self) -> Result<Map<String, Value>, String> {
-        read_object(&self.secrets_path())
-    }
-
-    fn write_secrets(&self, secrets: &Map<String, Value>) -> Result<(), String> {
-        write_object(&self.secrets_path(), secrets, true)
+        let mut file = self.read_authority()?;
+        file.prefs.insert(key.to_string(), value);
+        self.write_authority(&file)
     }
 }
 
@@ -1164,10 +1261,12 @@ fn resolve_value(value: &Value) -> Value {
     }
 }
 
-fn read_object(path: &Path) -> Result<Map<String, Value>, String> {
-    if !path.exists() {
-        return Ok(Map::new());
-    }
+/// Parse a retired legacy authority file as a JSON object.
+///
+/// Used only by the one-time hard-cut migration. A non-object payload (e.g. an
+/// array) fails closed so a malformed legacy file can never seed the new
+/// authority.
+fn read_legacy_object(path: &Path) -> Result<Map<String, Value>, String> {
     let text =
         fs::read_to_string(path).map_err(|error| format!("read {}: {error}", path.display()))?;
     let value: Value = serde_json::from_str(&text)
@@ -1178,34 +1277,12 @@ fn read_object(path: &Path) -> Result<Map<String, Value>, String> {
         .ok_or_else(|| format!("{} must contain a JSON object", path.display()))
 }
 
-fn write_object(path: &Path, value: &Map<String, Value>, private: bool) -> Result<(), String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+fn remove_if_exists(path: &Path) -> Result<(), String> {
+    match fs::remove_file(path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.to_string()),
     }
-    let bytes = serde_json::to_vec_pretty(value).map_err(|error| error.to_string())?;
-    fs::write(path, bytes).map_err(|error| error.to_string())?;
-    if private {
-        restrict_secret_file(path)?;
-    }
-    Ok(())
-}
-
-#[cfg(unix)]
-fn restrict_secret_file(path: &Path) -> Result<(), String> {
-    use std::os::unix::fs::PermissionsExt;
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600)).map_err(|error| error.to_string())
-}
-
-#[cfg(windows)]
-fn restrict_secret_file(_path: &Path) -> Result<(), String> {
-    // Files inherit the user-only ACL applied to Delta's application-data
-    // directory by the installer/first-run shell. Secret values never cross IPC.
-    Ok(())
-}
-
-#[cfg(not(any(unix, windows)))]
-fn restrict_secret_file(_path: &Path) -> Result<(), String> {
-    Ok(())
 }
 
 fn object_mut<'a>(root: &'a mut Map<String, Value>, key: &str) -> &'a mut Map<String, Value> {
@@ -1272,9 +1349,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn settings_never_expose_secret_values() {
+    fn secret_values_never_leave_the_rust_boundary() {
         let temp = tempfile::tempdir().unwrap();
-        let authority = ModelAuthority::new(temp.path());
+        let authority = ModelAuthority::open(temp.path()).unwrap();
         authority
             .set_provider(
                 "openai",
@@ -1284,16 +1361,20 @@ mod tests {
             .unwrap();
         let settings = authority.settings().unwrap();
         let providers = authority.providers().unwrap();
+        // Settings/providers expose only has_key/source/key_set_at, never the value.
         assert!(!settings.to_string().contains("top-secret"));
         assert!(!providers.to_string().contains("top-secret"));
         assert_eq!(settings["source"], "store");
         assert_eq!(settings["model_ready"], true);
+        // The secret lives only inside the private authority file.
+        let authority_text = fs::read_to_string(temp.path().join("model-authority.json")).unwrap();
+        assert!(authority_text.contains("top-secret"));
     }
 
     #[test]
     fn model_id_resolves_provider_config_inside_rust() {
         let temp = tempfile::tempdir().unwrap();
-        let authority = ModelAuthority::new(temp.path());
+        let authority = ModelAuthority::open(temp.path()).unwrap();
         authority
             .set_provider(
                 "anthropic",
@@ -1313,7 +1394,7 @@ mod tests {
     #[test]
     fn custom_provider_is_persisted_and_removed_with_its_models() {
         let temp = tempfile::tempdir().unwrap();
-        let authority = ModelAuthority::new(temp.path());
+        let authority = ModelAuthority::open(temp.path()).unwrap();
         authority
             .set_provider(
                 "office-gateway",
@@ -1339,60 +1420,158 @@ mod tests {
     }
 
     #[test]
-    fn legacy_provider_profile_migrates_on_read() {
+    fn legacy_prefs_and_secrets_migrate_once_into_single_authority() {
         let temp = tempfile::tempdir().unwrap();
+        fs::write(
+            temp.path().join("prefs.json"),
+            r#"{"default_model":"gpt-5.5"}"#,
+        )
+        .unwrap();
         fs::write(
             temp.path().join("secrets.json"),
             r#"{"provider:openai":{"api_key":"legacy"}}"#,
         )
         .unwrap();
-        let authority = ModelAuthority::new(temp.path());
+
+        let authority = ModelAuthority::open(temp.path()).unwrap();
+        // Retired dual-authority files are removed after the hard cut.
+        assert!(!temp.path().join("prefs.json").exists());
+        assert!(!temp.path().join("secrets.json").exists());
+        // The consolidated authority is the sole persisted file.
+        let authority_path = temp.path().join("model-authority.json");
+        assert!(authority_path.is_file());
+        let text = fs::read_to_string(&authority_path).unwrap();
+        assert!(text.contains("provider-profile:openai"));
+        assert!(!text.contains("provider:openai"));
+        // The migrated secret is still resolvable inside the Rust boundary.
         let config = authority.resolve_runtime_config("gpt-5.5").unwrap();
         assert_eq!(config.api_key, "legacy");
-        let secrets = fs::read_to_string(temp.path().join("secrets.json")).unwrap();
-        assert!(secrets.contains("provider-profile:openai"));
-        assert!(!secrets.contains("provider:openai"));
     }
     #[test]
-    fn corrupt_prefs_fail_closed_for_settings_and_runtime_resolution() {
+    fn corrupt_legacy_prefs_fail_migration_without_creating_authority() {
         let temp = tempfile::tempdir().unwrap();
-        fs::write(temp.path().join("prefs.json"), b"{not-json").unwrap();
-        let authority = ModelAuthority::new(temp.path());
+        let prefs_path = temp.path().join("prefs.json");
+        fs::write(&prefs_path, b"{not-json").unwrap();
+        fs::write(
+            temp.path().join("secrets.json"),
+            r#"{"provider:openai":{"api_key":"k"}}"#,
+        )
+        .unwrap();
 
-        assert!(authority.settings().is_err());
-        assert!(authority.providers().is_err());
-        assert!(authority.resolve_runtime_config("gpt-5.6-sol").is_err());
+        assert!(ModelAuthority::open(temp.path()).is_err());
+        // Corrupt input is left untouched (not half-migrated).
+        assert_eq!(fs::read(&prefs_path).unwrap(), b"{not-json");
+        // No new authority is created from corrupt input.
+        assert!(!temp.path().join("model-authority.json").exists());
+    }
+
+    #[test]
+    fn corrupt_legacy_secrets_fail_migration_without_mutating_prefs() {
+        let temp = tempfile::tempdir().unwrap();
+        let prefs_bytes = r#"{"default_model":"gpt-5.5"}"#.as_bytes();
+        fs::write(temp.path().join("prefs.json"), prefs_bytes).unwrap();
+        let secrets_path = temp.path().join("secrets.json");
+        fs::write(&secrets_path, b"{not-json").unwrap();
+
+        assert!(ModelAuthority::open(temp.path()).is_err());
+        assert_eq!(fs::read(&secrets_path).unwrap(), b"{not-json");
         assert_eq!(
             fs::read(temp.path().join("prefs.json")).unwrap(),
-            b"{not-json"
+            prefs_bytes
         );
+        assert!(!temp.path().join("model-authority.json").exists());
     }
 
     #[test]
-    fn corrupt_secrets_fail_closed_and_are_not_overwritten() {
+    fn non_object_legacy_authority_fails_closed() {
         let temp = tempfile::tempdir().unwrap();
-        fs::write(temp.path().join("secrets.json"), b"{not-json").unwrap();
-        let authority = ModelAuthority::new(temp.path());
+        fs::write(temp.path().join("prefs.json"), b"[]").unwrap();
+        assert!(ModelAuthority::open(temp.path()).is_err());
+        assert!(!temp.path().join("model-authority.json").exists());
+    }
 
-        assert!(authority.settings().is_err());
+    #[test]
+    fn consolidated_authority_wins_over_stale_legacy() {
+        let temp = tempfile::tempdir().unwrap();
+        // Establish the consolidated authority with a real credential.
+        let authority = ModelAuthority::open(temp.path()).unwrap();
+        authority
+            .set_provider(
+                "openai",
+                None,
+                &json!({"api_key": "real", "base_url": DEFAULT_OPENAI_URL}),
+            )
+            .unwrap();
+        // Stale legacy files reappear (e.g. left behind by an interrupted cleanup).
+        fs::write(temp.path().join("prefs.json"), b"{stale").unwrap();
+        fs::write(temp.path().join("secrets.json"), b"{stale").unwrap();
+
+        // The consolidated authority is the sole source; stale inputs are dropped.
+        let authority = ModelAuthority::open(temp.path()).unwrap();
+        let config = authority.resolve_runtime_config("gpt-5.6-sol").unwrap();
+        assert_eq!(config.api_key, "real");
+        assert!(!temp.path().join("prefs.json").exists());
+        assert!(!temp.path().join("secrets.json").exists());
+    }
+
+    #[test]
+    fn provider_profile_and_secret_commit_in_one_atomic_write() {
+        let temp = tempfile::tempdir().unwrap();
+        let authority = ModelAuthority::open(temp.path()).unwrap();
+        authority
+            .set_provider(
+                "openai",
+                None,
+                &json!({"api_key": "top-secret", "base_url": DEFAULT_OPENAI_URL}),
+            )
+            .unwrap();
+        let authority_path = temp.path().join("model-authority.json");
+        let text = fs::read_to_string(&authority_path).unwrap();
+        // The secret and the prefs-side default model share one file.
+        assert!(text.contains("top-secret"));
+        assert!(text.contains("default_model"));
+        // No retired dual-authority production files exist.
+        assert!(!temp.path().join("prefs.json").exists());
+        assert!(!temp.path().join("secrets.json").exists());
+    }
+
+    #[test]
+    fn corrupt_authority_blocks_mutation_without_overwrite() {
+        let temp = tempfile::tempdir().unwrap();
+        let authority_path = temp.path().join("model-authority.json");
+        // Boot clean, then corrupt the authority after it is established.
+        let authority = ModelAuthority::open(temp.path()).unwrap();
+        fs::write(&authority_path, b"{corrupt").unwrap();
         assert!(authority
             .set_provider(
                 "openai",
                 None,
-                &json!({"api_key": "new-secret", "base_url": DEFAULT_OPENAI_URL}),
+                &json!({"api_key": "new", "base_url": DEFAULT_OPENAI_URL}),
             )
             .is_err());
-        assert_eq!(
-            fs::read(temp.path().join("secrets.json")).unwrap(),
-            b"{not-json"
-        );
+        // The corrupt authority is preserved, not overwritten by the mutation.
+        assert_eq!(fs::read(&authority_path).unwrap(), b"{corrupt");
     }
 
+    #[cfg(unix)]
     #[test]
-    fn non_object_authority_files_fail_closed() {
+    fn model_authority_file_is_persisted_private() {
+        use std::os::unix::fs::PermissionsExt;
+
         let temp = tempfile::tempdir().unwrap();
-        fs::write(temp.path().join("prefs.json"), b"[]").unwrap();
-        let authority = ModelAuthority::new(temp.path());
-        assert!(authority.settings().is_err());
+        let authority = ModelAuthority::open(temp.path()).unwrap();
+        authority
+            .set_provider(
+                "openai",
+                None,
+                &json!({"api_key": "k", "base_url": DEFAULT_OPENAI_URL}),
+            )
+            .unwrap();
+        let mode = fs::metadata(temp.path().join("model-authority.json"))
+            .unwrap()
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
     }
 }

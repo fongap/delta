@@ -1,7 +1,7 @@
 // Lightweight i18n provider — the single source of truth for all user-visible natural
 // language in the GUI. Follows the theme pattern (theme.ts): the preference is persisted
-// via the backend settings (`prefs.json` → `/v1/settings`), read on mount, and switched at
-// runtime through a small state + effects channel so unrelated surfaces re-render.
+// via the backend settings (model-authority.json → settings), read on mount, and switched
+// at runtime through a small state + effects channel so unrelated surfaces re-render.
 //
 // §17: no second store, no external framework — a hook + context the rest of the app consumes.
 import { createContext, useCallback, useContext, useMemo, type ReactNode } from "react";
