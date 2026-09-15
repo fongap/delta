@@ -289,6 +289,9 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let path = temp.path().join("inbox.json");
         std::fs::write(&path, b"{not-json").unwrap();
-        assert!(matches!(InboxStore::open(path), Err(ShadowReadError::Json(_))));
+        assert!(matches!(
+            InboxStore::open(path),
+            Err(ShadowReadError::Json(_))
+        ));
     }
 }
