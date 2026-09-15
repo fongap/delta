@@ -1,24 +1,28 @@
 //! Rust Application Control Plane authority for automations, scheduler state,
 //! and run identity.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
 use chrono::Local;
 use cron::Schedule;
+use rusqlite::{params, Connection, TransactionBehavior};
 use serde_json::{json, Map, Value};
 
 use crate::{ShadowReadError, TaskStore};
 
 pub struct AutomationStore {
     tasks: TaskStore,
+    db_path: PathBuf,
 }
 
 impl AutomationStore {
     pub fn open(state_dir: impl AsRef<Path>) -> Result<Self, ShadowReadError> {
         std::fs::create_dir_all(state_dir.as_ref())?;
+        let db_path = state_dir.as_ref().join("automation.db");
         Ok(Self {
-            tasks: TaskStore::open(state_dir.as_ref().join("automation.db"))?,
+            tasks: TaskStore::open(&db_path)?,
+            db_path,
         })
     }
 
@@ -212,31 +216,88 @@ impl AutomationStore {
             .collect())
     }
 
-    /// Atomically claim due work from the scheduler's perspective: every
-    /// returned run is inserted before the task's next deadline advances, so a
-    /// second tick cannot launch the same occurrence again.
+    /// Atomically claim every task due at this scheduler tick.
+    ///
+    /// The previous implementation updated `scheduled_tasks` first and inserted
+    /// the run later through a separate TaskStore call. A process crash between
+    /// those writes could advance/disable the task without a corresponding run.
+    /// This path takes an IMMEDIATE SQLite transaction before reading due work
+    /// and commits the schedule advance and run insertion together.
     pub fn claim_due_runs(&self) -> Result<Vec<Value>, ShadowReadError> {
-        let mut prepared = Vec::new();
-        for entry in self.tasks.due_tasks(now())? {
-            let next = next_run_for_task(&entry.data, true);
+        let current = now();
+        let mut conn = Connection::open(&self.db_path)?;
+        let tx = conn.transaction_with_behavior(TransactionBehavior::Immediate)?;
+        let due = {
+            let mut stmt = tx.prepare(
+                "SELECT id, data FROM scheduled_tasks \
+                 WHERE enabled = 1 AND next_run IS NOT NULL AND next_run <= ? \
+                 ORDER BY next_run",
+            )?;
+            let rows = stmt.query_map(params![current], |row| {
+                Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+            })?;
+            let mut due = Vec::new();
+            for row in rows {
+                let (id, data) = row?;
+                due.push((id, serde_json::from_str::<Value>(&data)?));
+            }
+            due
+        };
+
+        let mut prepared = Vec::with_capacity(due.len());
+        for (task_id, data) in due {
+            let next = next_run_for_task(&data, true);
             let enabled = next.is_some();
-            let mut task = object_or_empty(entry.data.clone());
+            let mut task = object_or_empty(data.clone());
             task.insert("enabled".to_string(), Value::Bool(enabled));
             task.insert(
                 "next_run".to_string(),
                 next.map(Value::from).unwrap_or(Value::Null),
             );
-            self.tasks.save_task(
-                &entry.id,
-                enabled,
-                next,
-                &serde_json::to_string(&Value::Object(task))?,
+            let task_data = serde_json::to_string(&Value::Object(task))?;
+
+            let run_id = uuid::Uuid::new_v4().to_string();
+            let session_id = format!("__run__{run_id}");
+            let workspace = data
+                .get("workspace")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let prompt = data
+                .get("instructions")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            let task_title = data
+                .get("title")
+                .and_then(Value::as_str)
+                .unwrap_or("Automation")
+                .to_string();
+            let started_at = now();
+            let run = json!({
+                "run_id": run_id, "task_id": task_id, "session_id": session_id,
+                "started_at": started_at, "finished_at": null, "status": "running",
+                "result_text": null, "artifacts": [], "error": null, "trigger": "scheduled",
+            });
+            let run_data = serde_json::to_string(&run)?;
+
+            tx.execute(
+                "UPDATE scheduled_tasks SET enabled = ?, next_run = ?, data = ? WHERE id = ?",
+                params![enabled as i64, next, task_data, task_id],
             )?;
-            let run = self.prepare_run_with_trigger(&entry.id, "scheduled")?;
-            if run.get("ok").and_then(Value::as_bool) == Some(true) {
-                prepared.push(run);
-            }
+            tx.execute(
+                "INSERT INTO task_runs (run_id, task_id, started_at, data, workspace) \
+                 VALUES (?, ?, ?, ?, ?)",
+                params![run_id, task_id, started_at, run_data, workspace],
+            )?;
+
+            prepared.push(json!({
+                "ok": true, "run_id": run_id, "session_id": session_id,
+                "workspace": workspace, "prompt": prompt,
+                "task_id": task_id, "task_title": task_title,
+            }));
         }
+        tx.commit()?;
         Ok(prepared)
     }
 
@@ -362,13 +423,36 @@ mod tests {
     fn scheduled_claim_is_single_shot_for_due_one_time_task() {
         let temp = tempfile::tempdir().unwrap();
         let store = AutomationStore::open(temp.path()).unwrap();
-        store
+        let created = store
             .create(&json!({
                 "title": "Once", "instructions": "Run",
                 "fire_at": "2020-01-01T00:00:00Z"
             }))
             .unwrap();
+        let id = created["task"]["id"].as_str().unwrap().to_string();
         assert_eq!(store.claim_due_runs().unwrap().len(), 1);
         assert!(store.claim_due_runs().unwrap().is_empty());
+        assert_eq!(store.get(&id).unwrap()["runs"].as_array().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn scheduled_claim_is_single_across_independent_store_connections() {
+        let temp = tempfile::tempdir().unwrap();
+        let first = AutomationStore::open(temp.path()).unwrap();
+        let created = first
+            .create(&json!({
+                "title": "Once", "instructions": "Run",
+                "fire_at": "2020-01-01T00:00:00Z"
+            }))
+            .unwrap();
+        let id = created["task"]["id"].as_str().unwrap().to_string();
+        let second = AutomationStore::open(temp.path()).unwrap();
+
+        assert_eq!(first.claim_due_runs().unwrap().len(), 1);
+        assert!(second.claim_due_runs().unwrap().is_empty());
+        assert_eq!(
+            second.get(&id).unwrap()["runs"].as_array().unwrap().len(),
+            1
+        );
     }
 }
