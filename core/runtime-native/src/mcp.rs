@@ -186,9 +186,7 @@ fn redact_value(value: &Value, parent_key: Option<&str>) -> Value {
             for (key, child) in object {
                 let next = if redact_all_children || is_secret_key(key) {
                     Value::String(REDACTED.to_string())
-                } else if key.eq_ignore_ascii_case("auth")
-                    && child.as_str() != Some("oauth")
-                {
+                } else if key.eq_ignore_ascii_case("auth") && child.as_str() != Some("oauth") {
                     Value::String(REDACTED.to_string())
                 } else {
                     redact_value(child, Some(key))
@@ -203,9 +201,7 @@ fn redact_value(value: &Value, parent_key: Option<&str>) -> Value {
                 .map(|item| redact_value(item, parent_key))
                 .collect(),
         ),
-        _ if parent_key.is_some_and(is_secret_container_key) => {
-            Value::String(REDACTED.to_string())
-        }
+        _ if parent_key.is_some_and(is_secret_container_key) => Value::String(REDACTED.to_string()),
         _ => value.clone(),
     }
 }
@@ -348,7 +344,9 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let store = McpStore::open(temp.path()).unwrap();
         store.put("demo", json!({"command": "worker"})).unwrap();
-        let result = store.patch("demo", &json!(["not", "an", "object"])).unwrap();
+        let result = store
+            .patch("demo", &json!(["not", "an", "object"]))
+            .unwrap();
         assert_eq!(result["ok"], false);
     }
 
