@@ -1363,8 +1363,7 @@ mod tests {
         sender
             .send(WorkerLine::Stdout(serde_json::to_string(&typed).unwrap()))
             .unwrap();
-        let control =
-            CapabilityControl::new(Arc::new(AtomicBool::new(false)), Arc::new(|_| {}));
+        let control = CapabilityControl::new(Arc::new(AtomicBool::new(false)), Arc::new(|_| {}));
         let mut stdout_lines = Vec::new();
         let mut stderr_lines = Vec::new();
         let mut result = None;
@@ -1386,14 +1385,12 @@ mod tests {
     fn drain_worker_lines_rejects_multiple_terminal_results() {
         let (sender, receiver) = mpsc::channel();
         for _ in 0..2 {
-            let typed =
-                CapabilityResult::completed("job-typed", serde_json::json!({"ok": true}));
+            let typed = CapabilityResult::completed("job-typed", serde_json::json!({"ok": true}));
             sender
                 .send(WorkerLine::Stdout(serde_json::to_string(&typed).unwrap()))
                 .unwrap();
         }
-        let control =
-            CapabilityControl::new(Arc::new(AtomicBool::new(false)), Arc::new(|_| {}));
+        let control = CapabilityControl::new(Arc::new(AtomicBool::new(false)), Arc::new(|_| {}));
         let mut stdout_lines = Vec::new();
         let mut stderr_lines = Vec::new();
         let mut result = None;
