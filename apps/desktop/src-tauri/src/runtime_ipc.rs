@@ -180,44 +180,44 @@ pub fn start_scheduler(app: AppHandle) {
                     .and_then(Value::as_str)
                     .unwrap_or_default()
                     .to_string();
-                let settings = state.models.lock().unwrap().settings();
-                let model_id = settings
-                    .as_ref()
-                    .ok()
-                    .and_then(|settings| settings.get("model"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string();
                 let workspace = run
                     .get("workspace")
                     .and_then(Value::as_str)
                     .map(str::to_string);
-                let session_ready = delta_runtime_native::control_plane::ensure_session(
-                    &state_dir(),
-                    &session_id,
-                    workspace.as_deref().filter(|value| !value.is_empty()),
-                    &model_id,
-                );
-                let accepted = match (settings, session_ready) {
-                    (Err(error), _) => json!({"ok": false, "error": error}),
-                    (Ok(_), Ok(_)) => start_runtime(
-                        &app,
-                        state.inner(),
-                        session_id.clone(),
-                        model_id,
-                        run.get("prompt")
+                let accepted = match state.models.lock().unwrap().settings() {
+                    Err(error) => json!({"ok": false, "error": error}),
+                    Ok(settings) => {
+                        let model_id = settings
+                            .get("model")
                             .and_then(Value::as_str)
                             .unwrap_or_default()
-                            .to_string(),
-                        workspace,
-                        None,
-                        None,
-                        Some("unattended".to_string()),
-                        None,
-                        None,
-                        Some(json!({"automation_id": run.get("task_id"), "trigger": "scheduled"})),
-                    ),
-                    (_, Err(error)) => json!({"ok": false, "error": error.to_string()}),
+                            .to_string();
+                        match delta_runtime_native::control_plane::ensure_session(
+                            &state_dir(),
+                            &session_id,
+                            workspace.as_deref().filter(|value| !value.is_empty()),
+                            &model_id,
+                        ) {
+                            Ok(_) => start_runtime(
+                                &app,
+                                state.inner(),
+                                session_id.clone(),
+                                model_id,
+                                run.get("prompt")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or_default()
+                                    .to_string(),
+                                workspace,
+                                None,
+                                None,
+                                Some("unattended".to_string()),
+                                None,
+                                None,
+                                Some(json!({"automation_id": run.get("task_id"), "trigger": "scheduled"})),
+                            ),
+                            Err(error) => json!({"ok": false, "error": error.to_string()}),
+                        }
+                    }
                 };
                 if accepted.get("ok").and_then(Value::as_bool) == Some(true) {
                     let sequence = APP_EVENT_SEQUENCE.fetch_add(1, Ordering::SeqCst) + 1;
