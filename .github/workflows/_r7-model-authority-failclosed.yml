@@ -25,87 +25,55 @@ jobs:
 
           path = Path("apps/desktop/src-tauri/src/runtime_ipc.rs")
           text = path.read_text(encoding="utf-8")
-          old = '''                let settings = state.models.lock().unwrap().settings();
-                let model_id = settings
-                    .as_ref()
-                    .ok()
-                    .and_then(|settings| settings.get("model"))
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string();
-                let workspace = run
-                    .get("workspace")
-                    .and_then(Value::as_str)
-                    .map(str::to_string);
-                let session_ready = delta_runtime_native::control_plane::ensure_session(
-                    &state_dir(),
-                    &session_id,
-                    workspace.as_deref().filter(|value| !value.is_empty()),
-                    &model_id,
-                );
-                let accepted = match (settings, session_ready) {
-                    (Err(error), _) => json!({"ok": false, "error": error}),
-                    (Ok(_), Ok(_)) => start_runtime(
-                        &app,
-                        state.inner(),
-                        session_id.clone(),
-                        model_id,
-                        run.get("prompt")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_string(),
-                        workspace,
-                        None,
-                        None,
-                        Some("unattended".to_string()),
-                        None,
-                        None,
-                        Some(json!({"automation_id": run.get("task_id"), "trigger": "scheduled"})),
-                    ),
-                    (_, Err(error)) => json!({"ok": false, "error": error.to_string()}),
-                };'''
-          new = '''                let workspace = run
-                    .get("workspace")
-                    .and_then(Value::as_str)
-                    .map(str::to_string);
-                let accepted = match state.models.lock().unwrap().settings() {
-                    Err(error) => json!({"ok": false, "error": error}),
-                    Ok(settings) => {
-                        let model_id = settings
-                            .get("model")
-                            .and_then(Value::as_str)
-                            .unwrap_or_default()
-                            .to_string();
-                        match delta_runtime_native::control_plane::ensure_session(
-                            &state_dir(),
-                            &session_id,
-                            workspace.as_deref().filter(|value| !value.is_empty()),
-                            &model_id,
-                        ) {
-                            Ok(_) => start_runtime(
-                                &app,
-                                state.inner(),
-                                session_id.clone(),
-                                model_id,
-                                run.get("prompt")
-                                    .and_then(Value::as_str)
-                                    .unwrap_or_default()
-                                    .to_string(),
-                                workspace,
-                                None,
-                                None,
-                                Some("unattended".to_string()),
-                                None,
-                                None,
-                                Some(json!({"automation_id": run.get("task_id"), "trigger": "scheduled"})),
-                            ),
-                            Err(error) => json!({"ok": false, "error": error.to_string()}),
-                        }
-                    }
-                };'''
-          if text.count(old) != 1:
-              raise SystemExit(f"scheduler authority ordering target count={text.count(old)}")
-          path.write_text(text.replace(old, new, 1), encoding="utf-8")
+          start_marker = "                let settings = state.models.lock().unwrap().settings();"
+          end_marker = "                if accepted.get(\"ok\").and_then(Value::as_bool) == Some(true) {"
+          start = text.find(start_marker)
+          end = text.find(end_marker, start if start >= 0 else 0)
+          if start < 0 or end < 0 or end <= start:
+              raise SystemExit(f"scheduler markers missing: start={start}, end={end}")
+          lines = [
+              "                let workspace = run",
+              "                    .get(\"workspace\")",
+              "                    .and_then(Value::as_str)",
+              "                    .map(str::to_string);",
+              "                let accepted = match state.models.lock().unwrap().settings() {",
+              "                    Err(error) => json!({\"ok\": false, \"error\": error}),",
+              "                    Ok(settings) => {",
+              "                        let model_id = settings",
+              "                            .get(\"model\")",
+              "                            .and_then(Value::as_str)",
+              "                            .unwrap_or_default()",
+              "                            .to_string();",
+              "                        match delta_runtime_native::control_plane::ensure_session(",
+              "                            &state_dir(),",
+              "                            &session_id,",
+              "                            workspace.as_deref().filter(|value| !value.is_empty()),",
+              "                            &model_id,",
+              "                        ) {",
+              "                            Ok(_) => start_runtime(",
+              "                                &app,",
+              "                                state.inner(),",
+              "                                session_id.clone(),",
+              "                                model_id,",
+              "                                run.get(\"prompt\")",
+              "                                    .and_then(Value::as_str)",
+              "                                    .unwrap_or_default()",
+              "                                    .to_string(),",
+              "                                workspace,",
+              "                                None,",
+              "                                None,",
+              "                                Some(\"unattended\".to_string()),",
+              "                                None,",
+              "                                None,",
+              "                                Some(json!({\"automation_id\": run.get(\"task_id\"), \"trigger\": \"scheduled\"})),",
+              "                            ),",
+              "                            Err(error) => json!({\"ok\": false, \"error\": error.to_string()}),",
+              "                        }",
+              "                    }",
+              "                };",
+          ]
+          replacement = "\n".join(lines) + "\n"
+          path.write_text(text[:start] + replacement + text[end:], encoding="utf-8")
           PY
           rustfmt --edition 2021 apps/desktop/src-tauri/src/runtime_ipc.rs
           git diff --check
