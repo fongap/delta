@@ -15,8 +15,8 @@ permissions:
   pull-requests: write
 
 jobs:
-  purge-deleted-workflow-history:
-    name: Purge deleted workflow history
+  purge-orphan-workflow-history:
+    name: Purge orphan workflow history
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -25,7 +25,7 @@ jobs:
       contents: read
 
     steps:
-      - name: Remove every deleted workflow run
+      - name: Remove orphan R5.1 workflow runs
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash
@@ -48,48 +48,57 @@ jobs:
             done
           }
 
-          retry gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/workflows?per_page=100" \
-            --jq '.workflows[] | [.id, .name, .path, .state] | @tsv' \
-            > workflows.tsv
+          cat > orphan-workflows.tsv <<'EOF'
+          356374905	R5.1 composer contract sync	.github/workflows/r51-composer-contract-sync.yml
+          356384188	R5.1 fix steering regression assertion	.github/workflows/r51-fix-provider-count-test.yml
+          356370656	R5.1 live steering repair	.github/workflows/r51-live-steering-repair.yml
+          356371925	R5.1 live steering test sync	.github/workflows/r51-live-steering-test-sync.yml
+          356373219	R5.1 test format sync	.github/workflows/r51-test-format-sync.yml
+          EOF
 
-          echo "Workflow inventory:"
-          cat workflows.tsv
+          echo "Orphan workflow identities to purge:"
+          cat orphan-workflows.tsv
 
-          awk -F '\t' '$4 == "deleted" {print $1}' workflows.tsv > deleted-workflow-ids.txt
-          deleted_count="$(wc -l < deleted-workflow-ids.txt | tr -d ' ')"
-          echo "Found ${deleted_count} deleted workflow identities."
+          # Safety gate: none of these files may exist on main. If one has been
+          # restored, abort rather than deleting history for a live workflow.
+          while IFS=$'\t' read -r workflow_id workflow_name workflow_path; do
+            if gh api "repos/${GITHUB_REPOSITORY}/contents/${workflow_path}?ref=main" --silent 2>/dev/null; then
+              echo "::error::${workflow_path} exists on main; refusing to purge ${workflow_name}."
+              exit 1
+            fi
+          done < orphan-workflows.tsv
 
           total_deleted_runs=0
-          while IFS= read -r workflow_id; do
-            [ -z "$workflow_id" ] && continue
-
-            workflow_line="$(awk -F '\t' -v id="$workflow_id" '$1 == id {print; exit}' workflows.tsv)"
-            echo "Purging workflow: ${workflow_line}"
+          while IFS=$'\t' read -r workflow_id workflow_name workflow_path; do
+            echo "Purging ${workflow_name} (${workflow_id})"
 
             while true; do
               run_ids_file="runs-${workflow_id}.txt"
-              : > "$run_ids_file"
-
               retry gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow_id}/runs?per_page=100" \
-                --jq '.workflow_runs[].id' \
-                > "$run_ids_file"
+                --jq '.workflow_runs[].id' > "$run_ids_file"
 
               batch_count="$(wc -l < "$run_ids_file" | tr -d ' ')"
               if [ "$batch_count" = "0" ]; then
                 break
               fi
 
+              echo "Deleting ${batch_count} run(s) from ${workflow_name}"
               while IFS= read -r run_id; do
                 [ -z "$run_id" ] && continue
-                echo "Deleting run ${run_id} from workflow ${workflow_id}"
                 retry gh api --method DELETE "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}" --silent
                 total_deleted_runs=$((total_deleted_runs + 1))
               done < "$run_ids_file"
             done
-          done < deleted-workflow-ids.txt
 
-          echo "Deleted ${total_deleted_runs} runs across ${deleted_count} deleted workflow identities."
-          echo "Deleted workflow history purge complete."
+            remaining="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/${workflow_id}/runs?per_page=1" --jq '.total_count')"
+            if [ "$remaining" != "0" ]; then
+              echo "::error::${workflow_name} still has ${remaining} run(s)."
+              exit 1
+            fi
+            echo "${workflow_name}: 0 runs remain"
+          done < orphan-workflows.tsv
+
+          echo "Deleted ${total_deleted_runs} orphan workflow runs across 5 R5.1 workflow identities."
 
   enable-auto-merge:
     name: Enable auto-merge
