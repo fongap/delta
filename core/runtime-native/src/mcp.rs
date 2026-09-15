@@ -9,7 +9,7 @@ use std::sync::Mutex;
 
 use serde_json::{json, Map, Value};
 
-use crate::ShadowReadError;
+use crate::{durability::atomic_write_private, ShadowReadError};
 
 const REDACTED: &str = "••••••••";
 
@@ -38,11 +38,8 @@ impl McpStore {
     }
 
     fn save(&self, servers: &BTreeMap<String, Value>) -> Result<(), ShadowReadError> {
-        std::fs::write(
-            &self.path,
-            serde_json::to_vec_pretty(&json!({"mcpServers": servers}))?,
-        )?;
-        restrict_private_file(&self.path)?;
+        let bytes = serde_json::to_vec_pretty(&json!({"mcpServers": servers}))?;
+        atomic_write_private(&self.path, &bytes)?;
         Ok(())
     }
 
@@ -227,24 +224,6 @@ fn is_secret_key(key: &str) -> bool {
             | "credential"
             | "credentials"
     )
-}
-
-#[cfg(unix)]
-fn restrict_private_file(path: &Path) -> Result<(), ShadowReadError> {
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))?;
-    Ok(())
-}
-
-#[cfg(windows)]
-fn restrict_private_file(_path: &Path) -> Result<(), ShadowReadError> {
-    // The desktop installer/first-run shell owns the app-data ACL on Windows.
-    Ok(())
-}
-
-#[cfg(not(any(unix, windows)))]
-fn restrict_private_file(_path: &Path) -> Result<(), ShadowReadError> {
-    Ok(())
 }
 
 #[cfg(test)]
