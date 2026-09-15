@@ -1,15 +1,17 @@
 //! Rust authority for MCP server configuration.
 //!
 //! MCP servers are controlled workers. This store owns their product
-//! configuration and never returns header/env secret values to React.
+//! configuration and never returns persisted secret values to React.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 
 use crate::ShadowReadError;
+
+const REDACTED: &str = "••••••••";
 
 pub struct McpStore {
     path: PathBuf,
@@ -25,13 +27,7 @@ impl McpStore {
             // stop authority initialization rather than silently looking like
             // an empty configuration and being overwritten on the next write.
             let value = serde_json::from_slice::<Value>(&std::fs::read(&path)?)?;
-            value
-                .get("mcpServers")
-                .and_then(Value::as_object)
-                .cloned()
-                .unwrap_or_default()
-                .into_iter()
-                .collect()
+            parse_persisted_servers(&value)?
         } else {
             BTreeMap::new()
         };
@@ -71,13 +67,21 @@ impl McpStore {
                                 "http" | "https" | "sse" | "streamable-http"
                             )
                         });
+                let public_auth = config
+                    .get("auth")
+                    .and_then(Value::as_str)
+                    .filter(|value| *value == "oauth")
+                    .map(|_| Value::String("oauth".to_string()))
+                    .unwrap_or(Value::Null);
                 json!({
                     "name": name,
                     "enabled": enabled,
                     "transport": if is_http { "http" } else { "stdio" },
                     "requires_approval": config.get("requires_approval").and_then(Value::as_bool).unwrap_or(true),
                     "status": if enabled { "configured" } else { "disabled" },
-                    "auth": config.get("auth").cloned().unwrap_or(Value::Null),
+                    // Product surfaces only need the OAuth mode marker. Persisted
+                    // auth objects/tokens are never part of the React contract.
+                    "auth": public_auth,
                     "last_error": null,
                     "tool_count": null,
                     "config": redact_config(&config),
@@ -88,9 +92,7 @@ impl McpStore {
 
     pub fn put(&self, name: &str, config: Value) -> Result<Value, ShadowReadError> {
         validate_name(name)?;
-        if !config.is_object() {
-            return Ok(json!({"ok": false, "error": "MCP config must be an object"}));
-        }
+        validate_server_config(&config)?;
         let mut servers = self.servers.lock().unwrap();
         let mut next = servers.clone();
         next.insert(name.to_string(), config);
@@ -101,15 +103,16 @@ impl McpStore {
 
     pub fn patch(&self, name: &str, changes: &Value) -> Result<Value, ShadowReadError> {
         validate_name(name)?;
+        let Some(changes) = changes.as_object() else {
+            return Ok(json!({"ok": false, "error": "MCP changes must be an object"}));
+        };
         let mut servers = self.servers.lock().unwrap();
         let mut next = servers.clone();
         let Some(existing) = next.get_mut(name).and_then(Value::as_object_mut) else {
             return Ok(json!({"ok": false, "error": "MCP server not found"}));
         };
-        if let Some(changes) = changes.as_object() {
-            for (key, value) in changes {
-                existing.insert(key.clone(), value.clone());
-            }
+        for (key, value) in changes {
+            existing.insert(key.clone(), value.clone());
         }
         self.save(&next)?;
         *servers = next;
@@ -127,6 +130,25 @@ impl McpStore {
     }
 }
 
+fn parse_persisted_servers(value: &Value) -> Result<BTreeMap<String, Value>, ShadowReadError> {
+    let root = value
+        .as_object()
+        .ok_or_else(|| ShadowReadError::Parse("MCP state root must be an object".to_string()))?;
+    let servers = root
+        .get("mcpServers")
+        .ok_or_else(|| ShadowReadError::Parse("MCP state is missing mcpServers".to_string()))?
+        .as_object()
+        .ok_or_else(|| ShadowReadError::Parse("MCP mcpServers must be an object".to_string()))?;
+
+    let mut parsed = BTreeMap::new();
+    for (name, config) in servers {
+        validate_name(name)?;
+        validate_server_config(config)?;
+        parsed.insert(name.clone(), config.clone());
+    }
+    Ok(parsed)
+}
+
 fn validate_name(name: &str) -> Result<(), ShadowReadError> {
     if name.is_empty()
         || name.len() > 80
@@ -141,23 +163,60 @@ fn validate_name(name: &str) -> Result<(), ShadowReadError> {
     Ok(())
 }
 
-fn redact_config(config: &Value) -> Value {
-    let mut value = config.clone();
-    if let Some(object) = value.as_object_mut() {
-        for field in ["env", "headers"] {
-            if let Some(secrets) = object.get_mut(field).and_then(Value::as_object_mut) {
-                for secret in secrets.values_mut() {
-                    *secret = Value::String("••••••••".to_string());
-                }
-            }
-        }
-        for key in ["token", "api_key", "authorization"] {
-            if object.contains_key(key) {
-                object.insert(key.to_string(), Value::String("••••••••".to_string()));
-            }
-        }
+fn validate_server_config(config: &Value) -> Result<(), ShadowReadError> {
+    if !config.is_object() {
+        return Err(ShadowReadError::Parse(
+            "MCP server config must be an object".to_string(),
+        ));
     }
-    value
+    Ok(())
+}
+
+fn redact_config(config: &Value) -> Value {
+    redact_value(config, None)
+}
+
+fn redact_value(value: &Value, parent_key: Option<&str>) -> Value {
+    match value {
+        Value::Object(object) => {
+            let redact_all_children = parent_key.is_some_and(|key| {
+                key.eq_ignore_ascii_case("env") || key.eq_ignore_ascii_case("headers")
+            });
+            let mut redacted = Map::new();
+            for (key, child) in object {
+                let next = if redact_all_children || is_secret_key(key) {
+                    Value::String(REDACTED.to_string())
+                } else {
+                    redact_value(child, Some(key))
+                };
+                redacted.insert(key.clone(), next);
+            }
+            Value::Object(redacted)
+        }
+        Value::Array(items) => Value::Array(
+            items
+                .iter()
+                .map(|item| redact_value(item, parent_key))
+                .collect(),
+        ),
+        _ => value.clone(),
+    }
+}
+
+fn is_secret_key(key: &str) -> bool {
+    matches!(
+        key.to_ascii_lowercase().as_str(),
+        "token"
+            | "access_token"
+            | "refresh_token"
+            | "api_key"
+            | "apikey"
+            | "api-key"
+            | "authorization"
+            | "password"
+            | "secret"
+            | "client_secret"
+    )
 }
 
 #[cfg(unix)]
@@ -193,9 +252,52 @@ mod tests {
             )
             .unwrap();
         let listed = store.list();
-        assert_eq!(listed[0]["config"]["env"]["TOKEN"], "••••••••");
+        assert_eq!(listed[0]["config"]["env"]["TOKEN"], REDACTED);
         assert!(!serde_json::to_string(&listed).unwrap().contains("secret"));
         assert_eq!(store.delete("demo").unwrap()["ok"], true);
+    }
+
+    #[test]
+    fn list_exposes_only_oauth_metadata_and_recursively_redacts_secrets() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = McpStore::open(temp.path()).unwrap();
+        store
+            .put(
+                "sensitive",
+                json!({
+                    "url": "https://example.test/mcp",
+                    "auth": {"type": "bearer", "access_token": "deep-token"},
+                    "headers": {"Authorization": "header-secret"},
+                    "nested": {"client_secret": "client-secret", "safe": "visible"}
+                }),
+            )
+            .unwrap();
+
+        let listed = store.list();
+        assert!(listed[0]["auth"].is_null());
+        assert_eq!(listed[0]["config"]["auth"]["access_token"], REDACTED);
+        assert_eq!(listed[0]["config"]["headers"]["Authorization"], REDACTED);
+        assert_eq!(listed[0]["config"]["nested"]["client_secret"], REDACTED);
+        assert_eq!(listed[0]["config"]["nested"]["safe"], "visible");
+        let serialized = serde_json::to_string(&listed).unwrap();
+        for secret in ["deep-token", "header-secret", "client-secret"] {
+            assert!(!serialized.contains(secret));
+        }
+    }
+
+    #[test]
+    fn oauth_auth_mode_is_exposed_without_credentials() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = McpStore::open(temp.path()).unwrap();
+        store
+            .put(
+                "oauth-demo",
+                json!({"url": "https://example.test/mcp", "auth": "oauth"}),
+            )
+            .unwrap();
+        let listed = store.list();
+        assert_eq!(listed[0]["auth"], "oauth");
+        assert_eq!(listed[0]["config"]["auth"], "oauth");
     }
 
     #[test]
@@ -206,6 +308,35 @@ mod tests {
             McpStore::open(temp.path()),
             Err(ShadowReadError::Json(_))
         ));
+    }
+
+    #[test]
+    fn valid_json_with_invalid_mcp_shape_fails_closed_on_open() {
+        for payload in [
+            json!({}),
+            json!({"mcpServers": []}),
+            json!({"mcpServers": {"demo": "not-an-object"}}),
+        ] {
+            let temp = tempfile::tempdir().unwrap();
+            std::fs::write(
+                temp.path().join("mcp.json"),
+                serde_json::to_vec(&payload).unwrap(),
+            )
+            .unwrap();
+            assert!(matches!(
+                McpStore::open(temp.path()),
+                Err(ShadowReadError::Parse(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn patch_rejects_non_object_changes() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = McpStore::open(temp.path()).unwrap();
+        store.put("demo", json!({"command": "worker"})).unwrap();
+        let result = store.patch("demo", &json!(["not", "an", "object"])).unwrap();
+        assert_eq!(result["ok"], false);
     }
 
     #[cfg(unix)]
