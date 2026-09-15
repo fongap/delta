@@ -10,7 +10,7 @@ use std::sync::Mutex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::ShadowReadError;
+use crate::{durability::atomic_write, ShadowReadError};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct InboxItem {
@@ -87,15 +87,10 @@ impl InboxStore {
     }
 
     fn save(&self, items: &[InboxItem]) -> Result<(), ShadowReadError> {
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(
-            &self.path,
-            serde_json::to_vec_pretty(&InboxFile {
-                items: items.to_vec(),
-            })?,
-        )?;
+        let bytes = serde_json::to_vec_pretty(&InboxFile {
+            items: items.to_vec(),
+        })?;
+        atomic_write(&self.path, &bytes)?;
         Ok(())
     }
 
