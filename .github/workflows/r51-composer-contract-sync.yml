@@ -1,0 +1,13 @@
+name: R5.1 composer contract sync
+
+# Temporary inert stub used only to re-bind a stale GitHub Actions workflow identity.
+# Remove after historical runs are purged.
+on:
+  workflow_dispatch:
+
+jobs:
+  inert:
+    if: ${{ false }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "temporary workflow identity rehydration only"
