@@ -1,0 +1,69 @@
+name: R7 Inbox Atomic Write
+
+on:
+  push:
+    branches:
+      - codex/r7-inbox-atomic-write
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: codex/r7-inbox-atomic-write
+      - name: Patch Inbox authority write
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('core/runtime-native/src/inbox.rs')
+          text = path.read_text(encoding='utf-8')
+
+          old_import = 'use crate::ShadowReadError;'
+          new_import = 'use crate::{durability::atomic_write, ShadowReadError};'
+          if text.count(old_import) != 1:
+              raise SystemExit(f'expected one authority import, got {text.count(old_import)}')
+          text = text.replace(old_import, new_import, 1)
+
+          old_write = '\n'.join([
+              '        if let Some(parent) = self.path.parent() {',
+              '            std::fs::create_dir_all(parent)?;',
+              '        }',
+              '        std::fs::write(',
+              '            &self.path,',
+              '            serde_json::to_vec_pretty(&InboxFile {',
+              '                items: items.to_vec(),',
+              '            })?,',
+              '        )?;',
+          ])
+          new_write = '\n'.join([
+              '        let bytes = serde_json::to_vec_pretty(&InboxFile {',
+              '            items: items.to_vec(),',
+              '        })?;',
+              '        atomic_write(&self.path, &bytes)?;',
+          ])
+          if text.count(old_write) != 1:
+              raise SystemExit(f'expected one inbox save block, got {text.count(old_write)}')
+          text = text.replace(old_write, new_write, 1)
+          path.write_text(text, encoding='utf-8')
+          PY
+          rustfmt --edition 2021 core/runtime-native/src/inbox.rs
+          git diff --check
+      - name: Commit product change and remove staging workflow
+        shell: bash
+        run: |
+          set -euo pipefail
+          rm .github/workflows/r7-inbox-atomic-write.yml
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git add core/runtime-native/src/inbox.rs .github/workflows/r7-inbox-atomic-write.yml
+          git diff --cached --check
+          git commit -m 'fix(r7): persist inbox authority atomically'
+          git push origin HEAD:codex/r7-inbox-atomic-write
