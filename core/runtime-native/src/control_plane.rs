@@ -766,16 +766,12 @@ fn workspace_trust_dto_from_paths(workspace: &Path, trusted_paths: &[String]) ->
     })
 }
 
-fn workspace_trust_dto(state_dir: &Path, workspace: &Path) -> Result<Value, ShadowReadError> {
-    let trusted_paths = trusted_workspace_paths(state_dir)?;
-    Ok(workspace_trust_dto_from_paths(workspace, &trusted_paths))
-}
-
 pub fn open_workspace(
     state_dir: &Path,
     path: &str,
     create: bool,
 ) -> Result<Value, ShadowReadError> {
+    let trusted_paths = trusted_workspace_paths(state_dir)?;
     let requested = PathBuf::from(path);
     if create && !requested.exists() {
         fs::create_dir_all(&requested)?;
@@ -787,7 +783,7 @@ pub fn open_workspace(
         return Ok(json!({"ok": false, "path": path, "error": "workspace must be a directory"}));
     }
     let canonical_text = canonical.to_string_lossy().to_string();
-    let command_trust = workspace_trust_dto(state_dir, &canonical)?;
+    let command_trust = workspace_trust_dto_from_paths(&canonical, &trusted_paths);
     let conn = open_conn(&state_dir.join("core.db"))?;
     conn.execute(
         "INSERT INTO workspaces (path, last_used) VALUES (?1, CURRENT_TIMESTAMP)
@@ -1107,6 +1103,9 @@ mod tests {
         let before = fs::read(&authority_path).unwrap();
 
         assert!(list_trusted_workspaces(state.path()).is_err());
+        let uncreated = state.path().join("must-not-be-created");
+        assert!(open_workspace(state.path(), uncreated.to_str().unwrap(), true).is_err());
+        assert!(!uncreated.exists());
         assert!(open_workspace(state.path(), workspace.path().to_str().unwrap(), false).is_err());
         assert!(!state.path().join("core.db").exists());
         assert!(
