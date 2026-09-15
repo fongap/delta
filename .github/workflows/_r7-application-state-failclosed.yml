@@ -1,0 +1,70 @@
+name: R7 Application State Fail Closed
+
+on:
+  push:
+    branches:
+      - codex/r7-application-state-failclosed
+
+permissions:
+  contents: write
+
+jobs:
+  patch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: codex/r7-application-state-failclosed
+
+      - name: Apply application authority patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 .github/scripts/r7_application_failclosed_patch.py
+          rustfmt --edition 2021 \
+            core/runtime-native/src/application.rs \
+            apps/desktop/src-tauri/src/runtime_ipc.rs
+          git diff --check
+
+      - name: Install Tauri Linux system dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libasound2-dev
+
+      - name: Verify Rust gates
+        shell: bash
+        run: |
+          set -euo pipefail
+          cargo check --locked --manifest-path core/runtime-native/Cargo.toml
+          cargo test --locked --manifest-path core/runtime-native/Cargo.toml
+          cargo clippy --locked --manifest-path core/runtime-native/Cargo.toml --all-targets -- -D warnings
+          cargo check --locked --manifest-path apps/desktop/src-tauri/Cargo.toml
+          cargo test --locked --manifest-path apps/desktop/src-tauri/Cargo.toml
+          cargo clippy --locked --manifest-path apps/desktop/src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      - name: Commit product patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet -- \
+            core/runtime-native/src/application.rs \
+            apps/desktop/src-tauri/src/runtime_ipc.rs; then
+            echo "Product patch already committed; nothing to push."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add \
+            core/runtime-native/src/application.rs \
+            apps/desktop/src-tauri/src/runtime_ipc.rs
+          git diff --cached --check
+          git commit -m "fix(r7): fail closed on application state corruption"
+          git push origin HEAD:codex/r7-application-state-failclosed
