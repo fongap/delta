@@ -73,9 +73,10 @@ impl InboxStore {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, ShadowReadError> {
         let path = path.as_ref().to_path_buf();
         let items = if path.exists() {
-            serde_json::from_slice::<InboxFile>(&std::fs::read(&path)?)
-                .unwrap_or_default()
-                .items
+            // inbox.json is authoritative state. Corruption must be surfaced to
+            // the caller instead of being interpreted as an empty inbox, which
+            // could otherwise hide pending approvals after a restart.
+            serde_json::from_slice::<InboxFile>(&std::fs::read(&path)?)?.items
         } else {
             Vec::new()
         };
@@ -135,8 +136,10 @@ impl InboxStore {
             questions: Vec::new(),
             data: json!({"tool": tool, "arguments": arguments}),
         };
-        items.push(item.clone());
-        self.save(&items)?;
+        let mut next = items.clone();
+        next.push(item.clone());
+        self.save(&next)?;
+        *items = next;
         Ok(item)
     }
 
@@ -208,8 +211,10 @@ impl InboxStore {
                 .unwrap_or_default(),
             data: arguments.clone(),
         };
-        items.push(item.clone());
-        self.save(&items)?;
+        let mut next = items.clone();
+        next.push(item.clone());
+        self.save(&next)?;
+        *items = next;
         Ok(item)
     }
 
@@ -244,14 +249,16 @@ impl InboxStore {
             return Ok(None);
         };
         if items[position].state == "pending" {
-            items[position].state = "resolved".to_string();
-            items[position].resolution = Some(resolution.to_string());
-            items[position].resolved_at = Some(
+            let mut next = items.clone();
+            next[position].state = "resolved".to_string();
+            next[position].resolution = Some(resolution.to_string());
+            next[position].resolved_at = Some(
                 time::OffsetDateTime::now_utc()
                     .format(&time::format_description::well_known::Rfc3339)
                     .unwrap_or_default(),
             );
-            self.save(&items)?;
+            self.save(&next)?;
+            *items = next;
         }
         Ok(Some(items[position].clone()))
     }
@@ -275,5 +282,13 @@ mod tests {
         store.resolve(&first.id, "allow").unwrap();
         let resolved = store.resolve(&first.id, "deny").unwrap().unwrap();
         assert_eq!(resolved.resolution.as_deref(), Some("allow"));
+    }
+
+    #[test]
+    fn corrupt_inbox_fails_closed_instead_of_becoming_empty() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("inbox.json");
+        std::fs::write(&path, b"{not-json").unwrap();
+        assert!(matches!(InboxStore::open(path), Err(ShadowReadError::Json(_))));
     }
 }
