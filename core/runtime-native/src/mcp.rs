@@ -184,9 +184,10 @@ fn redact_value(value: &Value, parent_key: Option<&str>) -> Value {
             let redact_all_children = parent_key.is_some_and(is_secret_container_key);
             let mut redacted = Map::new();
             for (key, child) in object {
-                let next = if redact_all_children || is_secret_key(key) {
-                    Value::String(REDACTED.to_string())
-                } else if key.eq_ignore_ascii_case("auth") && child.as_str() != Some("oauth") {
+                let next = if redact_all_children
+                    || is_secret_key(key)
+                    || (key.eq_ignore_ascii_case("auth") && child.as_str() != Some("oauth"))
+                {
                     Value::String(REDACTED.to_string())
                 } else {
                     redact_value(child, Some(key))
