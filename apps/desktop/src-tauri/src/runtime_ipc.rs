@@ -110,7 +110,7 @@ pub fn init() -> RuntimeRegistry {
 /// real native capability through the same Capability Host used by Runtime.
 pub fn portable_self_test() -> Result<(), String> {
     let registry = RuntimeRegistry::new();
-    let settings = registry.models.lock().unwrap().settings();
+    let settings = registry.models.lock().unwrap().settings()?;
     if health().get("status").and_then(Value::as_str) != Some("ok")
         || !settings.is_object()
         || registry.capabilities.tool_schemas().as_array().is_none()
@@ -180,44 +180,44 @@ pub fn start_scheduler(app: AppHandle) {
                     .and_then(Value::as_str)
                     .unwrap_or_default()
                     .to_string();
-                let model_id = state
-                    .models
-                    .lock()
-                    .unwrap()
-                    .settings()
-                    .get("model")
-                    .and_then(Value::as_str)
-                    .unwrap_or_default()
-                    .to_string();
                 let workspace = run
                     .get("workspace")
                     .and_then(Value::as_str)
                     .map(str::to_string);
-                let session_ready = delta_runtime_native::control_plane::ensure_session(
-                    &state_dir(),
-                    &session_id,
-                    workspace.as_deref().filter(|value| !value.is_empty()),
-                    &model_id,
-                );
-                let accepted = match session_ready {
-                    Ok(_) => start_runtime(
-                        &app,
-                        state.inner(),
-                        session_id.clone(),
-                        model_id,
-                        run.get("prompt")
+                let accepted = match state.models.lock().unwrap().settings() {
+                    Err(error) => json!({"ok": false, "error": error}),
+                    Ok(settings) => {
+                        let model_id = settings
+                            .get("model")
                             .and_then(Value::as_str)
                             .unwrap_or_default()
-                            .to_string(),
-                        workspace,
-                        None,
-                        None,
-                        Some("unattended".to_string()),
-                        None,
-                        None,
-                        Some(json!({"automation_id": run.get("task_id"), "trigger": "scheduled"})),
-                    ),
-                    Err(error) => json!({"ok": false, "error": error.to_string()}),
+                            .to_string();
+                        match delta_runtime_native::control_plane::ensure_session(
+                            &state_dir(),
+                            &session_id,
+                            workspace.as_deref().filter(|value| !value.is_empty()),
+                            &model_id,
+                        ) {
+                            Ok(_) => start_runtime(
+                                &app,
+                                state.inner(),
+                                session_id.clone(),
+                                model_id,
+                                run.get("prompt")
+                                    .and_then(Value::as_str)
+                                    .unwrap_or_default()
+                                    .to_string(),
+                                workspace,
+                                None,
+                                None,
+                                Some("unattended".to_string()),
+                                None,
+                                None,
+                                Some(json!({"automation_id": run.get("task_id"), "trigger": "scheduled"})),
+                            ),
+                            Err(error) => json!({"ok": false, "error": error.to_string()}),
+                        }
+                    }
                 };
                 if accepted.get("ok").and_then(Value::as_bool) == Some(true) {
                     let sequence = APP_EVENT_SEQUENCE.fetch_add(1, Ordering::SeqCst) + 1;
@@ -681,7 +681,7 @@ pub fn runtime_truncate(
 
 #[tauri::command]
 pub fn settings_get(state: State<'_, RuntimeRegistry>) -> Value {
-    state.models.lock().unwrap().settings()
+    authority_result(state.models.lock().unwrap().settings())
 }
 
 #[tauri::command]
@@ -745,7 +745,7 @@ pub fn settings_set_compaction(state: State<'_, RuntimeRegistry>, patch: Value) 
 
 #[tauri::command]
 pub fn providers_list(state: State<'_, RuntimeRegistry>) -> Value {
-    state.models.lock().unwrap().providers()
+    authority_result(state.models.lock().unwrap().providers())
 }
 
 #[tauri::command]
@@ -776,7 +776,7 @@ pub fn provider_remove(state: State<'_, RuntimeRegistry>, name: String) -> Value
 
 #[tauri::command]
 pub fn provider_verify(state: State<'_, RuntimeRegistry>, name: String, fields: Value) -> Value {
-    state.models.lock().unwrap().verify_provider(&name, &fields)
+    authority_result(state.models.lock().unwrap().verify_provider(&name, &fields))
 }
 
 #[tauri::command]
@@ -785,7 +785,7 @@ pub fn provider_fetch_models(
     name: String,
     fields: Value,
 ) -> Value {
-    state.models.lock().unwrap().fetch_models(&name, &fields)
+    authority_result(state.models.lock().unwrap().fetch_models(&name, &fields))
 }
 
 fn authority_result<E: std::fmt::Display>(result: Result<Value, E>) -> Value {
