@@ -6,47 +6,12 @@ on:
       - opened
       - reopened
       - synchronize
-  push:
-    branches:
-      - main
 
 permissions:
   contents: write
   pull-requests: write
 
 jobs:
-  cleanup-obsolete-actions-history:
-    name: Cleanup obsolete Actions history
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    permissions:
-      actions: write
-      contents: read
-
-    steps:
-      - name: Delete runs from obsolete workflow identities
-        env:
-          GH_TOKEN: ${{ github.token }}
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/runs?per_page=100" \
-            --jq '.workflow_runs[] | select(.workflow_id == 339182377 or .workflow_id == 346241682 or .workflow_id == 346241758) | .id' \
-            > obsolete-run-ids.txt
-
-          count="$(wc -l < obsolete-run-ids.txt | tr -d ' ')"
-          echo "Found ${count} obsolete workflow runs."
-
-          while IFS= read -r run_id; do
-            [ -z "$run_id" ] && continue
-            echo "Deleting workflow run ${run_id}"
-            gh api --method DELETE "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}"
-          done < obsolete-run-ids.txt
-
-          echo "Obsolete workflow history cleanup complete."
-
   enable-auto-merge:
     name: Enable auto-merge
     # Only Dependabot PRs are eligible for auto-merge. Anything else
