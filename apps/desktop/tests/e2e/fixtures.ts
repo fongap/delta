@@ -61,7 +61,7 @@ const SETTINGS = {
   surfaces: { delta: true },
   nav_layout: "grouped",
   scratch_base: "~/Delta",
-  secrets_path: "/Users/test/.config/delta/secrets.json",
+  secrets_path: "/Users/test/.config/delta/model-authority.json",
   sessions_peek: 6,
   pdf_fallback: "text",
   pdf_max_pages: 2,
