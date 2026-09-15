@@ -1,0 +1,132 @@
+name: R7 Runtime Persistence Refine
+
+on:
+  push:
+    branches:
+      - codex/r7-runtime-persistence-failclosed
+
+permissions:
+  contents: write
+
+jobs:
+  refine:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: codex/r7-runtime-persistence-failclosed
+      - name: Tighten stream and sequence semantics
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          path = Path('core/runtime-native/src/runtime.rs')
+          text = path.read_text()
+
+          old = '''        let frame = {
+              let mut sequence = self.sequence.lock().unwrap();
+              *sequence += 1;
+              event.to_frame(&self.session_id, *sequence)
+          };
+              if let Err(error) = self.sink.emit(frame) {
+              let mut event_error = self.event_error.lock().unwrap();
+              if event_error.is_none() {
+                  *event_error = Some(error);
+              }
+          }
+          '''
+          new = '''        let mut sequence = self.sequence.lock().unwrap();
+              let next_sequence = *sequence + 1;
+          let frame = event.to_frame(&self.session_id, next_sequence);
+              if let Err(error) = self.sink.emit(frame) {
+              let mut event_error = self.event_error.lock().unwrap();
+              if event_error.is_none() {
+                  *event_error = Some(error);
+              }
+              return;
+          }
+              *sequence = next_sequence;
+          '''
+          if text.count(old) != 1:
+              raise SystemExit(f'event emitter target count={text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          old = '''            ) {
+                  Ok(ProviderStreamOutcome::Completed) => {}
+                  Ok(ProviderStreamOutcome::Interrupted) => {
+          '''
+          new = '''            ) {
+                  Ok(ProviderStreamOutcome::Completed) => {
+                  self.ensure_event_delivery()?;
+              }
+                  Ok(ProviderStreamOutcome::Interrupted) => {
+                  self.ensure_event_delivery()?;
+          '''
+          if text.count(old) != 1:
+              raise SystemExit(f'provider outcome target count={text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          old = '''                Err(e) => {
+                      if turn_retries < self.config.max_retries
+          '''
+          new = '''                Err(e) => {
+                      self.ensure_event_delivery()?;
+                  if turn_retries < self.config.max_retries
+          '''
+          if text.count(old) != 1:
+              raise SystemExit(f'provider error target count={text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          old = '''            self.emit_event(RuntimeEvent::IterationEnd {
+                  iteration: iterations,
+              });
+                  if self.cancel.load(Ordering::Relaxed) {
+          '''
+          new = '''            self.emit_event(RuntimeEvent::IterationEnd {
+                  iteration: iterations,
+              });
+                  self.ensure_event_delivery()?;
+              if self.cancel.load(Ordering::Relaxed) {
+          '''
+          if text.count(old) != 1:
+              raise SystemExit(f'iteration target count={text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          old = '''                self.emit_event(RuntimeEvent::ToolFinished {
+                      tool_call_id: tc.id.clone(),
+                      name: tc.name.clone(),
+                      result: result.output.clone(),
+                      error: result.error.clone(),
+                  });
+                  }
+          '''
+          new = '''                self.emit_event(RuntimeEvent::ToolFinished {
+                      tool_call_id: tc.id.clone(),
+                      name: tc.name.clone(),
+                      result: result.output.clone(),
+                      error: result.error.clone(),
+                  });
+                      self.ensure_event_delivery()?;
+              }
+          '''
+          if text.count(old) != 1:
+              raise SystemExit(f'tool finished target count={text.count(old)}')
+          text = text.replace(old, new, 1)
+
+          path.write_text(text)
+          PY
+          rustfmt --edition 2021 core/runtime-native/src/runtime.rs
+          git diff --check
+          cargo check --manifest-path core/runtime-native/Cargo.toml
+          cargo test --manifest-path core/runtime-native/Cargo.toml
+      - name: Commit refinement and self-delete
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git rm .github/workflows/_r7-runtime-persistence-refine.yml
+          git add core/runtime-native/src/runtime.rs
+          git diff --cached --check
+          git commit -m "fix(r7): tighten event persistence boundary"
+          git push origin HEAD:codex/r7-runtime-persistence-failclosed
