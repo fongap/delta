@@ -700,9 +700,10 @@ mod tests {
         assert!(slack["blurb"].as_str().unwrap().contains("Socket Mode"));
         // The catalog never exposes secret values.
         assert!(!slack.to_string().contains("top-secret"));
-        // Every connector row carries a non-placeholder brand color.
-        assert!(rows
-            .iter()
-            .all(|row| row["brand_color"].as_str().is_some_and(|c| !c.is_empty() && c != "#6b7280" || row["name"] == "email")));
+        // Every connector row carries a non-placeholder brand color (email is
+        // the neutral-gray exception — it has no brand color of its own).
+        assert!(rows.iter().all(|row| row["brand_color"]
+            .as_str()
+            .is_some_and(|c| !c.is_empty() && c != "#6b7280" || row["name"] == "email")));
     }
 }
