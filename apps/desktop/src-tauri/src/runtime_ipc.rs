@@ -105,7 +105,36 @@ impl RuntimeRegistry {
 }
 
 pub fn init() -> RuntimeRegistry {
-    RuntimeRegistry::new()
+    let registry = RuntimeRegistry::new();
+    // Cold-start restart recovery: close runs interrupted by a crash and sweep
+    // their stale side effects to `Uncertain` (never auto-replayed). Runs
+    // paused on approval / interaction are preserved so their waiting state is
+    // restored. The automation store is reconciled with the same recovery
+    // result — there is no second state machine.
+    let report = registry
+        .authorities
+        .recover_interrupted_runs()
+        .unwrap_or_else(|error| {
+            eprintln!("runtime boot recovery failed: {error}");
+            delta_runtime_native::RecoveryReport::default()
+        });
+    for run_id in &report.interrupted_runs {
+        let session_id = format!("__run__{run_id}");
+        let _ = registry
+            .automations
+            .lock()
+            .unwrap()
+            .finalize_session(&session_id, "interrupted");
+    }
+    if !report.interrupted_runs.is_empty() || !report.recovered_waiting.is_empty() {
+        eprintln!(
+            "runtime recovery: {} interrupted, {} waiting, {} side effects swept",
+            report.interrupted_runs.len(),
+            report.recovered_waiting.len(),
+            report.swept_side_effects.len(),
+        );
+    }
+    registry
 }
 
 /// Headless release smoke: boot every embedded Rust authority and execute a

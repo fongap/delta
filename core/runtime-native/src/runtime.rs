@@ -30,8 +30,8 @@ use sha2::{Digest, Sha256};
 use crate::approval::{ApprovalController, ApprovalDecision, ApprovalRecordInput, ApprovalWriter};
 use crate::artifact::{ArtifactInput, ArtifactRegistryWriter};
 use crate::capability::CapabilityProgress;
-use crate::checkpoint::{CheckpointRegisterInput, CheckpointWriter};
-use crate::idemlog::IdempotencyWriter;
+use crate::checkpoint::{CheckpointReader, CheckpointRegisterInput, CheckpointWriter};
+use crate::idemlog::{IdempotencyWriter, SideEffectEntry};
 use crate::inbox::InboxStore;
 use crate::policy::{self, Decision, PolicyEvaluateInput, RiskLevel, RootEntry, ToolMetadata};
 use crate::provider::{self, ProviderRequest};
@@ -422,9 +422,117 @@ impl RuntimeAuthorities {
         self.ledger.clone()
     }
 
+    /// Read-write handle to the side-effect idempotency authority.
+    pub fn idempotency(&self) -> Arc<Mutex<IdempotencyWriter>> {
+        self.idempotency.clone()
+    }
+
     pub fn inbox(&self) -> Arc<InboxStore> {
         self.inbox.clone()
     }
+
+    /// Cold-start restart recovery: rebuild Run state from the sole durable
+    /// Run authority (the ledger) and close every run that was interrupted by
+    /// a crash, without ever auto-replaying a real side effect.
+    ///
+    /// State taxonomy on restart (ADR-042 run lifecycle + checkpoints):
+    /// - **Recoverable** (latest checkpoint phase is `awaiting_approval` /
+    ///   `awaiting_user` / `awaiting_question` / `awaiting_directory` /
+    ///   `awaiting_plan`): the run was paused on a human action. It is left
+    ///   open (`running`) so its approval / inbox / interaction state is
+    ///   restored, not destroyed. Its side effects are not swept.
+    /// - **Executing** (no recoverable checkpoint): the run was actively
+    ///   executing when the process died. It is closed with a synthetic
+    ///   `run.interrupted` (terminal) and every stale `Planned` / `Executing`
+    ///   side effect is swept to `Uncertain` — never re-executed. An operator
+    ///   resolves each `Uncertain` entry via `resolve_uncertain`.
+    /// - **Terminal** (`completed` / `failed` / `interrupted` / `skipped` /
+    ///   `cancelled`): already closed; not touched. Never re-executed.
+    ///
+    /// Idempotent: a second invocation finds no open runs and no uncommitted
+    /// side effects, so it is a no-op. This holds for duplicate restarts and
+    /// repeated reconciliation.
+    ///
+    /// The ledger is the single Run authority. The transcript and the
+    /// `recovery` column are rebuild evidence only and are not consulted to
+    /// decide whether a run may be replayed.
+    pub fn recover_interrupted_runs(&self) -> Result<RecoveryReport, String> {
+        let ledger = self.ledger.lock().unwrap();
+        let reader = ledger.reader().map_err(|error| error.to_string())?;
+        let open_runs = reader.open_runs().map_err(|error| error.to_string())?;
+        if open_runs.is_empty() {
+            return Ok(RecoveryReport::default());
+        }
+
+        // Partition open runs by their latest checkpoint phase. A run paused on
+        // a human action is recoverable and must survive the restart; a run that
+        // was mid-execution is interrupted.
+        let checkpoint_reader = CheckpointReader::from_reader(reader);
+        let mut interrupted = Vec::new();
+        let mut recovered_waiting = Vec::new();
+        for run_id in &open_runs {
+            let recoverable = checkpoint_reader
+                .latest(run_id)
+                .map_err(|error| error.to_string())?
+                .is_some_and(|checkpoint| checkpoint.recoverable);
+            if recoverable {
+                recovered_waiting.push(run_id.clone());
+            } else {
+                interrupted.push(run_id.clone());
+            }
+        }
+        drop(checkpoint_reader);
+
+        // Close every interrupted run with a synthetic `run.interrupted`. The
+        // ledger state machine enforces `running | resumed -> interrupted`.
+        let ts = now_ts();
+        for run_id in &interrupted {
+            ledger
+                .transition(
+                    run_id,
+                    "run.interrupted",
+                    "system",
+                    ts,
+                    &json!({"reason": "crashed"}),
+                    "",
+                )
+                .map_err(|error| error.to_string())?;
+        }
+        drop(ledger);
+
+        // Sweep stale side effects for the interrupted runs to `Uncertain`.
+        // Recoverable (waiting) runs are intentionally excluded: their
+        // `Planned` side effects represent intent awaiting a human decision,
+        // not a crash mid-flight.
+        let swept = if interrupted.is_empty() {
+            Vec::new()
+        } else {
+            let idempotency = self.idempotency.lock().unwrap();
+            idempotency
+                .sweep_stale(&interrupted)
+                .map_err(|error| error.to_string())?
+        };
+
+        Ok(RecoveryReport {
+            interrupted_runs: interrupted,
+            recovered_waiting,
+            swept_side_effects: swept,
+        })
+    }
+}
+
+/// Outcome of a cold-start restart recovery sweep.
+#[derive(Debug, Clone, Default)]
+pub struct RecoveryReport {
+    /// Runs that were mid-execution at crash and are now closed as
+    /// `interrupted` (terminal). Their stale side effects were swept to
+    /// `Uncertain` and must never be auto-replayed.
+    pub interrupted_runs: Vec<String>,
+    /// Runs that were paused on a human action (approval / interaction) and
+    /// are left open so their waiting state is restored.
+    pub recovered_waiting: Vec<String>,
+    /// Side-effect rows swept from `Planned` / `Executing` to `Uncertain`.
+    pub swept_side_effects: Vec<SideEffectEntry>,
 }
 
 #[derive(Clone)]
@@ -4277,5 +4385,252 @@ mod tests {
             .unwrap()
             .iter()
             .any(|frame| frame["type"] == "interrupted"));
+    }
+
+    // ------------------------------------------------------------------
+    // R7 Task 2: Runtime restart recovery closure.
+    // The ledger is the sole Run authority; recover_interrupted_runs()
+    // rebuilds from it without ever auto-replaying a real side effect.
+    // ------------------------------------------------------------------
+
+    use crate::checkpoint::CheckpointRegisterInput;
+    use crate::idemlog::SideEffectState;
+
+    fn open_authorities() -> (tempfile::TempDir, RuntimeAuthorities) {
+        let dir = tempfile::tempdir().unwrap();
+        let auth = RuntimeAuthorities::open(dir.path()).unwrap();
+        (dir, auth)
+    }
+
+    fn start_run(auth: &RuntimeAuthorities, run_id: &str) {
+        let ledger = auth.ledger.lock().unwrap();
+        ledger
+            .transition(
+                run_id,
+                "run.started",
+                "user",
+                now_ts(),
+                &json!({"kind": "run"}),
+                "",
+            )
+            .unwrap();
+    }
+
+    fn side_effect(
+        auth: &RuntimeAuthorities,
+        run_id: &str,
+        tool_call_id: &str,
+        state: SideEffectState,
+    ) {
+        let idem = auth.idempotency.lock().unwrap();
+        let args = json!({"path": "a.txt"});
+        idem.record_planned(run_id, tool_call_id, "write_file", &args)
+            .unwrap();
+        if state != SideEffectState::Planned {
+            idem.mark_executing(run_id, tool_call_id).unwrap();
+        }
+        match state {
+            SideEffectState::Committed => {
+                idem.commit(
+                    run_id,
+                    tool_call_id,
+                    "write_file",
+                    &args,
+                    &json!({"ok": true}),
+                )
+                .unwrap();
+            }
+            SideEffectState::Failed => {
+                idem.mark_failed(run_id, tool_call_id, "boom").unwrap();
+            }
+            SideEffectState::Uncertain => {
+                idem.mark_uncertain(run_id, tool_call_id).unwrap();
+            }
+            _ => {}
+        }
+    }
+
+    fn register_checkpoint(auth: &RuntimeAuthorities, run_id: &str, phase: &str) {
+        let ledger = auth.ledger.lock().unwrap();
+        CheckpointWriter::new(&ledger)
+            .register(
+                CheckpointRegisterInput {
+                    checkpoint_id: None,
+                    run_id: run_id.to_string(),
+                    session_id: "s1".to_string(),
+                    phase: phase.to_string(),
+                    pending_tool_call: None,
+                    pending_inbox_item_id: None,
+                    last_event_seq: None,
+                    todo_summary: Vec::new(),
+                    recent_artifacts: Vec::new(),
+                    error: None,
+                },
+                now_ts(),
+                "",
+            )
+            .unwrap();
+    }
+
+    #[test]
+    fn restart_sweeps_executing_side_effect_to_uncertain_without_replay() {
+        let (_dir, auth) = open_authorities();
+        start_run(&auth, "run_exec");
+        side_effect(&auth, "run_exec", "tc_1", SideEffectState::Executing);
+
+        let report = auth.recover_interrupted_runs().unwrap();
+        assert_eq!(report.interrupted_runs, vec!["run_exec".to_string()]);
+        assert!(report.recovered_waiting.is_empty());
+        assert_eq!(report.swept_side_effects.len(), 1);
+
+        let ledger = auth.ledger.lock().unwrap();
+        let reader = ledger.reader().unwrap();
+        assert_eq!(reader.run_status("run_exec").unwrap(), "interrupted");
+
+        let idem = auth.idempotency.lock().unwrap();
+        let entry = idem.get("run_exec", "tc_1").unwrap().unwrap();
+        assert_eq!(entry.state, SideEffectState::Uncertain);
+    }
+
+    #[test]
+    fn restart_sweeps_planned_side_effect_and_closes_run_before_execution() {
+        let (_dir, auth) = open_authorities();
+        start_run(&auth, "run_planned");
+        side_effect(&auth, "run_planned", "tc_1", SideEffectState::Planned);
+
+        let report = auth.recover_interrupted_runs().unwrap();
+        assert_eq!(report.interrupted_runs, vec!["run_planned".to_string()]);
+        assert_eq!(report.swept_side_effects.len(), 1);
+
+        let idem = auth.idempotency.lock().unwrap();
+        let entry = idem.get("run_planned", "tc_1").unwrap().unwrap();
+        assert_eq!(entry.state, SideEffectState::Uncertain);
+    }
+
+    #[test]
+    fn restart_preserves_committed_side_effect_after_crash() {
+        let (_dir, auth) = open_authorities();
+        start_run(&auth, "run_committed");
+        side_effect(&auth, "run_committed", "tc_1", SideEffectState::Committed);
+
+        let report = auth.recover_interrupted_runs().unwrap();
+        assert_eq!(report.interrupted_runs, vec!["run_committed".to_string()]);
+        assert!(report.swept_side_effects.is_empty());
+
+        let idem = auth.idempotency.lock().unwrap();
+        let entry = idem.get("run_committed", "tc_1").unwrap().unwrap();
+        assert_eq!(entry.state, SideEffectState::Committed);
+    }
+
+    #[test]
+    fn restart_preserves_terminal_run_without_reexecution() {
+        let (_dir, auth) = open_authorities();
+        start_run(&auth, "run_done");
+        let ledger = auth.ledger.lock().unwrap();
+        ledger
+            .transition(
+                "run_done",
+                "run.completed",
+                "system",
+                now_ts(),
+                &json!({"status": "completed"}),
+                "",
+            )
+            .unwrap();
+        drop(ledger);
+
+        let report = auth.recover_interrupted_runs().unwrap();
+        assert!(report.interrupted_runs.is_empty());
+        assert!(report.recovered_waiting.is_empty());
+    }
+
+    #[test]
+    fn restart_restores_run_paused_on_approval() {
+        let (_dir, auth) = open_authorities();
+        start_run(&auth, "run_approve");
+        register_checkpoint(&auth, "run_approve", "awaiting_approval");
+
+        let report = auth.recover_interrupted_runs().unwrap();
+        assert!(report.interrupted_runs.is_empty());
+        assert_eq!(report.recovered_waiting, vec!["run_approve".to_string()]);
+        assert!(report.swept_side_effects.is_empty());
+
+        let ledger = auth.ledger.lock().unwrap();
+        let reader = ledger.reader().unwrap();
+        assert_eq!(reader.run_status("run_approve").unwrap(), "running");
+    }
+
+    #[test]
+    fn restart_restores_run_paused_on_user_interaction() {
+        let (_dir, auth) = open_authorities();
+        start_run(&auth, "run_interact");
+        register_checkpoint(&auth, "run_interact", "awaiting_user");
+
+        let report = auth.recover_interrupted_runs().unwrap();
+        assert!(report.interrupted_runs.is_empty());
+        assert_eq!(report.recovered_waiting, vec!["run_interact".to_string()]);
+
+        let ledger = auth.ledger.lock().unwrap();
+        let reader = ledger.reader().unwrap();
+        assert_eq!(reader.run_status("run_interact").unwrap(), "running");
+    }
+
+    #[test]
+    fn restart_does_not_sweep_side_effects_of_recoverable_waiting_run() {
+        let (_dir, auth) = open_authorities();
+        start_run(&auth, "run_wait");
+        side_effect(&auth, "run_wait", "tc_1", SideEffectState::Planned);
+        register_checkpoint(&auth, "run_wait", "awaiting_approval");
+
+        let report = auth.recover_interrupted_runs().unwrap();
+        assert!(report.interrupted_runs.is_empty());
+        assert!(report.swept_side_effects.is_empty());
+
+        let idem = auth.idempotency.lock().unwrap();
+        let entry = idem.get("run_wait", "tc_1").unwrap().unwrap();
+        assert_eq!(entry.state, SideEffectState::Planned);
+    }
+
+    #[test]
+    fn duplicate_restart_recovery_is_idempotent() {
+        let (_dir, auth) = open_authorities();
+        start_run(&auth, "run_dup");
+        side_effect(&auth, "run_dup", "tc_1", SideEffectState::Executing);
+
+        let first = auth.recover_interrupted_runs().unwrap();
+        assert_eq!(first.interrupted_runs.len(), 1);
+        assert_eq!(first.swept_side_effects.len(), 1);
+
+        let second = auth.recover_interrupted_runs().unwrap();
+        assert!(second.interrupted_runs.is_empty());
+        assert!(second.recovered_waiting.is_empty());
+        assert!(second.swept_side_effects.is_empty());
+    }
+
+    #[test]
+    fn restart_recovery_partitions_mixed_open_runs() {
+        let (_dir, auth) = open_authorities();
+        start_run(&auth, "run_exec");
+        side_effect(&auth, "run_exec", "tc_1", SideEffectState::Executing);
+        start_run(&auth, "run_approve");
+        register_checkpoint(&auth, "run_approve", "awaiting_approval");
+        start_run(&auth, "run_done");
+        let ledger = auth.ledger.lock().unwrap();
+        ledger
+            .transition(
+                "run_done",
+                "run.completed",
+                "system",
+                now_ts(),
+                &json!({"status": "completed"}),
+                "",
+            )
+            .unwrap();
+        drop(ledger);
+
+        let report = auth.recover_interrupted_runs().unwrap();
+        assert_eq!(report.interrupted_runs, vec!["run_exec".to_string()]);
+        assert_eq!(report.recovered_waiting, vec!["run_approve".to_string()]);
+        assert_eq!(report.swept_side_effects.len(), 1);
     }
 }
