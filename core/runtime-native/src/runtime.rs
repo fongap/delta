@@ -554,6 +554,10 @@ pub struct RuntimeConfig {
     /// Unattended runs park approval requests in the Inbox authority instead
     /// of waiting on an in-composer response.
     pub unattended: bool,
+    /// Execution mode drives the Plan-mode Trust constraint in the Policy
+    /// layer. Default is `Execute`. `Plan` hard-rejects any non-read-only
+    /// capability regardless of model behavior.
+    pub mode: crate::policy::ExecutionMode,
 }
 
 impl Default for RuntimeConfig {
@@ -572,6 +576,7 @@ impl Default for RuntimeConfig {
             system_prompt: None,
             workspace: None,
             unattended: false,
+            mode: crate::policy::ExecutionMode::Execute,
         }
     }
 }
@@ -1555,6 +1560,7 @@ impl RuntimeHost {
             level: level as i64,
             workspace_root: workspace,
             roots,
+            mode: self.config.mode,
         })
         .map_err(|error| error.to_string())?;
         let evaluated_level = RiskLevel::from_i64(evaluated.level)

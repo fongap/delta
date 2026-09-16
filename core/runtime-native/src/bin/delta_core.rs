@@ -2081,6 +2081,7 @@ fn handle(cmd: Command, cache: &Mutex<ConnCache>) -> Value {
                 level,
                 workspace_root,
                 roots: root_entries,
+                mode: delta_runtime_native::ExecutionMode::Execute,
             };
             match delta_runtime_native::evaluate(input) {
                 Ok(output) => Ok(serde_json::to_value(output).unwrap()),
@@ -2426,6 +2427,7 @@ fn handle_runtime_stream(cmd: Command, ctx: StreamCtx) {
                 system_prompt,
                 workspace,
                 unattended: false,
+                mode: delta_runtime_native::ExecutionMode::Execute,
             };
             let mut host = RuntimeHost::new(&session_id, config);
             if let Some(t) = tools {
