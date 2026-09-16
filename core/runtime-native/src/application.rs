@@ -11,54 +11,68 @@ use serde_json::{json, Value};
 
 use crate::{durability::atomic_write_private, ShadowReadError};
 
-const CONNECTORS: &[(&str, &str, &str, bool, bool)] = &[
-    ("telegram", "Telegram", "telegram", true, true),
-    ("slack", "Slack", "slack", true, true),
-    ("email", "Email", "email", true, false),
-    ("gmail", "Gmail", "gmail", false, false),
-    (
-        "google_calendar",
-        "Google Calendar",
-        "google-calendar",
-        false,
-        false,
-    ),
-    ("browser", "Browser", "browser", false, false),
-    ("github", "GitHub", "github", true, false),
-    ("outlook", "Outlook", "outlook", false, false),
-    ("jira", "Jira", "jira", false, false),
-    ("monday", "monday.com", "monday", false, false),
-    ("confluence", "Confluence", "confluence", false, false),
-    ("zendesk", "Zendesk", "zendesk", false, false),
-    ("linear", "Linear", "linear", false, false),
-    ("gitlab", "GitLab", "gitlab", false, false),
-    ("discord", "Discord", "discord", true, true),
-    ("stripe", "Stripe", "stripe", false, false),
-    ("asana", "Asana", "asana", false, false),
-    ("hubspot", "HubSpot", "hubspot", false, false),
-    ("dropbox", "Dropbox", "dropbox", false, false),
-    ("box", "Box", "box", false, false),
-    ("whatsapp", "WhatsApp", "whatsapp", true, true),
-    ("quickbooks", "QuickBooks", "quickbooks", false, false),
-    ("datadog", "Datadog", "datadog", false, false),
-    ("salesforce", "Salesforce", "salesforce", false, false),
-    ("docusign", "DocuSign", "docusign", false, false),
-    ("clickup", "ClickUp", "clickup", false, false),
-    ("google_drive", "Google Drive", "google-drive", false, false),
-    ("canva", "Canva", "canva", false, false),
-    ("figma", "Figma", "figma", false, false),
-    ("descript", "Descript", "descript", false, false),
-    ("clay", "Clay", "clay", false, false),
-    ("close", "Close", "close", false, false),
-    ("notion", "Notion", "notion", false, false),
-    ("attio", "Attio", "attio", false, false),
-    ("posthog", "PostHog", "posthog", false, false),
-    ("mixpanel", "Mixpanel", "mixpanel", false, false),
-    ("amplitude", "Amplitude", "amplitude", false, false),
-    ("apollo", "Apollo", "apollo", false, false),
-    ("hunter", "Hunter", "hunter", false, false),
-    ("pagerduty", "PagerDuty", "pagerduty", false, false),
+/// The single Connector Catalog Authority (R7 Task 4). Each entry carries the
+/// full business metadata for a connector: id, title, logo, auth requirements,
+/// two-way / channels characteristics, blurb and brand color. The frontend and
+/// every other layer read this catalog via [`ApplicationStore::connectors`]; no
+/// other source may maintain a business connector list. Connector *secrets*
+/// remain in this authority's `secrets` map; connector *worker* protocol
+/// bindings live in the worker package, not here.
+const CONNECTORS: &[ConnectorSpec] = &[
+    ConnectorSpec { name: "telegram", title: "Telegram", logo: "telegram", auth: "bot_token", two_way: true, channels: true, blurb: "Two-way messaging with a Telegram bot.", brand_color: "#229ed9" },
+    ConnectorSpec { name: "slack", title: "Slack", logo: "slack", auth: "socket_app", two_way: true, channels: true, blurb: "Two-way messaging via a Slack app using Socket Mode.", brand_color: "#611f69" },
+    ConnectorSpec { name: "email", title: "Email (IMAP)", logo: "email", auth: "app_password", two_way: false, channels: false, blurb: "Read, search, and send mail from any IMAP account — Gmail, iCloud, Fastmail, or custom.", brand_color: "#6b7280" },
+    ConnectorSpec { name: "gmail", title: "Gmail", logo: "gmail", auth: "oauth", two_way: false, channels: false, blurb: "Search, summarize, draft, and send email.", brand_color: "#ea4335" },
+    ConnectorSpec { name: "google_calendar", title: "Google Calendar", logo: "google-calendar", auth: "oauth", two_way: false, channels: false, blurb: "Read availability, summarize schedules, and create events.", brand_color: "#4285f4" },
+    ConnectorSpec { name: "browser", title: "Browser", logo: "browser", auth: "none", two_way: false, channels: false, blurb: "Let agents navigate, read, and act on websites with approval.", brand_color: "#0ea5e9" },
+    ConnectorSpec { name: "github", title: "GitHub", logo: "github", auth: "token", two_way: true, channels: false, blurb: "Work with issues, pull requests, repository files, and CI status.", brand_color: "#1f2328" },
+    ConnectorSpec { name: "outlook", title: "Outlook", logo: "outlook", auth: "oauth", two_way: false, channels: false, blurb: "Microsoft 365 mail and calendar: search, draft, and send email; manage events and respond to invites.", brand_color: "#0078d4" },
+    ConnectorSpec { name: "jira", title: "Jira", logo: "jira", auth: "api_token", two_way: false, channels: false, blurb: "Search, summarize, create, and update issues.", brand_color: "#0052cc" },
+    ConnectorSpec { name: "monday", title: "monday.com", logo: "monday", auth: "oauth", two_way: false, channels: false, blurb: "Read boards and items, track work, create items and post updates.", brand_color: "#6161ff" },
+    ConnectorSpec { name: "confluence", title: "Confluence", logo: "confluence", auth: "api_token", two_way: false, channels: false, blurb: "Search spaces, read pages, and draft documentation.", brand_color: "#172b4d" },
+    ConnectorSpec { name: "zendesk", title: "Zendesk", logo: "zendesk", auth: "api_token", two_way: false, channels: false, blurb: "Search tickets, summarize customer context, and draft replies.", brand_color: "#03363d" },
+    ConnectorSpec { name: "linear", title: "Linear", logo: "linear", auth: "api_token", two_way: false, channels: false, blurb: "Search, read, and create Linear issues.", brand_color: "#5e6ad2" },
+    ConnectorSpec { name: "gitlab", title: "GitLab", logo: "gitlab", auth: "token", two_way: false, channels: false, blurb: "Work with issues and merge requests on GitLab.com or self-hosted.", brand_color: "#fc6d26" },
+    ConnectorSpec { name: "discord", title: "Discord", logo: "discord", auth: "bot_token", two_way: false, channels: true, blurb: "Read channels and send messages through a Discord bot.", brand_color: "#5865f2" },
+    ConnectorSpec { name: "stripe", title: "Stripe", logo: "stripe", auth: "api_token", two_way: false, channels: false, blurb: "Read-only access to customers, charges, and invoices.", brand_color: "#635bff" },
+    ConnectorSpec { name: "asana", title: "Asana", logo: "asana", auth: "token", two_way: false, channels: false, blurb: "Search and read tasks and projects; create, update, and comment.", brand_color: "#f06a6a" },
+    ConnectorSpec { name: "hubspot", title: "HubSpot", logo: "hubspot", auth: "token", two_way: false, channels: false, blurb: "Search CRM records; log notes and tasks, update records. No deletes.", brand_color: "#ff7a59" },
+    ConnectorSpec { name: "dropbox", title: "Dropbox", logo: "dropbox", auth: "oauth", two_way: false, channels: false, blurb: "Search, browse, and read files in Dropbox.", brand_color: "#0061ff" },
+    ConnectorSpec { name: "box", title: "Box", logo: "box", auth: "oauth", two_way: false, channels: false, blurb: "Search, browse, and read files in Box.", brand_color: "#0061d5" },
+    ConnectorSpec { name: "whatsapp", title: "WhatsApp", logo: "whatsapp", auth: "token", two_way: false, channels: true, blurb: "Send WhatsApp messages through Meta's official Cloud API (outbound only).", brand_color: "#25d366" },
+    ConnectorSpec { name: "quickbooks", title: "QuickBooks", logo: "quickbooks", auth: "oauth", two_way: false, channels: false, blurb: "Read-only access to customers, invoices, and financial reports.", brand_color: "#2ca01c" },
+    ConnectorSpec { name: "datadog", title: "Datadog", logo: "datadog", auth: "none", two_way: false, channels: false, blurb: "Pull firing alerts, monitors, and the incident timeline.", brand_color: "#632ca6" },
+    ConnectorSpec { name: "salesforce", title: "Salesforce", logo: "salesforce", auth: "none", two_way: false, channels: false, blurb: "Read and update cases, accounts, and opportunities in the CRM.", brand_color: "#00a1e0" },
+    ConnectorSpec { name: "docusign", title: "Docusign", logo: "docusign", auth: "oauth", two_way: false, channels: false, blurb: "Track agreements, check envelope status, and send documents for signature.", brand_color: "#4c00ff" },
+    ConnectorSpec { name: "clickup", title: "ClickUp", logo: "clickup", auth: "api_token", two_way: false, channels: false, blurb: "Search tasks and docs; create and update items.", brand_color: "#7b68ee" },
+    ConnectorSpec { name: "google_drive", title: "Google Drive", logo: "google-drive", auth: "oauth", two_way: false, channels: false, blurb: "Search, browse, and read files in Google Drive.", brand_color: "#4285f4" },
+    ConnectorSpec { name: "canva", title: "Canva", logo: "canva", auth: "oauth", two_way: false, channels: false, blurb: "Browse, create, and export designs.", brand_color: "#00c4cc" },
+    ConnectorSpec { name: "figma", title: "Figma", logo: "figma", auth: "api_token", two_way: false, channels: false, blurb: "Read design files and comments; export assets.", brand_color: "#f24e1e" },
+    ConnectorSpec { name: "descript", title: "Descript", logo: "descript", auth: "none", two_way: false, channels: false, blurb: "Read and edit audio and video projects through their transcripts.", brand_color: "#0062ff" },
+    ConnectorSpec { name: "clay", title: "Clay", logo: "clay", auth: "none", two_way: false, channels: false, blurb: "Enrich people and companies; run outbound research workflows.", brand_color: "#1f2328" },
+    ConnectorSpec { name: "close", title: "Close", logo: "close", auth: "api_token", two_way: false, channels: false, blurb: "Read and update leads, contacts, and opportunities in the CRM.", brand_color: "#276392" },
+    ConnectorSpec { name: "notion", title: "Notion", logo: "notion", auth: "oauth", two_way: false, channels: false, blurb: "Search pages, read content, query databases, create pages.", brand_color: "#1f2328" },
+    ConnectorSpec { name: "attio", title: "Attio", logo: "attio", auth: "oauth", two_way: false, channels: false, blurb: "Read your Attio CRM: objects, records, notes.", brand_color: "#2d7ff9" },
+    ConnectorSpec { name: "posthog", title: "PostHog", logo: "posthog", auth: "api_token", two_way: false, channels: false, blurb: "Query product analytics: events, funnels, saved insights.", brand_color: "#f54e00" },
+    ConnectorSpec { name: "mixpanel", title: "Mixpanel", logo: "mixpanel", auth: "api_token", two_way: false, channels: false, blurb: "Query Mixpanel events and segmentation.", brand_color: "#7856ff" },
+    ConnectorSpec { name: "amplitude", title: "Amplitude", logo: "amplitude", auth: "api_token", two_way: false, channels: false, blurb: "Query Amplitude charts data: active users, event totals.", brand_color: "#1e61f0" },
+    ConnectorSpec { name: "apollo", title: "Apollo.io", logo: "apollo", auth: "api_token", two_way: false, channels: false, blurb: "Enrich people and companies; search the B2B database.", brand_color: "#fbbf24" },
+    ConnectorSpec { name: "hunter", title: "Hunter", logo: "hunter", auth: "api_token", two_way: false, channels: false, blurb: "Find and verify professional email addresses by domain.", brand_color: "#fa5320" },
+    ConnectorSpec { name: "pagerduty", title: "PagerDuty", logo: "pagerduty", auth: "none", two_way: false, channels: false, blurb: "See who's on-call and review active incidents before paging.", brand_color: "#06ac38" },
 ];
+
+/// One entry in the Connector Catalog Authority.
+#[derive(Clone, Copy)]
+struct ConnectorSpec {
+    name: &'static str,
+    title: &'static str,
+    logo: &'static str,
+    auth: &'static str,
+    two_way: bool,
+    channels: bool,
+    blurb: &'static str,
+    brand_color: &'static str,
+}
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 struct ConnectorState {
@@ -170,8 +184,8 @@ impl ApplicationStore {
         let state = self.read()?;
         Ok(CONNECTORS
             .iter()
-            .map(|(name, title, logo, two_way, channels)| {
-                let current = state.connectors.get(*name).cloned().unwrap_or_default();
+            .map(|spec| {
+                let current = state.connectors.get(spec.name).cloned().unwrap_or_default();
                 let tools = current
                     .tools
                     .iter()
@@ -184,12 +198,12 @@ impl ApplicationStore {
                     })
                     .collect::<Vec<_>>();
                 let mut row = json!({
-                    "name": name, "title": title, "icon": logo, "logo": logo,
-                    "blurb": format!("Connect Delta to {title}."), "about": "", "access": [],
-                    "auth": "token", "two_way": two_way, "channels": channels,
+                    "name": spec.name, "title": spec.title, "icon": spec.logo, "logo": spec.logo,
+                    "blurb": spec.blurb, "about": "", "access": [],
+                    "auth": spec.auth, "two_way": spec.two_way, "channels": spec.channels,
                     "available": true, "fields": [], "instructions": [],
                     "connected": current.connected, "account": current.account,
-                    "enabled": current.enabled, "brand_color": "#6b7280",
+                    "enabled": current.enabled, "brand_color": spec.brand_color,
                     "allowed_users": [], "tools": tools, "managed": false,
                     "managed_profile": false,
                 });
@@ -208,7 +222,7 @@ impl ApplicationStore {
         name: &str,
         fields: &BTreeMap<String, String>,
     ) -> Result<Value, ShadowReadError> {
-        if !CONNECTORS.iter().any(|descriptor| descriptor.0 == name) {
+        if !CONNECTORS.iter().any(|descriptor| descriptor.name == name) {
             return Ok(json!({"ok": false, "error": "unknown connector"}));
         }
         if fields.is_empty() && name != "browser" {
@@ -661,5 +675,35 @@ mod tests {
             .mode()
             & 0o777;
         assert_eq!(mode, 0o600);
+    }
+
+    #[test]
+    fn connector_catalog_authority_serves_real_metadata_and_hides_secrets() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = ApplicationStore::open(temp.path()).unwrap();
+        store
+            .connect(
+                "slack",
+                &BTreeMap::from([("token".to_string(), "top-secret".to_string())]),
+            )
+            .unwrap();
+        let rows = store.connectors().unwrap();
+        let slack = rows
+            .iter()
+            .find(|row| row["name"] == "slack")
+            .expect("slack in catalog");
+        // Real business metadata (not placeholders) served from the single
+        // authority: brand color, blurb, auth requirement, two-way flag.
+        assert_eq!(slack["brand_color"], "#611f69");
+        assert_eq!(slack["auth"], "socket_app");
+        assert_eq!(slack["two_way"], true);
+        assert!(slack["blurb"].as_str().unwrap().contains("Socket Mode"));
+        // The catalog never exposes secret values.
+        assert!(!slack.to_string().contains("top-secret"));
+        // Every connector row carries a non-placeholder brand color (email is
+        // the neutral-gray exception — it has no brand color of its own).
+        assert!(rows.iter().all(|row| row["brand_color"]
+            .as_str()
+            .is_some_and(|c| !c.is_empty() && c != "#6b7280" || row["name"] == "email")));
     }
 }
