@@ -1,4 +1,11 @@
 //! Rust authority for folder-backed Delta skills.
+//!
+//! A Skill is a controlled extension unit, not a second agent. Its `SKILL.md`
+//! front-matter declares an executable contract that the Runtime / Policy /
+//! Capability layer consumes; the Skill itself never runs its own scheduler,
+//! approval, retry, or authority — every tool call still flows through the
+//! single main Agent via `Task -> Policy -> Capability/Worker -> Validation ->
+//! Artifact/Ledger`.
 
 use std::collections::{BTreeMap, HashSet};
 use std::io::{Cursor, ErrorKind, Read};
@@ -8,6 +15,70 @@ use base64::Engine;
 use serde_json::{json, Value};
 
 use crate::{durability::atomic_write, ShadowReadError};
+
+/// Declared side-effect class of a Skill's execution. This is metadata the
+/// Policy layer uses to bound what a Skill may cause; it is not an execution
+/// path (the main Agent still runs every tool call through Policy).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum SideEffectClass {
+    #[default]
+    /// No side effects — pure reasoning / analysis.
+    None,
+    /// Read-only access (files, search, inspection).
+    Read,
+    /// Reversible local writes within the workspace.
+    LocalWrite,
+    /// External effects (messages, connectors, remote writes).
+    ExternalWrite,
+    /// Irreversible or destructive actions.
+    Destructive,
+}
+
+impl SideEffectClass {
+    fn parse(value: &str) -> Option<Self> {
+        match value.trim().to_ascii_lowercase().as_str() {
+            "none" => Some(Self::None),
+            "read" | "read_only" | "read-only" => Some(Self::Read),
+            "local_write" | "local-write" | "write" => Some(Self::LocalWrite),
+            "external_write" | "external-write" | "external" => Some(Self::ExternalWrite),
+            "destructive" => Some(Self::Destructive),
+            _ => None,
+        }
+    }
+
+    fn as_str(&self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Read => "read",
+            Self::LocalWrite => "local_write",
+            Self::ExternalWrite => "external_write",
+            Self::Destructive => "destructive",
+        }
+    }
+}
+
+/// The executable contract for a Skill, parsed from its `SKILL.md` front-matter.
+///
+/// Every field is optional in the file and falls back to a safe default; a
+/// malformed value fails closed so a broken contract can never silently weaken
+/// the Runtime / Policy boundary.
+#[derive(Debug, Clone, Default)]
+pub struct SkillContract {
+    pub name: String,
+    pub description: String,
+    pub instructions: String,
+    pub source: String,
+    pub version: String,
+    pub compatibility: String,
+    pub side_effect: SideEffectClass,
+    pub capabilities: Vec<String>,
+    pub permissions: Vec<String>,
+    pub timeout_secs: Option<u64>,
+    pub cancellable: bool,
+    pub worker: Option<String>,
+    pub input_schema: Option<Value>,
+    pub output_schema: Option<Value>,
+}
 
 pub struct SkillStore {
     state_dir: PathBuf,
@@ -63,26 +134,37 @@ impl SkillStore {
                     continue;
                 }
                 let skill_md = folder.join("SKILL.md");
-                let Ok(text) = std::fs::read_to_string(&skill_md) else {
+                if !skill_md.exists() {
                     continue;
-                };
+                }
+                let text = std::fs::read_to_string(&skill_md)?;
                 let fallback = folder
                     .file_name()
                     .map(|value| value.to_string_lossy().to_string())
                     .unwrap_or_default();
-                let parsed = parse_skill(&text, &fallback);
+                let contract = parse_skill(&text, &fallback)?.contract;
                 let files = walk_files(&folder)?.saturating_sub(1);
                 rows.insert(
-                    parsed.name.clone(),
+                    contract.name.clone(),
                     json!({
-                        "name": parsed.name,
-                        "description": parsed.description,
-                        "instructions": parsed.instructions,
+                        "name": contract.name,
+                        "description": contract.description,
+                        "instructions": contract.instructions,
                         "scope": scope,
-                        "source": parsed.source,
-                        "enabled": !disabled.contains(&parsed.name),
+                        "source": contract.source,
+                        "enabled": !disabled.contains(&contract.name),
                         "path": folder,
                         "files": files,
+                        "version": contract.version,
+                        "compatibility": contract.compatibility,
+                        "side_effect": contract.side_effect.as_str(),
+                        "capabilities": contract.capabilities,
+                        "permissions": contract.permissions,
+                        "timeout_secs": contract.timeout_secs,
+                        "cancellable": contract.cancellable,
+                        "worker": contract.worker,
+                        "input_schema": contract.input_schema,
+                        "output_schema": contract.output_schema,
                     }),
                 );
             }
@@ -134,7 +216,8 @@ impl SkillStore {
         }
         if patch.get("description").is_some() || patch.get("instructions").is_some() {
             let (folder, _) = self.find(&name, workspace)?;
-            let current = parse_skill(&std::fs::read_to_string(folder.join("SKILL.md"))?, &name);
+            let current =
+                parse_skill(&std::fs::read_to_string(folder.join("SKILL.md"))?, &name)?.contract;
             let instructions = patch
                 .get("instructions")
                 .and_then(Value::as_str)
@@ -217,7 +300,7 @@ impl SkillStore {
                 std::fs::rename(entry.path(), staged.join(entry.file_name()))?;
             }
         }
-        let parsed = parse_skill(&std::fs::read_to_string(staged.join("SKILL.md"))?, "");
+        let parsed = parse_skill(&std::fs::read_to_string(staged.join("SKILL.md"))?, "")?.contract;
         let name = validate_name(&parsed.name)?;
         let files = list_relative_files(&staged)?;
         Ok(json!({
@@ -235,7 +318,7 @@ impl SkillStore {
     ) -> Result<Value, ShadowReadError> {
         let token = validate_name(token)?;
         let staged = self.state_dir.join("skills-staged").join(token);
-        let parsed = parse_skill(&std::fs::read_to_string(staged.join("SKILL.md"))?, "");
+        let parsed = parse_skill(&std::fs::read_to_string(staged.join("SKILL.md"))?, "")?.contract;
         let name = validate_name(&parsed.name)?;
         let destination = self.base(scope, workspace)?.join(&name);
         if destination.exists() {
@@ -264,6 +347,7 @@ impl SkillStore {
                     "name": name,
                     "description": row["description"],
                     "scope": row["scope"],
+                    "side_effect": row["side_effect"],
                     "enabled": session.and_then(|value| value.get(name)).and_then(Value::as_bool).unwrap_or_else(|| row["enabled"].as_bool().unwrap_or(true)),
                 })
             })
@@ -394,38 +478,112 @@ fn read_optional_json(path: &Path) -> Result<Option<Value>, ShadowReadError> {
 }
 
 struct ParsedSkill {
-    name: String,
-    description: String,
-    instructions: String,
-    source: String,
+    contract: SkillContract,
 }
 
-fn parse_skill(text: &str, fallback: &str) -> ParsedSkill {
-    let mut name = fallback.to_string();
-    let mut description = String::new();
-    let mut source = "local".to_string();
-    let mut instructions = text.trim().to_string();
+fn parse_skill(text: &str, fallback: &str) -> Result<ParsedSkill, ShadowReadError> {
+    Ok(ParsedSkill {
+        contract: parse_contract(text, fallback)?,
+    })
+}
+
+/// Parse and validate a Skill contract from `SKILL.md` text.
+///
+/// A malformed contract (unknown side-effect class, non-numeric timeout,
+/// invalid JSON schema, bad worker binding) fails closed — the Skill is not
+/// surfaced to the Runtime / Policy layer.
+fn parse_contract(text: &str, fallback: &str) -> Result<SkillContract, ShadowReadError> {
+    let mut contract = SkillContract {
+        name: fallback.to_string(),
+        cancellable: true,
+        ..SkillContract::default()
+    };
+    contract.instructions = text.trim().to_string();
+
     if let Some(rest) = text.strip_prefix("---") {
         if let Some(end) = rest.find("\n---") {
             for line in rest[..end].lines() {
-                if let Some((key, value)) = line.split_once(':') {
-                    match key.trim() {
-                        "name" => name = value.trim().to_string(),
-                        "description" => description = value.trim().to_string(),
-                        "source" => source = value.trim().to_string(),
-                        _ => {}
+                let Some((key, value)) = line.split_once(':') else {
+                    continue;
+                };
+                let key = key.trim();
+                let value = value.trim();
+                if value.is_empty() {
+                    continue;
+                }
+                match key {
+                    "name" => contract.name = value.to_string(),
+                    "description" => contract.description = value.to_string(),
+                    "source" => contract.source = value.to_string(),
+                    "version" => contract.version = value.to_string(),
+                    "compatibility" => contract.compatibility = value.to_string(),
+                    "side_effect" => {
+                        contract.side_effect = SideEffectClass::parse(value).ok_or_else(|| {
+                            ShadowReadError::Parse(format!(
+                                "skill declares an unknown side_effect class: {value}"
+                            ))
+                        })?;
                     }
+                    "capabilities" => contract.capabilities = parse_string_list(value)?,
+                    "permissions" => contract.permissions = parse_string_list(value)?,
+                    "timeout_secs" => {
+                        contract.timeout_secs = Some(value.parse::<u64>().map_err(|_| {
+                            ShadowReadError::Parse(format!(
+                                "skill timeout_secs must be a non-negative integer: {value}"
+                            ))
+                        })?);
+                    }
+                    "cancellable" => {
+                        contract.cancellable = parse_bool(value).ok_or_else(|| {
+                            ShadowReadError::Parse(format!(
+                                "skill cancellable must be true or false: {value}"
+                            ))
+                        })?;
+                    }
+                    "worker" => {
+                        validate_name(value)?;
+                        contract.worker = Some(value.to_string());
+                    }
+                    "input_schema" => contract.input_schema = Some(parse_json_value(value)?),
+                    "output_schema" => contract.output_schema = Some(parse_json_value(value)?),
+                    _ => {}
                 }
             }
-            instructions = rest[end + 4..].trim().to_string();
+            contract.instructions = rest[end + 4..].trim().to_string();
         }
     }
-    ParsedSkill {
-        name,
-        description,
-        instructions,
-        source,
+    Ok(contract)
+}
+
+/// Parse a string list that is either a JSON array or a comma-separated list.
+fn parse_string_list(value: &str) -> Result<Vec<String>, ShadowReadError> {
+    let trimmed = value.trim();
+    if trimmed.starts_with('[') {
+        let parsed: Vec<String> = serde_json::from_str(trimmed).map_err(|_| {
+            ShadowReadError::Parse(format!("skill field must be a JSON string array: {value}"))
+        })?;
+        return Ok(parsed);
     }
+    Ok(trimmed
+        .split(',')
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
+        .collect())
+}
+
+fn parse_bool(value: &str) -> Option<bool> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "true" => Some(true),
+        "false" => Some(false),
+        _ => None,
+    }
+}
+
+/// Parse a single-line JSON value (for input/output schemas).
+fn parse_json_value(value: &str) -> Result<Value, ShadowReadError> {
+    serde_json::from_str(value.trim()).map_err(|_| {
+        ShadowReadError::Parse(format!("skill schema field is not valid JSON: {value}"))
+    })
 }
 
 fn validate_name(name: &str) -> Result<String, ShadowReadError> {
@@ -642,5 +800,109 @@ mod tests {
             store.session_rows("s1", None),
             Err(ShadowReadError::Parse(_))
         ));
+    }
+
+    // ------------------------------------------------------------------
+    // R7 Task 5: Skill executable contract.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn skill_contract_parses_full_front_matter() {
+        let contract = parse_contract(
+            "---\nname: brief\nversion: 1.2.0\ncompatibility: delta>=1.0\nside_effect: local_write\ncapabilities: file.read,file.write\npermissions: workspace.read\nworkspace.write\ntimeout_secs: 30\ncancellable: false\nworker: office\ninput_schema: {\"type\":\"object\"}\n---\nDo the summary.",
+            "fallback",
+        )
+        .unwrap();
+        assert_eq!(contract.name, "brief");
+        assert_eq!(contract.version, "1.2.0");
+        assert_eq!(contract.compatibility, "delta>=1.0");
+        assert_eq!(contract.side_effect, SideEffectClass::LocalWrite);
+        assert_eq!(contract.capabilities, vec!["file.read", "file.write"]);
+        assert_eq!(contract.timeout_secs, Some(30));
+        assert!(!contract.cancellable);
+        assert_eq!(contract.worker.as_deref(), Some("office"));
+        assert_eq!(contract.input_schema, Some(json!({"type": "object"})));
+        assert_eq!(contract.instructions, "Do the summary.");
+    }
+
+    #[test]
+    fn skill_contract_defaults_are_safe_when_fields_absent() {
+        let contract = parse_contract("Do it", "fallback").unwrap();
+        assert_eq!(contract.name, "fallback");
+        assert_eq!(contract.side_effect, SideEffectClass::None);
+        assert!(contract.capabilities.is_empty());
+        assert!(contract.permissions.is_empty());
+        assert_eq!(contract.timeout_secs, None);
+        assert!(contract.cancellable);
+        assert_eq!(contract.worker, None);
+        assert_eq!(contract.input_schema, None);
+    }
+
+    #[test]
+    fn skill_contract_unknown_side_effect_fails_closed() {
+        assert!(matches!(
+            parse_contract("---\nname: bad\nside_effect: explodes\n---\nDo it", "bad"),
+            Err(ShadowReadError::Parse(_))
+        ));
+    }
+
+    #[test]
+    fn skill_contract_non_numeric_timeout_fails_closed() {
+        assert!(matches!(
+            parse_contract("---\nname: bad\ntimeout_secs: soon\n---\nDo it", "bad"),
+            Err(ShadowReadError::Parse(_))
+        ));
+    }
+
+    #[test]
+    fn skill_contract_invalid_schema_fails_closed() {
+        assert!(matches!(
+            parse_contract("---\nname: bad\ninput_schema: {not json\n---\nDo it", "bad"),
+            Err(ShadowReadError::Parse(_))
+        ));
+    }
+
+    #[test]
+    fn skill_contract_unknown_worker_name_fails_closed() {
+        assert!(matches!(
+            parse_contract("---\nname: bad\nworker: ../evil\n---\nDo it", "bad"),
+            Err(ShadowReadError::Parse(_))
+        ));
+    }
+
+    #[test]
+    fn skill_contract_json_array_capabilities() {
+        let contract = parse_contract(
+            "---\nname: brief\ncapabilities: [\"file.read\",\"search\"]\n---\nDo it",
+            "fallback",
+        )
+        .unwrap();
+        assert_eq!(contract.capabilities, vec!["file.read", "search"]);
+    }
+
+    #[test]
+    fn skill_list_exposes_contract_and_fails_closed_on_bad_contract() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = SkillStore::open(temp.path()).unwrap();
+        store
+            .create(&json!({"name": "brief", "description": "d", "instructions": "Do it"}))
+            .unwrap();
+        // Overwrite with a full contract.
+        std::fs::write(
+            temp.path().join("skills").join("brief").join("SKILL.md"),
+            "---\nname: brief\ndescription: d\nsource: local\nside_effect: external_write\ntimeout_secs: 10\n---\nDo it",
+        )
+        .unwrap();
+        let rows = store.list(None).unwrap();
+        assert_eq!(rows[0]["side_effect"], "external_write");
+        assert_eq!(rows[0]["timeout_secs"], 10);
+
+        // A corrupt contract must fail closed, not be silently skipped.
+        std::fs::write(
+            temp.path().join("skills").join("brief").join("SKILL.md"),
+            "---\nname: brief\nside_effect: bogus\n---\nDo it",
+        )
+        .unwrap();
+        assert!(matches!(store.list(None), Err(ShadowReadError::Parse(_))));
     }
 }
