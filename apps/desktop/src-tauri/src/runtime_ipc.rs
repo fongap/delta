@@ -16,9 +16,9 @@ use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use delta_runtime_native::{
-    ApplicationStore, AutomationStore, CapabilityHost, EventSink, McpStore, MemoryStore,
-    ModelAuthority, RuntimeAuthorities, RuntimeConfig, RuntimeHandle, RuntimeHost, SkillStore,
-    ToolCall, ToolExecutionContext, ToolExecutor, ToolExitState,
+    ApplicationStore, AutomationStore, CapabilityHost, EventSink, ExecutionMode, McpStore,
+    MemoryStore, ModelAuthority, RuntimeAuthorities, RuntimeConfig, RuntimeHandle, RuntimeHost,
+    SkillStore, ToolCall, ToolExecutionContext, ToolExecutor, ToolExitState,
 };
 
 struct TauriEventSink {
@@ -424,6 +424,11 @@ fn start_runtime(
         workspace,
         unattended: delta_runtime_native::control_plane::get_unattended(&state_dir(), &session_id)
             .unwrap_or(false),
+        mode: if mode.as_deref() == Some("plan") {
+            ExecutionMode::Plan
+        } else {
+            ExecutionMode::Execute
+        },
         ..config
     };
     if let Err(error) = delta_runtime_native::control_plane::ensure_session(

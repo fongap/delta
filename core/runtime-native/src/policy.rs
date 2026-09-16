@@ -58,6 +58,23 @@ pub enum RiskClass {
     Egress = 4,
 }
 
+/// Execution mode for a session. Drives a hard Trust constraint in the Policy
+/// layer — it is not a system-prompt suggestion.
+///
+/// - `Execute` (default): normal behavior; mutations are gated by risk level
+///   and approval as usual.
+/// - `Plan`: only read-only (`L0`) capabilities may run. Any local mutation,
+///   external mutation, destructive action, secret access, network write or
+///   side-effect commit is **hard-rejected** — never routed to approval. The
+///   model cannot bypass this by calling a write tool anyway.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ExecutionMode {
+    #[default]
+    Execute,
+    Plan,
+}
+
 /// Tool metadata for classification.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ToolMetadata {
@@ -87,6 +104,8 @@ pub struct PolicyEvaluateInput {
     pub level: i64,
     pub workspace_root: String,
     pub roots: Vec<RootEntry>,
+    #[serde(default)]
+    pub mode: ExecutionMode,
 }
 
 /// A root directory entry for confinement checking.
@@ -362,6 +381,32 @@ pub fn restrict_grants(level: RiskLevel, mut decision: Decision) -> Decision {
     decision
 }
 
+/// Enforce the Plan-mode Trust constraint: in `Plan` mode only read-only (`L0`)
+/// capabilities are permitted. Every mutation, external effect, destructive
+/// action, secret access, network write or side-effect commit (anything above
+/// `L0`) is **hard-rejected** — `needs_user` is left `false` so the runtime
+/// never routes it to approval; the call simply fails.
+///
+/// This is metadata-driven: the risk level is derived from the capability's
+/// declared `ToolMetadata`, not from a hardcoded tool-name list, so it covers
+/// native, MCP and Worker capabilities uniformly.
+pub fn enforce_plan_mode(level: RiskLevel, mut decision: Decision) -> Decision {
+    if level > RiskLevel::L0 {
+        decision.allowed = false;
+        decision.needs_user = false;
+        decision.rule = String::new();
+        decision.reason = format!(
+            "plan mode is active: only read-only capabilities are permitted; this call is {level:?} (mutation / external / destructive / secret / network write){}",
+            if !decision.reason.is_empty() {
+                format!("; was: {}", decision.reason)
+            } else {
+                String::new()
+            }
+        );
+    }
+    decision
+}
+
 /// Extract declared on-disk targets from arguments (including patch/diff blobs).
 fn declared_targets(arguments: Option<&Value>, tool_name: Option<&str>) -> Vec<String> {
     let mut out = Vec::new();
@@ -534,6 +579,12 @@ pub fn evaluate(input: PolicyEvaluateInput) -> Result<PolicyEvaluateOutput, Shad
         &input.roots,
         Some(&input.tool_name),
     );
+
+    // Slice 5 (Plan-mode Trust constraint): in Plan mode only read-only (L0)
+    // capabilities are permitted. This is a hard reject — never approval.
+    if matches!(input.mode, ExecutionMode::Plan) {
+        decision = enforce_plan_mode(level, decision);
+    }
 
     Ok(PolicyEvaluateOutput {
         decision,
@@ -745,6 +796,7 @@ mod tests {
                 path: "/workspace".to_string(),
                 writable: true,
             }],
+            mode: ExecutionMode::Execute,
         };
         let output = evaluate(input).unwrap();
         assert!(output.decision.allowed);
@@ -766,6 +818,7 @@ mod tests {
                 path: "/workspace".to_string(),
                 writable: true,
             }],
+            mode: ExecutionMode::Execute,
         };
         let output = evaluate(input).unwrap();
         assert!(!output.decision.allowed);
@@ -776,5 +829,216 @@ mod tests {
     #[test]
     fn schema_version_constant() {
         assert_eq!(POLICY_SCHEMA_VERSION, 1);
+    }
+
+    // ------------------------------------------------------------------
+    // R7 Task 3: Plan Mode Trust hard-constraint.
+    // ------------------------------------------------------------------
+
+    /// Build the same Decision `RuntimeHost::policy_for` constructs, so the
+    /// Plan-mode slice is exercised against realistic input (not a blanket
+    /// `allowed=true` fixture).
+    fn runtime_decision(level: RiskLevel, metadata: &ToolMetadata) -> Decision {
+        let explicitly_gated = metadata.requires_approval.unwrap_or(true);
+        let auto_allowed = level <= RiskLevel::L1 && !explicitly_gated;
+        Decision {
+            allowed: auto_allowed,
+            reason: if auto_allowed {
+                "auto-approved by Rust policy".to_string()
+            } else {
+                format!("explicit approval required for {level:?}")
+            },
+            needs_user: !auto_allowed,
+            rule: if auto_allowed {
+                "runtime.auto_low_risk".to_string()
+            } else {
+                String::new()
+            },
+            grant: if auto_allowed {
+                "policy".to_string()
+            } else {
+                String::new()
+            },
+        }
+    }
+
+    fn writable_root() -> Vec<RootEntry> {
+        vec![RootEntry {
+            path: "/workspace".to_string(),
+            writable: true,
+        }]
+    }
+
+    fn plan_input(
+        tool: &str,
+        args: Value,
+        meta: ToolMetadata,
+        mode: ExecutionMode,
+    ) -> PolicyEvaluateInput {
+        let level = classify(tool, Some(&args), Some(&meta));
+        let decision = runtime_decision(level, &meta);
+        PolicyEvaluateInput {
+            tool_name: tool.to_string(),
+            arguments: Some(args),
+            metadata: Some(meta),
+            decision,
+            level: level as i64,
+            workspace_root: "/workspace".to_string(),
+            roots: writable_root(),
+            mode,
+        }
+    }
+
+    fn read_meta() -> ToolMetadata {
+        ToolMetadata {
+            risk_level: Some("low".to_string()),
+            requires_approval: Some(false),
+            category: Some("read".to_string()),
+            capabilities: Some(vec!["file.read".to_string()]),
+        }
+    }
+
+    fn write_meta() -> ToolMetadata {
+        ToolMetadata {
+            risk_level: Some("medium".to_string()),
+            requires_approval: Some(true),
+            category: Some("filesystem".to_string()),
+            capabilities: Some(vec!["file.write".to_string()]),
+        }
+    }
+
+    fn external_meta() -> ToolMetadata {
+        ToolMetadata {
+            risk_level: Some("medium".to_string()),
+            requires_approval: Some(true),
+            category: Some("connector".to_string()),
+            capabilities: Some(vec!["message.send".to_string()]),
+        }
+    }
+
+    #[test]
+    fn plan_mode_allows_read_only_capability() {
+        let input = plan_input(
+            "read_file",
+            json!({"path": "src/main.rs"}),
+            read_meta(),
+            ExecutionMode::Plan,
+        );
+        let output = evaluate(input).unwrap();
+        assert!(output.decision.allowed, "{}", output.decision.reason);
+        assert!(!output.decision.needs_user);
+        assert_eq!(output.level, 0); // L0
+    }
+
+    #[test]
+    fn plan_mode_hard_rejects_local_write() {
+        let input = plan_input(
+            "write_file",
+            json!({"path": "src/main.rs"}),
+            write_meta(),
+            ExecutionMode::Plan,
+        );
+        let output = evaluate(input).unwrap();
+        assert!(!output.decision.allowed);
+        // Hard reject: never routed to approval.
+        assert!(!output.decision.needs_user);
+        assert!(output.decision.reason.contains("plan mode is active"));
+    }
+
+    #[test]
+    fn plan_mode_hard_rejects_external_mutation() {
+        let input = plan_input(
+            "send_message",
+            json!({"channel": "slack:C1"}),
+            external_meta(),
+            ExecutionMode::Plan,
+        );
+        let output = evaluate(input).unwrap();
+        assert!(!output.decision.allowed);
+        assert!(!output.decision.needs_user);
+        assert!(output.decision.reason.contains("plan mode is active"));
+    }
+
+    #[test]
+    fn plan_mode_hard_rejects_irreversible_l4() {
+        let mut meta = write_meta();
+        meta.risk_level = Some("high".to_string());
+        let input = plan_input("send_email", json!({}), meta, ExecutionMode::Plan);
+        let output = evaluate(input).unwrap();
+        assert!(!output.decision.allowed);
+        assert!(!output.decision.needs_user);
+    }
+
+    #[test]
+    fn plan_mode_hard_rejects_forged_tool_with_no_metadata() {
+        // The model invents a write tool the runtime has never registered.
+        // No metadata -> classify fails closed to L4 -> Plan rejects it.
+        let input = PolicyEvaluateInput {
+            tool_name: "evil_write".to_string(),
+            arguments: Some(json!({"path": "/etc/passwd"})),
+            metadata: None,
+            decision: Decision {
+                allowed: true,
+                reason: String::new(),
+                needs_user: false,
+                rule: String::new(),
+                grant: String::new(),
+            },
+            level: 4,
+            workspace_root: "/workspace".to_string(),
+            roots: writable_root(),
+            mode: ExecutionMode::Plan,
+        };
+        let output = evaluate(input).unwrap();
+        assert!(!output.decision.allowed);
+        assert!(!output.decision.needs_user);
+    }
+
+    #[test]
+    fn plan_mode_rejection_overrides_scope_allowance() {
+        // A write inside a writable root would pass scope confinement; Plan
+        // mode still rejects it (the Trust constraint overrides scope).
+        let input = plan_input(
+            "write_file",
+            json!({"path": "src/main.rs"}),
+            write_meta(),
+            ExecutionMode::Plan,
+        );
+        let output = evaluate(input).unwrap();
+        assert!(!output.decision.allowed);
+        assert!(output.decision.reason.contains("plan mode is active"));
+    }
+
+    #[test]
+    fn execute_mode_does_not_hard_reject_write_routes_to_approval() {
+        // Regression guard: in Execute mode the same write is NOT hard-rejected
+        // by the Plan slice. It stays needs_user=true (approval), as before.
+        let input = plan_input(
+            "write_file",
+            json!({"path": "src/main.rs"}),
+            write_meta(),
+            ExecutionMode::Execute,
+        );
+        let output = evaluate(input).unwrap();
+        assert!(!output.decision.allowed); // not auto-allowed (L2)
+        assert!(output.decision.needs_user); // routed to approval, not hard-rejected
+        assert!(!output.decision.reason.contains("plan mode is active"));
+    }
+
+    #[test]
+    fn enforce_plan_mode_slice_is_metadata_driven_not_name_based() {
+        // A tool NAMED "read_file" but declared as a write (medium/filesystem)
+        // is rejected in Plan mode — the decision follows the declared
+        // metadata, not the tool name.
+        let meta = write_meta();
+        let input = plan_input(
+            "read_file",
+            json!({"path": "out.txt"}),
+            meta,
+            ExecutionMode::Plan,
+        );
+        let output = evaluate(input).unwrap();
+        assert!(!output.decision.allowed);
+        assert!(output.decision.reason.contains("plan mode is active"));
     }
 }

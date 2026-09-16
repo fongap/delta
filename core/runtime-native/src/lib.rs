@@ -73,8 +73,9 @@ pub use mcp::McpStore;
 pub use memory::MemoryStore;
 pub use model_authority::ModelAuthority;
 pub use policy::{
-    classify, enforce_level, enforce_scope, evaluate, restrict_grants, Decision,
-    PolicyEvaluateInput, PolicyEvaluateOutput, RiskLevel, RootEntry, POLICY_SCHEMA_VERSION,
+    classify, enforce_level, enforce_plan_mode, enforce_scope, evaluate, restrict_grants, Decision,
+    ExecutionMode, PolicyEvaluateInput, PolicyEvaluateOutput, RiskLevel, RootEntry,
+    POLICY_SCHEMA_VERSION,
 };
 pub use provider::ProviderRequest;
 pub use retry::{
