@@ -99,9 +99,9 @@ pub use validation::{
 
 pub use inbox::{InboxItem, InboxStore};
 pub use runtime::{
-    AssistantTurn, EventSink, NullSink, RuntimeAuthorities, RuntimeConfig, RuntimeEvent,
-    RuntimeEventEnvelopeV1, RuntimeHandle, RuntimeHost, RuntimeState, StagedArtifact, StdoutSink,
-    ToolCall, ToolExecutionContext, ToolExecutor, ToolExitState, ToolResult,
+    AssistantTurn, EventSink, NullSink, RecoveryReport, RuntimeAuthorities, RuntimeConfig,
+    RuntimeEvent, RuntimeEventEnvelopeV1, RuntimeHandle, RuntimeHost, RuntimeState, StagedArtifact,
+    StdoutSink, ToolCall, ToolExecutionContext, ToolExecutor, ToolExitState, ToolResult,
 };
 
 pub use thiserror::Error;

@@ -79,10 +79,19 @@ impl CheckpointRecord {
     }
 
     /// Determine if checkpoint is recoverable (paused on user action).
+    ///
+    /// A run paused at one of these phases must NOT be swept to `interrupted`
+    /// on restart — its approval/inbox interaction state is restored, not
+    /// treated as a crash. Only runs that were actively executing (no
+    /// recoverable checkpoint) are closed as `interrupted`.
     fn compute_recoverable(phase: &str) -> bool {
         matches!(
             phase,
-            "awaiting_approval" | "awaiting_question" | "awaiting_directory" | "awaiting_plan"
+            "awaiting_approval"
+                | "awaiting_user"
+                | "awaiting_question"
+                | "awaiting_directory"
+                | "awaiting_plan"
         )
     }
 }
